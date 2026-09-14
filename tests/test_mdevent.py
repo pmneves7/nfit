@@ -383,6 +383,15 @@ def test_trajectory_workers_honor_cpu_ceiling_and_available_memory(monkeypatch):
     assert mdevent._trajectory_worker_count(1_470_183_435) == 11
 
 
+def test_mdevent_available_memory_uses_shared_platform_probe(monkeypatch):
+    monkeypatch.setattr(
+        "nfit.performance.available_memory_bytes",
+        lambda: 64 * 1024**3,
+    )
+
+    assert mdevent._available_memory_bytes() == 64 * 1024**3
+
+
 def test_mdevent_memory_estimate_scales_with_output_grid_and_preflight_blocks(monkeypatch, tmp_path):
     source = tmp_path / "events.nxs"
     _write_mdevent(source)

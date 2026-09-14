@@ -125,7 +125,7 @@ def test_benchmark_candidates_scale_to_large_allocations(monkeypatch):
 def test_macos_available_memory_uses_free_inactive_and_speculative_pages(
     monkeypatch,
 ):
-    from nfit import performance_benchmark
+    from nfit import performance
 
     output = """Mach Virtual Memory Statistics: (page size of 16384 bytes)
 Pages free: 100.
@@ -134,11 +134,11 @@ Pages inactive: 200.
 Pages speculative: 50.
 """
     monkeypatch.setattr(
-        performance_benchmark.subprocess,
+        performance.subprocess,
         "check_output",
         lambda *args, **kwargs: output,
     )
-    assert performance_benchmark._darwin_available_memory_bytes() == 350 * 16384
+    assert performance._darwin_available_memory_bytes() == 350 * 16384
 
 
 def _project():

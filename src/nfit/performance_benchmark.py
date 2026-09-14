@@ -8,12 +8,9 @@ from __future__ import annotations
 
 import argparse
 import copy
-import ctypes
 import json
 import math
-import os
 import pickle
-import re
 import statistics
 import subprocess
 import sys
@@ -21,91 +18,16 @@ import tempfile
 import time
 from pathlib import Path
 
+from .performance import available_memory_bytes
+
 
 class BenchmarkCancelled(Exception):
     """The caller cancelled a benchmark; no recommendation should be applied."""
 
 
-def _darwin_available_memory_bytes() -> int | None:
-    """Read reclaimable memory from macOS's stable vm_stat interface."""
-    try:
-        output = subprocess.check_output(
-            ["/usr/bin/vm_stat"], text=True, timeout=5
-        )
-        page_match = re.search(r"page size of (\d+) bytes", output)
-        if page_match is None:
-            return None
-        pages = {}
-        for name, value in re.findall(
-            r"^Pages (free|inactive|speculative):\s+(\d+)\.",
-            output,
-            re.MULTILINE,
-        ):
-            pages[name] = int(value)
-        if not pages:
-            return None
-        return int(page_match.group(1)) * sum(pages.values())
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
-
-
 def _available_memory_mib() -> int | None:
     """Return currently available physical memory, constrained by Linux cgroups."""
-    available = None
-    try:
-        import psutil
-
-        available = int(psutil.virtual_memory().available)
-    except (ImportError, OSError, ValueError):
-        if sys.platform == "darwin":
-            available = _darwin_available_memory_bytes()
-        elif sys.platform == "win32":
-            class MemoryStatus(ctypes.Structure):
-                _fields_ = [
-                    ("length", ctypes.c_ulong),
-                    ("memory_load", ctypes.c_ulong),
-                    ("total_physical", ctypes.c_ulonglong),
-                    ("available_physical", ctypes.c_ulonglong),
-                    ("total_page_file", ctypes.c_ulonglong),
-                    ("available_page_file", ctypes.c_ulonglong),
-                    ("total_virtual", ctypes.c_ulonglong),
-                    ("available_virtual", ctypes.c_ulonglong),
-                    ("available_extended_virtual", ctypes.c_ulonglong),
-                ]
-
-            status = MemoryStatus()
-            status.length = ctypes.sizeof(status)
-            try:
-                if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-                    available = int(status.available_physical)
-            except (AttributeError, OSError):
-                pass
-        else:
-            try:
-                available = int(
-                    os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-                )
-            except (AttributeError, OSError, ValueError):
-                pass
-
-    if sys.platform == "linux":
-        for limit_path, usage_path in (
-            (Path("/sys/fs/cgroup/memory.max"), Path("/sys/fs/cgroup/memory.current")),
-            (
-                Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
-                Path("/sys/fs/cgroup/memory/memory.usage_in_bytes"),
-            ),
-        ):
-            try:
-                limit_text = limit_path.read_text().strip()
-                if limit_text != "max":
-                    remaining = max(
-                        0, int(limit_text) - int(usage_path.read_text().strip())
-                    )
-                    available = remaining if available is None else min(available, remaining)
-                    break
-            except (OSError, ValueError):
-                continue
+    available = available_memory_bytes()
     return None if available is None else max(1, available // 1024**2)
 
 

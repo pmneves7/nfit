@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -773,14 +772,9 @@ def _validate_mdevent_memory(shape, *, max_batch_bytes):
 
 
 def _available_memory_bytes():
-    try:
-        import psutil
-        return int(psutil.virtual_memory().available)
-    except (ImportError, AttributeError):
-        try:
-            return int(os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
-        except (AttributeError, OSError, ValueError):
-            return None
+    from .performance import available_memory_bytes
+
+    return available_memory_bytes()
 
 
 def _trajectory_worker_count(output_size: int) -> int:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -39,6 +41,103 @@ def peak_process_memory_mib() -> float:
     if not query(kernel.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
         raise ctypes.WinError(ctypes.get_last_error())
     return counters.PeakWorkingSetSize / 1024**2
+
+
+def _darwin_available_memory_bytes() -> int | None:
+    """Return free and reclaimable macOS memory from ``vm_stat``."""
+
+    try:
+        output = subprocess.check_output(
+            ["/usr/bin/vm_stat"], text=True, timeout=5
+        )
+        page_match = re.search(r"page size of (\d+) bytes", output)
+        if page_match is None:
+            return None
+        pages = {
+            name: int(value)
+            for name, value in re.findall(
+                r"^Pages (free|inactive|speculative):\s+(\d+)\.",
+                output,
+                re.MULTILINE,
+            )
+        }
+        if not pages:
+            return None
+        return int(page_match.group(1)) * sum(pages.values())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def _windows_available_memory_bytes() -> int | None:
+    """Return Windows' available physical-memory counter."""
+
+    import ctypes
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [
+            ("length", ctypes.c_ulong),
+            ("memory_load", ctypes.c_ulong),
+            ("total_physical", ctypes.c_ulonglong),
+            ("available_physical", ctypes.c_ulonglong),
+            ("total_page_file", ctypes.c_ulonglong),
+            ("available_page_file", ctypes.c_ulonglong),
+            ("total_virtual", ctypes.c_ulonglong),
+            ("available_virtual", ctypes.c_ulonglong),
+            ("available_extended_virtual", ctypes.c_ulonglong),
+        ]
+
+    status = MemoryStatus()
+    status.length = ctypes.sizeof(status)
+    try:
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return int(status.available_physical)
+    except (AttributeError, OSError):
+        pass
+    return None
+
+
+def available_memory_bytes() -> int | None:
+    """Return reclaimable physical memory, constrained by Linux cgroups."""
+
+    available = None
+    try:
+        import psutil
+
+        available = int(psutil.virtual_memory().available)
+    except (ImportError, AttributeError, OSError, ValueError):
+        if sys.platform == "darwin":
+            available = _darwin_available_memory_bytes()
+        elif sys.platform == "win32":
+            available = _windows_available_memory_bytes()
+        else:
+            try:
+                available = int(
+                    os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+                )
+            except (AttributeError, OSError, ValueError):
+                pass
+
+    if sys.platform == "linux":
+        for limit_path, usage_path in (
+            (Path("/sys/fs/cgroup/memory.max"), Path("/sys/fs/cgroup/memory.current")),
+            (
+                Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+                Path("/sys/fs/cgroup/memory/memory.usage_in_bytes"),
+            ),
+        ):
+            try:
+                limit_text = limit_path.read_text().strip()
+                if limit_text != "max":
+                    remaining = max(
+                        0, int(limit_text) - int(usage_path.read_text().strip())
+                    )
+                    available = (
+                        remaining if available is None else min(available, remaining)
+                    )
+                    break
+            except (OSError, ValueError):
+                continue
+    return None if available is None else max(1, available)
 
 
 def performance_settings_path() -> Path:
@@ -100,12 +199,7 @@ def transient_rebin_memory_limit_bytes(available_memory: int | None = None) -> i
     """Return the machine-local ceiling for rebin batches and worker buffers."""
 
     if available_memory is None:
-        try:
-            import psutil
-
-            available_memory = int(psutil.virtual_memory().available)
-        except (ImportError, AttributeError):
-            available_memory = None
+        available_memory = available_memory_bytes()
     percent = load_performance_settings()["transient_memory_percent"] or 25
     if available_memory is None:
         return 512 * 1024**2

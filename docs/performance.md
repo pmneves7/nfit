@@ -149,6 +149,9 @@ batch target cannot silently exceed the machine policy. The setting applies to
 existing projects because it describes the current machine rather than project
 state. The separate MDEvent output-grid preflight continues to warn when the
 estimated complete reduction exceeds 70% of currently available memory.
+On macOS, available memory includes inactive and speculative pages that the
+operating system can reclaim; this prevents the worker planner from falling to
+one CPU merely because the file cache has consumed most completely free pages.
 
 Process caches normally disappear when nfit exits. For projects whose raw data
 are expensive to load or rebin, enable **File → Cache binnings** before saving.
