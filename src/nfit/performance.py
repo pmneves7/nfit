@@ -47,24 +47,44 @@ def performance_settings_path() -> Path:
 
 
 def load_performance_settings() -> dict[str, int]:
-    """Read preferences. Zero means automatic (192 MiB or available CPU allocation)."""
+    """Read preferences. Zero selects the documented automatic value."""
     try:
         value = json.loads(performance_settings_path().read_text())
         return _validated(value)
     except (OSError, ValueError, TypeError, AttributeError):
-        return {"max_batch_mb": 0, "workers": 0}
+        return {"max_batch_mb": 0, "workers": 0, "transient_memory_percent": 0}
 
 
 def _validated(value) -> dict[str, int]:
-    result = {key: int(value.get(key, 0)) for key in ("max_batch_mb", "workers")}
-    if not 0 <= result["max_batch_mb"] <= 1_048_576 or not 0 <= result["workers"] <= 4096:
-        raise ValueError("Batch memory must be 0–1048576 MiB and workers 0–4096.")
+    result = {
+        key: int(value.get(key, 0))
+        for key in ("max_batch_mb", "workers", "transient_memory_percent")
+    }
+    if (
+        not 0 <= result["max_batch_mb"] <= 1_048_576
+        or not 0 <= result["workers"] <= 4096
+        or not 0 <= result["transient_memory_percent"] <= 80
+    ):
+        raise ValueError(
+            "Batch memory must be 0–1048576 MiB, workers 0–4096, and transient memory 0–80%."
+        )
     return result
 
 
-def save_performance_settings(*, max_batch_mb: int = 0, workers: int = 0) -> None:
+def save_performance_settings(
+    *,
+    max_batch_mb: int = 0,
+    workers: int = 0,
+    transient_memory_percent: int = 0,
+) -> None:
     """Atomically save defaults for newly initialized rebin configurations."""
-    values = _validated({"max_batch_mb": max_batch_mb, "workers": workers})
+    values = _validated(
+        {
+            "max_batch_mb": max_batch_mb,
+            "workers": workers,
+            "transient_memory_percent": transient_memory_percent,
+        }
+    )
     path = performance_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
@@ -74,6 +94,22 @@ def save_performance_settings(*, max_batch_mb: int = 0, workers: int = 0) -> Non
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def transient_rebin_memory_limit_bytes(available_memory: int | None = None) -> int:
+    """Return the machine-local ceiling for rebin batches and worker buffers."""
+
+    if available_memory is None:
+        try:
+            import psutil
+
+            available_memory = int(psutil.virtual_memory().available)
+        except (ImportError, AttributeError):
+            available_memory = None
+    percent = load_performance_settings()["transient_memory_percent"] or 25
+    if available_memory is None:
+        return 512 * 1024**2
+    return max(1, int(available_memory) * int(percent) // 100)
 
 
 def initialize_rebin_performance(config: dict) -> None:

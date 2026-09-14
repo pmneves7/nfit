@@ -141,6 +141,15 @@ test a custom candidate list when a cluster node warrants a broader sweep. The
 default benchmark sweep includes the machine's full detected CPU allowance in
 addition to conservative smaller ceilings.
 
+**Preferences → Performance → Transient memory ceiling** controls that share
+of currently available memory. The automatic value is 25%, and an explicit
+value may range up to 80%. The same ceiling limits thread-private rebin
+accumulators and clamps each saved per-rebin batch target, so increasing a
+batch target cannot silently exceed the machine policy. The setting applies to
+existing projects because it describes the current machine rather than project
+state. The separate MDEvent output-grid preflight continues to warn when the
+estimated complete reduction exceeds 70% of currently available memory.
+
 Process caches normally disappear when nfit exits. For projects whose raw data
 are expensive to load or rebin, enable **File → Cache binnings** before saving.
 The project then embeds current dataset and composite binnings and restores them

@@ -200,7 +200,18 @@ def _rebin_max_batch_mb(config: dict[str, Any]) -> int:
 
 
 def _rebin_max_batch_bytes(config: dict[str, Any]) -> int:
-    return _rebin_max_batch_mb(config) * 1024 * 1024
+    from .performance import transient_rebin_memory_limit_bytes
+
+    requested = _rebin_max_batch_mb(config) * 1024 * 1024
+    return min(requested, transient_rebin_memory_limit_bytes())
+
+
+def _rebin_max_parallel_bytes() -> int:
+    """Return the machine ceiling for thread-private rebin accumulators."""
+
+    from .performance import transient_rebin_memory_limit_bytes
+
+    return transient_rebin_memory_limit_bytes()
 
 
 def _rebin_resolution_mode(config: dict[str, Any]) -> str:
@@ -1143,6 +1154,7 @@ def _rebin_mdhisto_coverage(
         normalize=False,
         mean_weighting="uniform",
         max_batch_bytes=_rebin_max_batch_bytes(config),
+        max_parallel_bytes=_rebin_max_parallel_bytes(),
     )
     # Reuse the resolved edges, rather than interpreting them as centers again.
     kwargs["bin_edges"] = bins_list
@@ -1273,6 +1285,7 @@ def _rebin_mdhisto_data(
         mean_weighting=_rebin_mean_weighting(config),
         minimum_samples=_rebin_minimum_samples(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
+        max_parallel_bytes=_rebin_max_parallel_bytes(),
         progress_callback=progress_callback,
     )
     result = (
@@ -1484,6 +1497,7 @@ def _point_data_histogram(
         mean_weighting=_rebin_mean_weighting(config),
         minimum_samples=_rebin_minimum_samples(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
+        max_parallel_bytes=_rebin_max_parallel_bytes(),
         progress_callback=progress_callback,
     )
     result = (

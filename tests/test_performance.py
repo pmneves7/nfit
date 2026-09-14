@@ -8,6 +8,7 @@ from nfit.performance import (
     initialize_rebin_performance,
     load_performance_settings,
     save_performance_settings,
+    transient_rebin_memory_limit_bytes,
 )
 from nfit.performance_benchmark import (
     BenchmarkCancelled,
@@ -31,8 +32,17 @@ def test_performance_defaults_are_snapshots(monkeypatch):
     first = {}
     initialize_rebin_performance(first)
     assert first == {"max_batch_mb": 192, "workers": 3}
-    save_performance_settings(max_batch_mb=64, workers=2)
-    assert load_performance_settings() == {"max_batch_mb": 64, "workers": 2}
+    save_performance_settings(
+        max_batch_mb=64,
+        workers=2,
+        transient_memory_percent=40,
+    )
+    assert load_performance_settings() == {
+        "max_batch_mb": 64,
+        "workers": 2,
+        "transient_memory_percent": 40,
+    }
+    assert transient_rebin_memory_limit_bytes(1_000) == 400
     initialize_rebin_performance(first)
     assert first == {"max_batch_mb": 192, "workers": 3}
     second = {}
@@ -40,6 +50,16 @@ def test_performance_defaults_are_snapshots(monkeypatch):
     assert second == {"max_batch_mb": 64, "workers": 2}
     with pytest.raises(ValueError):
         save_performance_settings(workers=-1)
+    with pytest.raises(ValueError):
+        save_performance_settings(transient_memory_percent=81)
+
+
+def test_project_batch_memory_is_capped_by_machine_preference(monkeypatch):
+    monkeypatch.setattr(
+        "nfit.performance.transient_rebin_memory_limit_bytes",
+        lambda: 1024,
+    )
+    assert project_data._rebin_max_batch_bytes({"max_batch_mb": 64}) == 1024
 
 
 def test_scoped_workers_are_restored():

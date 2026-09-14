@@ -786,12 +786,14 @@ def _available_memory_bytes():
 def _trajectory_worker_count(output_size: int) -> int:
     """Resolve the saved CPU ceiling against trajectory-buffer memory."""
 
+    from .performance import transient_rebin_memory_limit_bytes
+
     output_bytes = max(int(output_size) * 8, 1)
     available_memory = _available_memory_bytes()
     partial_budget = (
         512 * 1024**2
         if available_memory is None
-        else max(available_memory // 4, output_bytes)
+        else max(transient_rebin_memory_limit_bytes(available_memory), output_bytes)
     )
     memory_workers = max(1, partial_budget // output_bytes)
     return min(_parallel.num_threads(), memory_workers)

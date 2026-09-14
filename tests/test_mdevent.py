@@ -363,6 +363,10 @@ def test_symmetry_trajectory_numba_matches_python_fallback(monkeypatch, tmp_path
 def test_trajectory_workers_honor_cpu_ceiling_and_available_memory(monkeypatch):
     monkeypatch.setattr(mdevent._parallel, "num_threads", lambda: 16)
     monkeypatch.setattr(
+        "nfit.performance.transient_rebin_memory_limit_bytes",
+        lambda available: available // 4,
+    )
+    monkeypatch.setattr(
         mdevent,
         "_available_memory_bytes",
         lambda: 2 * 1024**3,

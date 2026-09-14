@@ -194,6 +194,18 @@ class PerformancePage(QtWidgets.QWidget):
         self.workers.setValue(settings["workers"])
         self.workers.setToolTip("Maximum rebin workers. Auto uses the nfit CPU allocation; each rebin may use fewer workers.")
         form.addRow("Default worker ceiling", self.workers)
+        self.transient_memory = QtWidgets.QSpinBox()
+        self.transient_memory.setObjectName("preferences_transient_memory_percent")
+        self.transient_memory.setRange(0, 80)
+        self.transient_memory.setSpecialValueText("Auto (25%)")
+        self.transient_memory.setSuffix("% available")
+        self.transient_memory.setValue(settings["transient_memory_percent"])
+        self.transient_memory.setToolTip(
+            "Maximum share of currently available RAM used by temporary rebin "
+            "batches and parallel worker accumulators. Higher values can enable "
+            "more CPUs for large grids but leave less memory for other work."
+        )
+        form.addRow("Transient memory ceiling", self.transient_memory)
         save = QtWidgets.QPushButton("Save defaults")
         save.setToolTip("Persist these defaults for new rebin configurations; no existing settings are overwritten.")
         save.clicked.connect(self._save)
@@ -208,7 +220,11 @@ class PerformancePage(QtWidgets.QWidget):
 
     def _save(self):
         try:
-            save_performance_settings(max_batch_mb=self.batch.value(), workers=self.workers.value())
+            save_performance_settings(
+                max_batch_mb=self.batch.value(),
+                workers=self.workers.value(),
+                transient_memory_percent=self.transient_memory.value(),
+            )
         except OSError as exc:
             QtWidgets.QMessageBox.warning(self, "Save preferences", str(exc))
             return
@@ -216,7 +232,10 @@ class PerformancePage(QtWidgets.QWidget):
 
     def _calibrate(self):
         def apply(values):
-            save_performance_settings(**values)
+            save_performance_settings(
+                **values,
+                transient_memory_percent=self.transient_memory.value(),
+            )
             self.batch.setValue(values["max_batch_mb"])
             self.workers.setValue(values["workers"])
             self.status.setText("Calibrated defaults saved. Existing configurations are unchanged.")

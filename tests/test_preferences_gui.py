@@ -161,9 +161,15 @@ def test_performance_preferences_save_and_apply(qt_app, monkeypatch, tmp_path):
     page = PerformancePage()
     page.batch.setValue(64)
     page.workers.setValue(2)
+    page.transient_memory.setValue(40)
     assert load_performance_settings()["workers"] == 0
     page._save()
-    assert load_performance_settings() == {"max_batch_mb": 64, "workers": 2}
+    assert load_performance_settings() == {
+        "max_batch_mb": 64,
+        "workers": 2,
+        "transient_memory_percent": 40,
+    }
+    assert page.transient_memory.toolTip()
     page.close()
 
 
