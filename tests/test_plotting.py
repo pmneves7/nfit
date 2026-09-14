@@ -1866,6 +1866,32 @@ def test_qt_autoscale_limits_and_manual_override():
     assert viewer.model.percentile_n == pytest.approx(5.0)
 
 
+def test_qt_home_preserves_manual_color_limits_locked_from_zoomed_autoscale():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    viewer.toolbar.update()
+    viewer.toolbar.push_current()
+    full_limits = viewer.image.get_clim()
+
+    viewer.ax_image.set_xlim(-1.1, 0.1)
+    viewer.ax_image.set_ylim(-0.6, 0.1)
+    viewer.toolbar.push_current()
+    zoom_limits = viewer.image.get_clim()
+    assert zoom_limits != pytest.approx(full_limits)
+
+    viewer.autoscale_check.setChecked(False)
+    viewer.toolbar.home()
+
+    assert not viewer.model.autoscale
+    assert viewer.image.get_clim() == pytest.approx(zoom_limits)
+    assert (viewer.vmin_spin.value(), viewer.vmax_spin.value()) == pytest.approx(
+        zoom_limits
+    )
+    assert viewer.colorbar.ax.get_ylim() == pytest.approx(zoom_limits)
+
+
 def test_qt_color_scale_preserves_manual_view_and_power_gamma():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer

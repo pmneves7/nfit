@@ -435,6 +435,9 @@ readout.
 For slice and tiled plots, editing either **vmin** or **vmax** turns off
 **Autoscale** and keeps the currently displayed value for the other bound.
 Thus either field can be changed independently and takes effect immediately.
+Turning off **Autoscale** also locks both displayed limits while using the
+Matplotlib Home, Back, or Forward buttons; those buttons change the data view
+without silently restoring an older color normalization.
 When the optional other-axis binning title is visible, it summarizes only
 dimensions not represented by the horizontal, vertical, or tiled axes.
 

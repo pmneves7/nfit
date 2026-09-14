@@ -29,6 +29,26 @@ from .qt_slice_controls import (
 from .slice_viewer_state import _option_name
 
 
+class _SliceNavigationToolbar(NavigationToolbar2QT):
+    """Keep nfit plot state authoritative after navigation-history restores."""
+
+    def __init__(self, canvas: Any, parent: Any, restored_callback: Any) -> None:
+        self._restored_callback = restored_callback
+        super().__init__(canvas, parent)
+
+    def home(self, *args: Any) -> None:
+        super().home(*args)
+        self._restored_callback()
+
+    def back(self, *args: Any) -> None:
+        super().back(*args)
+        self._restored_callback()
+
+    def forward(self, *args: Any) -> None:
+        super().forward(*args)
+        self._restored_callback()
+
+
 def build_slice_viewer(
     viewer: Any,
     *,
@@ -158,7 +178,11 @@ def _build_plot_panel(viewer: Any) -> Any:
     viewer.canvas.setToolTip(
         "Interactive plot canvas. Move the cursor for coordinate readouts; use the toolbar or box tool to inspect slices."
     )
-    viewer.toolbar = NavigationToolbar2QT(viewer.canvas, viewer.window)
+    viewer.toolbar = _SliceNavigationToolbar(
+        viewer.canvas,
+        viewer.window,
+        viewer._on_navigation_history_restored,
+    )
     viewer.toolbar.setToolTip(
         "Matplotlib navigation toolbar for pan, zoom, home, configure, and save actions."
     )

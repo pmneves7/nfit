@@ -3414,6 +3414,18 @@ class QtMDHistoSliceViewer:
         self.toolbar.update()
         self.toolbar.push_current()
 
+    def _on_navigation_history_restored(self) -> None:
+        """Reapply nfit state after Matplotlib restores every axes in the figure."""
+
+        self._sync_view_limit_controls()
+        if self.image is not None:
+            # Matplotlib navigation history includes colorbar axes. Restoring one
+            # can mutate the mappable normalization after nfit has restored the
+            # data view, leaving manual limits and their controls inconsistent.
+            self.update_plot(preserve_view=True)
+        elif self.canvas is not None:
+            self.canvas.draw_idle()
+
     def _sync_view_limit_controls(self, axis_name: str | None = None) -> None:
         if self.ax_image is None or self.x_min_spin is None:
             return
