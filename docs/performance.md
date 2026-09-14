@@ -133,7 +133,9 @@ Python reference path is retained for numerical-equivalence testing. The saved
 per-rebin **Workers** value is a ceiling: nfit uses it on a workstation or
 cluster node but automatically lowers the normalization worker count when the
 thread-private output accumulators would exceed one quarter of currently
-available memory (with a 4 GiB cap). **Benchmark this rebin…** measures the
+available memory. Large-memory nodes can therefore use multiple CPUs for large
+four-dimensional grids, while memory-constrained machines still fall back to a
+smaller worker count. **Benchmark this rebin…** measures the
 complete saved configuration on the current machine; its exported script can
 test a custom candidate list when a cluster node warrants a broader sweep. The
 default benchmark sweep includes the machine's full detected CPU allowance in

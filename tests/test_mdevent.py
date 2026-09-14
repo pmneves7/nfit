@@ -371,6 +371,13 @@ def test_trajectory_workers_honor_cpu_ceiling_and_available_memory(monkeypatch):
     assert mdevent._trajectory_worker_count(1024) == 16
     assert mdevent._trajectory_worker_count(16_000_000) == 4
 
+    monkeypatch.setattr(
+        mdevent,
+        "_available_memory_bytes",
+        lambda: 512 * 1024**3,
+    )
+    assert mdevent._trajectory_worker_count(1_470_183_435) == 11
+
 
 def test_mdevent_memory_estimate_scales_with_output_grid_and_preflight_blocks(monkeypatch, tmp_path):
     source = tmp_path / "events.nxs"

@@ -791,7 +791,7 @@ def _trajectory_worker_count(output_size: int) -> int:
     partial_budget = (
         512 * 1024**2
         if available_memory is None
-        else min(4 * 1024**3, max(available_memory // 4, output_bytes))
+        else max(available_memory // 4, output_bytes)
     )
     memory_workers = max(1, partial_budget // output_bytes)
     return min(_parallel.num_threads(), memory_workers)
