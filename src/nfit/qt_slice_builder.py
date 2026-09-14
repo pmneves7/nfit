@@ -331,17 +331,29 @@ def _build_axis_controls(viewer: Any, controls_layout: Any) -> None:
     axis_selector_layout.addWidget(viewer._axis_y_label)
     axis_selector_layout.addWidget(viewer.y_combo)
     axis_selector_layout.addStretch(1)
-    axes_layout.addWidget(axis_selector_widget, 0, 0, 1, 4)
+    axes_layout.addWidget(axis_selector_widget, 0, 0, 1, 5)
     viewer.x_min_spin = _make_float_spinbox()
     viewer.x_max_spin = _make_float_spinbox()
     viewer.y_min_spin = _make_float_spinbox()
     viewer.y_max_spin = _make_float_spinbox()
+    viewer.x_step_spin = _make_float_spinbox(1.0e-12, 1.0e12)
+    viewer.y_step_spin = _make_float_spinbox(1.0e-12, 1.0e12)
+    for spinbox in (viewer.x_step_spin, viewer.y_step_spin):
+        spinbox.setMinimumWidth(70)
+        spinbox.setMaximumWidth(92)
     viewer.x_reset_button = QtWidgets.QPushButton("Reset")
     viewer.y_reset_button = QtWidgets.QPushButton("Reset")
     viewer.x_min_spin.setToolTip("Lower displayed limit for the horizontal axis.")
     viewer.x_max_spin.setToolTip("Upper displayed limit for the horizontal axis.")
     viewer.y_min_spin.setToolTip("Lower displayed limit for the vertical axis.")
     viewer.y_max_spin.setToolTip("Upper displayed limit for the vertical axis.")
+    step_tooltip = (
+        "Combine neighboring displayed bins into this step size. Values snap to "
+        "integer multiples of the smallest native bin spacing; source data and "
+        "cached rebins are unchanged."
+    )
+    viewer.x_step_spin.setToolTip(step_tooltip)
+    viewer.y_step_spin.setToolTip(step_tooltip)
     viewer.x_reset_button.setToolTip(
         "Reset the horizontal axis limits to the full displayed data range."
     )
@@ -354,20 +366,31 @@ def _build_axis_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.x_max_spin.valueChanged.connect(lambda _value: viewer._set_view_limits("x"))
     viewer.y_min_spin.valueChanged.connect(lambda _value: viewer._set_view_limits("y"))
     viewer.y_max_spin.valueChanged.connect(lambda _value: viewer._set_view_limits("y"))
+    viewer.x_step_spin.valueChanged.connect(
+        lambda value: viewer._set_display_step("x", value)
+    )
+    viewer.y_step_spin.valueChanged.connect(
+        lambda value: viewer._set_display_step("y", value)
+    )
     viewer.x_reset_button.clicked.connect(lambda: viewer._reset_view_limits("x"))
     viewer.y_reset_button.clicked.connect(lambda: viewer._reset_view_limits("y"))
     axes_layout.addWidget(QtWidgets.QLabel("min"), 1, 1)
     axes_layout.addWidget(QtWidgets.QLabel("max"), 1, 2)
+    viewer.step_header_label = QtWidgets.QLabel("step")
+    axes_layout.addWidget(viewer.step_header_label, 1, 3)
     axes_layout.addWidget(QtWidgets.QLabel("x limits"), 2, 0)
     axes_layout.addWidget(viewer.x_min_spin, 2, 1)
     axes_layout.addWidget(viewer.x_max_spin, 2, 2)
-    axes_layout.addWidget(viewer.x_reset_button, 2, 3)
+    axes_layout.addWidget(viewer.x_step_spin, 2, 3)
+    axes_layout.addWidget(viewer.x_reset_button, 2, 4)
     axes_layout.addWidget(QtWidgets.QLabel("y limits"), 3, 0)
     axes_layout.addWidget(viewer.y_min_spin, 3, 1)
     axes_layout.addWidget(viewer.y_max_spin, 3, 2)
-    axes_layout.addWidget(viewer.y_reset_button, 3, 3)
+    axes_layout.addWidget(viewer.y_step_spin, 3, 3)
+    axes_layout.addWidget(viewer.y_reset_button, 3, 4)
     axes_layout.setColumnStretch(1, 1)
     axes_layout.setColumnStretch(2, 1)
+    axes_layout.setColumnStretch(3, 1)
     controls_layout.addWidget(axes_group)
 
 

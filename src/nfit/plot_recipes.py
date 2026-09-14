@@ -124,6 +124,7 @@ def render_plot(
             smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
             smoothing_sigma_waterfall=float(settings.get("smoothing_y", 0.0)),
             smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", False)),
+            x_step=settings.get("x_step"),
             xlim=_pair(settings.get("xlim")),
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),
@@ -164,6 +165,8 @@ def render_plot(
             smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
             smoothing_sigma_y=float(settings.get("smoothing_y", 0.0)),
             smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", False)),
+            x_step=settings.get("x_step"),
+            y_step=settings.get("y_step"),
             xlim=_pair(settings.get("xlim")),
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),
@@ -201,6 +204,7 @@ def render_plot(
             channel=settings.get("channel", "signal"),
             smoothing_sigma=float(settings.get("smoothing_x", 0.0)),
             smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", False)),
+            axis_step=settings.get("x_step"),
         )
         figure = ax.figure
     elif plot_type == "fit_comparison":
@@ -222,6 +226,8 @@ def render_plot(
             cmap=settings.get("cmap", "viridis"),
             color_scale=settings.get("color_scale", "linear"),
             auto_limits=settings.get("auto_limits", "min/max"),
+            x_step=settings.get("x_step"),
+            y_step=settings.get("y_step"),
             show_brillouin_zone_boundaries=bool(
                 settings.get("show_brillouin_zone_boundaries", False)
             ),
@@ -262,6 +268,8 @@ def render_plot(
             smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
             smoothing_sigma_y=float(settings.get("smoothing_y", 0.0)),
             smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", False)),
+            x_step=settings.get("x_step"),
+            y_step=settings.get("y_step"),
             xlim=_pair(settings.get("xlim")),
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),

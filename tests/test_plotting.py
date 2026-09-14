@@ -2018,6 +2018,35 @@ def test_qt_view_limit_controls_track_set_and_reset_main_axes():
     np.testing.assert_allclose(viewer.ax_image.get_ylim(), (-1.0, 1.0))
 
 
+def test_qt_display_axis_steps_snap_coarsen_and_round_trip():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+
+    assert viewer.x_step_spin.value() == pytest.approx(0.8)
+    assert viewer.y_step_spin.value() == pytest.approx(0.5)
+    assert viewer._current_slice["signal"].shape == (4, 5)
+
+    viewer.x_step_spin.setValue(1.3)
+    viewer.y_step_spin.setValue(1.0)
+
+    assert viewer.x_step_spin.value() == pytest.approx(1.6)
+    assert viewer.y_step_spin.value() == pytest.approx(1.0)
+    assert viewer._current_slice["signal"].shape == (2, 3)
+    settings = viewer.current_plot_settings()
+    assert settings["x_step"] == pytest.approx(1.6)
+    assert settings["y_step"] == pytest.approx(1.0)
+    assert "x_step=1.6" in viewer.figure_script()
+    assert "y_step=1.0" in viewer.figure_script()
+
+    restored = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    restored.apply_plot_settings(settings)
+    assert restored.x_step_spin.value() == pytest.approx(1.6)
+    assert restored.y_step_spin.value() == pytest.approx(1.0)
+    assert restored._current_slice["signal"].shape == (2, 3)
+
+
 def test_qt_roi_button_enables_rectangle_selector_and_cursor_hkle():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer

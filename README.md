@@ -40,7 +40,7 @@ A few of its main capabilities are:
   including raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data,
   raw CORELLI finite-energy correlation-chopper reconstruction, and reduced
   CORELLI and WAND² single-crystal data, with conventional major-tick or
-  Brillouin-zone gridline overlays;
+  Brillouin-zone gridline overlays and reversible displayed-axis coarsening;
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
 - construct and inspect crystal, tight-binding, Lindhard, and RPA models;
 - save complete `.nfit` projects and export editable analysis scripts; and

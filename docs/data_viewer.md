@@ -99,6 +99,16 @@ the figure; fitting always excludes masked data. When an integrated auxiliary
 channel has no finite contributors, the corresponding displayed pixel remains
 blank rather than producing a numerical value.
 
+Each displayed axis has a **Step** control beside its minimum and maximum.
+The default is the smallest native bin spacing. Increasing it combines adjacent
+display bins in integer multiples of that spacing using inverse-variance
+weighting and propagated uncertainties; event and normalization counts are
+summed. This is a reversible presentation setting: it does not alter the source
+data, project rebin configuration, or cached bins. Stored plots and exported
+scripts retain the selected `x_step` and `y_step` values. In waterfall mode the
+x step coarsens each trace, while the existing **Bin width** remains responsible
+for grouping the vertical waterfall axis.
+
 In **Figure**, enable **Show other-axis binning above plot** to add the current
 non-displayed-axis selections to the title. Projected labels and physical units
 are retained, for example `[K,-K,0]=[0.9,1.1] r.l.u., ΔE=[1,2] meV`. The option

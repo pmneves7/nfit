@@ -2,7 +2,7 @@
 
 Each workspace's **Plots** branch stores editable figure recipes. A recipe
 contains stable dataset references, displayed axes and channels, integrations,
-styles, limits, smoothing, figure size, and a complete rebin-configuration
+styles, limits, displayed-axis steps, smoothing, figure size, and a complete rebin-configuration
 snapshot for each source. It does not duplicate the numerical data or embed a
 rendered image. A composite recipe additionally records its workspace or nested
 dataset-group scope and composite rebin configuration.

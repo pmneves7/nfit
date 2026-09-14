@@ -62,6 +62,7 @@ class _DatasetViewState:
     tile_label_si_prefix: str = ""
     show_tile_labels: bool = True
     tile_local_color_scales: bool = False
+    display_step_factors: dict[int, int] | None = None
 
 
 def _coerce_datasets(data: MDHistoData | Sequence[MDHistoData]) -> list[MDHistoData]:

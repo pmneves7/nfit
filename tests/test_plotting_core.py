@@ -129,6 +129,35 @@ def test_smooth_mdhisto_view_can_fill_explicitly_masked_display_pixels():
     assert np.isfinite(smoothed["errors"][0, 1])
 
 
+def test_coarsen_mdhisto_view_combines_integer_native_bin_multiples():
+    from nfit.plotting_core import coarsen_mdhisto_view
+
+    model = MDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    source = model.slice_arrays()
+    coarse = coarsen_mdhisto_view(source, x_step=1.6, y_step=1.0)
+
+    assert coarse["signal"].shape == (2, 3)
+    np.testing.assert_allclose(
+        coarse["signal"][0, 0],
+        np.mean(source["signal"][:2, :2]),
+    )
+    assert coarse["errors"][0, 0] == pytest.approx(0.5)
+    assert coarse["num_events"][0, 0] == pytest.approx(4.0)
+    np.testing.assert_allclose(coarse["x_edges"], [-2.0, -0.4, 1.2, 2.0])
+    np.testing.assert_allclose(coarse["y_edges"], [-1.0, 0.0, 1.0])
+    assert source["signal"].shape == (4, 5)
+
+
+def test_coarsen_mdhisto_view_rejects_nonpositive_display_steps():
+    from nfit.plotting_core import coarsen_mdhisto_view
+
+    view = MDHistoSliceViewer(
+        _tiny_mdhisto_data(), x_dim=3, y_dim=2
+    ).slice_arrays()
+    with pytest.raises(ValueError, match="x_step"):
+        coarsen_mdhisto_view(view, x_step=0.0)
+
+
 def test_plotting_helpers_return_axes():
     data = PointData4D(
         H=[0.0, 0.1, 0.2, 0.3],

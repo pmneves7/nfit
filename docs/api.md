@@ -110,6 +110,9 @@ colormap-range and per-trace marker-fill controls.
 dimension as a grid of linked 2D maps with one shared normalization and
 colorbar. `prepare_mdhisto_tiled_slices` returns the panel arrays and labels for
 custom layouts, while `default_tiled_slice_step` chooses up to nine panels.
+The `x_step` and `y_step` arguments on slice and tiled-slice functions combine
+displayed bins in integer multiples of their smallest native spacing. Line
+plots use `axis_step`, and waterfall plots use `x_step` for the trace axis.
 Exported scripts from the GUI call the matching slice, line, waterfall, or
 tiled-slice backend and include the current display settings.
 

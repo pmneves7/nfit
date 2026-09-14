@@ -24,6 +24,7 @@ from .plotting_core import (
     TiledSlice,
     WaterfallTrace,
     _draw_box_sum_annotation,
+    coarsen_mdhisto_view,
     default_tiled_slice_step,
     default_waterfall_offset,  # noqa: F401 - compatibility re-export
     default_waterfall_step,  # noqa: F401 - compatibility re-export
@@ -31,6 +32,7 @@ from .plotting_core import (
     draw_waterfall_traces,  # noqa: F401 - compatibility re-export
     integrated_box_sum,
     inverse_variance_weighted_profile,
+    mdhisto_view_native_step,
     prepare_mdhisto_tiled_slices,  # noqa: F401 - compatibility re-export
     prepare_mdhisto_waterfall,  # noqa: F401 - compatibility re-export
     smooth_mdhisto_view,
@@ -211,6 +213,9 @@ class QtMDHistoSliceViewer:
         self.x_max_spin = None
         self.y_min_spin = None
         self.y_max_spin = None
+        self.x_step_spin = None
+        self.y_step_spin = None
+        self.step_header_label = None
         self.x_reset_button = None
         self.y_reset_button = None
         self.toolbar = None
@@ -421,6 +426,7 @@ class QtMDHistoSliceViewer:
         self._syncing_axes = False
         self._syncing_limits = False
         self._syncing_view_limits = False
+        self._syncing_display_steps = False
         self._autoscaling_view = False
         self._syncing_roi_controls = False
         self._box_tool_has_auto_shown_hist_axes = False
@@ -428,6 +434,7 @@ class QtMDHistoSliceViewer:
         self._roi_extents: tuple[float, float, float, float] | None = None
         self._view_limit_callback_ids: list[int] = []
         self.bragg_peak_overlay: dict[str, Any] | None = None
+        self.display_step_factors: dict[int, int] = {}
         self._dataset_states: list[_DatasetViewState | None] = [None] * len(self.datasets)
         self._dataset_states[0] = _DatasetViewState(
             model=self.model,
@@ -442,6 +449,7 @@ class QtMDHistoSliceViewer:
             tile_label_si_prefix=self.tile_label_si_prefix,
             show_tile_labels=self.show_tile_labels,
             tile_local_color_scales=self.tile_local_color_scales,
+            display_step_factors=dict(self.display_step_factors),
         )
         self._plot_layout_mode: tuple[Any, ...] | None = None
         self._compare_axes = []
@@ -688,6 +696,8 @@ class QtMDHistoSliceViewer:
             "brillouin_zone_alpha": self.brillouin_zone_alpha,
             "xlim": xlim,
             "ylim": ylim,
+            "x_step": self._current_display_step("x"),
+            "y_step": self._current_display_step("y"),
             "font_size": self.font_size,
             "axis_linewidth": self.axis_linewidth,
             "show_binning_title": self.show_binning_title,
@@ -774,6 +784,10 @@ class QtMDHistoSliceViewer:
             self._set_display_dim("x", names.index(x_name))
         if y_name in names and len(names) > 1:
             self._set_display_dim("y", names.index(y_name))
+        if settings.get("x_step") is not None:
+            self._set_display_step("x", float(settings["x_step"]), redraw=False)
+        if settings.get("y_step") is not None:
+            self._set_display_step("y", float(settings["y_step"]), redraw=False)
         if settings.get("channel") in self.model.CHANNELS:
             self._set_channel(str(settings["channel"]))
         self.model.selections.update({int(key): tuple(value) for key, value in dict(settings.get("selections", {})).items()})
@@ -1246,6 +1260,8 @@ class QtMDHistoSliceViewer:
                 f"    smoothing_sigma_x={self.smoothing_x!r},",
                 f"    smoothing_sigma_y={self.smoothing_y!r},",
                 f"    smoothing_fill_nans={self.smoothing_fill_nans!r},",
+                f"    x_step={self._current_display_step('x')!r},",
+                f"    y_step={self._current_display_step('y')!r},",
                 f"    xlim={self._export_limits('x')!r},",
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
@@ -1311,6 +1327,8 @@ class QtMDHistoSliceViewer:
                 f"    smoothing_sigma_x={self.smoothing_x!r},",
                 f"    smoothing_sigma_y={self.smoothing_y!r},",
                 f"    smoothing_fill_nans={self.smoothing_fill_nans!r},",
+                f"    x_step={self._current_display_step('x')!r},",
+                f"    y_step={self._current_display_step('y')!r},",
                 f"    xlim={self._export_limits('x')!r},",
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
@@ -1411,6 +1429,7 @@ class QtMDHistoSliceViewer:
                 f"    smoothing_sigma_x={self.smoothing_x!r},",
                 f"    smoothing_sigma_waterfall={self.smoothing_y!r},",
                 f"    smoothing_fill_nans={self.smoothing_fill_nans!r},",
+                f"    x_step={self._current_display_step('x')!r},",
                 f"    xlim={self._export_limits('x')!r},",
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
@@ -1434,6 +1453,7 @@ class QtMDHistoSliceViewer:
                 "    data,",
                 f"    axis_dim={self.data.axes[self.model.x_dim].name!r},",
                 f"    channel={self.model.channel!r},",
+                f"    axis_step={self._current_display_step('x')!r},",
                 f"    smoothing_sigma={self.smoothing_x!r},",
                 f"    smoothing_fill_nans={self.smoothing_fill_nans!r},",
                 ")",
@@ -1908,6 +1928,7 @@ class QtMDHistoSliceViewer:
             tile_label_unit=self.tile_label_unit,
             tile_label_si_prefix=self.tile_label_si_prefix,
             tile_local_color_scales=bool(self.tile_local_color_scales),
+            display_step_factors=dict(self.display_step_factors),
         )
 
     def _default_dataset_state(self, index: int) -> _DatasetViewState:
@@ -2006,6 +2027,7 @@ class QtMDHistoSliceViewer:
             self.tile_local_color_scales = bool(
                 state.tile_local_color_scales and state.model.autoscale
             )
+            self.display_step_factors = dict(state.display_step_factors or {})
             self.model.masked = bool(state.apply_masks)
             self.model.coverage_threshold = self.coverage_threshold
             self.model.cmap_reversed = bool(state.cmap_reversed)
@@ -2093,6 +2115,7 @@ class QtMDHistoSliceViewer:
             self._sync_limit_n_visibility()
             self._rebuild_hidden_axis_controls()
             self._sync_control_visibility()
+            self._sync_display_step_controls()
         finally:
             self._restoring_dataset_state = False
         self.update_plot(preserve_view=False)
@@ -2668,7 +2691,11 @@ class QtMDHistoSliceViewer:
         if getattr(self.model, "is_point_list", False):
             return view
         return smooth_mdhisto_view(
-            view,
+            coarsen_mdhisto_view(
+                view,
+                x_step=self._current_display_step("x"),
+                y_step=self._current_display_step("y"),
+            ),
             sigma_x=self.smoothing_x,
             sigma_y=self.smoothing_y,
             fill_nans=self.smoothing_fill_nans,
@@ -3442,6 +3469,70 @@ class QtMDHistoSliceViewer:
         for spinbox in spinboxes:
             spinbox.setSingleStep(step)
 
+    def _native_display_step(self, dim: int) -> float:
+        if getattr(self.model, "is_point_list", False):
+            values = np.asarray(self.model.data.column(self.model.x_key), dtype=float)
+            values = np.unique(values[np.isfinite(values)])
+            view = {"x_centers": values, "x_edges": np.array([], dtype=float)}
+            return mdhisto_view_native_step(view, "x")
+        axis = self.data.axes[int(dim)]
+        view = {
+            "x_centers": np.asarray(axis.centers, dtype=float),
+            "x_edges": np.asarray(axis.values, dtype=float),
+        }
+        return mdhisto_view_native_step(view, "x")
+
+    def _current_display_step(self, axis_name: str) -> float:
+        dim = self.model.x_dim if axis_name == "x" else self.model.y_dim
+        native = self._native_display_step(dim)
+        value = native * max(int(self.display_step_factors.get(int(dim), 1)), 1)
+        return float(f"{value:.12g}")
+
+    def _set_display_step(
+        self,
+        axis_name: str,
+        value: float,
+        *,
+        redraw: bool = True,
+    ) -> None:
+        if self._syncing_display_steps or getattr(self.model, "is_point_list", False):
+            return
+        dim = self.model.x_dim if axis_name == "x" else self.model.y_dim
+        native = self._native_display_step(dim)
+        size = int(self.data.shape[dim])
+        factor = int(np.clip(np.floor(float(value) / native + 0.5), 1, max(size, 1)))
+        self.display_step_factors[int(dim)] = factor
+        self._sync_display_step_controls()
+        if redraw and not self._restoring_dataset_state:
+            self.update_plot()
+
+    def _sync_display_step_controls(self) -> None:
+        if self.x_step_spin is None or self.y_step_spin is None:
+            return
+        self._syncing_display_steps = True
+        try:
+            for axis_name, spinbox in (
+                ("x", self.x_step_spin),
+                ("y", self.y_step_spin),
+            ):
+                dim = self.model.x_dim if axis_name == "x" else self.model.y_dim
+                native = self._native_display_step(dim)
+                size = (
+                    len(np.unique(np.asarray(self.model.data.column(self.model.x_key))))
+                    if getattr(self.model, "is_point_list", False)
+                    else int(self.data.shape[dim])
+                )
+                previous = spinbox.blockSignals(True)
+                try:
+                    spinbox.setDecimals(8)
+                    spinbox.setRange(native, native * max(size, 1))
+                    spinbox.setSingleStep(native)
+                    spinbox.setValue(self._current_display_step(axis_name))
+                finally:
+                    spinbox.blockSignals(previous)
+        finally:
+            self._syncing_display_steps = False
+
     def _sync_control_visibility(self) -> None:
         is_line = self._is_effective_1d()
         is_point = getattr(self.model, "is_point_list", False)
@@ -3457,6 +3548,13 @@ class QtMDHistoSliceViewer:
             # Point data is always 1D but still lets the user pick which
             # coordinate is the x axis, so keep the selector visible.
             self.axis_selector_widget.setVisible(is_point or not is_line or is_waterfall)
+        if self.x_step_spin is not None:
+            self.x_step_spin.setVisible(not is_point)
+        if self.y_step_spin is not None:
+            self.y_step_spin.setVisible(not is_point and not is_line and not is_waterfall)
+        if self.step_header_label is not None:
+            self.step_header_label.setVisible(not is_point)
+        self._sync_display_step_controls()
         if self.y_combo is not None:
             self.y_combo.setVisible(not is_point and not grouped_waterfall)
         if self._axis_y_label is not None:
@@ -4228,6 +4326,10 @@ class QtMDHistoSliceViewer:
             x_idx,
             y_idx,
             coordinate_overrides=coordinate_overrides,
+            displayed_coordinates=(
+                float(view["x_centers"][x_idx]),
+                float(view["y_centers"][y_idx]),
+            ),
         )
         value_text, error_text = _format_value_with_uncertainty(
             float(display_values[y_idx, x_idx]),
@@ -4294,7 +4396,7 @@ class QtMDHistoSliceViewer:
             return
         value = float(values[x_idx])
         error = float(errors[x_idx]) if x_idx < errors.size else np.nan
-        coords = self._cursor_hkle_1d(x_idx)
+        coords = self._cursor_hkle_1d(x_idx, x_value=float(x[x_idx]))
         value_text, error_text = _format_value_with_uncertainty(value, error)
         self.cursor_xy_label.setText(f"(x, y) = ({_format_coord(x[x_idx])}, {_format_coord(value)})")
         self.cursor_hkle_label.setText(
@@ -4350,6 +4452,7 @@ class QtMDHistoSliceViewer:
         y_idx: int,
         *,
         coordinate_overrides: dict[int, float] | None = None,
+        displayed_coordinates: tuple[float, float] | None = None,
     ) -> dict[str, float]:
         hkle = np.zeros(4, dtype=float)
         has_energy = False
@@ -4357,9 +4460,17 @@ class QtMDHistoSliceViewer:
         overrides = coordinate_overrides or {}
         for dim, _axis in enumerate(self.data.axes):
             if dim == self.model.x_dim:
-                value = self.data.axes[dim].centers[x_idx]
+                value = (
+                    displayed_coordinates[0]
+                    if displayed_coordinates is not None
+                    else self.data.axes[dim].centers[x_idx]
+                )
             elif dim == self.model.y_dim:
-                value = self.data.axes[dim].centers[y_idx]
+                value = (
+                    displayed_coordinates[1]
+                    if displayed_coordinates is not None
+                    else self.data.axes[dim].centers[y_idx]
+                )
             elif dim in overrides:
                 value = overrides[dim]
             else:
@@ -4375,7 +4486,12 @@ class QtMDHistoSliceViewer:
             has_energy = has_energy or bool(vector[3])
         return {"H": hkle[0], "K": hkle[1], "L": hkle[2], "E": hkle[3] if has_energy else np.nan}
 
-    def _cursor_hkle_1d(self, x_idx: int) -> dict[str, float]:
+    def _cursor_hkle_1d(
+        self,
+        x_idx: int,
+        *,
+        x_value: float | None = None,
+    ) -> dict[str, float]:
         if getattr(self.model, "is_point_list", False):
             return self._cursor_hkle_point_list_1d(x_idx)
         hkle = np.zeros(4, dtype=float)
@@ -4383,7 +4499,11 @@ class QtMDHistoSliceViewer:
         hidden = self.model._normalized_selections()
         for dim, _axis in enumerate(self.data.axes):
             if dim == self.model.x_dim:
-                value = self.data.axes[dim].centers[x_idx]
+                value = (
+                    float(x_value)
+                    if x_value is not None
+                    else self.data.axes[dim].centers[x_idx]
+                )
             else:
                 selection = hidden.get(dim)
                 if isinstance(selection, tuple):

@@ -296,6 +296,8 @@ def plot_mdhisto_slice(
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_y: float = 0.0,
     smoothing_fill_nans: bool = True,
+    x_step: float | None = None,
+    y_step: float | None = None,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     font_size: float = 10.0,
@@ -350,7 +352,11 @@ def plot_mdhisto_slice(
     model.power_gamma = float(power_gamma)
     model.color_alpha = float(color_alpha)
     view = smooth_mdhisto_view(
-        model.slice_arrays(),
+        coarsen_mdhisto_view(
+            model.slice_arrays(),
+            x_step=x_step,
+            y_step=y_step,
+        ),
         sigma_x=smoothing_sigma_x,
         sigma_y=smoothing_sigma_y,
         fill_nans=smoothing_fill_nans,
@@ -450,6 +456,8 @@ def prepare_mdhisto_tiled_slices(
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_y: float = 0.0,
     smoothing_fill_nans: bool = True,
+    x_step: float | None = None,
+    y_step: float | None = None,
 ) -> list[TiledSlice]:
     """Prepare coarse third-axis bins as a sequence of 2D slices.
 
@@ -557,7 +565,11 @@ def prepare_mdhisto_tiled_slices(
         )
         panel.integrate_checks[tile_index] = True
         view = smooth_mdhisto_view(
-            panel.slice_arrays(),
+            coarsen_mdhisto_view(
+                panel.slice_arrays(),
+                x_step=x_step,
+                y_step=y_step,
+            ),
             sigma_x=smoothing_sigma_x,
             sigma_y=smoothing_sigma_y,
             fill_nans=smoothing_fill_nans,
@@ -642,6 +654,8 @@ def plot_mdhisto_tiled_slices(
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_y: float = 0.0,
     smoothing_fill_nans: bool = True,
+    x_step: float | None = None,
+    y_step: float | None = None,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     font_size: float = 10.0,
@@ -688,6 +702,8 @@ def plot_mdhisto_tiled_slices(
         smoothing_sigma_x=smoothing_sigma_x,
         smoothing_sigma_y=smoothing_sigma_y,
         smoothing_fill_nans=smoothing_fill_nans,
+        x_step=x_step,
+        y_step=y_step,
     )
     if not slices:
         raise ValueError("the tiled-slice settings produced no panels")
@@ -826,6 +842,7 @@ def plot_mdhisto_line(
     channel: str = "signal",
     smoothing_sigma: float = 0.0,
     smoothing_fill_nans: bool = True,
+    axis_step: float | None = None,
     ax=None,
 ):
     """Render a one-dimensional MDHisto channel as a line plot.
@@ -849,15 +866,28 @@ def plot_mdhisto_line(
     index = [0] * data.signal.ndim
     index[axis_index] = slice(None)
     y = np.asarray(values[tuple(index)], dtype=float)
+    x = np.asarray(data.axes[axis_index].centers, dtype=float)
+    line_view = {
+        "x_centers": x,
+        "x_edges": _edges_from_centers(x),
+        "signal": y,
+    }
+    if channel_name == "signal":
+        line_view["errors"] = np.asarray(
+            _mdhisto_channel_array(data, "errors")[tuple(index)],
+            dtype=float,
+        )
+    line_view = coarsen_mdhisto_view(line_view, x_step=axis_step)
+    x = np.asarray(line_view["x_centers"], dtype=float)
+    y = np.asarray(line_view["signal"], dtype=float)
     source_finite = np.isfinite(y)
     y = gaussian_smooth_nan(y, (max(float(smoothing_sigma), 0.0),))
     if not smoothing_fill_nans:
         y = np.where(source_finite, y, np.nan)
-    x = data.axes[axis_index].centers
     if ax is None:
         _, ax = plt.subplots()
     if channel_name == "signal":
-        yerr = np.asarray(_mdhisto_channel_array(data, "errors")[tuple(index)], dtype=float)
+        yerr = np.asarray(line_view["errors"], dtype=float)
         source_error_finite = np.isfinite(yerr)
         yerr = gaussian_smooth_uncertainty(
             yerr,
@@ -901,6 +931,7 @@ def prepare_mdhisto_waterfall(
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_waterfall: float = 0.0,
     smoothing_fill_nans: bool = True,
+    x_step: float | None = None,
     include_model: bool = False,
     unmask_model: bool = False,
 ) -> list[WaterfallTrace]:
@@ -949,7 +980,7 @@ def prepare_mdhisto_waterfall(
                 coverage_threshold=coverage_threshold,
             )
             view = smooth_mdhisto_view(
-                model.slice_arrays(),
+                coarsen_mdhisto_view(model.slice_arrays(), x_step=x_step),
                 sigma_x=smoothing_sigma_x,
                 sigma_y=0.0,
                 fill_nans=smoothing_fill_nans,
@@ -967,7 +998,7 @@ def prepare_mdhisto_waterfall(
                     coverage_threshold=0.0,
                 )
                 fit_view = smooth_mdhisto_view(
-                    fit_model.slice_arrays(),
+                    coarsen_mdhisto_view(fit_model.slice_arrays(), x_step=x_step),
                     sigma_x=smoothing_sigma_x,
                     sigma_y=0.0,
                     fill_nans=smoothing_fill_nans,
@@ -1009,7 +1040,7 @@ def prepare_mdhisto_waterfall(
             {int(dim): bool(value) for dim, value in integrate_checks.items()}
         )
     view = smooth_mdhisto_view(
-        model.slice_arrays(),
+        coarsen_mdhisto_view(model.slice_arrays(), x_step=x_step),
         sigma_x=smoothing_sigma_x,
         sigma_y=smoothing_sigma_waterfall,
         fill_nans=smoothing_fill_nans,
@@ -1035,7 +1066,7 @@ def prepare_mdhisto_waterfall(
                 {int(dim): bool(value) for dim, value in integrate_checks.items()}
             )
         fit_view = smooth_mdhisto_view(
-            fit_model.slice_arrays(),
+            coarsen_mdhisto_view(fit_model.slice_arrays(), x_step=x_step),
             sigma_x=smoothing_sigma_x,
             sigma_y=smoothing_sigma_waterfall,
             fill_nans=smoothing_fill_nans,
@@ -1097,6 +1128,7 @@ def plot_mdhisto_waterfall(
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_waterfall: float = 0.0,
     smoothing_fill_nans: bool = True,
+    x_step: float | None = None,
     masked: bool = True,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
@@ -1124,6 +1156,7 @@ def plot_mdhisto_waterfall(
         smoothing_sigma_x=smoothing_sigma_x,
         smoothing_sigma_waterfall=smoothing_sigma_waterfall,
         smoothing_fill_nans=smoothing_fill_nans,
+        x_step=x_step,
         include_model=show_model,
         unmask_model=unmask_model,
     )
@@ -1649,6 +1682,8 @@ def plot_mdhisto_fit_comparison(
     cmap: str = "viridis",
     color_scale: str = "linear",
     auto_limits: str = "min/max",
+    x_step: float | None = None,
+    y_step: float | None = None,
     show_brillouin_zone_boundaries: bool = False,
     show_major_gridlines: bool = False,
     brillouin_zone_spacegroup: str | None = None,
@@ -1673,6 +1708,7 @@ def plot_mdhisto_fit_comparison(
             show_residual=show_residual,
             axis_dim=non_singleton[0],
             channel=channel,
+            axis_step=x_step,
             figsize=(8.0, 5.5) if figsize is None else figsize,
         )
     return _plot_mdhisto_fit_slice_comparison(
@@ -1688,6 +1724,8 @@ def plot_mdhisto_fit_comparison(
         cmap=cmap,
         color_scale=color_scale,
         auto_limits=auto_limits,
+        x_step=x_step,
+        y_step=y_step,
         show_brillouin_zone_boundaries=show_brillouin_zone_boundaries,
         show_major_gridlines=show_major_gridlines,
         brillouin_zone_spacegroup=brillouin_zone_spacegroup,
@@ -1707,6 +1745,7 @@ def plot_mdhisto_fit_line_comparison(
     show_residual: bool = True,
     axis_dim: int | str | None = None,
     channel: str = "signal",
+    axis_step: float | None = None,
     ax=None,
     figsize: tuple[float, float] = (8.0, 5.5),
 ):
@@ -1725,12 +1764,40 @@ def plot_mdhisto_fit_line_comparison(
         _, ax = plt.subplots(figsize=figsize)
     x, y, yerr = _mdhisto_1d_values(data, axis_index, channel)
     _, yfit, _ = _mdhisto_1d_values(fit, axis_index, channel)
+    line_view = {
+        "x_centers": np.asarray(x, dtype=float),
+        "x_edges": _edges_from_centers(np.asarray(x, dtype=float)),
+        "signal": np.asarray(y, dtype=float),
+        "fit": np.asarray(yfit, dtype=float),
+    }
+    if yerr is not None:
+        line_view["errors"] = np.asarray(yerr, dtype=float)
+    view = coarsen_mdhisto_view(line_view, x_step=axis_step)
+    x = np.asarray(view["x_centers"], dtype=float)
+    y = np.asarray(view["signal"], dtype=float)
+    yerr = (
+        np.asarray(view["errors"], dtype=float)
+        if "errors" in view
+        else None
+    )
+    yfit = np.asarray(view["fit"], dtype=float)
     ax.errorbar(x, y, yerr=yerr, fmt="o", linestyle="none", ms=5.0, mfc="none", label="data")
     ax.plot(x, yfit, "-", lw=1.5, label="fit")
     if show_residual:
         if residual is None:
             residual = residual_mdhisto(data, fit)
         _, r, _ = _mdhisto_1d_values(residual, axis_index, "signal")
+        residual_view = coarsen_mdhisto_view(
+            {
+                "x_centers": np.asarray(data.axes[axis_index].centers, dtype=float),
+                "x_edges": _edges_from_centers(
+                    np.asarray(data.axes[axis_index].centers, dtype=float)
+                ),
+                "signal": np.asarray(r, dtype=float),
+            },
+            x_step=axis_step,
+        )
+        r = np.asarray(residual_view["signal"], dtype=float)
         offset = _residual_offset(y, yfit)
         ax.axhline(offset, color="0.7", lw=0.8)
         ax.plot(x, r + offset, "o", ms=4.0, mfc="none", color="0.25", label="residual")
@@ -1768,6 +1835,8 @@ def _plot_mdhisto_fit_slice_comparison(
     cmap: str,
     color_scale: str,
     auto_limits: str,
+    x_step: float | None,
+    y_step: float | None,
     show_brillouin_zone_boundaries: bool,
     show_major_gridlines: bool,
     brillouin_zone_spacegroup: str | None,
@@ -1804,7 +1873,11 @@ def _plot_mdhisto_fit_slice_comparison(
         color_scale=color_scale,
         auto_limits=auto_limits,
     )
-    data_view = data_model.slice_arrays()
+    data_view = coarsen_mdhisto_view(
+        data_model.slice_arrays(),
+        x_step=x_step,
+        y_step=y_step,
+    )
     data_values = data_model._display_values(data_view)
     shared_norm = data_model._color_norm(data_values)
 
@@ -1820,7 +1893,11 @@ def _plot_mdhisto_fit_slice_comparison(
             color_scale=color_scale,
             auto_limits=auto_limits,
         )
-        view = model.slice_arrays()
+        view = coarsen_mdhisto_view(
+            model.slice_arrays(),
+            x_step=x_step,
+            y_step=y_step,
+        )
         values = model._display_values(view)
         norm = None if title == "Residual" else shared_norm
         artist = ax.pcolormesh(
@@ -3188,6 +3265,195 @@ def gaussian_smooth_uncertainty(
     with np.errstate(divide="ignore", invalid="ignore"):
         uncertainty = np.sqrt(propagated_variance) / denominator
     return np.where(denominator > np.finfo(float).eps, uncertainty, np.nan)
+
+
+def mdhisto_view_native_step(
+    view: dict[str, np.ndarray],
+    axis_name: str,
+) -> float:
+    """Return the smallest positive native spacing of a displayed slice axis."""
+
+    if axis_name not in {"x", "y"}:
+        raise ValueError("axis_name must be 'x' or 'y'")
+    centers = np.asarray(view.get(f"{axis_name}_centers", []), dtype=float)
+    if centers.size > 1:
+        widths = np.abs(np.diff(centers))
+    else:
+        edges = np.asarray(view.get(f"{axis_name}_edges", []), dtype=float)
+        widths = np.abs(np.diff(edges))
+    positive = widths[np.isfinite(widths) & (widths > 0.0)]
+    return float(np.min(positive)) if positive.size else 1.0
+
+
+def _display_step_factor(
+    view: dict[str, np.ndarray],
+    axis_name: str,
+    requested_step: float | None,
+) -> int:
+    if requested_step is None:
+        return 1
+    step = float(requested_step)
+    if not np.isfinite(step) or step <= 0.0:
+        raise ValueError(f"{axis_name}_step must be finite and positive")
+    native = mdhisto_view_native_step(view, axis_name)
+    return max(int(np.floor(step / native + 0.5)), 1)
+
+
+def _block_view(values: np.ndarray, factor: int, axis: int, fill_value) -> np.ndarray:
+    array = np.asarray(values)
+    moved = np.moveaxis(array, axis, -1)
+    count = moved.shape[-1]
+    groups = int(np.ceil(count / factor))
+    padding = groups * factor - count
+    if padding:
+        pad_width = [(0, 0)] * moved.ndim
+        pad_width[-1] = (0, padding)
+        moved = np.pad(moved, pad_width, constant_values=fill_value)
+    return moved.reshape(*moved.shape[:-1], groups, factor)
+
+
+def _block_nanmean(values: np.ndarray, factor: int, axis: int) -> np.ndarray:
+    blocks = _block_view(np.asarray(values, dtype=float), factor, axis, np.nan)
+    finite = np.isfinite(blocks)
+    count = np.sum(finite, axis=-1)
+    total = np.sum(np.where(finite, blocks, 0.0), axis=-1)
+    result = np.full(count.shape, np.nan, dtype=float)
+    np.divide(total, count, out=result, where=count > 0)
+    return np.moveaxis(result, -1, axis)
+
+
+def _block_sum(values: np.ndarray, factor: int, axis: int) -> np.ndarray:
+    blocks = _block_view(np.asarray(values, dtype=float), factor, axis, 0.0)
+    return np.moveaxis(np.nansum(blocks, axis=-1), -1, axis)
+
+
+def _block_all(values: np.ndarray, factor: int, axis: int) -> np.ndarray:
+    blocks = _block_view(np.asarray(values, dtype=bool), factor, axis, True)
+    return np.moveaxis(np.all(blocks, axis=-1), -1, axis)
+
+
+def _block_weighted_mean(
+    values: np.ndarray,
+    errors: np.ndarray,
+    factor: int,
+    axis: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    value_blocks = _block_view(np.asarray(values, dtype=float), factor, axis, np.nan)
+    error_blocks = _block_view(np.asarray(errors, dtype=float), factor, axis, np.nan)
+    valid = np.isfinite(value_blocks) & np.isfinite(error_blocks) & (error_blocks > 0.0)
+    weights = np.zeros(error_blocks.shape, dtype=float)
+    np.divide(1.0, error_blocks, out=weights, where=valid)
+    np.square(weights, out=weights)
+    weight_sum = np.sum(weights, axis=-1)
+    weighted_sum = np.sum(np.where(valid, value_blocks * weights, 0.0), axis=-1)
+    mean = np.full(weight_sum.shape, np.nan, dtype=float)
+    uncertainty = np.full(weight_sum.shape, np.nan, dtype=float)
+    np.divide(weighted_sum, weight_sum, out=mean, where=weight_sum > 0.0)
+    np.divide(1.0, np.sqrt(weight_sum), out=uncertainty, where=weight_sum > 0.0)
+    fallback = _block_nanmean(values, factor, axis)
+    mean = np.moveaxis(mean, -1, axis)
+    mean = np.where(np.isfinite(mean), mean, fallback)
+    return mean, np.moveaxis(uncertainty, -1, axis)
+
+
+def _coarsen_mdhisto_view_axis(
+    view: dict[str, np.ndarray],
+    *,
+    axis_name: str,
+    factor: int,
+) -> dict[str, np.ndarray]:
+    centers_key = f"{axis_name}_centers"
+    edges_key = f"{axis_name}_edges"
+    centers = np.asarray(view.get(centers_key, []), dtype=float)
+    if factor <= 1 or centers.size <= 1:
+        return dict(view)
+    factor = min(int(factor), int(centers.size))
+    reference = np.asarray(view.get("signal"))
+    array_axis = reference.ndim - 1 if axis_name == "x" else 0
+    if array_axis < 0 or array_axis >= reference.ndim:
+        return dict(view)
+
+    edges = np.asarray(view.get(edges_key, []), dtype=float)
+    if edges.size != centers.size + 1:
+        edges = _edges_from_centers(centers)
+    starts = np.arange(0, centers.size, factor, dtype=int)
+    stops = np.minimum(starts + factor, centers.size)
+    result = dict(view)
+    result[edges_key] = np.concatenate((edges[starts], edges[[stops[-1]]]))
+    result[centers_key] = 0.5 * (edges[starts] + edges[stops])
+
+    reference_shape = reference.shape
+    paired_errors = {
+        "signal": "errors",
+        **{
+            name[: -len("_errors")]: name
+            for name, values in view.items()
+            if name.endswith("_errors")
+            and np.asarray(values).shape == reference_shape
+        },
+    }
+    handled: set[str] = set()
+    for value_name, error_name in paired_errors.items():
+        if value_name not in view or error_name not in view:
+            continue
+        values = np.asarray(view[value_name])
+        errors = np.asarray(view[error_name])
+        if values.shape != reference_shape or errors.shape != reference_shape:
+            continue
+        reduced, reduced_errors = _block_weighted_mean(
+            values,
+            errors,
+            factor,
+            array_axis,
+        )
+        result[value_name] = reduced
+        result[error_name] = reduced_errors
+        handled.update((value_name, error_name))
+
+    for name, values in view.items():
+        array = np.asarray(values)
+        if name in handled or array.shape != reference_shape:
+            continue
+        if array.dtype == bool or name in {
+            "combined_mask",
+            "mask",
+            "file_mask",
+            "nfit_mask",
+            "coverage_mask",
+        }:
+            result[name] = _block_all(array, factor, array_axis)
+        elif name in {"num_events", "normalization_denominator"}:
+            result[name] = _block_sum(array, factor, array_axis)
+        else:
+            result[name] = _block_nanmean(array, factor, array_axis)
+    return result
+
+
+def coarsen_mdhisto_view(
+    view: dict[str, np.ndarray],
+    *,
+    x_step: float | None = None,
+    y_step: float | None = None,
+) -> dict[str, np.ndarray]:
+    """Combine displayed bins into integer multiples of their native spacing.
+
+    Values with uncertainties use inverse-variance weighting. Event and
+    normalization counts are summed, coverage-like values are averaged, and a
+    coarse mask is set only when all contributing native bins are masked. The
+    input mapping and its arrays are never modified.
+    """
+
+    result = dict(view)
+    for axis_name, requested in (("x", x_step), ("y", y_step)):
+        if requested is None or f"{axis_name}_centers" not in result:
+            continue
+        factor = _display_step_factor(result, axis_name, requested)
+        result = _coarsen_mdhisto_view_axis(
+            result,
+            axis_name=axis_name,
+            factor=factor,
+        )
+    return result
 
 
 def smooth_mdhisto_view(
