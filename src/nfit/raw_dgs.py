@@ -262,6 +262,7 @@ def bin_raw_dgs_group(
     progress_callback: Any | None = None,
     symmetry_operations: Iterable[Iterable[Iterable[float]]] | None = None,
     coordinate_mode: str = "hkle",
+    fractional_axes: Iterable[bool] | None = None,
 ) -> MDHistoData:
     """Reduce raw direct-geometry event banks into an HKLE histogram.
 
@@ -293,6 +294,7 @@ def bin_raw_dgs_group(
             progress_callback=progress_callback,
             symmetry_operations=symmetry_operations,
             coordinate_mode=coordinate_mode,
+            fractional_axes=fractional_axes,
         )
     selected = list(group.datasets if datasets is None else datasets)
     if coordinate_mode not in {"hkle", "powder"}:
@@ -606,6 +608,7 @@ def bin_raw_dgs_powder_group(
     datasets: Iterable[DatasetEntry] | None = None,
     max_batch_bytes: int = 192 * 1024 * 1024,
     progress_callback: Any | None = None,
+    fractional_axes: Iterable[bool] | None = None,
 ) -> MDHistoData:
     """Reduce raw direct-geometry detector events to ``|Q|, DeltaE``."""
 
@@ -621,6 +624,7 @@ def bin_raw_dgs_powder_group(
         max_batch_bytes=max_batch_bytes,
         progress_callback=progress_callback,
         coordinate_mode="powder",
+        fractional_axes=fractional_axes,
     )
 
 

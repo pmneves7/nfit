@@ -65,6 +65,7 @@ REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
 GROUP_COMPOSITE_BINNINGS_KEY = "composite_binnings"
 FIT_BINNING_ID = "fit"
+CORELLI_ASSIGNMENT_VERSION = 1
 
 _BACKEND_NAMESPACE: Mapping[str, Any] | None = None
 
@@ -409,6 +410,10 @@ def data_group_composite_config(
     config["normalize"] = True
     mdevent = group.metadata.get("mdevent") if isinstance(group.metadata, dict) else None
     raw_dgs = group.metadata.get("raw_dgs") if isinstance(group.metadata, dict) else None
+    is_corelli = (
+        isinstance(raw_dgs, dict)
+        and raw_dgs.get("format") == "corelli-correlation-nexus"
+    )
     event_config = (
         mdevent if isinstance(mdevent, dict) else raw_dgs if isinstance(raw_dgs, dict) else None
     )
@@ -450,6 +455,7 @@ def data_group_composite_config(
                     "auto_upper_value": q_upper,
                     "num_bins": 100,
                     "step_size": q_upper / 100.0,
+                    "fractional": bool(is_corelli),
                 },
                 {
                     "name": "DeltaE",
@@ -462,6 +468,7 @@ def data_group_composite_config(
                     "auto_upper_value": energy_upper,
                     "num_bins": 100,
                     "step_size": (energy_upper - energy_lower) / 100.0,
+                    "fractional": False if is_corelli else True,
                 },
             ]
         else:
@@ -493,6 +500,7 @@ def data_group_composite_config(
                         "auto_upper_value": upper,
                         "num_bins": 50 if index == 3 else 20,
                         "step_size": (upper - lower) / (50.0 if index == 3 else 20.0),
+                        "fractional": index < 3 if is_corelli else True,
                     }
                 )
     else:
@@ -552,6 +560,14 @@ def data_group_composite_config(
         # Preserve a saved basis if reference data are temporarily unavailable
         # or differ during a refresh. A user edit is the only operation that
         # should replace its coordinate-axis vectors.
+    if is_corelli and config.get("corelli_assignment_version") != CORELLI_ASSIGNMENT_VERSION:
+        configured_axes = config.get("axes")
+        if isinstance(configured_axes, list) and configured_axes:
+            for index, axis in enumerate(configured_axes):
+                if isinstance(axis, dict):
+                    axis["fractional"] = index < len(configured_axes) - 1
+            config["stale"] = True
+        config["corelli_assignment_version"] = CORELLI_ASSIGNMENT_VERSION
     if "auto_rebin" not in config:
         # File-backed MDEvent composites require a complete source scan even
         # when only a few selected events contribute to the current view.
@@ -1304,6 +1320,12 @@ def _composite_dataset_data(
             "max_batch_bytes": _rebin_max_batch_bytes(config),
             "progress_callback": progress_callback,
         }
+        raw_config = node.metadata.get("raw_dgs", {})
+        if raw_config.get("format") == "corelli-correlation-nexus":
+            common["fractional_axes"] = _rebin_fractional_axes(
+                config,
+                config.get("axes", []),
+            )
         if config.get("coordinate_mode") == "powder":
             result = bin_raw_dgs_powder_group(node, **common)
         else:

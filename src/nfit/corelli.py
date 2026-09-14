@@ -18,6 +18,7 @@ import math
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from dataclasses import dataclass
+from itertools import product
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,6 @@ except Exception:  # Numba remains optional for portable source installations.
 from .mdevent import (
     ENERGY_TO_K2,
     FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
-    _flat_bin_indices,
     _requested_edges,
     _symmetry_matrices,
     _validated_minimum_samples,
@@ -311,6 +311,118 @@ def _run_info_from_dataset(dataset: DatasetEntry, config: dict[str, Any]):
     )
 
 
+def _corelli_fractional_axes(
+    fractional_axes: Iterable[bool] | None,
+    *,
+    dimensions: int,
+) -> np.ndarray:
+    """Resolve CORELLI assignment modes with discrete reconstructed energy."""
+
+    if fractional_axes is None:
+        result = np.ones(dimensions, dtype=bool)
+        result[-1] = False
+        return result
+    values = tuple(fractional_axes)
+    if len(values) != dimensions or any(
+        not isinstance(value, (bool, np.bool_)) for value in values
+    ):
+        raise ValueError(
+            "fractional_axes must contain one boolean per CORELLI coordinate"
+        )
+    result = np.asarray(values, dtype=bool)
+    if result[-1]:
+        raise ValueError(
+            "CORELLI energy assignment must be discrete because each output "
+            "channel is reconstructed at its requested DeltaE bin centre"
+        )
+    return result
+
+
+def _corelli_bin_contributions(
+    coordinates: np.ndarray,
+    edges: Iterable[np.ndarray],
+    shape: tuple[int, ...],
+    fractional_axes: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return output indices and weights for mixed CORELLI assignment modes."""
+
+    coords = np.asarray(coordinates, dtype=float)
+    axis_edges = tuple(np.asarray(values, dtype=float) for values in edges)
+    if coords.ndim != 2 or coords.shape[1] != len(axis_edges):
+        raise ValueError("CORELLI coordinates do not match the output grid")
+    assignments = np.asarray(fractional_axes, dtype=bool)
+    if assignments.shape != (len(axis_edges),):
+        raise ValueError("CORELLI assignment modes do not match the output grid")
+
+    valid = np.all(np.isfinite(coords), axis=1)
+    lower_indices: list[np.ndarray] = []
+    upper_indices: list[np.ndarray] = []
+    upper_weights: list[np.ndarray] = []
+    for dimension, values in enumerate(axis_edges):
+        coordinate = coords[:, dimension]
+        valid &= (coordinate >= values[0]) & (coordinate <= values[-1])
+        if not assignments[dimension] or values.size == 2:
+            index = np.searchsorted(values, coordinate, side="right") - 1
+            index[coordinate == values[-1]] = values.size - 2
+            index = np.clip(index, 0, values.size - 2)
+            lower_indices.append(index)
+            upper_indices.append(index)
+            upper_weights.append(np.zeros(coordinate.shape, dtype=float))
+            continue
+        centers = 0.5 * (values[:-1] + values[1:])
+        left = np.searchsorted(centers, coordinate, side="right") - 1
+        left = np.clip(left, 0, centers.size - 2)
+        fraction = (coordinate - centers[left]) / (
+            centers[left + 1] - centers[left]
+        )
+        fraction = np.clip(fraction, 0.0, 1.0)
+        lower_indices.append(left)
+        upper_indices.append(left + 1)
+        upper_weights.append(fraction)
+
+    source_indices = np.flatnonzero(valid)
+    flat_blocks: list[np.ndarray] = []
+    point_blocks: list[np.ndarray] = []
+    weight_blocks: list[np.ndarray] = []
+    fractional_dimensions = np.flatnonzero(assignments)
+    for offsets in product((0, 1), repeat=fractional_dimensions.size):
+        selected = [indices[source_indices].copy() for indices in lower_indices]
+        spatial = np.ones(source_indices.size, dtype=float)
+        for dimension, use_upper in zip(
+            fractional_dimensions,
+            offsets,
+            strict=True,
+        ):
+            fraction = upper_weights[dimension][source_indices]
+            if use_upper:
+                selected[dimension] = upper_indices[dimension][source_indices]
+                spatial *= fraction
+            else:
+                spatial *= 1.0 - fraction
+        keep = spatial > 0.0
+        if not np.any(keep):
+            continue
+        flat_blocks.append(
+            np.ravel_multi_index(
+                tuple(indices[keep] for indices in selected),
+                shape,
+            )
+        )
+        point_blocks.append(source_indices[keep])
+        weight_blocks.append(spatial[keep])
+    if not flat_blocks:
+        return (
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=float),
+        )
+    return (
+        np.concatenate(flat_blocks),
+        np.concatenate(point_blocks),
+        np.concatenate(weight_blocks),
+    )
+
+
 def bin_corelli_group(
     group: DatasetGroup,
     *,
@@ -327,6 +439,7 @@ def bin_corelli_group(
     progress_callback: Any | None = None,
     symmetry_operations: Iterable[Iterable[Iterable[float]]] | None = None,
     coordinate_mode: str = "hkle",
+    fractional_axes: Iterable[bool] | None = None,
 ) -> MDHistoData:
     """Cross-correlate raw CORELLI events at requested finite DeltaE bins.
 
@@ -352,6 +465,10 @@ def bin_corelli_group(
     if powder and lo[0] < 0.0:
         raise ValueError("powder |Q| lower bound must be nonnegative")
     edges = _requested_edges(lo, hi, bins, step_size, bin_edges=bin_edges)
+    assignments = _corelli_fractional_axes(
+        fractional_axes,
+        dimensions=expected_dimensions,
+    )
     minimum_samples = _validated_minimum_samples(minimum_samples)
     shape = tuple(edge.size - 1 for edge in edges)
     energy_centres = 0.5 * (edges[-1][:-1] + edges[-1][1:])
@@ -509,6 +626,7 @@ def bin_corelli_group(
                                     *common,
                                     np.ascontiguousarray(edges[0]),
                                     np.ascontiguousarray(edges[1]),
+                                    np.ascontiguousarray(assignments),
                                     bool(
                                         config.get(
                                             "he3_detector_efficiency_correction", True
@@ -530,6 +648,7 @@ def bin_corelli_group(
                                     np.ascontiguousarray(edges[2]),
                                     np.ascontiguousarray(edges[3]),
                                     np.asarray(shape, dtype=np.int64),
+                                    np.ascontiguousarray(assignments),
                                     bool(
                                         config.get(
                                             "he3_detector_efficiency_correction", True
@@ -617,12 +736,31 @@ def bin_corelli_group(
                                     for operation in symmetry
                                 )
                             for coords in coordinate_blocks:
-                                flat = _flat_bin_indices(coords, edges, shape)
-                                keep = flat >= 0
-                                if np.any(keep):
-                                    data_sum.ravel()[:] += np.bincount(flat[keep], weights=weights[keep], minlength=data_sum.size)
-                                    variance_sum.ravel()[:] += np.bincount(flat[keep], weights=weights[keep] ** 2, minlength=variance_sum.size)
-                                    hypothesis_count.ravel()[:] += np.bincount(flat[keep], minlength=hypothesis_count.size)
+                                flat, point_indices, spatial = (
+                                    _corelli_bin_contributions(
+                                        coords,
+                                        edges,
+                                        shape,
+                                        assignments,
+                                    )
+                                )
+                                if flat.size:
+                                    contributions = weights[point_indices] * spatial
+                                    data_sum.ravel()[:] += np.bincount(
+                                        flat,
+                                        weights=contributions,
+                                        minlength=data_sum.size,
+                                    )
+                                    variance_sum.ravel()[:] += np.bincount(
+                                        flat,
+                                        weights=contributions**2,
+                                        minlength=variance_sum.size,
+                                    )
+                                    hypothesis_count.ravel()[:] += np.bincount(
+                                        flat,
+                                        weights=spatial,
+                                        minlength=hypothesis_count.size,
+                                    )
                     processed += stop - start
                     if progress_callback is not None:
                         progress_callback(
@@ -670,6 +808,7 @@ def bin_corelli_group(
                 "duty_cycle": duty,
                 "retained_proton_charge_uah": retained_charge,
                 "channel_covariance": "DeltaE channels reconstructed from the same measured events are correlated; MDHisto errors contain diagonal variances only.",
+                "fractional_axes": assignments.tolist(),
                 "normalization_limit": "Counts include optional pointwise solid-angle and incident-flux corrections and are normalized by retained proton charge and chopper duty cycle; full four-dimensional MDNorm trajectory normalization is not applied.",
                 "solid_angle_file": config.get("normalization_file"),
                 "flux_file": config.get("flux_file"),
@@ -678,6 +817,7 @@ def bin_corelli_group(
                 **({"vectors": basis.tolist()} if basis is not None else {}),
                 "bin_edges": [edge.tolist() for edge in edges],
                 "minimum_samples": minimum_samples,
+                "fractional_axes": assignments.tolist(),
             },
             "signal_semantics": "cross_correlation_intensity",
             "signal_semantics_source": "nfit_corelli_finite_energy_reconstruction",

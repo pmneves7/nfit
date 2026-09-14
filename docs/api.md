@@ -416,7 +416,9 @@ shared UB matrix, wavelength interval, timing offset, and optional solid-angle,
 incident-flux, and detector-mask files. `bin_corelli_group(...)` streams the
 selected files into a finite-energy HKLE histogram, while
 `bin_corelli_powder_group(...)` accumulates directly into
-$|\mathbf Q|,\Delta E$.
+$|\mathbf Q|,\Delta E$. Its `fractional_axes` argument defaults to fractional
+momentum assignment and discrete reconstructed-energy assignment; the final
+energy flag must remain false.
 
 The ordinary `raw_dgs_dataset_group` and `bin_raw_dgs_group` entry points detect
 CORELLI and dispatch to these functions, so GUI and scripting imports use the

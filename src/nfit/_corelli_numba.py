@@ -96,6 +96,110 @@ def _bin_index(value, edges):
     return index
 
 
+@njit(inline="always")
+def _axis_assignment(value, edges, fractional):
+    """Return neighboring-bin indices and the upper-bin fraction."""
+
+    count = edges.size - 1
+    if not math.isfinite(value) or value < edges[0] or value > edges[-1]:
+        return -1, -1, 0.0, False
+    if not fractional or count == 1:
+        index = _bin_index(value, edges)
+        return index, index, 0.0, 0 <= index < count
+    first = 0.5 * (edges[0] + edges[1])
+    last = 0.5 * (edges[-2] + edges[-1])
+    if value <= first:
+        return 0, 0, 0.0, True
+    if value >= last:
+        return count - 1, count - 1, 0.0, True
+    left = 0
+    right = count - 1
+    while left + 1 < right:
+        middle = (left + right) // 2
+        centre = 0.5 * (edges[middle] + edges[middle + 1])
+        if value < centre:
+            right = middle
+        else:
+            left = middle
+    lower_centre = 0.5 * (edges[left] + edges[left + 1])
+    upper_centre = 0.5 * (edges[left + 1] + edges[left + 2])
+    upper_fraction = (value - lower_centre) / (upper_centre - lower_centre)
+    return left, left + 1, upper_fraction, True
+
+
+@njit(inline="always")
+def _deposit_powder(values, variances, counts, q, energy_index, q_edges, energy_count, fractional, weight):
+    lower, upper, upper_fraction, valid = _axis_assignment(
+        q, q_edges, fractional
+    )
+    if not valid:
+        return
+    choices = 2 if upper != lower else 1
+    for choice in range(choices):
+        if choice:
+            index = upper
+            spatial = upper_fraction
+        else:
+            index = lower
+            spatial = 1.0 - upper_fraction
+        contribution = spatial * weight
+        flat = index * energy_count + energy_index
+        values[flat] += contribution
+        variances[flat] += contribution * contribution
+        counts[flat] += spatial
+
+
+@njit(inline="always")
+def _deposit_hkle(
+    values,
+    variances,
+    counts,
+    c0,
+    c1,
+    c2,
+    energy_index,
+    edge0,
+    edge1,
+    edge2,
+    shape,
+    fractional_axes,
+    weight,
+):
+    low0, high0, fraction0, valid0 = _axis_assignment(
+        c0, edge0, fractional_axes[0]
+    )
+    low1, high1, fraction1, valid1 = _axis_assignment(
+        c1, edge1, fractional_axes[1]
+    )
+    low2, high2, fraction2, valid2 = _axis_assignment(
+        c2, edge2, fractional_axes[2]
+    )
+    if not (valid0 and valid1 and valid2):
+        return
+    choices0 = 2 if high0 != low0 else 1
+    choices1 = 2 if high1 != low1 else 1
+    choices2 = 2 if high2 != low2 else 1
+    for choice0 in range(choices0):
+        index0 = high0 if choice0 else low0
+        spatial0 = fraction0 if choice0 else 1.0 - fraction0
+        for choice1 in range(choices1):
+            index1 = high1 if choice1 else low1
+            spatial1 = fraction1 if choice1 else 1.0 - fraction1
+            for choice2 in range(choices2):
+                index2 = high2 if choice2 else low2
+                spatial2 = fraction2 if choice2 else 1.0 - fraction2
+                spatial = spatial0 * spatial1 * spatial2
+                contribution = spatial * weight
+                flat = (
+                    ((index0 * shape[1] + index1) * shape[2] + index2)
+                    * shape[3]
+                    + energy_index
+                )
+                values[flat] += contribution
+                variances[flat] += contribution * contribution
+                counts[flat] += spatial
+
+
 @njit(fastmath=False, nogil=True, parallel=True)
 def powder_kernel(
     tofs,
@@ -119,6 +223,7 @@ def powder_kernel(
     cumulative_flux,
     q_edges,
     energy_edges,
+    fractional_axes,
     use_he3,
     use_ki_kf,
 ):
@@ -154,13 +259,17 @@ def powder_kernel(
                 continue
             cosine = directions[event, 2]
             q = math.sqrt(max(0.0, ki * ki + kf * kf - 2.0 * ki * kf * cosine))
-            q_index = _bin_index(q, q_edges)
-            if q_index < 0 or q_index >= q_edges.size - 1:
-                continue
-            flat = q_index * (energy_edges.size - 1) + energy_index
-            values[thread, flat] += weight
-            variances[thread, flat] += weight * weight
-            counts[thread, flat] += 1.0
+            _deposit_powder(
+                values[thread],
+                variances[thread],
+                counts[thread],
+                q,
+                energy_index,
+                q_edges,
+                energy_edges.size - 1,
+                fractional_axes[0],
+                weight,
+            )
     return np.sum(values, axis=0), np.sum(variances, axis=0), np.sum(counts, axis=0)
 
 
@@ -193,6 +302,7 @@ def hkle_kernel(
     edge2,
     energy_edges,
     shape,
+    fractional_axes,
     use_he3,
     use_ki_kf,
 ):
@@ -239,15 +349,21 @@ def hkle_kernel(
                 c0 = sh * basis_inverse[0, 0] + sk * basis_inverse[1, 0] + sl * basis_inverse[2, 0]
                 c1 = sh * basis_inverse[0, 1] + sk * basis_inverse[1, 1] + sl * basis_inverse[2, 1]
                 c2 = sh * basis_inverse[0, 2] + sk * basis_inverse[1, 2] + sl * basis_inverse[2, 2]
-                i0 = _bin_index(c0, edge0)
-                i1 = _bin_index(c1, edge1)
-                i2 = _bin_index(c2, edge2)
-                if i0 < 0 or i0 >= shape[0] or i1 < 0 or i1 >= shape[1] or i2 < 0 or i2 >= shape[2]:
-                    continue
-                flat = ((i0 * shape[1] + i1) * shape[2] + i2) * shape[3] + energy_index
-                values[thread, flat] += weight
-                variances[thread, flat] += weight * weight
-                counts[thread, flat] += 1.0
+                _deposit_hkle(
+                    values[thread],
+                    variances[thread],
+                    counts[thread],
+                    c0,
+                    c1,
+                    c2,
+                    energy_index,
+                    edge0,
+                    edge1,
+                    edge2,
+                    shape,
+                    fractional_axes,
+                    weight,
+                )
     return np.sum(values, axis=0), np.sum(variances, axis=0), np.sum(counts, axis=0)
 
 
@@ -280,6 +396,7 @@ def hkle_energy_kernel(
     edge2,
     energy_edges,
     shape,
+    fractional_axes,
     use_he3,
     use_ki_kf,
 ):
@@ -379,25 +496,21 @@ def hkle_energy_kernel(
                     + sk * basis_inverse[1, 2]
                     + sl * basis_inverse[2, 2]
                 )
-                i0 = _bin_index(c0, edge0)
-                i1 = _bin_index(c1, edge1)
-                i2 = _bin_index(c2, edge2)
-                if (
-                    i0 < 0
-                    or i0 >= shape[0]
-                    or i1 < 0
-                    or i1 >= shape[1]
-                    or i2 < 0
-                    or i2 >= shape[2]
-                ):
-                    continue
-                flat = (
-                    ((i0 * shape[1] + i1) * shape[2] + i2) * shape[3]
-                    + energy_index
+                _deposit_hkle(
+                    values,
+                    variances,
+                    counts,
+                    c0,
+                    c1,
+                    c2,
+                    energy_index,
+                    edge0,
+                    edge1,
+                    edge2,
+                    shape,
+                    fractional_axes,
+                    weight,
                 )
-                values[flat] += weight
-                variances[flat] += weight * weight
-                counts[flat] += 1.0
     return values, variances, counts
 
 

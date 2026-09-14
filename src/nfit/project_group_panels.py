@@ -309,6 +309,11 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         coordinate_row.addStretch(1)
         layout.addLayout(coordinate_row)
     axes = config.get("axes", [])
+    raw_dgs = group.metadata.get("raw_dgs")
+    is_corelli = (
+        isinstance(raw_dgs, dict)
+        and raw_dgs.get("format") == "corelli-correlation-nexus"
+    )
     show_momentum_matrix = (
         config.get("coordinate_mode") != "powder"
         and len(axes) == 4
@@ -457,10 +462,17 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         assignment_combo.setCurrentIndex(
             max(assignment_combo.findData(_rebin_axis_fractional(config, axis)), 0)
         )
-        assignment_combo.setEnabled(axis_mode not in {"discrete", "tolerance"})
+        corelli_energy = is_corelli and axis_index == len(axes) - 1
+        assignment_combo.setEnabled(
+            axis_mode not in {"discrete", "tolerance"} and not corelli_energy
+        )
         assignment_combo.setToolTip(
-            "Fractional distributes a point between neighboring bins on this axis. Discrete "
-            "assigns it wholly to one bin. Tolerance always uses discrete assignment."
+            "CORELLI reconstructs each requested DeltaE bin centre as a separate, "
+            "correlated energy channel, so energy assignment remains discrete."
+            if corelli_energy
+            else "Fractional distributes a point between neighboring bins on this axis. "
+            "Discrete assigns it wholly to one bin. Tolerance always uses discrete "
+            "assignment."
         )
         assignment_combo.currentIndexChanged.connect(
             lambda _index, index=axis_index, combo=assignment_combo: self._set_group_composite_axis_fractional(

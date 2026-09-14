@@ -122,6 +122,14 @@ proportional to the number of raw events times the number of requested energy
 bins, so use the energy interval and resolution needed for the scientific
 question rather than a large exploratory range at fine resolution.
 
+Momentum coordinates use fractional assignment by default: each reconstructed
+event is distributed between neighboring momentum-bin centers, and its
+statistical variance follows those fractional weights. Energy assignment is
+discrete because each requested $\Delta E$ center is a separately reconstructed
+cross-correlation channel rather than a continuously measured event coordinate.
+Existing CORELLI projects created before this distinction are marked stale and
+must be rebinned once; their cached source data remain available until then.
+
 The **CORELLI finite-energy reconstruction** panel configures the shared batch:
 
 - **Solid-angle workspace** accepts the processed Mantid solid-angle workspace.

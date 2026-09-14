@@ -12,6 +12,8 @@ from nfit import (
 from nfit.corelli import (
     CORELLI_TOF_US_PER_M_SQRT_MEV,
     _ChopperTiming,
+    _corelli_bin_contributions,
+    _corelli_fractional_axes,
     _correlation_weights,
     _geometry_from_solid_angle,
     _load_corelli_detector_mask,
@@ -85,6 +87,63 @@ def test_corelli_metadata_and_finite_energy_solver(tmp_path):
     assert solved[0] == pytest.approx(50.0, abs=1e-6)
 
 
+def test_corelli_fractional_assignment_splits_momentum_but_not_energy():
+    edges = (
+        np.array([0.0, 1.0, 2.0]),
+        np.array([0.0, 1.0, 2.0]),
+        np.array([0.0, 1.0, 2.0]),
+        np.array([-0.5, 0.5]),
+    )
+    assignments = _corelli_fractional_axes(None, dimensions=4)
+    flat, points, weights = _corelli_bin_contributions(
+        np.array([[1.0, 1.0, 1.0, 0.0]]),
+        edges,
+        (2, 2, 2, 1),
+        assignments,
+    )
+
+    np.testing.assert_array_equal(assignments, [True, True, True, False])
+    np.testing.assert_array_equal(np.sort(flat), np.arange(8))
+    np.testing.assert_array_equal(points, np.zeros(8, dtype=int))
+    np.testing.assert_allclose(weights, np.full(8, 0.125))
+    assert weights.sum() == pytest.approx(1.0)
+    with pytest.raises(ValueError, match="energy assignment must be discrete"):
+        _corelli_fractional_axes([True, True, True, True], dimensions=4)
+
+
+def test_corelli_compiled_fractional_deposition_matches_numpy():
+    from nfit import corelli as corelli_module
+
+    if corelli_module._CORELLI_NUMBA is None:
+        pytest.skip("Numba is unavailable")
+    edges = np.array([0.0, 1.0, 2.0])
+    shape = np.array([2, 2, 2, 1], dtype=np.int64)
+    assignments = np.array([True, True, True, False])
+    values = np.zeros(8)
+    variances = np.zeros(8)
+    counts = np.zeros(8)
+
+    corelli_module._CORELLI_NUMBA._deposit_hkle(
+        values,
+        variances,
+        counts,
+        1.0,
+        1.0,
+        1.0,
+        0,
+        edges,
+        edges,
+        edges,
+        shape,
+        assignments,
+        2.0,
+    )
+
+    np.testing.assert_allclose(values, np.full(8, 0.25))
+    np.testing.assert_allclose(variances, np.full(8, 0.0625))
+    np.testing.assert_allclose(counts, np.full(8, 0.125))
+
+
 def test_corelli_weights_match_mantid_open_closed_convention():
     timing = _ChopperTiming(
         tdc_ns=np.array([0.0, 1_000_000.0, 2_000_000.0]),
@@ -121,6 +180,8 @@ def test_corelli_group_reconstructs_requested_energy_channel(tmp_path):
     assert not result.mask.item()
     reconstruction = result.metadata["corelli_reconstruction"]
     assert reconstruction["energy_sampling"] == "requested_DeltaE_bin_centres"
+    assert reconstruction["fractional_axes"] == [True, True, True, False]
+    assert result.metadata["rebin"]["fractional_axes"] == [True, True, True, False]
     assert "correlated" in reconstruction["channel_covariance"]
 
 

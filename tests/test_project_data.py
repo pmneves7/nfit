@@ -58,6 +58,61 @@ def test_saved_hierarchical_composite_grid_does_not_materialize_reference(
     explorer._set_dataset_collection_details(root, parent)
 
 
+def test_corelli_composite_migrates_to_fractional_momentum_and_discrete_energy():
+    from PySide6 import QtWidgets
+
+    raw_dgs = {
+        "format": "corelli-correlation-nexus",
+        "dimensions": [
+            {"lower": -5.0, "upper": 5.0},
+            {"lower": -5.0, "upper": 5.0},
+            {"lower": -5.0, "upper": 5.0},
+            {"lower": -30.0, "upper": 30.0},
+        ],
+    }
+    batch = DatasetGroup("CORELLI", metadata={"raw_dgs": raw_dgs})
+    batch.metadata[project_gui.GROUP_COMPOSITE_KEY] = {
+        "auto_rebin": False,
+        "stale": False,
+        "axes": [
+            {
+                "name": name,
+                "mode": "bins",
+                "fractional": False,
+                "lower": -5.0,
+                "upper": 5.0,
+                "num_bins": 11,
+                "step_size": 1.0,
+            }
+            for name in ("H", "K", "L", "DeltaE")
+        ],
+    }
+    root = DataGroup("Workspace1", subgroups=[batch])
+
+    config = project_gui.data_group_composite_config(
+        project_gui._composite_scope(root, batch)
+    )
+
+    assert [axis["fractional"] for axis in config["axes"]] == [
+        True,
+        True,
+        True,
+        False,
+    ]
+    assert config["corelli_assignment_version"] == 1
+    assert config["stale"] is True
+
+    explorer = NfitProjectExplorer(NfitProject([root]))
+    explorer._set_dataset_collection_details(root, batch)
+    energy_assignment = explorer.details_widget.findChild(
+        QtWidgets.QComboBox,
+        "group_composite_axis_assignment_3",
+    )
+    assert energy_assignment is not None
+    assert not energy_assignment.isEnabled()
+    assert "separate" in energy_assignment.toolTip()
+
+
 def test_live_derived_dataset_keeps_owner_in_viewer_binning_aliases():
     source = DatasetEntry("source", _grid_mdhisto_data(), kind="mdhisto")
     group = DataGroup("Workspace1", datasets=[source])
