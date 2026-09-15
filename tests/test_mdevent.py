@@ -27,6 +27,40 @@ from nfit.project_gui import (
 )
 
 
+def test_mdevent_preflight_warns_above_half_available_ram(monkeypatch):
+    bins = (10, 10, 10, 10)
+    estimate = estimate_mdevent_peak_memory(bins)
+    monkeypatch.setattr(mdevent, "_available_memory_bytes", lambda: estimate * 2)
+    assert not mdevent.assess_mdevent_memory(bins)[2]
+    monkeypatch.setattr(mdevent, "_available_memory_bytes", lambda: int(estimate * 1.8))
+    assert mdevent.assess_mdevent_memory(bins)[2]
+
+
+def test_full_compressed_cache_dialog_explains_save_and_discard(monkeypatch):
+    from PySide6 import QtWidgets
+
+    from nfit.project_cache_gui import CompressedCachePrompt
+    from nfit.rebin_cache import CompressedBinning
+    from tests.project_gui_test_support import _tiny_mdhisto_data
+
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("cache")]))
+    prompt = CompressedCachePrompt(explorer.window)
+    artifact = CompressedBinning.from_data(_tiny_mdhisto_data(1.0), max_bytes=10_000)
+    seen = []
+
+    def choose_discard(message):
+        buttons = message.buttons()
+        assert len(buttons) == 2
+        assert all(button.toolTip() for button in buttons)
+        seen.append(message.text())
+        next(button for button in buttons if "Discard" in button.text()).click()
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec", choose_discard)
+    prompt.request("named oldest bin", artifact)
+    assert "named oldest bin" in seen[0]
+    assert "compressed NPZ" in seen[0]
+
+
 def _write_mdevent(path):
     h5py = pytest.importorskip("h5py")
     with h5py.File(path, "w") as handle:

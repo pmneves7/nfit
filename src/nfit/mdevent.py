@@ -756,7 +756,7 @@ def assess_mdevent_memory(num_bins, *, max_batch_bytes=192 * 1024 * 1024):
 
     estimate = estimate_mdevent_peak_memory(num_bins, max_batch_bytes=max_batch_bytes)
     available = _available_memory_bytes()
-    return estimate, available, available is not None and estimate > int(available * 0.7)
+    return estimate, available, available is not None and estimate > int(available * 0.5)
 
 
 def _validate_mdevent_memory(shape, *, max_batch_bytes):

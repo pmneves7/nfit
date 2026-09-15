@@ -160,6 +160,8 @@ def lru_store(
 ) -> None:
     """Store one LRU entry and evict until count and array-byte limits hold."""
 
+    if hasattr(cache, "configure_budget"):
+        max_array_bytes = cache.configure_budget(max_array_bytes)
     cache[key] = value
     cache.move_to_end(key)
     entry_limit = max(int(limit), 0)

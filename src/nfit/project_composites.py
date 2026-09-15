@@ -1635,6 +1635,12 @@ def _cached_composite_dataset_data(
     signature = _composite_cache_signature(
         group, config_override=config, binning_id=binning_id
     )
+    binning_names = data_group_composite_binnings(group)
+    name = next(
+        (item["name"] for item in binning_names if item["id"] == binning_id),
+        binning_names[0]["name"],
+    )
+    _COMPOSITE_DATA_CACHE.set_label(cache_key, f"{group.name} · {name}")
     _lru_store(
         _COMPOSITE_DATA_CACHE,
         cache_key,

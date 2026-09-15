@@ -121,6 +121,7 @@ from .model_registry import (
     model_plot_definitions,
     model_types_in_category,
 )
+from .performance import assess_output_rebin_memory
 from .pipeline import (
     BackgroundSpec,
     DataGroup,
@@ -216,6 +217,7 @@ from .project_model_editor import (
     model_parameter_names,
 )
 from .project_models import reconcile_model_orbit_parameters
+from .project_rebinning import estimated_rebin_shape
 from .qt_branding import configure_application_icon
 from .qt_controls import configure_numeric_spin_boxes
 from .spectral_channels import (
@@ -2209,7 +2211,15 @@ def slice_viewer_datasets(
         force_rebin=force_rebin,
         progress_callback=progress_callback,
     )
-    for dataset in entries:
+    viewer_total = len(entries)
+    for viewer_index, dataset in enumerate(entries):
+        if progress_callback is not None:
+            progress_callback({
+                "stage": "viewer_prepare",
+                "iteration": viewer_index,
+                "total": viewer_total,
+                "message": f"preparing viewer data for {dataset.name}",
+            })
         is_composite = bool(dataset.metadata.get("composite"))
         extra_masks = [] if is_composite else effective_dataset_masks(group, dataset)
         view_data = dataset_for_slice_viewer(
@@ -2228,6 +2238,13 @@ def slice_viewer_datasets(
             )
             data.append(view_data)
             names.append(dataset.name)
+    if progress_callback is not None and viewer_total:
+        progress_callback({
+            "stage": "viewer_prepare",
+            "iteration": viewer_total,
+            "total": viewer_total,
+            "message": "viewer data prepared",
+        })
     return data, names
 
 
@@ -6085,6 +6102,12 @@ class _RebinProgressDialog:
         if self.current_label.isVisible():
             self._refresh_current_label()
 
+        if event.get("stage") == "viewer_prepare" and self._batch_total > 1:
+            self._batch_base_text = (
+                f"{self._batch_completed:,}/{self._batch_total:,} dataset groups binned; "
+                "preparing viewer data"
+            )
+
         total = max(int(event.get("total") or 0), 0)
         iteration = max(int(event.get("iteration") or 0), 0)
         self._detail_total = total
@@ -6655,6 +6678,11 @@ class NfitProjectExplorer:
             splash.close()
             self.app._nfit_startup_splash = None
         self._interactive = True
+        from .project_cache_gui import CompressedCachePrompt
+
+        cache_prompt = CompressedCachePrompt(self.window)
+        _COMPOSITE_DATA_CACHE.before_discard = cache_prompt.request
+        _VIEWER_VIEW_CACHE.before_discard = cache_prompt.request
         self._update_controller.schedule_startup()
         if self._external_change_timer is not None:
             self._external_change_timer.start()
@@ -6665,6 +6693,8 @@ class NfitProjectExplorer:
             self.app.exit(130)
             return 130
         finally:
+            _COMPOSITE_DATA_CACHE.before_discard = None
+            _VIEWER_VIEW_CACHE.before_discard = None
             if self._external_change_timer is not None:
                 self._external_change_timer.stop()
             if interrupt_timer is not None:
@@ -7730,6 +7760,8 @@ class NfitProjectExplorer:
             return None
         selected = self._selected_dataset_binning(entry)
         config = selected["config"]
+        if not self._confirm_dataset_rebin_memory([selected]):
+            return None
         progress = self._make_rebin_progress_callback("Creating rebinned dataset...") if _dataset_rebin_is_large(entry, config) else None
         try:
             rebinned = create_rebinned_dataset(
@@ -7770,6 +7802,8 @@ class NfitProjectExplorer:
             return False
         selected = self._selected_dataset_binning(entry)
         config = selected["config"]
+        if not self._confirm_dataset_rebin_memory([selected]):
+            return False
         progress = self._make_rebin_progress_callback("Saving rebinned dataset...") if _dataset_rebin_is_large(entry, config) else None
         try:
             data = rebinned_dataset_data(
@@ -7816,6 +7850,8 @@ class NfitProjectExplorer:
         selected = self._selected_dataset_binning(entry)
         config = selected["config"]
         cache_id = None if selected["fit"] else selected["id"]
+        if not self._confirm_dataset_rebin_memory([selected]):
+            return False
         if self._interactive:
             def task(progress_callback: Any) -> Any:
                 return dataset_for_slice_viewer(
@@ -7889,6 +7925,8 @@ class NfitProjectExplorer:
         ]
         if not binnings:
             return False
+        if not self._confirm_dataset_rebin_memory(binnings):
+            return False
 
         def task(progress_callback: Any | None) -> int:
             completed = 0
@@ -7955,25 +7993,64 @@ class NfitProjectExplorer:
         on_success(completed)
         return bool(completed)
 
+    def _confirm_dataset_rebin_memory(
+        self, binnings: list[dict[str, Any]]
+    ) -> bool:
+        """Confirm an ordinary rebin when its output workspace is very large."""
+
+        from PySide6 import QtWidgets
+
+        risky = []
+        for item in binnings:
+            config = item["config"]
+            output_bins = _dataset_rebin_output_bins(config)
+            if not output_bins:
+                continue
+            estimate, available, warn = assess_output_rebin_memory(
+                output_bins, max_batch_bytes=_rebin_max_batch_bytes(config)
+            )
+            if warn:
+                risky.append((item, output_bins, estimate, available))
+        if not risky:
+            return True
+        item, output_bins, estimate, available = max(risky, key=lambda row: row[2])
+        answer = QtWidgets.QMessageBox.warning(
+            self.window,
+            "Rebin memory estimate",
+            f"The requested {item['name']!r} rebin has {output_bins:,} output bins. "
+            f"Its estimated array workspace is {estimate / 1024**3:.1f} GB, "
+            f"over half of the currently available {available / 1024**3:.1f} GB "
+            "of RAM. Continue?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
     def _confirm_composite_rebin_memory(
         self,
         group: DataGroup | _CompositeScope,
         binnings: list[dict[str, Any]],
     ) -> bool:
-        """Confirm any risky MDEvent grids before starting one or more rebins."""
+        """Confirm large native or ordinary composite grids before rebinning."""
 
         from PySide6 import QtWidgets
 
         candidates = _composite_candidates(group)
-        if not candidates or _dataset_composite_kind(candidates[0]) != "mdevent":
+        if not candidates:
             return True
+        native = _dataset_composite_kind(candidates[0]) == "mdevent"
         risky = []
         for item in binnings:
             config = item["config"]
             _lower, _upper, num_bins = _composite_rebin_bounds(config)
-            estimate, available, warn = assess_mdevent_memory(
-                num_bins, max_batch_bytes=_rebin_max_batch_bytes(config)
-            )
+            if native:
+                estimate, available, warn = assess_mdevent_memory(
+                    num_bins, max_batch_bytes=_rebin_max_batch_bytes(config)
+                )
+            else:
+                estimate, available, warn = assess_output_rebin_memory(
+                    math.prod(num_bins), max_batch_bytes=_rebin_max_batch_bytes(config)
+                )
             if warn:
                 risky.append((item, num_bins, estimate, available))
         if not risky:
@@ -7981,18 +8058,90 @@ class NfitProjectExplorer:
         item, num_bins, estimate, available = max(risky, key=lambda values: values[2])
         grid = " x ".join(str(value) for value in num_bins)
         prefix = (
-            f"{len(risky)} requested binnings may exceed available memory. "
+            f"{len(risky)} requested binnings may use over half the currently available RAM. "
             f"The largest is {item['name']!r}: "
             if len(risky) > 1
             else "The requested "
         )
         answer = QtWidgets.QMessageBox.warning(
             self.window,
-            "MDEvent memory estimate",
-            f"{prefix}{grid} grid ({math.prod(num_bins):,} bins) is estimated to peak at "
+            "Rebin memory estimate",
+            f"{prefix}{grid} grid ({math.prod(num_bins):,} bins) is estimated to use "
             f"{estimate / 1024**3:.1f} GB. Currently available RAM is "
-            f"{available / 1024**3:.1f} GB.\n\nContinuing may cause heavy swapping or terminate nfit. "
+            f"{available / 1024**3:.1f} GB; this is over half of that allowance.\n\n"
+            "Continuing may cause heavy swapping or terminate nfit. "
             "Do you want to continue anyway?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+            return False
+        for risky_item, _bins, _estimate, _available in risky:
+            risky_item["config"]["_allow_memory_overcommit_once"] = True
+        return True
+
+    def _confirm_viewer_rebin_memory(
+        self, group: DataGroup, *, use_composite: bool
+    ) -> bool:
+        """Warn once for the largest pending output in a viewer load."""
+
+        from PySide6 import QtWidgets
+
+        risky = []
+        for dataset in group.iter_datasets():
+            if not isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict):
+                continue
+            for item in dataset_rebin_binnings(dataset):
+                config = item["config"]
+                if not config.get("enabled", False) or _project_binning_is_current(
+                    "dataset", group, dataset, item["id"], config
+                ):
+                    continue
+                bins = estimated_rebin_shape(config)
+                if not bins:
+                    continue
+                estimate, available, warn = assess_output_rebin_memory(
+                    math.prod(bins), max_batch_bytes=_rebin_max_batch_bytes(config)
+                )
+                if warn:
+                    risky.append((item, bins, estimate, available))
+        if use_composite:
+            for scope in _composite_scopes(group):
+                if not data_group_composite_enabled(scope):
+                    continue
+                candidates = _composite_candidates(scope)
+                if not candidates:
+                    continue
+                native = _dataset_composite_kind(candidates[0]) == "mdevent"
+                for item in data_group_composite_binnings(scope):
+                    config = item["config"]
+                    if not config.get("enabled", False) or _project_binning_is_current(
+                        "dataset group", group, scope, item["id"], config
+                    ):
+                        continue
+                    _lower, _upper, bins = _composite_rebin_bounds(config)
+                    if native:
+                        estimate, available, warn = assess_mdevent_memory(
+                            bins, max_batch_bytes=_rebin_max_batch_bytes(config)
+                        )
+                    else:
+                        estimate, available, warn = assess_output_rebin_memory(
+                            math.prod(bins),
+                            max_batch_bytes=_rebin_max_batch_bytes(config),
+                        )
+                    if warn:
+                        risky.append((item, bins, estimate, available))
+        if not risky:
+            return True
+        item, bins, estimate, available = max(risky, key=lambda row: row[2])
+        answer = QtWidgets.QMessageBox.warning(
+            self.window,
+            "Data viewer memory estimate",
+            f"Opening the viewer may rebin {len(risky)} large result(s). The largest, "
+            f"{item['name']!r}, has a {' x '.join(map(str, bins))} grid "
+            f"({math.prod(bins):,} bins). Its estimated peak is "
+            f"{estimate / 1024**3:.1f} GB, over half of the currently available "
+            f"{available / 1024**3:.1f} GB of RAM. Continue?",
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No,
         )
@@ -8170,6 +8319,8 @@ class NfitProjectExplorer:
         selected = self._selected_composite_binning(group)
         config = selected["config"]
         if not bool(config.get("enabled", False)):
+            return False
+        if not self._confirm_composite_rebin_memory(group, [selected]):
             return False
         root = _composite_root(group)
         node = group.node if isinstance(group, _CompositeScope) else root
@@ -9086,6 +9237,10 @@ class NfitProjectExplorer:
     ) -> Any | None:
         from PySide6 import QtWidgets
 
+        if not self._confirm_viewer_rebin_memory(
+            group, use_composite=use_composite
+        ):
+            return None
         progress = self._rebin_progress_callback_for_group(group, use_composite=use_composite)
         try:
             datasets, names = slice_viewer_datasets(

@@ -236,6 +236,33 @@ def _rebin_axis_bound_is_auto(axis: Mapping[str, Any], key: str) -> bool:
     return bool(np.isclose(value, automatic))
 
 
+def estimated_rebin_shape(config: Mapping[str, Any]) -> tuple[int, ...]:
+    """Estimate saved output bin counts without reading the source arrays."""
+
+    axes = config.get("axes")
+    if not isinstance(axes, list) or not axes:
+        return ()
+    shape = []
+    for axis in axes:
+        if not isinstance(axis, dict):
+            return ()
+        count = max(int(axis.get("num_bins", 1) or 1), 1)
+        edges = axis.get("bin_edges")
+        if isinstance(edges, (list, tuple)) and len(edges) > 1:
+            count = max(count, len(edges) - 1)
+        elif _rebin_axis_mode(config, axis) == "step":
+            try:
+                lower = float(axis["lower"])
+                upper = float(axis["upper"])
+                step = float(axis["step_size"])
+                if np.isfinite([lower, upper, step]).all() and step > 0 and upper > lower:
+                    count = max(count, int(math.ceil((upper - lower) / step)) + 1)
+            except (KeyError, TypeError, ValueError, OverflowError):
+                pass
+        shape.append(count)
+    return tuple(shape)
+
+
 def _resolve_auto_rebin_axes(
     axes_config: Sequence[dict[str, Any]],
     data_bounds: Sequence[tuple[float, float]],

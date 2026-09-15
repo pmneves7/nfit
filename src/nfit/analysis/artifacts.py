@@ -55,47 +55,53 @@ def read_dataset_artifact(
     stream: str | PathLike[str] | BinaryIO
     stream = BytesIO(source) if isinstance(source, bytes) else source
     with np.load(stream, allow_pickle=False) as archive:
-        kind = str(np.asarray(archive["container"]).item())
-        metadata = json.loads(str(np.asarray(archive["metadata_json"]).item()))
-        if kind == "point_list":
-            names = json.loads(str(np.asarray(archive["column_names_json"]).item()))
-            return PointListData(
-                {name: np.asarray(archive[f"column_{i}"], dtype=float) for i, name in enumerate(names)},
-                units=json.loads(str(np.asarray(archive["units_json"]).item())),
-                coordinate_names=json.loads(str(np.asarray(archive["coordinate_names_json"]).item())),
-                channels=json.loads(str(np.asarray(archive["channels_json"]).item())), metadata=metadata,
-                quantity_types=(json.loads(str(np.asarray(archive["quantity_types_json"]).item())) if "quantity_types_json" in archive else {}),
-            )
-        if kind != "mdhisto":
-            raise ValueError(f"unknown analysis artifact container {kind!r}")
-        count = int(np.asarray(archive["axis_count"]).item())
-        axes = tuple(
-            MDHistoAxis(
-                str(np.asarray(archive[f"axis_{i}_name"]).item()), np.asarray(archive[f"axis_{i}_values"], dtype=float),
-                str(np.asarray(archive[f"axis_{i}_units"]).item()), str(np.asarray(archive[f"axis_{i}_kind"]).item()),
-                frame=str(np.asarray(archive[f"axis_{i}_frame"]).item()) or None,
-                path=str(np.asarray(archive[f"axis_{i}_path"]).item()) or None,
-                metadata=json.loads(str(np.asarray(archive[f"axis_{i}_metadata"]).item())),
-            ) for i in range(count)
+        return dataset_artifact_from_payload(archive)
+
+
+def dataset_artifact_from_payload(archive: Any) -> MDHistoData | PointListData:
+    """Reconstruct an artifact from an NPZ reader or in-memory array mapping."""
+
+    kind = str(np.asarray(archive["container"]).item())
+    metadata = json.loads(str(np.asarray(archive["metadata_json"]).item()))
+    if kind == "point_list":
+        names = json.loads(str(np.asarray(archive["column_names_json"]).item()))
+        return PointListData(
+            {name: np.asarray(archive[f"column_{i}"], dtype=float) for i, name in enumerate(names)},
+            units=json.loads(str(np.asarray(archive["units_json"]).item())),
+            coordinate_names=json.loads(str(np.asarray(archive["coordinate_names_json"]).item())),
+            channels=json.loads(str(np.asarray(archive["channels_json"]).item())), metadata=metadata,
+            quantity_types=(json.loads(str(np.asarray(archive["quantity_types_json"]).item())) if "quantity_types_json" in archive else {}),
         )
-        channel_names = json.loads(str(np.asarray(archive["auxiliary_names"]).item())) if "auxiliary_names" in archive else []
-        channels = {
-            name: MDHistoChannel(
-                np.asarray(archive[f"aux_{i}_values"]),
-                np.asarray(archive[f"aux_{i}_errors"])
-                if f"aux_{i}_errors" in archive
-                else None,
-                str(np.asarray(archive[f"aux_{i}_label"]).item()),
-                str(np.asarray(archive[f"aux_{i}_unit"]).item()),
-                str(np.asarray(archive[f"aux_{i}_quantity_type"]).item())
-                if f"aux_{i}_quantity_type" in archive
-                else "unknown",
-            )
-            for i, name in enumerate(channel_names)
-        }
-        coordinate = int(np.asarray(archive["coordinate_system"]).item()) if "coordinate_system" in archive else -1
-        visual = int(np.asarray(archive["visual_normalization"]).item()) if "visual_normalization" in archive else -1
-        return MDHistoData(axes, archive["signal"], archive["errors"], archive["mask"], archive["num_events"], coordinate_system=None if coordinate < 0 else coordinate, visual_normalization=None if visual < 0 else visual, metadata=metadata, auxiliary_channels=channels)
+    if kind != "mdhisto":
+        raise ValueError(f"unknown analysis artifact container {kind!r}")
+    count = int(np.asarray(archive["axis_count"]).item())
+    axes = tuple(
+        MDHistoAxis(
+            str(np.asarray(archive[f"axis_{i}_name"]).item()), np.asarray(archive[f"axis_{i}_values"], dtype=float),
+            str(np.asarray(archive[f"axis_{i}_units"]).item()), str(np.asarray(archive[f"axis_{i}_kind"]).item()),
+            frame=str(np.asarray(archive[f"axis_{i}_frame"]).item()) or None,
+            path=str(np.asarray(archive[f"axis_{i}_path"]).item()) or None,
+            metadata=json.loads(str(np.asarray(archive[f"axis_{i}_metadata"]).item())),
+        ) for i in range(count)
+    )
+    channel_names = json.loads(str(np.asarray(archive["auxiliary_names"]).item())) if "auxiliary_names" in archive else []
+    channels = {
+        name: MDHistoChannel(
+            np.asarray(archive[f"aux_{i}_values"]),
+            np.asarray(archive[f"aux_{i}_errors"])
+            if f"aux_{i}_errors" in archive
+            else None,
+            str(np.asarray(archive[f"aux_{i}_label"]).item()),
+            str(np.asarray(archive[f"aux_{i}_unit"]).item()),
+            str(np.asarray(archive[f"aux_{i}_quantity_type"]).item())
+            if f"aux_{i}_quantity_type" in archive
+            else "unknown",
+        )
+        for i, name in enumerate(channel_names)
+    }
+    coordinate = int(np.asarray(archive["coordinate_system"]).item()) if "coordinate_system" in archive else -1
+    visual = int(np.asarray(archive["visual_normalization"]).item()) if "visual_normalization" in archive else -1
+    return MDHistoData(axes, archive["signal"], archive["errors"], archive["mask"], archive["num_events"], coordinate_system=None if coordinate < 0 else coordinate, visual_normalization=None if visual < 0 else visual, metadata=metadata, auxiliary_channels=channels)
 
 
 def output_data(output: DatasetOutput | TableOutput) -> MDHistoData | PointListData:

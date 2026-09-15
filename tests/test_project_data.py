@@ -153,10 +153,11 @@ def test_composite_preserves_nonidentity_histogram_coordinates():
 
 def test_save_reuses_binnings_evicted_from_memory(tmp_path, monkeypatch):
     project_gui._COMPOSITE_DATA_CACHE.clear()
-    monkeypatch.setattr(project_gui, "_COMPOSITE_DATA_CACHE_MAX_BYTES", 1)
+    monkeypatch.setattr(project_gui, "_COMPOSITE_DATA_CACHE_MAX_BYTES", 100_000)
     # The service owns the budget; the GUI alias is retained for compatibility.
     from nfit import project_composites
-    monkeypatch.setattr(project_composites, "_COMPOSITE_DATA_CACHE_MAX_BYTES", 1)
+    monkeypatch.setattr(project_composites, "_COMPOSITE_DATA_CACHE_MAX_BYTES", 100_000)
+    monkeypatch.setattr(project_composites, "_COMPOSITE_DATA_CACHE_LIMIT", 0)
     subgroups = []
     for i in range(3):
         source = tmp_path / f"source-{i}.nxs"
@@ -169,8 +170,9 @@ def test_save_reuses_binnings_evicted_from_memory(tmp_path, monkeypatch):
     project = NfitProject([root], settings={"cache_binnings": True})
     expected, _ = project_gui.slice_viewer_datasets(root)
     assert not project_gui._COMPOSITE_DATA_CACHE
+    assert len(project_gui._COMPOSITE_DATA_CACHE._compressed) == 3
     with monkeypatch.context() as checks:
-        checks.setattr("nfit.rebin_cache.read_dataset_artifact", lambda *a: pytest.fail("freshness checks must not read arrays"))
+        checks.setattr("nfit.rebin_cache.CompressedBinning.restore", lambda *a: pytest.fail("freshness checks must not read arrays"))
         assert not project_gui.project_binnings_need_refresh(project)
     monkeypatch.setattr(project_composites, "composite_dataset_data", lambda *a, **k: pytest.fail("saving current binnings must not rebin"))
     path = tmp_path / "overflow.nfit"

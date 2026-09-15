@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import replace
@@ -1058,6 +1059,12 @@ def _viewer_data_before_scale(
         # Recompute the signature: the uncached path may have lazily loaded the
         # data and incremented the dataset revision.
         signature = _viewer_view_signature(dataset, extra_masks, config)
+        binning_names = dataset_rebin_binnings(dataset)
+        label = next(
+            (item["name"] for item in binning_names if item["id"] == cache_id),
+            binning_names[0]["name"],
+        )
+        _VIEWER_VIEW_CACHE.set_label(key, f"{dataset.name} · {label}")
         _lru_store(
             _VIEWER_VIEW_CACHE,
             key,
@@ -1580,15 +1587,8 @@ def _dataset_rebin_source_points(dataset: DatasetEntry) -> int:
 
 
 def _dataset_rebin_output_bins(config: dict[str, Any]) -> int:
-    total = 1
-    axes = config.get("axes")
-    if not isinstance(axes, list) or not axes:
-        return 0
-    for axis in axes:
-        if not isinstance(axis, dict):
-            return 0
-        total *= max(int(axis.get("num_bins", 1) or 1), 1)
-    return int(total)
+    shape = _project_rebinning.estimated_rebin_shape(config)
+    return math.prod(shape) if shape else 0
 
 
 def _dataset_rebin_estimated_contributions(dataset: DatasetEntry, config: dict[str, Any]) -> int:

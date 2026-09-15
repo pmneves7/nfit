@@ -103,15 +103,21 @@ geometry.
 
 Cache entries are process-local and evicted by least-recent use. Each GUI data
 cache has both an entry-count limit and an estimated numerical-array memory
-budget. Completed viewer and composite binnings that leave memory are retained
-as temporary disk artifacts, including results larger than the memory budget.
-Reopening the viewer or saving cached binnings reads those artifacts instead of
-repeating the reduction. Temporary artifacts are removed when the cache is
-cleared or nfit exits. The
-budgets count distinct NumPy array payloads, not small Python-object overhead.
+budget. Completed viewer and composite binnings first use resident arrays,
+then a bounded, chunk-compressed RAM tier. nfit does not write automatic cache
+spill files to `/tmp` or scratch. When the compressed tier fills, the GUI asks
+whether to discard the oldest compressed binning or save it as a compressed
+`.npz` file at a path you choose. A discarded binning can be recomputed from
+its sources. Saving a compressed NPZ exports the numerical result; it does not
+add that file to the project automatically. A binning too large for the
+compressed tier is not retained there. Scripting workflows evict old results
+without a GUI prompt. The budgets count distinct NumPy array payloads and
+compressed bytes, with small Python-object overhead excluded.
 The prepared-table cache defaults to 128 MiB and the model-overlay cache to
 256 MiB. Viewer and composite cache capacities use one sixteenth of physical
-memory, bounded between 768 MiB and 4 GiB. This capacity is not allocated in
+memory, bounded between 768 MiB and 4 GiB for each cache. Three quarters of
+each allowance holds resident arrays and one quarter holds compressed results.
+This capacity is not allocated in
 advance: small projects retain only the arrays they produce. The adaptive
 budget can retain a practical four-dimensional reduction that exceeded the old
 256 MiB limit, avoiding immediate eviction and duplicate work while preparing
@@ -148,7 +154,12 @@ accumulators and clamps each saved per-rebin batch target, so increasing a
 batch target cannot silently exceed the machine policy. The setting applies to
 existing projects because it describes the current machine rather than project
 state. The separate MDEvent output-grid preflight continues to warn when the
-estimated complete reduction exceeds 70% of currently available memory.
+estimated complete reduction exceeds 50% of currently available memory. Other
+dataset and composite rebins use an estimate of their output-array workspace
+plus the batch target and warn at the same threshold. The native reducer still
+blocks an unapproved estimate above 70%. Opening a data viewer also warns
+before starting pending large rebins. A memory estimate is advisory: source
+data, other caches, and the operating system can change the actual peak.
 On macOS, available memory includes inactive and speculative pages that the
 operating system can reclaim; this prevents the worker planner from falling to
 one CPU merely because the file cache has consumed most completely free pages.

@@ -140,6 +140,16 @@ def available_memory_bytes() -> int | None:
     return None if available is None else max(1, available)
 
 
+def assess_output_rebin_memory(
+    output_bins: int, *, max_batch_bytes: int = 192 * 1024**2
+) -> tuple[int, int | None, bool]:
+    """Estimate peak array workspace for an ordinary dataset/grid rebin."""
+
+    estimate = max(int(output_bins), 0) * 96 + max(int(max_batch_bytes), 0)
+    available = available_memory_bytes()
+    return estimate, available, available is not None and estimate > available // 2
+
+
 def performance_settings_path() -> Path:
     """Return the machine-local preferences file; override with NFIT_PERFORMANCE_FILE."""
     return Path(os.environ.get("NFIT_PERFORMANCE_FILE", "~/.config/nfit/performance.json")).expanduser()
