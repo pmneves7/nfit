@@ -3164,6 +3164,10 @@ class QtMDHistoSliceViewer:
                 dim, (float(centers[centers.size // 2]),) * 2
             )
             low, high = sorted((float(selection[0]), float(selection[1])))
+            if not self.model.integrate_checks.get(dim, self.model.integrate):
+                selected_bin = self.model._normalized_selections()[dim]
+                edges = self.model._axis_edges(dim)
+                low, high = float(edges[selected_bin]), float(edges[selected_bin + 1])
             name = (
                 "ΔE"
                 if axis.role in {"energy", "energy_transfer"}

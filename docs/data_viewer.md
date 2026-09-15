@@ -439,7 +439,9 @@ Turning off **Autoscale** also locks both displayed limits while using the
 Matplotlib Home, Back, or Forward buttons; those buttons change the data view
 without silently restoring an older color normalization.
 When the optional other-axis binning title is visible, it summarizes only
-dimensions not represented by the horizontal, vertical, or tiled axes.
+dimensions not represented by the horizontal, vertical, or tiled axes. For a
+single selected slice, the title shows the selected bin's edges; for an
+integrated range, it shows the selected lower and upper bin centers.
 
 ## Volumetric mode
 

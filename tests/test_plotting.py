@@ -385,12 +385,43 @@ def test_qt_slice_viewer_can_title_plot_with_hidden_axis_binning():
     viewer = QtMDHistoSliceViewer(data, x_dim=0, y_dim=2)
     viewer.model.selections[1] = (0.9, 1.1)
     viewer.model.selections[3] = (1.0, 2.0)
+    viewer.model.integrate_checks[1] = True
+    viewer.model.integrate_checks[3] = True
     viewer.show_binning_title_check.setChecked(True)
 
     expected = "[K,K,-2K]=[0.9,1.1] r.l.u., ΔE=[1,2] meV"
     assert viewer.figure._suptitle.get_text() == expected
     assert repr(expected) in viewer.figure_script()
     assert viewer.current_plot_settings()["show_binning_title"] is True
+    viewer.window.close()
+
+
+def test_qt_slice_viewer_title_shows_single_hidden_bin_edges():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    data = replace(
+        data,
+        axes=(
+            data.axes[0],
+            MDHistoAxis(
+                "[L,-L,0]", np.array([-0.15, -0.05, 0.05, 0.15]),
+                "rlu", "momentum",
+            ),
+            *data.axes[2:],
+        ),
+    )
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    controls = viewer.hidden_controls[1]
+    controls.integrate.setChecked(False)
+    assert controls.value.value() == pytest.approx(0.0)
+    assert controls.width.value() == pytest.approx(0.1)
+    viewer.show_binning_title_check.setChecked(True)
+
+    expected = "[L,-L,0]=[-0.05,0.05] r.l.u."
+    assert expected in viewer.figure._suptitle.get_text()
+    assert repr(viewer._binning_title_text()) in viewer.figure_script()
     viewer.window.close()
 
 
