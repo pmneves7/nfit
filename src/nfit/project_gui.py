@@ -800,6 +800,23 @@ def _project_file_signature(path: str | Path | None) -> tuple[int, int, int, int
     )
 
 
+def _project_file_size(path: str | Path | None) -> int | None:
+    """Return the current archive size, or ``None`` for an unsaved project."""
+
+    if path is None:
+        return None
+    try:
+        return int(Path(path).stat().st_size)
+    except OSError:
+        return None
+
+
+def _format_project_file_size(num_bytes: int) -> str:
+    """Format a saved project archive size for the project-window title."""
+
+    return f"{float(num_bytes) / 1024**3:.2f} GB"
+
+
 def create_data_group(project: NfitProject, name: str | None = None) -> DataGroup:
     """Add a data group to a project and return it."""
 
@@ -6624,6 +6641,7 @@ class NfitProjectExplorer:
         self.project_path: Path | None = (
             None if stored_path is None else Path(stored_path)
         )
+        self._saved_project_size_bytes = _project_file_size(self.project_path)
         set_active_project_path(self.project_path)
         self._project_disk_signature: tuple[int, int, int, int] | None = None
         self._ignored_project_disk_signature: tuple[int, int, int, int] | None = None
@@ -7263,6 +7281,7 @@ class NfitProjectExplorer:
         self._close_all_slice_viewers()
         self.project = _new_gui_project()
         self.project_path = None
+        self._saved_project_size_bytes = None
         set_active_project_path(None)
         self._project_disk_signature = None
         self._ignored_project_disk_signature = None
@@ -7496,6 +7515,7 @@ class NfitProjectExplorer:
         self._close_all_slice_viewers()
         self.project = load_project(path)
         self.project_path = path
+        self._saved_project_size_bytes = _project_file_size(path)
         set_active_project_path(path)
         self.has_unsaved_changes = False
         self._clear_active_fit_state()
@@ -7592,6 +7612,7 @@ class NfitProjectExplorer:
             self._close_rebin_progress(progress)
         self.has_unsaved_changes = False
         self._update_project_disk_signature()
+        self._saved_project_size_bytes = _project_file_size(self.project_path)
         self._sync_window_title()
         self._sync_details()
         return True
@@ -7634,6 +7655,7 @@ class NfitProjectExplorer:
         self._remember_recent_project(self.project_path)
         self.has_unsaved_changes = False
         self._update_project_disk_signature()
+        self._saved_project_size_bytes = _project_file_size(self.project_path)
         self._sync_window_title()
         self._sync_details()
         return True
@@ -16300,8 +16322,13 @@ class NfitProjectExplorer:
 
     def _sync_window_title(self) -> None:
         suffix = "Untitled" if self.project_path is None else str(self.project_path)
+        size = (
+            ""
+            if self._saved_project_size_bytes is None
+            else f" ({_format_project_file_size(self._saved_project_size_bytes)})"
+        )
         marker = " *" if self.has_unsaved_changes else ""
-        self.window.setWindowTitle(f"nfit Project Explorer - {suffix}{marker}")
+        self.window.setWindowTitle(f"nfit Project Explorer - {suffix}{size}{marker}")
         if self.reload_project_action is not None:
             self.reload_project_action.setEnabled(self.project_path is not None)
 

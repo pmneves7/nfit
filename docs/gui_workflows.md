@@ -29,7 +29,9 @@ this rebin…**; see [performance settings and benchmarks](performance.md#perfor
 
 Each `.nfit` project is one portable file containing its JSON manifest and
 generated analysis artifacts. Original imported measurement files remain
-external source references.
+external source references. For a saved project, the Project Explorer title
+shows the archive size recorded when the file was opened. That value updates
+only after nfit completes **Save** or **Save As**.
 
 Enable **File → Cache binnings** to make the current project embed its rebinned
 datasets and dataset-group composites when saved. Saving checks every configured

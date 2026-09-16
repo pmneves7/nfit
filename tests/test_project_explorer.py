@@ -1914,6 +1914,44 @@ def test_recent_project_helpers_and_file_menu(monkeypatch, tmp_path):
     assert reload_action.toolTip()
 
 
+def test_project_title_shows_saved_size_and_refreshes_it_only_after_save(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    unsaved = NfitProjectExplorer()
+    assert unsaved.window.windowTitle() == "nfit Project Explorer - Untitled"
+
+    path = tmp_path / "sized.nfit"
+    save_project(NfitProject([DataGroup("saved")]), path)
+    explorer = NfitProjectExplorer()
+    assert explorer.open_project_path(path, remember=False)
+    opened_title = explorer.window.windowTitle()
+    assert opened_title == (
+        f"nfit Project Explorer - {path} "
+        f"({project_gui._format_project_file_size(path.stat().st_size)})"
+    )
+
+    with path.open("ab") as stream:
+        stream.write(b"external size change")
+    explorer._mark_dirty()
+    assert explorer.window.windowTitle() == f"{opened_title} *"
+
+    def fake_save_project(project, target, **_kwargs):
+        Path(target).write_bytes(b"saved archive")
+        project._project_path = Path(target)
+
+    monkeypatch.setattr(explorer, "_project_changed_on_disk", lambda: False)
+    monkeypatch.setattr(project_gui, "save_project", fake_save_project)
+    monkeypatch.setattr(project_gui, "_project_file_size", lambda _path: 2 * 1024**3)
+    assert explorer.save()
+    assert explorer.window.windowTitle() == (
+        f"nfit Project Explorer - {path} (2.00 GB)"
+    )
+
+
 def test_project_explorer_detects_reloads_and_protects_external_file_changes(
     monkeypatch,
     tmp_path,
