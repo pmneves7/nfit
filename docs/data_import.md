@@ -618,9 +618,11 @@ The information tab reports each axis's count, limits, centers, edges, grid
 mode, assignment mode, total bins, and numeric payload estimate; after a current
 rebin it uses the exact cached grid. The **Rebin settings** tab also shows the
 estimated result-array memory beside the editable controls. This is the
-persistent numerical payload rather than peak working memory. Compressed disk
-size is reported as data-dependent because it cannot be predicted reliably
-before the values and masks are compressed.
+persistent numerical payload rather than peak working memory. When the current
+binning is embedded in the saved `.nfit` project, the panel also reports the
+artifact's actual compressed disk size. A dash means that the selected binning
+is not currently stored in the saved project; nfit does not estimate a future
+compressed size because it depends on the values, masks, and compression ratio.
 
 Automatic rebinning turns off when an edit raises the estimate above 5,000,000
 point contributions or 2,000,000 output bins. It may be manually re-enabled;

@@ -49,6 +49,7 @@ def rebin_bin_information_widget(
     data: Any | None,
     object_prefix: str,
     estimated_seconds: float | None = None,
+    compressed_disk_bytes: int | None = None,
 ) -> Any:
     """Build a compact, expandable description of a requested or cached grid."""
 
@@ -75,7 +76,7 @@ def rebin_bin_information_widget(
 
     size_parts = [
         f"Numeric payload: {'exactly' if exact else 'about'} {_format_bytes(payload_bytes)} in memory",
-        "compressed disk size: data-dependent",
+        _compressed_disk_size_text(compressed_disk_bytes),
     ]
     if estimated_seconds is not None and np.isfinite(estimated_seconds):
         size_parts.append(f"estimated rebin time: {estimated_seconds:.1f} s")
@@ -84,9 +85,9 @@ def rebin_bin_information_widget(
     size.setWordWrap(True)
     size.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
     size.setToolTip(
-        "The memory value counts the output numerical arrays. Compressed NPZ and project "
-        "sizes cannot be predicted reliably because they depend on the values, masks, and "
-        "compression ratio. nfit does not automatically spill this cache to disk."
+        "The memory value counts the output numerical arrays. Compressed disk size is the "
+        "actual binning artifact stored in the current nfit project; a dash means this "
+        "binning is not currently embedded in the saved project."
     )
     layout.addWidget(size)
 
@@ -143,26 +144,40 @@ def rebin_memory_estimate(
 
 
 def rebin_memory_estimate_label(
-    config: Mapping[str, Any], *, data: Any | None, object_prefix: str
+    config: Mapping[str, Any],
+    *,
+    data: Any | None,
+    object_prefix: str,
+    compressed_disk_bytes: int | None = None,
 ) -> Any:
     """Build the memory/disk estimate shown beside editable rebin settings."""
 
     from PySide6 import QtCore, QtWidgets
 
-    label = QtWidgets.QLabel(rebin_memory_estimate_text(config, data=data))
+    label = QtWidgets.QLabel(
+        rebin_memory_estimate_text(
+            config,
+            data=data,
+            compressed_disk_bytes=compressed_disk_bytes,
+        )
+    )
     label.setObjectName(f"{object_prefix}_memory_estimate")
     label.setWordWrap(True)
     label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
     label.setToolTip(
         "This estimates the numerical output arrays from the configured grid, or reports "
         "the exact cached payload. Peak rebin memory can be higher because source and worker "
-        "arrays also exist. Compressed disk size depends on the actual values and masks."
+        "arrays also exist. Compressed disk size is shown only when the current binning is "
+        "embedded in the saved nfit project."
     )
     return label
 
 
 def rebin_memory_estimate_text(
-    config: Mapping[str, Any], *, data: Any | None
+    config: Mapping[str, Any],
+    *,
+    data: Any | None,
+    compressed_disk_bytes: int | None = None,
 ) -> str:
     """Return the concise memory and disk-size description for a rebin."""
 
@@ -170,8 +185,14 @@ def rebin_memory_estimate_text(
     return (
         f"{'Cached result memory' if exact else 'Estimated result memory'}: "
         f"{'exactly ' if exact else 'about '}{_format_bytes(payload_bytes)} · "
-        "compressed disk size: data-dependent"
+        f"{_compressed_disk_size_text(compressed_disk_bytes)}"
     )
+
+
+def _compressed_disk_size_text(size: int | None) -> str:
+    """Format an exact saved-project artifact size or an unavailable marker."""
+
+    return f"Compressed disk size: {_format_bytes(size) if size is not None else '-'}"
 
 
 def _axis_information(

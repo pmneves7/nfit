@@ -87,6 +87,17 @@ def project_artifact_size(path: str | Path, member: str) -> int | None:
         return None
 
 
+def project_artifact_compressed_size(path: str | Path, member: str) -> int | None:
+    """Return the bytes occupied by an internal artifact in the archive."""
+
+    try:
+        normalized = _safe_member(member)
+        with zipfile.ZipFile(path, "r") as archive:
+            return int(archive.getinfo(normalized).compress_size)
+    except (FileNotFoundError, KeyError, OSError, ValueError, zipfile.BadZipFile):
+        return None
+
+
 def write_project_manifest(
     path: str | Path,
     payload: Mapping[str, Any],

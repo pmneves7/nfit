@@ -162,8 +162,10 @@ before starting pending large rebins. A memory estimate is advisory: source
 data, other caches, and the operating system can change the actual peak.
 The rebin-settings panel separately displays the estimated persistent result
 payload for its configured grid. An exact value is shown when the result is
-already cached. Compressed disk size remains data-dependent because sparse
-masks, repeated values, and numerical content change the compression ratio.
+already cached. It reports the actual compressed artifact size when that
+binning is embedded in the saved `.nfit` project, and a dash otherwise. A
+future compressed size is not estimated because sparse masks, repeated values,
+and numerical content change the compression ratio.
 On macOS, available memory includes inactive and speculative pages that the
 operating system can reclaim; this prevents the worker planner from falling to
 one CPU merely because the file cache has consumed most completely free pages.

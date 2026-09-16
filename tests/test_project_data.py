@@ -412,6 +412,10 @@ def test_viewer_batch_progress_and_cache_cover_more_than_four_composites():
 def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monkeypatch):
     import zipfile
 
+    from nfit.project_rebin_panels import _format_bytes as format_rebin_bytes
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     project_gui._COMPOSITE_DATA_CACHE.clear()
     source = tmp_path / "large-source.nxs"
     source.write_bytes(b"source placeholder")
@@ -439,7 +443,65 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
     save_project(project, path, progress_callback=save_events.append)
     assert save_events == []
 
+    dataset_disk_size = project_gui._saved_binning_compressed_size(
+        project,
+        kind="dataset",
+        group=group,
+        target=dataset,
+        binning_id=dataset_config["_binning_id"],
+        config=dataset_config,
+    )
+    composite_disk_size = project_gui._saved_binning_compressed_size(
+        project,
+        kind="dataset group",
+        group=group,
+        target=group,
+        binning_id=config["_binning_id"],
+        config=config,
+    )
+    with zipfile.ZipFile(path) as archive:
+        saved_sizes = {
+            entry["type"]: archive.getinfo(entry["member"]).compress_size
+            for entry in project.settings[
+                project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY
+            ]
+        }
+    assert dataset_disk_size == saved_sizes["dataset"]
+    assert composite_disk_size == saved_sizes["composite"]
+
+    explorer = NfitProjectExplorer(project)
+    explorer._set_dataset_details(dataset, group)
+    dataset_size_label = explorer.details_widget.findChild(
+        QtWidgets.QLabel,
+        "dataset_rebin_memory_estimate",
+    )
+    assert (
+        f"Compressed disk size: {format_rebin_bytes(dataset_disk_size)}"
+        in dataset_size_label.text()
+    )
+    explorer._set_dataset_collection_details(group, group)
+    composite_size_label = explorer.details_widget.findChild(
+        QtWidgets.QLabel,
+        "group_composite_memory_estimate",
+    )
+    assert (
+        f"Compressed disk size: {format_rebin_bytes(composite_disk_size)}"
+        in composite_size_label.text()
+    )
+    explorer.window.close()
+
     config["minimum_coverage"] = 0.25
+    assert (
+        project_gui._saved_binning_compressed_size(
+            project,
+            kind="dataset group",
+            group=group,
+            target=group,
+            binning_id=config["_binning_id"],
+            config=config,
+        )
+        is None
+    )
     assert project_gui.project_binnings_need_refresh(project)
     refresh_events = []
     save_project(project, path, progress_callback=refresh_events.append)
@@ -922,7 +984,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     )
     assert memory_estimate is not None
     assert "result memory" in memory_estimate.text()
-    assert "compressed disk size: data-dependent" in memory_estimate.text()
+    assert "Compressed disk size: -" in memory_estimate.text()
     assert memory_estimate.toolTip()
     assignment = rebin_panel.findChild(
         QtWidgets.QComboBox, "dataset_rebin_axis_assignment_0"
@@ -1775,7 +1837,7 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     )
     assert memory_estimate is not None
     assert "result memory" in memory_estimate.text()
-    assert "compressed disk size: data-dependent" in memory_estimate.text()
+    assert "Compressed disk size: -" in memory_estimate.text()
     binning_combo = explorer.details_widget.findChild(
         QtWidgets.QComboBox, "group_composite_binning"
     )

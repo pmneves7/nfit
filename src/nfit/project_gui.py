@@ -136,6 +136,7 @@ from .pipeline import (
 from .plot_recipes import new_plot_entry, plot_script, render_plot
 from .project_archive import (
     binning_artifact_member,
+    project_artifact_compressed_size,
     project_artifact_exists,
     project_artifact_size,
     read_project_manifest,
@@ -5240,6 +5241,90 @@ def _project_binning_is_current(
     ) is not None
 
 
+def _saved_binning_compressed_size(
+    project: NfitProject,
+    *,
+    kind: str,
+    group: DataGroup,
+    target: DatasetEntry | DataGroup | _CompositeScope,
+    binning_id: str,
+    config: dict[str, Any],
+) -> int | None:
+    """Return the saved archive size of a current persisted binning."""
+
+    project_path = getattr(project, "_project_path", None)
+    entries = project.settings.get(PROJECT_BINNING_CACHE_ENTRIES_KEY, [])
+    if project_path is None or not isinstance(entries, list):
+        return None
+    try:
+        group_index = next(
+            index
+            for index, candidate in enumerate(project.data_groups)
+            if candidate is group
+        )
+    except StopIteration:
+        return None
+    entry_type = "dataset" if kind == "dataset" else "composite"
+    node_id = (
+        target.node.id
+        if isinstance(target, _CompositeScope)
+        else None
+    )
+    current_signature = (
+        _viewer_view_signature(
+            target,
+            effective_dataset_masks(group, target),
+            config,
+        )
+        if entry_type == "dataset"
+        else (
+            _composite_cache_signature(target)
+            if config is _fit_data_group_composite_config(target)
+            else _composite_cache_signature(
+                target,
+                config_override=config,
+                binning_id=binning_id,
+            )
+        )
+    )
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") != entry_type:
+            continue
+        try:
+            if int(entry.get("group_index", -1)) != group_index:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if str(entry.get("binning_id", "")) != str(binning_id):
+            continue
+        if entry_type == "dataset":
+            if str(entry.get("dataset_id", "")) != target.id:
+                continue
+        elif entry.get("node_id") != node_id:
+            continue
+        try:
+            format_version = int(entry.get("format_version", 0))
+        except (TypeError, ValueError):
+            continue
+        if format_version not in PROJECT_BINNING_CACHE_COMPATIBLE_FORMATS:
+            continue
+        saved_signature = entry.get("signature")
+        if format_version >= 6:
+            if saved_signature != current_signature:
+                return None
+        elif not _project_binning_is_current(
+            kind, group, target, binning_id, config
+        ):
+            return None
+        member = entry.get("member")
+        if not isinstance(member, str):
+            return None
+        return project_artifact_compressed_size(project_path, member)
+    return None
+
+
 def _dataset_cached_binnings_current(
     group: DataGroup, dataset: DatasetEntry
 ) -> bool:
@@ -7508,6 +7593,7 @@ class NfitProjectExplorer:
         self.has_unsaved_changes = False
         self._update_project_disk_signature()
         self._sync_window_title()
+        self._sync_details()
         return True
 
     def save_as(self) -> bool:
@@ -7549,6 +7635,7 @@ class NfitProjectExplorer:
         self.has_unsaved_changes = False
         self._update_project_disk_signature()
         self._sync_window_title()
+        self._sync_details()
         return True
 
     def open_project(self) -> bool:
@@ -15535,13 +15622,25 @@ class NfitProjectExplorer:
         status = self.details_widget.findChild(QtWidgets.QLabel, "dataset_rebin_status")
         if status is not None:
             status.setText(_dataset_rebin_status_text(dataset, config))
+        selected_binning = self._selected_dataset_binning(dataset)
+        compressed_disk_bytes = (
+            _saved_binning_compressed_size(
+                self.project,
+                kind="dataset",
+                group=group,
+                target=dataset,
+                binning_id=selected_binning["id"],
+                config=config,
+            )
+            if group is not None
+            else None
+        )
         memory = self.details_widget.findChild(
             QtWidgets.QLabel, "dataset_rebin_memory_estimate"
         )
         if memory is not None:
             from .project_rebin_panels import rebin_memory_estimate_text
 
-            selected_binning = self._selected_dataset_binning(dataset)
             memory.setText(
                 rebin_memory_estimate_text(
                     config,
@@ -15559,6 +15658,7 @@ class NfitProjectExplorer:
                             else selected_binning["id"]
                         ),
                     ),
+                    compressed_disk_bytes=compressed_disk_bytes,
                 )
             )
         symmetry = symmetry_spec_from_config(config.get("symmetry"))
@@ -15620,11 +15720,12 @@ class NfitProjectExplorer:
                             rebin_config=config,
                             cache_id=(
                                 None
-                                if self._selected_dataset_binning(dataset)["fit"]
-                                else self._selected_dataset_binning(dataset)["id"]
+                                if selected_binning["fit"]
+                                else selected_binning["id"]
                             ),
                         ),
                         object_prefix="dataset_rebin",
+                        compressed_disk_bytes=compressed_disk_bytes,
                     ),
                     "Bin information",
                 )

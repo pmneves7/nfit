@@ -39,6 +39,7 @@ _rebin_mean_weighting: Any = None
 _rebin_minimum_coverage: Any = None
 _rebin_minimum_samples: Any = None
 _sanitize_rebin_axis_config: Any = None
+_saved_binning_compressed_size: Any = None
 available_data_types: Any = None
 available_ions: Any = None
 data_group_composite_config: Any = None
@@ -1026,8 +1027,23 @@ def _dataset_axes_group_box(
         rebin_config=config,
         cache_id=None if selected_binning["fit"] else selected_binning["id"],
     )
+    compressed_disk_bytes = (
+        _saved_binning_compressed_size(
+            self.project,
+            kind="dataset",
+            group=group,
+            target=dataset,
+            binning_id=selected_binning["id"],
+            config=config,
+        )
+        if group is not None
+        else None
+    )
     memory_label = rebin_memory_estimate_label(
-        config, data=cached_rebin_data, object_prefix="dataset_rebin"
+        config,
+        data=cached_rebin_data,
+        object_prefix="dataset_rebin",
+        compressed_disk_bytes=compressed_disk_bytes,
     )
     controls_layout.addWidget(memory_label, footer_row + 3, 0, 1, last_column + 1)
     status_label = QtWidgets.QLabel(_dataset_rebin_status_text(dataset, config))
@@ -1052,6 +1068,7 @@ def _dataset_axes_group_box(
             config,
             data=cached_rebin_data,
             object_prefix="dataset_rebin",
+            compressed_disk_bytes=compressed_disk_bytes,
         ),
         "Bin information",
     )

@@ -26,6 +26,7 @@ _rebin_mean_weighting: Any = None
 _rebin_minimum_coverage: Any = None
 _rebin_minimum_samples: Any = None
 _sanitize_rebin_axis_config: Any = None
+_saved_binning_compressed_size: Any = None
 _tooltip_table_corner_buttons: Any = None
 data_group_composite_config: Any = None
 data_group_composite_binnings: Any = None
@@ -621,8 +622,19 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             ),
         ],
     }
+    compressed_disk_bytes = _saved_binning_compressed_size(
+        self.project,
+        kind="dataset group",
+        group=_composite_root(group),
+        target=group,
+        binning_id=selected_binning["id"],
+        config=config,
+    )
     memory_label = rebin_memory_estimate_label(
-        memory_config, data=cached_rebin_data, object_prefix="group_composite"
+        memory_config,
+        data=cached_rebin_data,
+        object_prefix="group_composite",
+        compressed_disk_bytes=compressed_disk_bytes,
     )
     controls_layout.addWidget(memory_label, footer_row + 3, 0, 1, len(headers))
     status_label = QtWidgets.QLabel(_composite_rebin_status_text(group, config))
@@ -687,6 +699,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             memory_config,
             data=cached_rebin_data,
             object_prefix="group_composite",
+            compressed_disk_bytes=compressed_disk_bytes,
         ),
         "Bin information",
     )
