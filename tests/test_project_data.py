@@ -247,6 +247,61 @@ def test_tree_cache_badges_follow_current_dataset_and_composite_bins():
     project_gui._COMPOSITE_DATA_CACHE.clear()
 
 
+def test_open_composite_viewer_refreshes_every_cache_badge(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+
+    subgroups = []
+    for index in range(2):
+        subgroup = DatasetGroup(
+            f"background {index + 1}",
+            datasets=[
+                DatasetEntry(
+                    f"run {index + 1}",
+                    _tiny_mdhisto_data(index + 1.0),
+                    kind="mdhisto",
+                )
+            ],
+            enabled=False,
+        )
+        subgroups.append(subgroup)
+    root = DataGroup("Powder background averages", subgroups=subgroups)
+    for subgroup in subgroups:
+        config = project_gui.data_group_composite_config(
+            project_gui._composite_scope(root, subgroup)
+        )
+        config.update(enabled=True, minimum_coverage=0.0)
+
+    explorer = NfitProjectExplorer(NfitProject([root]))
+    datasets_item = explorer.tree.topLevelItem(0).child(0)
+    subgroup_items = [datasets_item.child(index) for index in range(2)]
+    plain_icon = project_gui._tree_item_icon("folder").cacheKey()
+    cached_icon = project_gui._tree_item_icon("folder", cached=True).cacheKey()
+    assert [item.icon(0).cacheKey() for item in subgroup_items] == [
+        plain_icon,
+        plain_icon,
+    ]
+
+    viewer = explorer.open_slice_viewer(root, use_composite=True)
+
+    assert viewer is not None
+    assert all(
+        project_gui._composite_cached_binnings_current(root, subgroup)
+        for subgroup in subgroups
+    )
+    assert [item.icon(0).cacheKey() for item in subgroup_items] == [
+        cached_icon,
+        cached_icon,
+    ]
+    assert all("cached and up to date" in item.toolTip(0) for item in subgroup_items)
+
+    viewer.window.close()
+    explorer.window.close()
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+
+
 def test_hierarchical_rebin_retains_matching_child_caches(monkeypatch):
     from nfit import project_composites
     project_gui._COMPOSITE_DATA_CACHE.clear()

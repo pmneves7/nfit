@@ -9314,6 +9314,11 @@ class NfitProjectExplorer:
                         "message": "updating project controls before opening the data viewer",
                     }
                 )
+            # Preparing a composite viewer can populate caches for several
+            # sibling dataset groups. Refresh the complete tree so every
+            # newly current binning receives its cache badge, rather than
+            # updating only the selected row in _sync_details().
+            self._refresh_cache_badges()
             self._sync_details()
             if progress is not None:
                 progress(
@@ -9725,6 +9730,10 @@ class NfitProjectExplorer:
                 if getattr(current_viewer, "binning_combo", None) is not None:
                     replacement["selected_binning_name"] = selected_binning_name
                 current_viewer.replace_datasets(datasets, **replacement)
+        if prepared:
+            # One viewer refresh may prepare multiple dataset or composite
+            # binnings, including entries other than the current tree row.
+            self._refresh_cache_badges()
         remaining = self._slice_viewers.get(id(group), [])
         return remaining[0] if remaining else None
 
