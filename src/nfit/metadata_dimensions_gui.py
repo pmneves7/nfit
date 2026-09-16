@@ -28,6 +28,22 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
     def add_row(index, recipe):
         spec = MetadataDimension(**recipe)
         binning = spec.binning
+        event_pulse_time = spec.sampling == "event_pulse_time"
+        existing_edges = None if binning is None else binning.edges()
+        default_lower = (
+            None
+            if binning is None
+            else binning.lower
+            if binning.lower is not None
+            else float(existing_edges[0])
+        )
+        default_upper = (
+            None
+            if binning is None
+            else binning.upper
+            if binning.upper is not None
+            else float(existing_edges[-1])
+        )
         row = start_row + index
         label = QtWidgets.QLabel(f"{spec.name} ({spec.units})" if spec.units else spec.name)
         label.setObjectName(f"metadata_rebin_label_{index}")
@@ -35,20 +51,21 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
             f"Metadata channel: {spec.source}. Its values enter the same N-dimensional rebin as the physical coordinates."
         )
         layout.addWidget(label, row, 0)
-        lower = QtWidgets.QLineEdit(
-            "" if binning is None or binning.lower is None else str(binning.lower)
-        )
-        upper = QtWidgets.QLineEdit(
-            "" if binning is None or binning.upper is None else str(binning.upper)
-        )
+        lower = QtWidgets.QLineEdit("" if default_lower is None else str(default_lower))
+        upper = QtWidgets.QLineEdit("" if default_upper is None else str(default_upper))
         mode = QtWidgets.QComboBox()
-        for title, value in (
-            ("Discrete", "discrete"),
-            ("Step", "step"),
-            ("Bins", "bins"),
-            ("Edges", "edges"),
-            ("Tolerance", "tolerance"),
-        ):
+        choices = (
+            (("Step", "step"), ("Number of bins", "bins"), ("Edges", "edges"))
+            if event_pulse_time
+            else (
+                ("Discrete", "discrete"),
+                ("Step", "step"),
+                ("Number of bins", "bins"),
+                ("Edges", "edges"),
+                ("Tolerance", "tolerance"),
+            )
+        )
+        for title, value in choices:
             mode.addItem(title, value)
         selected_mode = (
             "discrete"
@@ -64,10 +81,17 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
             )
         )
         mode.setCurrentIndex(mode.findData(selected_mode))
+        if mode.currentIndex() < 0:
+            mode.setCurrentIndex(0)
         resolution = QtWidgets.QLineEdit(
             ""
             if binning is None
-            else str(binning.step or binning.num_bins or binning.tolerance or "")
+            else str(
+                binning.step
+                or binning.num_bins
+                or binning.tolerance
+                or (float(np.median(np.diff(existing_edges))) if existing_edges.size > 1 else "")
+            )
         )
         edges = QtWidgets.QLineEdit(
             ", ".join(f"{v:g}" for v in (binning.bin_edges or [])) if binning else ""
@@ -76,22 +100,22 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
             (
                 "lower",
                 lower,
-                "First metadata bin center; for one-bin integration this is the lower interval edge.",
+                "First metadata bin center. With Step, a start of 0 K, stop of 300 K, and step of 10 K produces centers 0, 10, …, 300 K.",
             ),
             (
                 "upper",
                 upper,
-                "Last metadata bin center; for one-bin integration this is the upper interval edge.",
+                "Last metadata bin center. For exact interval edges instead, choose Edges and enter the full edge list.",
             ),
             (
                 "mode",
                 mode,
-                "Discrete keeps exact assigned coordinates. Step, Bins, Edges, and Tolerance combine source measurements into whole bins; fractional binning never mixes metadata coordinates.",
+                "Step uses the displayed start, stop, and spacing. Number of bins divides the displayed range into that many bins. Raw event-pulse metadata require one of these explicit grids.",
             ),
             (
                 "resolution",
                 resolution,
-                "Metadata bin step, positive integer bin count, or clustering tolerance in axis units. One bin integrates between the limits.",
+                "For Step, enter the spacing in axis units (for example 10 K). For Number of bins, enter a positive integer count.",
             ),
             (
                 "edges",
@@ -175,6 +199,25 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
         def change_mode():
             enable_fields()
             try:
+                if event_pulse_time:
+                    if not lower.text():
+                        lower.setText(str(default_lower if default_lower is not None else 0.0))
+                    if not upper.text():
+                        upper.setText(str(default_upper if default_upper is not None else 1.0))
+                    if mode.currentData() == "step" and not resolution.text():
+                        resolution.setText(
+                            str(
+                                float(np.median(np.diff(existing_edges)))
+                                if existing_edges is not None and existing_edges.size > 1
+                                else 1.0
+                            )
+                        )
+                    elif mode.currentData() == "bins" and not resolution.text():
+                        resolution.setText(
+                            str(max((existing_edges.size - 1) if existing_edges is not None else 1, 1))
+                        )
+                    apply()
+                    return
                 if mode.currentData() != "discrete":
                     coordinates = []
                     for entry in _composite_candidates(group, include_backgrounds=True):
@@ -381,6 +424,12 @@ def metadata_dimensions_panel(explorer, group, *, embedded: bool = False):
 
         def validate():
             spec = specification()
+            if spec.sampling == "event_pulse_time":
+                preview.setPlainText(
+                    "The timestamped NeXus log is interpolated at every raw event pulse "
+                    "during rebinning. Configure its explicit grid under Rebin settings."
+                )
+                return spec
             resolved = []
             for dataset in candidates:
                 _ensure_dataset_data_loaded(dataset)

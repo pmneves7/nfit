@@ -237,6 +237,55 @@ def test_corelli_event_pulse_time_metadata_allows_project_tree_cache_signature(t
     assert _composite_cache_signature(group)
 
 
+def test_event_pulse_time_metadata_rebin_row_accepts_start_stop_and_step(tmp_path, monkeypatch):
+    pytest.importorskip("PySide6")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+
+    from nfit.metadata_dimensions_gui import metadata_rebin_rows
+
+    source = tmp_path / "CORELLI_7.nxs.h5"
+    _write_corelli(source)
+    group = corelli_dataset_group([source])
+    set_metadata_dimensions(
+        group,
+        [
+            {
+                "name": "Temperature",
+                "source": "entry/DASlogs/sample_temperature",
+                "units": "K",
+                "sampling": "event_pulse_time",
+                "binning": {"bin_edges": [0.0, 10.0, 20.0]},
+            }
+        ],
+    )
+
+    class Explorer:
+        def _after_group_composite_changed(self, _group):
+            pass
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    parent = QtWidgets.QWidget()
+    layout = QtWidgets.QGridLayout(parent)
+    warnings = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda *_args: warnings.append(_args),
+    )
+    metadata_rebin_rows(Explorer(), group, layout, 0)
+    mode = parent.findChild(QtWidgets.QComboBox, "metadata_rebin_mode_0")
+    mode.setCurrentIndex(mode.findData("step"))
+
+    recipe = group.metadata["metadata_dimensions"][0]["binning"]
+    assert recipe["lower"] == 0.0
+    assert recipe["upper"] == 20.0
+    assert recipe["step"] == 10.0
+    assert not warnings
+    parent.close()
+    app.processEvents()
+
+
 def test_generic_raw_import_dispatches_corelli_batches(tmp_path, monkeypatch):
     from nfit import corelli as corelli_module
 
