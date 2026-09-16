@@ -264,6 +264,48 @@ def test_native_mdevent_powder_binning_uses_radial_trajectory_normalization(tmp_
     )
 
 
+def test_native_mdevent_powder_binning_reports_trajectory_progress(tmp_path):
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+    progress = []
+
+    bin_mdevent_powder_group(
+        group,
+        lower=[0.0, -1.0],
+        upper=[1.0, 1.0],
+        num_bins=[1, 1],
+        progress_callback=progress.append,
+    )
+
+    trajectory_updates = [
+        event
+        for event in progress
+        if "powder detector trajectories" in event.get("message", "")
+    ]
+    assert trajectory_updates
+    assert trajectory_updates[-1]["iteration"] == trajectory_updates[-1]["total"]
+
+
+def test_native_mdevent_powder_binning_stops_at_trajectory_checkpoint(tmp_path):
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+
+    def cancel_at_trajectory_start(event):
+        if "powder detector trajectories" in event.get("message", ""):
+            raise RuntimeError("cancelled")
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        bin_mdevent_powder_group(
+            group,
+            lower=[0.0, -1.0],
+            upper=[1.0, 1.0],
+            num_bins=[1, 1],
+            progress_callback=cancel_at_trajectory_start,
+        )
+
+
 def test_native_mdevent_covered_zero_bins_are_finite_measured_zeros(tmp_path):
     source = tmp_path / "events.nxs"
     _write_mdevent(source)

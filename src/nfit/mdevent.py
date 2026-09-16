@@ -630,7 +630,13 @@ def bin_mdevent_powder_group(
                 "message": "calculating powder detector normalization",
             }
         )
-    normalization = _powder_trajectory_normalization(group, selected_runs, edges, shape)
+    normalization = _powder_trajectory_normalization(
+        group,
+        selected_runs,
+        edges,
+        shape,
+        progress_callback=progress_callback,
+    )
     with np.errstate(divide="ignore", invalid="ignore"):
         signal = data_sum / normalization
         errors = np.sqrt(variance_sum) / normalization
@@ -1003,7 +1009,14 @@ def _trajectory_normalization(
     return result
 
 
-def _powder_trajectory_normalization(group, datasets, edges, shape):
+def _powder_trajectory_normalization(
+    group,
+    datasets,
+    edges,
+    shape,
+    *,
+    progress_callback: Any | None = None,
+):
     """Accumulate the radial detector-trajectory denominator."""
 
     import h5py
@@ -1020,6 +1033,7 @@ def _powder_trajectory_normalization(group, datasets, edges, shape):
         else None
     )
     result = np.zeros(shape)
+    payloads = []
     for source_text in sorted(
         {str(dataset.metadata["source_file"]) for dataset in datasets}
     ):
@@ -1057,15 +1071,52 @@ def _powder_trajectory_normalization(group, datasets, edges, shape):
                 energy_bounds = np.asarray(
                     experiment["logs/processed_histogram_bins/value"][()], dtype=float
                 )
-                for detector_index in np.flatnonzero(solid > 0.0):
-                    _accumulate_powder_detector_trajectory(
-                        result,
-                        edges,
-                        float(theta[detector_index]),
-                        float(incident_energy),
-                        energy_bounds,
-                        charge * float(solid[detector_index]),
-                    )
+                payloads.append((theta, solid, incident_energy, energy_bounds, charge))
+
+    trajectory_total = sum(
+        int(np.count_nonzero(solid > 0.0))
+        for _theta, solid, _incident_energy, _energy_bounds, _charge in payloads
+    )
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "mdevent_normalization",
+                "iteration": 0,
+                "total": trajectory_total,
+                "message": (
+                    f"integrating {trajectory_total:,} powder detector trajectories"
+                ),
+                "output_bins": int(np.prod(shape)),
+            }
+        )
+    completed = 0
+    report_stride = max(trajectory_total // 100, 1)
+    for theta, solid, incident_energy, energy_bounds, charge in payloads:
+        for detector_index in np.flatnonzero(solid > 0.0):
+            _accumulate_powder_detector_trajectory(
+                result,
+                edges,
+                float(theta[detector_index]),
+                float(incident_energy),
+                energy_bounds,
+                charge * float(solid[detector_index]),
+            )
+            completed += 1
+            if progress_callback is not None and (
+                completed == trajectory_total or completed % report_stride == 0
+            ):
+                progress_callback(
+                    {
+                        "stage": "mdevent_normalization",
+                        "iteration": completed,
+                        "total": trajectory_total,
+                        "message": (
+                            f"integrated {completed:,}/{trajectory_total:,} "
+                            "powder detector trajectories"
+                        ),
+                        "output_bins": int(np.prod(shape)),
+                    }
+                )
     return result
 
 
