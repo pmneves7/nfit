@@ -15,6 +15,7 @@ from nfit.corelli import (
     _corelli_bin_contributions,
     _corelli_fractional_axes,
     _correlation_weights,
+    _event_metadata_exposure_uah,
     _geometry_from_solid_angle,
     _load_corelli_detector_mask,
     _load_corelli_flux,
@@ -214,6 +215,65 @@ def test_corelli_event_pulse_time_metadata_adds_a_histogram_axis(tmp_path):
     assert [axis.name for axis in result.axes] == ["H", "K", "L", "DeltaE", "Temperature"]
     assert result.num_events.sum() == pytest.approx(1.0)
     assert result.axes[-1].metadata["interpolation"] == "pulse_time_linear"
+
+
+def test_event_metadata_charge_exposure_uses_each_temperature_bin():
+    exposure = _event_metadata_exposure_uah(
+        pulse_seconds=np.array([0.0, 1.0, 2.0]),
+        pulse_charge_uah=np.array([1.0, 2.0, 3.0]),
+        event_logs=((np.array([0.0, 2.0]), np.array([0.0, 20.0])),),
+        metadata_edges=(np.array([0.0, 10.0, 20.0]),),
+        fractional_axes=np.array([False]),
+    )
+
+    np.testing.assert_allclose(exposure, [1.0, 5.0])
+
+
+def test_corelli_event_temperature_slices_normalize_by_their_own_charge(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    source = tmp_path / "CORELLI_7.nxs.h5"
+    _write_corelli(source)
+    with h5py.File(source, "r+") as handle:
+        bank = handle["entry/bank1_events"]
+        tof = float(bank["event_time_offset"][0])
+        for name in ("event_id", "event_time_offset", "event_index", "event_time_zero"):
+            del bank[name]
+        bank.create_dataset("event_id", data=[42, 42, 42])
+        bank.create_dataset("event_time_offset", data=[tof, tof, tof])
+        bank.create_dataset("event_index", data=[0, 1])
+        bank.create_dataset("event_time_zero", data=[0.005, 0.006])
+        charge = handle["entry/DASlogs/proton_charge"]
+        del charge["value"]
+        charge.create_dataset("value", data=[3.6e9, 7.2e9])
+        temperature = handle["entry/DASlogs/sample_temperature"]
+        del temperature["time"]
+        del temperature["value"]
+        temperature.create_dataset("time", data=[0.005, 0.006])
+        temperature.create_dataset("value", data=[5.0, 15.0])
+
+    group = corelli_dataset_group([source])
+    group.metadata["raw_dgs"].update(timing_offset_ns=0, bad_pulse_threshold=0)
+    result = bin_corelli_group(
+        group,
+        lower=[-100.0, -100.0, -100.0, -1.0, 0.0],
+        upper=[100.0, 100.0, 100.0, 1.0, 20.0],
+        num_bins=[1, 1, 1, 1, 2],
+        max_batch_bytes=128,
+        metadata_dimensions=[
+            {
+                "name": "Temperature",
+                "source": "entry/DASlogs/sample_temperature",
+                "units": "K",
+                "sampling": "event_pulse_time",
+                "binning": {"bin_edges": [0.0, 10.0, 20.0]},
+            }
+        ],
+    )
+
+    np.testing.assert_allclose(result.signal[..., 0], result.signal[..., 1])
+    np.testing.assert_allclose(
+        result.metadata["corelli_reconstruction"]["metadata_exposure_uah"], [0.5, 1.0]
+    )
 
 
 def test_corelli_event_pulse_time_metadata_allows_project_tree_cache_signature(tmp_path):

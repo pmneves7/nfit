@@ -46,6 +46,7 @@ from .raw_dgs import (
     _DetectorGeometry,
     _good_pulses,
     _he3_tube_efficiency_correction,
+    _pulse_charge_values,
     _raw_proton_charge_uah,
     _retained_proton_charge_uah,
     _source_distance,
@@ -423,6 +424,72 @@ def _corelli_bin_contributions(
     )
 
 
+def _event_metadata_exposure_uah(
+    pulse_seconds: np.ndarray,
+    pulse_charge_uah: np.ndarray,
+    event_logs: tuple[tuple[np.ndarray, np.ndarray], ...],
+    metadata_edges: tuple[np.ndarray, ...],
+    fractional_axes: np.ndarray,
+) -> np.ndarray:
+    """Accumulate retained beam charge in each event-metadata output bin.
+
+    Event-pulse metadata partition one acquisition into distinct physical
+    conditions. Each resulting slice must therefore be divided by its own
+    charge exposure, rather than by the total charge for the whole run.
+    """
+
+    shape = tuple(edge.size - 1 for edge in metadata_edges)
+    if not shape:
+        return np.empty(0, dtype=float)
+    pulse_seconds = np.asarray(pulse_seconds, dtype=float).reshape(-1)
+    charge = np.asarray(pulse_charge_uah, dtype=float).reshape(-1)
+    if pulse_seconds.shape != charge.shape:
+        raise ValueError("CORELLI pulse times and charge values must be aligned")
+    coordinates = np.column_stack(
+        [
+            np.interp(pulse_seconds, times, values, left=np.nan, right=np.nan)
+            for times, values in event_logs
+        ]
+    )
+    flat, pulse_indices, fractions = _corelli_bin_contributions(
+        coordinates,
+        metadata_edges,
+        shape,
+        fractional_axes,
+    )
+    return np.bincount(
+        flat,
+        weights=charge[pulse_indices] * fractions,
+        minlength=int(np.prod(shape, dtype=np.int64)),
+    ).reshape(shape)
+
+
+def _event_pulse_charge_uah(
+    entry,
+    pulse_seconds: np.ndarray,
+    pulse_keep,
+    retained_charge_uah: float,
+) -> np.ndarray:
+    """Return retained charge aligned to a CORELLI event-time-zero series."""
+
+    pulses = np.asarray(pulse_seconds, dtype=float).reshape(-1)
+    values = _pulse_charge_values(entry)
+    keep = np.ones(pulses.size, dtype=bool)
+    if pulse_keep is not None and pulses.size:
+        keep &= np.asarray(pulse_keep, dtype=bool)[
+            np.minimum(np.arange(pulses.size), len(pulse_keep) - 1)
+        ]
+    if values is not None and values.size == pulses.size:
+        charge = np.asarray(values, dtype=float) / 3.6e9
+        charge[~keep] = 0.0
+        return charge
+    count = int(np.count_nonzero(keep))
+    charge = np.zeros(pulses.size, dtype=float)
+    if count:
+        charge[keep] = float(retained_charge_uah) / count
+    return charge
+
+
 def bin_corelli_group(
     group: DatasetGroup,
     *,
@@ -502,10 +569,14 @@ def bin_corelli_group(
     data_sum = np.zeros(shape)
     variance_sum = np.zeros(shape)
     hypothesis_count = np.zeros(shape)
+    metadata_exposure_uah = (
+        np.zeros(shape[physical_dimensions:], dtype=float) if metadata_specs else None
+    )
     selected = list(group.datasets if datasets is None else datasets)
     total_events = sum(int(dataset.metadata.get("event_count", 0)) for dataset in selected)
     processed = 0
     retained_charge = 0.0
+    normalization_scale = 0.0
     duty_cycles = []
     detector_norm = load_detector_normalization(config["normalization_file"]) if config.get("normalization_file") else None
     incident_flux = _load_corelli_flux(config["flux_file"]) if config.get("flux_file") else None
@@ -545,7 +616,29 @@ def bin_corelli_group(
             event_logs = _event_metadata_logs(entry, metadata_specs, source.name)
             duty_cycles.append(timing.duty_cycle)
             pulse_keep = _good_pulses(entry, float(config.get("bad_pulse_threshold", 0.0)))
-            retained_charge += _retained_proton_charge_uah(entry, float(config.get("bad_pulse_threshold", 0.0)))
+            run_charge = _retained_proton_charge_uah(
+                entry, float(config.get("bad_pulse_threshold", 0.0))
+            )
+            retained_charge += run_charge
+            normalization_scale += run_charge * timing.duty_cycle
+            if metadata_specs:
+                pulse_times = next(
+                    (
+                        np.asarray(bank["event_time_zero"], dtype=float)
+                        for bank_name, bank in entry.items()
+                        if bank_name.startswith("bank")
+                        and bank_name.endswith("_events")
+                        and "event_time_zero" in bank
+                    ),
+                    np.empty(0, dtype=float),
+                )
+                metadata_exposure_uah += timing.duty_cycle * _event_metadata_exposure_uah(
+                    pulse_times,
+                    _event_pulse_charge_uah(entry, pulse_times, pulse_keep, run_charge),
+                    event_logs,
+                    tuple(edges[physical_dimensions:]),
+                    assignments[physical_dimensions:],
+                )
             for bank_name, bank in entry.items():
                 if not (bank_name.startswith("bank") and bank_name.endswith("_events") and "event_id" in bank):
                     continue
@@ -794,15 +887,27 @@ def bin_corelli_group(
                         )
 
     duty = float(np.mean(duty_cycles)) if duty_cycles else 1.0
-    scale = retained_charge * duty
-    if scale <= 0.0:
-        scale = duty if duty > 0.0 else 1.0
-    signal = data_sum / scale
-    errors = np.sqrt(variance_sum) / scale
+    scale = normalization_scale if normalization_scale > 0.0 else (duty if duty > 0.0 else 1.0)
+    if metadata_exposure_uah is None:
+        output_scale = np.full(shape, scale, dtype=float)
+    else:
+        output_scale = np.broadcast_to(
+            metadata_exposure_uah.reshape((1,) * physical_dimensions + metadata_exposure_uah.shape),
+            shape,
+        )
+    normalized = output_scale > 0.0
+    signal = np.zeros_like(data_sum)
+    np.divide(data_sum, output_scale, out=signal, where=normalized)
+    errors = np.zeros_like(variance_sum)
+    np.divide(np.sqrt(variance_sum), output_scale, out=errors, where=normalized)
     nonempty = hypothesis_count > 0.0
     rms = float(np.sqrt(variance_sum.sum() / hypothesis_count.sum())) if np.any(nonempty) else 1.0
-    errors[~nonempty] = FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER * rms / scale
-    mask = (~nonempty) | (hypothesis_count < minimum_samples)
+    errors[(~nonempty) & normalized] = (
+        FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER
+        * rms
+        / output_scale[(~nonempty) & normalized]
+    )
+    mask = (~nonempty) | (hypothesis_count < minimum_samples) | ~normalized
     if powder:
         axes = (
             MDHistoAxis("|Q|", edges[0], "1/angstrom", "momentum", frame="Q modulus"),
@@ -832,10 +937,13 @@ def bin_corelli_group(
                 "wavelength_range_angstrom": [wavelength_min, wavelength_max],
                 "duty_cycle": duty,
                 "retained_proton_charge_uah": retained_charge,
+                "metadata_exposure_uah": (
+                    None if metadata_exposure_uah is None else metadata_exposure_uah.tolist()
+                ),
                 "channel_covariance": "DeltaE channels reconstructed from the same measured events are correlated; MDHisto errors contain diagonal variances only.",
                 "fractional_axes": assignments.tolist(),
                 "event_metadata_dimensions": [spec.to_dict() for spec in metadata_specs],
-                "normalization_limit": "Counts include optional pointwise solid-angle and incident-flux corrections and are normalized by retained proton charge and chopper duty cycle; full four-dimensional MDNorm trajectory normalization is not applied.",
+                "normalization_limit": "Counts include optional pointwise solid-angle and incident-flux corrections and are normalized by retained proton charge and chopper duty cycle. Event-time metadata slices are normalized by their own retained charge exposure; full four-dimensional MDNorm trajectory normalization is not applied.",
                 "solid_angle_file": config.get("normalization_file"),
                 "flux_file": config.get("flux_file"),
             },

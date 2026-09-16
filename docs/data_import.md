@@ -473,9 +473,11 @@ Timestamped `value` logs are not scan columns. For native raw CORELLI event
 collections, choose **One value per raw event pulse time** to linearly
 interpolate any numeric NeXus log containing sibling `time` and `value`
 datasets at each event pulse. This adds the selected condition as a true
-event-mode rebin axis. Supply an explicit Step, Bins, or Edges grid for this
-mode; values outside the recorded log interval are excluded. Other source
-types do not infer asynchronous alignment.
+event-mode rebin axis. Supply an explicit Step, Number of bins, or Edges grid
+for this mode; values outside the recorded log interval are excluded. Each
+event-time metadata bin is normalized by the retained proton charge assigned
+to its pulses, so unequal dwell times do not create false intensity changes.
+Other source types do not infer asynchronous alignment.
 
 Enter **Discrete coordinates**, such as `5, 10, 20, 30, 40, 50`, to use nominal
 temperatures. A reading of 10.24 K maps wholly to 10 K when the **Assignment
