@@ -440,6 +440,7 @@ def bin_corelli_group(
     symmetry_operations: Iterable[Iterable[Iterable[float]]] | None = None,
     coordinate_mode: str = "hkle",
     fractional_axes: Iterable[bool] | None = None,
+    metadata_dimensions: Iterable[Any] | None = None,
 ) -> MDHistoData:
     """Cross-correlate raw CORELLI events at requested finite DeltaE bins.
 
@@ -455,7 +456,17 @@ def bin_corelli_group(
     if coordinate_mode not in {"hkle", "powder"}:
         raise ValueError("CORELLI coordinate mode must be 'hkle' or 'powder'")
     powder = coordinate_mode == "powder"
-    expected_dimensions = 2 if powder else 4
+    if powder and metadata_dimensions:
+        raise ValueError("CORELLI event metadata dimensions require single-crystal HKLE output")
+    from .metadata_dimensions import MetadataDimension
+    metadata_specs = tuple(
+        item if isinstance(item, MetadataDimension) else MetadataDimension(**item)
+        for item in (metadata_dimensions or ())
+    )
+    if any(spec.sampling != "event_pulse_time" for spec in metadata_specs):
+        raise ValueError("raw CORELLI metadata dimensions must use event_pulse_time sampling")
+    physical_dimensions = 2 if powder else 4
+    expected_dimensions = physical_dimensions + len(metadata_specs)
     lo, hi, bins = (
         np.asarray(tuple(values), dtype=dtype)
         for values, dtype in ((lower, float), (upper, float), (num_bins, int))
@@ -467,11 +478,11 @@ def bin_corelli_group(
     edges = _requested_edges(lo, hi, bins, step_size, bin_edges=bin_edges)
     assignments = _corelli_fractional_axes(
         fractional_axes,
-        dimensions=expected_dimensions,
+        dimensions=physical_dimensions,
     )
     minimum_samples = _validated_minimum_samples(minimum_samples)
     shape = tuple(edge.size - 1 for edge in edges)
-    energy_centres = 0.5 * (edges[-1][:-1] + edges[-1][1:])
+    energy_centres = 0.5 * (edges[3 if not powder else 1][:-1] + edges[3 if not powder else 1][1:])
     basis = None
     basis_inverse = None
     symmetry = (np.eye(3),)
@@ -484,7 +495,9 @@ def bin_corelli_group(
             raise ValueError("CORELLI momentum axes cannot mix energy")
         basis_inverse = np.linalg.inv(basis)
         symmetry = _symmetry_matrices(symmetry_operations)
-        names = tuple(axis_names or ("H", "K", "L", "DeltaE"))
+        names = (*tuple(axis_names or ("H", "K", "L", "DeltaE")), *(spec.name for spec in metadata_specs))
+    if metadata_specs:
+        assignments = np.r_[assignments, [bool(spec.binning.fractional) for spec in metadata_specs]]
 
     data_sum = np.zeros(shape)
     variance_sum = np.zeros(shape)
@@ -529,6 +542,7 @@ def bin_corelli_group(
         with h5py.File(source, "r") as handle:
             entry = handle["entry"]
             timing = _read_chopper_timing_entry(entry, source.name)
+            event_logs = _event_metadata_logs(entry, metadata_specs, source.name)
             duty_cycles.append(timing.duty_cycle)
             pulse_keep = _good_pulses(entry, float(config.get("bad_pulse_threshold", 0.0)))
             retained_charge += _retained_proton_charge_uah(entry, float(config.get("bad_pulse_threshold", 0.0)))
@@ -561,6 +575,10 @@ def bin_corelli_group(
                         positions = positions[base_valid]
                         he3_exponents = he3_exponents[base_valid]
                         pulse_seconds = pulse_zero[pulse_index[base_valid]]
+                        event_metadata = tuple(
+                            np.interp(pulse_seconds, times, values, left=np.nan, right=np.nan)
+                            for times, values in event_logs
+                        )
                         accepted_ids = event_ids
                         solid_angle = (
                             np.ones(accepted_ids.size)
@@ -572,6 +590,7 @@ def bin_corelli_group(
                         if (
                             _CORELLI_NUMBA is not None
                             and energy_centres.size > 1
+                            and not metadata_specs
                             and total_tof.size * energy_centres.size
                             >= CORELLI_NUMBA_MIN_HYPOTHESES
                         ):
@@ -736,6 +755,8 @@ def bin_corelli_group(
                                     for operation in symmetry
                                 )
                             for coords in coordinate_blocks:
+                                if event_metadata:
+                                    coords = np.column_stack((coords, *(values[chosen] for values in event_metadata)))
                                 flat, point_indices, spatial = (
                                     _corelli_bin_contributions(
                                         coords,
@@ -790,7 +811,11 @@ def bin_corelli_group(
     else:
         axes = tuple(
             MDHistoAxis(name, edge, "meV" if index == 3 else "r.l.u.", "energy" if index == 3 else "momentum", frame="General Frame" if index == 3 else "HKL")
-            for index, (name, edge) in enumerate(zip(names, edges, strict=True))
+            for index, (name, edge) in enumerate(zip(names[:4], edges[:4], strict=True))
+        )
+        axes += tuple(
+            MDHistoAxis(spec.name, edge, spec.units, "unknown", metadata={"metadata_dimension": spec.to_dict(), "interpolation": "pulse_time_linear"})
+            for spec, edge in zip(metadata_specs, edges[4:], strict=True)
         )
     return MDHistoData(
         axes=axes,
@@ -809,6 +834,7 @@ def bin_corelli_group(
                 "retained_proton_charge_uah": retained_charge,
                 "channel_covariance": "DeltaE channels reconstructed from the same measured events are correlated; MDHisto errors contain diagonal variances only.",
                 "fractional_axes": assignments.tolist(),
+                "event_metadata_dimensions": [spec.to_dict() for spec in metadata_specs],
                 "normalization_limit": "Counts include optional pointwise solid-angle and incident-flux corrections and are normalized by retained proton charge and chopper duty cycle; full four-dimensional MDNorm trajectory normalization is not applied.",
                 "solid_angle_file": config.get("normalization_file"),
                 "flux_file": config.get("flux_file"),
@@ -871,6 +897,39 @@ def _read_chopper_timing(path: Path) -> _ChopperTiming:
 
     with h5py.File(path, "r") as handle:
         return _read_chopper_timing_entry(handle["entry"], path.name)
+
+
+def _event_metadata_logs(entry, specs, source_name: str):
+    """Return timestamp/value pairs for event-aligned NeXus metadata logs."""
+
+    result = []
+    for spec in specs:
+        path = str(spec.source).replace(">", "/").strip("/")
+        if path.startswith("entry/"):
+            path = path.removeprefix("entry/")
+        if path.endswith("/value"):
+            path = path.removesuffix("/value")
+        try:
+            log = entry[path]
+            times = np.asarray(log["time"], dtype=float).reshape(-1)
+            values = np.asarray(log["value"], dtype=float).reshape(-1)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{source_name}: event metadata {spec.name!r} requires a NeXus log "
+                f"with time and value datasets at entry/{path}"
+            ) from exc
+        count = min(times.size, values.size)
+        times, values = times[:count], values[:count]
+        valid = np.isfinite(times) & np.isfinite(values)
+        times, values = times[valid], values[valid]
+        if times.size < 2 or np.any(np.diff(times) < 0):
+            raise ValueError(
+                f"{source_name}: event metadata {spec.name!r} needs at least two "
+                "finite, increasing timestamps"
+            )
+        unique = np.r_[True, np.diff(times) > 0]
+        result.append((times[unique], values[unique]))
+    return tuple(result)
 
 
 def _read_chopper_timing_entry(entry, source_name: str) -> _ChopperTiming:

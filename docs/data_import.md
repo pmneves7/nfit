@@ -469,8 +469,13 @@ reads the loaded point temperatures.
 summary to every point in that dataset. **One value per measured point** accepts
 scalar values, arrays aligned to the loaded points or histogram cells, and
 MACS scan columns under `entry/data` repeated over their detector channels.
-Timestamped `value` logs are not scan columns. Asynchronous logs require an
-explicit time-alignment adapter; nfit does not interpolate or guess alignment.
+Timestamped `value` logs are not scan columns. For native raw CORELLI event
+collections, choose **One value per raw event pulse time** to linearly
+interpolate any numeric NeXus log containing sibling `time` and `value`
+datasets at each event pulse. This adds the selected condition as a true
+event-mode rebin axis. Supply an explicit Step, Bins, or Edges grid for this
+mode; values outside the recorded log interval are excluded. Other source
+types do not infer asynchronous alignment.
 
 Enter **Discrete coordinates**, such as `5, 10, 20, 30, 40, 50`, to use nominal
 temperatures. A reading of 10.24 K maps wholly to 10 K when the **Assignment

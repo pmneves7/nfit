@@ -263,6 +263,7 @@ def bin_raw_dgs_group(
     symmetry_operations: Iterable[Iterable[Iterable[float]]] | None = None,
     coordinate_mode: str = "hkle",
     fractional_axes: Iterable[bool] | None = None,
+    metadata_dimensions: Iterable[Any] | None = None,
 ) -> MDHistoData:
     """Reduce raw direct-geometry event banks into an HKLE histogram.
 
@@ -295,6 +296,7 @@ def bin_raw_dgs_group(
             symmetry_operations=symmetry_operations,
             coordinate_mode=coordinate_mode,
             fractional_axes=fractional_axes,
+            metadata_dimensions=metadata_dimensions,
         )
     selected = list(group.datasets if datasets is None else datasets)
     if coordinate_mode not in {"hkle", "powder"}:

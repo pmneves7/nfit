@@ -324,12 +324,13 @@ def metadata_dimensions_panel(explorer, group, *, embedded: bool = False):
         sampling = QtWidgets.QComboBox()
         sampling.setObjectName("metadata_dimension_sampling")
         sampling.setToolTip(
-            "Mean or median assigns one condition to the whole dataset. Per point requires scalar or explicitly aligned point/scan values; asynchronous time logs are rejected."
+            "Mean or median assigns one condition to the whole dataset. Per point requires scalar or explicitly aligned point/scan values. Event pulse time linearly aligns a timestamped NeXus log to each raw CORELLI event pulse."
         )
         for label, key in (
             ("One value per dataset: mean", "dataset_mean"),
             ("One value per dataset: median", "dataset_median"),
             ("One value per measured point", "per_point"),
+            ("One value per raw event pulse time", "event_pulse_time"),
         ):
             sampling.addItem(label, key)
         sampling.setCurrentIndex(sampling.findData(current.get("sampling", "dataset_mean")))

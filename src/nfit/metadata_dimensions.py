@@ -117,8 +117,17 @@ class MetadataDimension:
             object.__setattr__(self, "binning", MetadataBinning(**self.binning))
         if not self.name.strip() or not self.source.strip():
             raise ValueError("dimension name and metadata channel are required")
-        if self.sampling not in {"dataset_mean", "dataset_median", "per_point"}:
-            raise ValueError("sampling must be dataset_mean, dataset_median, or per_point")
+        if self.sampling not in {
+            "dataset_mean",
+            "dataset_median",
+            "per_point",
+            "event_pulse_time",
+        }:
+            raise ValueError(
+                "sampling must be dataset_mean, dataset_median, per_point, or event_pulse_time"
+            )
+        if self.sampling == "event_pulse_time" and self.binning is None:
+            raise ValueError("event-pulse-time metadata requires an explicit binning grid")
         if not np.isfinite(self.tolerance) or self.tolerance < 0:
             raise ValueError("assignment tolerance must be finite and nonnegative")
         if self.centers is not None:

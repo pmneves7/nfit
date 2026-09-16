@@ -1078,9 +1078,13 @@ def set_metadata_dimensions(group, dimensions) -> None:
             _dataset_composite_kind(item)
             for item in _composite_candidates(group, include_backgrounds=True)
         }
-        if not kinds or not kinds <= {"point_data_4d", "mdhisto"}:
+        raw_event_metadata = (
+            kinds == {"raw_dgs_nexus"}
+            and all(spec.sampling == "event_pulse_time" for spec in specs)
+        )
+        if not raw_event_metadata and (not kinds or not kinds <= {"point_data_4d", "mdhisto"}):
             raise ValueError(
-                "metadata dimensions currently require loaded neutron points or histograms; raw event logs need an alignment adapter"
+                "metadata dimensions require loaded neutron points or histograms; raw event data require event-pulse-time sampling"
             )
     group.metadata["metadata_dimensions"] = [spec.to_dict() for spec in specs]
     config["stale"] = True
@@ -1096,6 +1100,44 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
     if _hierarchical_composite_scopes(group):
         raise ValueError(
             "configure metadata dimensions on the collection containing the source datasets"
+        )
+    node = group.node if isinstance(group, _CompositeScope) else group
+    raw_config = node.metadata.get("raw_dgs", {}) if isinstance(node, DatasetGroup) else {}
+    if raw_config.get("format") == "corelli-correlation-nexus":
+        if any(spec.sampling != "event_pulse_time" for spec in specs):
+            raise ValueError(
+                "raw CORELLI metadata dimensions must use event-pulse-time sampling"
+            )
+        unified_config = copy.deepcopy(config)
+        unified_config["axes"] = [
+            *unified_config.get("axes", []),
+            *(metadata_rebin_axis_config(spec) for spec in specs),
+        ]
+        lower, upper, num_bins = _composite_rebin_bounds(unified_config)
+        return bin_raw_dgs_group(
+            node,
+            lower=lower,
+            upper=upper,
+            num_bins=num_bins,
+            step_size=_composite_rebin_step_sizes(unified_config),
+            bin_edges=_composite_rebin_bin_edges(unified_config),
+            minimum_samples=_rebin_minimum_samples(unified_config),
+            datasets=_composite_candidates(group),
+            vectors=[
+                axis.get("vector", _identity_vector(index, 4))
+                for index, axis in enumerate(config.get("axes", [])[:4])
+            ],
+            axis_names=[
+                str(axis.get("name", ("H", "K", "L", "DeltaE")[index]))
+                for index, axis in enumerate(config.get("axes", [])[:4])
+            ],
+            max_batch_bytes=_rebin_max_batch_bytes(unified_config),
+            progress_callback=progress_callback,
+            symmetry_operations=_rebin_symmetry_matrices(
+                config, _composite_root(group).lattice_parameters
+            ),
+            fractional_axes=_rebin_fractional_axes(config, config.get("axes", [])),
+            metadata_dimensions=specs,
         )
     entries = []
     source_datasets = _composite_candidates(group, include_backgrounds=True)

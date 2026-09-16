@@ -64,6 +64,9 @@ def _write_corelli(path, *, incident_energy=50.0, delta_e=0.0):
         for index, value in enumerate((10.0, 20.0, 30.0), start=1):
             axis = logs.create_group(f"BL9:Mot:Sample:Axis{index}")
             axis.create_dataset("value", data=[value])
+        temperature = logs.create_group("sample_temperature")
+        temperature.create_dataset("time", data=[0.0, 1.0])
+        temperature.create_dataset("value", data=[10.0, 20.0])
 
 
 def test_corelli_metadata_and_finite_energy_solver(tmp_path):
@@ -183,6 +186,33 @@ def test_corelli_group_reconstructs_requested_energy_channel(tmp_path):
     assert reconstruction["fractional_axes"] == [True, True, True, False]
     assert result.metadata["rebin"]["fractional_axes"] == [True, True, True, False]
     assert "correlated" in reconstruction["channel_covariance"]
+
+
+def test_corelli_event_pulse_time_metadata_adds_a_histogram_axis(tmp_path):
+    source = tmp_path / "CORELLI_7.nxs.h5"
+    _write_corelli(source)
+    group = corelli_dataset_group([source])
+    group.metadata["raw_dgs"]["timing_offset_ns"] = 0
+    group.metadata["raw_dgs"]["bad_pulse_threshold"] = 0
+    result = bin_corelli_group(
+        group,
+        lower=[-100.0, -100.0, -100.0, -1.0, 0.0],
+        upper=[100.0, 100.0, 100.0, 1.0, 20.0],
+        num_bins=[1, 1, 1, 1, 2],
+        max_batch_bytes=128,
+        metadata_dimensions=[
+            {
+                "name": "Temperature",
+                "source": "entry/DASlogs/sample_temperature",
+                "units": "K",
+                "sampling": "event_pulse_time",
+                "binning": {"lower": 0.0, "upper": 20.0, "num_bins": 2},
+            }
+        ],
+    )
+    assert [axis.name for axis in result.axes] == ["H", "K", "L", "DeltaE", "Temperature"]
+    assert result.num_events.sum() == pytest.approx(1.0)
+    assert result.axes[-1].metadata["interpolation"] == "pulse_time_linear"
 
 
 def test_generic_raw_import_dispatches_corelli_batches(tmp_path, monkeypatch):
