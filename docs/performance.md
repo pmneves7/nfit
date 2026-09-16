@@ -180,6 +180,9 @@ version and a signature of the source, rebin settings, masks, and backgrounds.
 nfit reuses compatible cache formats and discards a cache when its saved
 signature no longer matches the live recipe. Incompatible older formats are
 recomputed from their source data.
+MDEvent powder reductions integrate detector-trajectory normalization in
+compiled parallel batches. Progress and cancellation are checked between
+batches, including while a save is refreshing several cached powder binnings.
 Source-backed cache signatures use the source path, size, and modification time,
 so lazily loading an unchanged source after opening a project does not invalidate
 its restored binning. Editing one named binning invalidates only that result;

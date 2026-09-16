@@ -1077,6 +1077,11 @@ def _powder_trajectory_normalization(
         int(np.count_nonzero(solid > 0.0))
         for _theta, solid, _incident_energy, _energy_bounds, _charge in payloads
     )
+    accelerated = (
+        _MDEVENT_NUMBA is not None
+        and hasattr(_MDEVENT_NUMBA, "run_powder_trajectory_normalization")
+    )
+    workers = _trajectory_worker_count(int(np.prod(shape))) if accelerated else 1
     if progress_callback is not None:
         progress_callback(
             {
@@ -1087,12 +1092,60 @@ def _powder_trajectory_normalization(
                     f"integrating {trajectory_total:,} powder detector trajectories"
                 ),
                 "output_bins": int(np.prod(shape)),
+                "workers": workers,
             }
         )
     completed = 0
     report_stride = max(trajectory_total // 100, 1)
+    next_report = report_stride
+
+    def report_progress() -> None:
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "mdevent_normalization",
+                    "iteration": completed,
+                    "total": trajectory_total,
+                    "message": (
+                        f"integrated {completed:,}/{trajectory_total:,} "
+                        "powder detector trajectories"
+                    ),
+                    "output_bins": int(np.prod(shape)),
+                    "workers": workers,
+                }
+            )
+
     for theta, solid, incident_energy, energy_bounds, charge in payloads:
-        for detector_index in np.flatnonzero(solid > 0.0):
+        active = np.flatnonzero(solid > 0.0)
+        if accelerated:
+            # Keep the compiled work bounded so GUI progress and cancellation
+            # are serviced even for instruments with many detectors.
+            detector_batch = 1_024
+            limits = np.asarray(
+                [[float(np.min(energy_bounds)), float(np.max(energy_bounds))]],
+                dtype=float,
+            )
+            for start in range(0, active.size, detector_batch):
+                batch = active[start : start + detector_batch]
+                flat = _MDEVENT_NUMBA.run_powder_trajectory_normalization(
+                    np.ascontiguousarray(theta[batch], dtype=float),
+                    np.ascontiguousarray(solid[batch], dtype=float),
+                    np.asarray([incident_energy], dtype=float),
+                    limits,
+                    np.asarray([charge], dtype=float),
+                    np.asarray(edges[0], dtype=float),
+                    np.asarray(edges[1], dtype=float),
+                    np.asarray(shape, dtype=np.int64),
+                    workers=workers,
+                )
+                result += np.asarray(flat, dtype=float).reshape(shape)
+                completed += int(batch.size)
+                if completed == trajectory_total or completed >= next_report:
+                    report_progress()
+                    while next_report <= completed:
+                        next_report += report_stride
+            continue
+        for detector_index in active:
             _accumulate_powder_detector_trajectory(
                 result,
                 edges,
@@ -1105,18 +1158,7 @@ def _powder_trajectory_normalization(
             if progress_callback is not None and (
                 completed == trajectory_total or completed % report_stride == 0
             ):
-                progress_callback(
-                    {
-                        "stage": "mdevent_normalization",
-                        "iteration": completed,
-                        "total": trajectory_total,
-                        "message": (
-                            f"integrated {completed:,}/{trajectory_total:,} "
-                            "powder detector trajectories"
-                        ),
-                        "output_bins": int(np.prod(shape)),
-                    }
-                )
+                report_progress()
     return result
 
 

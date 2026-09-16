@@ -513,6 +513,11 @@ def bin_raw_dgs_group(
             detector_norm,
             detector_mask,
             energy_bounds_by_dataset_id,
+            **(
+                {"progress_callback": progress_callback}
+                if progress_callback is not None
+                else {}
+            ),
         )
     else:
         normalization = _trajectory_normalization(
@@ -525,6 +530,11 @@ def bin_raw_dgs_group(
             detector_mask,
             symmetry,
             energy_bounds_by_dataset_id,
+            **(
+                {"progress_callback": progress_callback}
+                if progress_callback is not None
+                else {}
+            ),
         )
     covered = normalization > 0.0
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -640,6 +650,8 @@ def _trajectory_normalization(
     detector_mask,
     symmetry_operations=None,
     energy_bounds_by_dataset_id=None,
+    *,
+    progress_callback=None,
 ):
     """Native MDNorm-style detector trajectories for compatible direct-geometry runs."""
     config = group.metadata["raw_dgs"]
@@ -697,31 +709,78 @@ def _trajectory_normalization(
             (inverse, ei, energy_bounds, charge, direction, solid)
             for inverse in inverses
         )
-    if (
-        _MDEVENT_NUMBA is not None
-        and detector_payload is not None
-        and shared_detector_geometry
-        and len(symmetry) == 1
-    ):
+    task_total = sum(int(np.count_nonzero(item[5] > 0.0)) for item in payloads)
+    accelerated = _MDEVENT_NUMBA is not None
+    workers = _trajectory_worker_count(int(np.prod(shape))) if accelerated else 1
+    completed = 0
+
+    def report_progress():
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "raw_dgs_normalization",
+                    "iteration": completed,
+                    "total": task_total,
+                    "message": (
+                        f"integrated {completed:,}/{task_total:,} detector trajectories"
+                    ),
+                    "workers": workers,
+                    "output_bins": int(np.prod(shape)),
+                }
+            )
+
+    report_progress()
+    if accelerated and detector_payload is not None and shared_detector_geometry:
         _, theta, phi, solid = detector_payload
-        flat = _MDEVENT_NUMBA.run_trajectory_normalization(
-            theta,
-            phi,
-            solid,
-            np.asarray([item[0] for item in payloads]),
-            np.asarray([item[1] for item in payloads]),
-            np.asarray([item[2] for item in payloads]),
-            np.asarray([item[3] for item in payloads]),
-            *[np.asarray(edge) for edge in edges],
-            np.asarray(shape, dtype=np.int64),
-            workers=_trajectory_worker_count(int(np.prod(shape))),
-        )
-        return np.asarray(flat).reshape(shape)
+        detector_count = max(int(theta.size), 1)
+        payload_batch = max(1, 32_000_000 // detector_count)
+        for start in range(0, len(payloads), payload_batch):
+            batch = payloads[start : start + payload_batch]
+            flat = _MDEVENT_NUMBA.run_trajectory_normalization(
+                theta,
+                phi,
+                solid,
+                np.asarray([item[0] for item in batch]),
+                np.asarray([item[1] for item in batch]),
+                np.asarray([item[2] for item in batch]),
+                np.asarray([item[3] for item in batch]),
+                *[np.asarray(edge) for edge in edges],
+                np.asarray(shape, dtype=np.int64),
+                workers=workers,
+            )
+            result += np.asarray(flat).reshape(shape)
+            completed += sum(int(np.count_nonzero(item[5] > 0.0)) for item in batch)
+            report_progress()
+        return result
+    if accelerated:
+        for inverse, ei, energy_bounds, charge, direction, solid in payloads:
+            theta = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
+            phi = np.arctan2(direction[:, 1], direction[:, 0])
+            flat = _MDEVENT_NUMBA.run_trajectory_normalization(
+                theta,
+                phi,
+                solid,
+                np.asarray([inverse]),
+                np.asarray([ei]),
+                np.asarray([energy_bounds]),
+                np.asarray([charge]),
+                *[np.asarray(edge) for edge in edges],
+                np.asarray(shape, dtype=np.int64),
+                workers=workers,
+            )
+            result += np.asarray(flat).reshape(shape)
+            completed += int(np.count_nonzero(solid > 0.0))
+            report_progress()
+        return result
+    report_stride = max(task_total // 100, 1)
     for inverse, ei, energy_bounds, charge, direction, solid in payloads:
         for index in np.flatnonzero(solid > 0.0):
             _accumulate_detector_trajectory(
                 result, edges, inverse, direction[index], ei, energy_bounds, charge * solid[index]
             )
+            completed += 1
+            if completed == task_total or completed % report_stride == 0:
+                report_progress()
     return result
 
 
@@ -733,14 +792,14 @@ def _powder_trajectory_normalization(
     detector_norm,
     detector_mask,
     energy_bounds_by_dataset_id,
+    *,
+    progress_callback=None,
 ):
     """Accumulate the radial MDNorm-style denominator for raw runs."""
 
     config = group.metadata["raw_dgs"]
     result = np.zeros(shape)
     payloads = []
-    detector_payload = None
-    shared_detector_geometry = True
     for dataset in datasets:
         info = inspect_raw_dgs_run(dataset.metadata["source_file"])
         geometry = _detector_geometry(info.path)
@@ -766,38 +825,52 @@ def _powder_trajectory_normalization(
         )
         energy_bounds = energy_bounds_by_dataset_id[dataset.id]
         scattering_angles = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
-        current_detector_payload = (geometry.detector_ids, scattering_angles, solid)
-        if detector_payload is None:
-            detector_payload = current_detector_payload
-        else:
-            shared_detector_geometry &= all(
-                first.shape == current.shape and np.array_equal(first, current)
-                for first, current in zip(
-                    detector_payload, current_detector_payload, strict=True
-                )
-            )
         payloads.append(
             (incident_energy, energy_bounds, charge, scattering_angles, solid)
         )
-    if (
+    task_total = sum(int(np.count_nonzero(item[4] > 0.0)) for item in payloads)
+    accelerated = (
         _MDEVENT_NUMBA is not None
         and hasattr(_MDEVENT_NUMBA, "run_powder_trajectory_normalization")
-        and detector_payload is not None
-        and shared_detector_geometry
-    ):
-        _, scattering_angles, solid = detector_payload
-        flat = _MDEVENT_NUMBA.run_powder_trajectory_normalization(
-            scattering_angles,
-            solid,
-            np.asarray([item[0] for item in payloads]),
-            np.asarray([item[1] for item in payloads]),
-            np.asarray([item[2] for item in payloads]),
-            np.asarray(edges[0]),
-            np.asarray(edges[1]),
-            np.asarray(shape, dtype=np.int64),
-            workers=_trajectory_worker_count(int(np.prod(shape))),
-        )
-        return np.asarray(flat).reshape(shape)
+    )
+    workers = _trajectory_worker_count(int(np.prod(shape))) if accelerated else 1
+    completed = 0
+
+    def report_progress():
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "raw_dgs_normalization",
+                    "iteration": completed,
+                    "total": task_total,
+                    "message": (
+                        f"integrated {completed:,}/{task_total:,} "
+                        "powder detector trajectories"
+                    ),
+                    "workers": workers,
+                    "output_bins": int(np.prod(shape)),
+                }
+            )
+
+    report_progress()
+    if accelerated:
+        for incident_energy, energy_bounds, charge, scattering_angles, solid in payloads:
+            flat = _MDEVENT_NUMBA.run_powder_trajectory_normalization(
+                scattering_angles,
+                solid,
+                np.asarray([incident_energy]),
+                np.asarray([energy_bounds]),
+                np.asarray([charge]),
+                np.asarray(edges[0]),
+                np.asarray(edges[1]),
+                np.asarray(shape, dtype=np.int64),
+                workers=workers,
+            )
+            result += np.asarray(flat).reshape(shape)
+            completed += int(np.count_nonzero(solid > 0.0))
+            report_progress()
+        return result
+    report_stride = max(task_total // 100, 1)
     for incident_energy, energy_bounds, charge, scattering_angles, solid in payloads:
         for detector_index in np.flatnonzero(solid > 0.0):
             _accumulate_powder_detector_trajectory(
@@ -808,6 +881,9 @@ def _powder_trajectory_normalization(
                 energy_bounds,
                 charge * float(solid[detector_index]),
             )
+            completed += 1
+            if completed == task_total or completed % report_stride == 0:
+                report_progress()
     return result
 
 

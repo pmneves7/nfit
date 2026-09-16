@@ -160,6 +160,77 @@ def test_raw_dgs_trajectory_normalization_keeps_each_runs_detector_geometry(monk
     assert energy_bounds == [(-19.0, 19.0), (-19.0, 19.0)]
 
 
+def test_raw_dgs_mismatched_detector_geometries_still_use_compiled_kernels(
+    monkeypatch, tmp_path
+):
+    first_source = tmp_path / "SEQ_42.nxs.h5"
+    second_source = tmp_path / "SEQ_43.nxs.h5"
+    _write_raw_dgs(first_source)
+    _write_raw_dgs(second_source)
+    group = raw_dgs_dataset_group([first_source, second_source])
+    geometries = {
+        first_source: raw_dgs._DetectorGeometry(
+            detector_ids=np.array([42]),
+            positions=np.array([[1.0, 0.0, 0.0]]),
+            he3_exponents=np.zeros(1),
+        ),
+        second_source: raw_dgs._DetectorGeometry(
+            detector_ids=np.array([42]),
+            positions=np.array([[0.0, 1.0, 0.0]]),
+            he3_exponents=np.zeros(1),
+        ),
+    }
+    calls = {"hkle": 0, "powder": 0}
+
+    class Kernels:
+        @staticmethod
+        def run_trajectory_normalization(*args, workers):
+            calls["hkle"] += 1
+            return np.zeros(int(np.prod(args[-1])))
+
+        @staticmethod
+        def run_powder_trajectory_normalization(*args, workers):
+            calls["powder"] += 1
+            return np.zeros(int(np.prod(args[-1])))
+
+    monkeypatch.setattr(raw_dgs, "_detector_geometry", lambda path: geometries[path])
+    monkeypatch.setattr(raw_dgs, "_MDEVENT_NUMBA", Kernels)
+    monkeypatch.setattr(raw_dgs, "_trajectory_worker_count", lambda _size: 1)
+    monkeypatch.setattr(
+        raw_dgs,
+        "_accumulate_detector_trajectory",
+        lambda *_args: pytest.fail("scalar HKLE normalization was used"),
+    )
+    monkeypatch.setattr(
+        raw_dgs,
+        "_accumulate_powder_detector_trajectory",
+        lambda *_args: pytest.fail("scalar powder normalization was used"),
+    )
+    bounds = {dataset.id: (-19.0, 19.0) for dataset in group.datasets}
+
+    raw_dgs._trajectory_normalization(
+        group,
+        group.datasets,
+        [np.array([-10.0, 10.0])] * 4,
+        (1, 1, 1, 1),
+        np.eye(4),
+        None,
+        None,
+        energy_bounds_by_dataset_id=bounds,
+    )
+    raw_dgs._powder_trajectory_normalization(
+        group,
+        group.datasets,
+        [np.array([0.0, 10.0]), np.array([-19.0, 19.0])],
+        (1, 1),
+        None,
+        None,
+        bounds,
+    )
+
+    assert calls == {"hkle": 2, "powder": 2}
+
+
 def test_raw_dgs_custom_energy_limits_apply_to_events_and_normalization(
     monkeypatch, tmp_path
 ):
@@ -170,7 +241,7 @@ def test_raw_dgs_custom_energy_limits_apply_to_events_and_normalization(
     group.metadata["raw_dgs"]["energy_max_fraction"] = 0.9
     captured = {}
 
-    def normalization(*args):
+    def normalization(*args, **_kwargs):
         captured["bounds"] = args[-1]
         return np.ones(args[3])
 
