@@ -1018,30 +1018,39 @@ def _dataset_axes_group_box(
     symmetry_row.addWidget(symmetry_expression, 1)
     symmetry_row.addWidget(symmetry_preview)
     controls_layout.addLayout(symmetry_row, footer_row + 2, 0, 1, last_column + 1)
+    from .project_rebin_panels import rebin_memory_estimate_label
+
+    cached_rebin_data = _peek_cached_dataset_view(
+        dataset,
+        extra_masks=(effective_dataset_masks(group, dataset) if group is not None else None),
+        rebin_config=config,
+        cache_id=None if selected_binning["fit"] else selected_binning["id"],
+    )
+    memory_label = rebin_memory_estimate_label(
+        config, data=cached_rebin_data, object_prefix="dataset_rebin"
+    )
+    controls_layout.addWidget(memory_label, footer_row + 3, 0, 1, last_column + 1)
     status_label = QtWidgets.QLabel(_dataset_rebin_status_text(dataset, config))
     status_label.setObjectName("dataset_rebin_status")
     status_label.setWordWrap(True)
     status_label.setToolTip(
         "Shows whether the cached rebinned data is current. Pending manual rebinning will be forced automatically for fit, view, and export operations."
     )
-    controls_layout.addWidget(status_label, footer_row + 3, 0, 1, last_column + 1)
+    controls_layout.addWidget(status_label, footer_row + 4, 0, 1, last_column + 1)
     action_row = QtWidgets.QHBoxLayout()
     action_row.addWidget(rebin_now_button)
     action_row.addWidget(rebin_all_button)
     action_row.addWidget(create_button)
     action_row.addWidget(save_rebin_button)
     action_row.addStretch(1)
-    controls_layout.addLayout(action_row, footer_row + 4, 0, 1, last_column + 1)
+    controls_layout.addLayout(action_row, footer_row + 5, 0, 1, last_column + 1)
     controls.addTab(settings_tab, "Rebin settings")
     from .project_rebin_panels import rebin_bin_information_widget
 
     controls.addTab(
         rebin_bin_information_widget(
             config,
-            data=_peek_cached_dataset_view(
-                dataset,
-                extra_masks=(effective_dataset_masks(group, dataset) if group is not None else None),
-            ),
+            data=cached_rebin_data,
             object_prefix="dataset_rebin",
         ),
         "Bin information",

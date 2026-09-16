@@ -59,11 +59,8 @@ def rebin_bin_information_widget(
     layout = QtWidgets.QVBoxLayout(widget)
     layout.setContentsMargins(8, 8, 8, 8)
 
-    exact = isinstance(data, MDHistoData)
+    exact, shape, total_bins, payload_bytes = rebin_memory_estimate(config, data)
     axes = _axis_information(config, data if exact else None)
-    shape = tuple(item[3] for item in axes)
-    total_bins = int(np.prod(shape, dtype=np.int64)) if shape else 0
-    payload_bytes = _mdhisto_payload_bytes(data) if exact else total_bins * 33
     qualifier = "Resolved cached grid" if exact else "Configured grid estimate"
     summary = QtWidgets.QLabel(
         f"{qualifier}: {shape or '-'} · {total_bins:,} bins"
@@ -78,7 +75,7 @@ def rebin_bin_information_widget(
 
     size_parts = [
         f"Numeric payload: {'exactly' if exact else 'about'} {_format_bytes(payload_bytes)} in memory",
-        f"estimated uncompressed saved arrays: {_format_bytes(payload_bytes)}",
+        "compressed disk size: data-dependent",
     ]
     if estimated_seconds is not None and np.isfinite(estimated_seconds):
         size_parts.append(f"estimated rebin time: {estimated_seconds:.1f} s")
@@ -87,9 +84,9 @@ def rebin_bin_information_widget(
     size.setWordWrap(True)
     size.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
     size.setToolTip(
-        "Rebin caches use memory with temporary disk overflow for larger results. "
-        "File > Cache binnings also embeds them in the project for reuse after reopening. "
-        "Compressed project size varies."
+        "The memory value counts the output numerical arrays. Compressed NPZ and project "
+        "sizes cannot be predicted reliably because they depend on the values, masks, and "
+        "compression ratio. nfit does not automatically spill this cache to disk."
     )
     layout.addWidget(size)
 
@@ -130,6 +127,51 @@ def rebin_bin_information_widget(
     tree.resizeColumnToContents(3)
     layout.addWidget(tree, 1)
     return widget
+
+
+def rebin_memory_estimate(
+    config: Mapping[str, Any], data: Any | None = None
+) -> tuple[bool, tuple[int, ...], int, int]:
+    """Return exact/cached state, shape, bins, and numerical payload bytes."""
+
+    exact = isinstance(data, MDHistoData)
+    axes = _axis_information(config, data if exact else None)
+    shape = tuple(item[3] for item in axes)
+    total_bins = int(np.prod(shape, dtype=np.int64)) if shape else 0
+    payload_bytes = _mdhisto_payload_bytes(data) if exact else total_bins * 33
+    return exact, shape, total_bins, payload_bytes
+
+
+def rebin_memory_estimate_label(
+    config: Mapping[str, Any], *, data: Any | None, object_prefix: str
+) -> Any:
+    """Build the memory/disk estimate shown beside editable rebin settings."""
+
+    from PySide6 import QtCore, QtWidgets
+
+    label = QtWidgets.QLabel(rebin_memory_estimate_text(config, data=data))
+    label.setObjectName(f"{object_prefix}_memory_estimate")
+    label.setWordWrap(True)
+    label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+    label.setToolTip(
+        "This estimates the numerical output arrays from the configured grid, or reports "
+        "the exact cached payload. Peak rebin memory can be higher because source and worker "
+        "arrays also exist. Compressed disk size depends on the actual values and masks."
+    )
+    return label
+
+
+def rebin_memory_estimate_text(
+    config: Mapping[str, Any], *, data: Any | None
+) -> str:
+    """Return the concise memory and disk-size description for a rebin."""
+
+    exact, _shape, _total_bins, payload_bytes = rebin_memory_estimate(config, data)
+    return (
+        f"{'Cached result memory' if exact else 'Estimated result memory'}: "
+        f"{'exactly ' if exact else 'about '}{_format_bytes(payload_bytes)} · "
+        "compressed disk size: data-dependent"
+    )
 
 
 def _axis_information(

@@ -190,6 +190,63 @@ def test_save_reuses_binnings_evicted_from_memory(tmp_path, monkeypatch):
     project_gui._COMPOSITE_DATA_CACHE.clear()
 
 
+def test_tree_cache_badges_follow_current_dataset_and_composite_bins():
+    from nfit import project_composites
+
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+
+    direct = DatasetEntry("direct", _tiny_mdhisto_data(1.0), kind="mdhisto")
+    direct_config = project_data.dataset_rebin_config(direct)
+    direct_config.update(enabled=True, minimum_coverage=0.0)
+    nested = DatasetGroup(
+        "nested",
+        datasets=[DatasetEntry("run", _tiny_mdhisto_data(2.0), kind="mdhisto")],
+    )
+    root = DataGroup("Workspace1", datasets=[direct], subgroups=[nested])
+    scope = project_gui._composite_scope(root, nested)
+    composite_config = project_gui.data_group_composite_config(scope)
+    composite_config.update(enabled=True, minimum_coverage=0.0)
+
+    assert project_data.dataset_for_slice_viewer(direct, force_rebin=True) is not None
+    assert project_composites._cached_composite_dataset_data(
+        scope, force_rebin=True
+    ) is not None
+    explorer = NfitProjectExplorer(NfitProject([root]))
+    datasets_item = explorer.tree.topLevelItem(0).child(0)
+    dataset_item = datasets_item.child(0)
+    subgroup_item = datasets_item.child(1)
+
+    assert project_gui._dataset_cached_binnings_current(root, direct)
+    assert project_gui._composite_cached_binnings_current(root, nested)
+    assert dataset_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "dataset", cached=True
+    ).cacheKey()
+    assert subgroup_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "folder", cached=True
+    ).cacheKey()
+    assert "cached and up to date" in dataset_item.toolTip(0)
+    assert "cached and up to date" in subgroup_item.toolTip(0)
+
+    explorer.tree.setCurrentItem(dataset_item)
+    direct_config["auto_rebin"] = False
+    direct_config["minimum_coverage"] = 0.5
+    explorer._after_dataset_rebin_changed(direct, root)
+    composite_config["minimum_coverage"] = 0.5
+    explorer._refresh_cache_badges()
+    assert dataset_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "dataset"
+    ).cacheKey()
+    assert subgroup_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "folder"
+    ).cacheKey()
+    assert not dataset_item.toolTip(0)
+    assert not subgroup_item.toolTip(0)
+
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+
+
 def test_hierarchical_rebin_retains_matching_child_caches(monkeypatch):
     from nfit import project_composites
     project_gui._COMPOSITE_DATA_CACHE.clear()
@@ -805,6 +862,13 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
         "Rebin settings",
         "Bin information",
     ]
+    memory_estimate = rebin_panel.findChild(
+        QtWidgets.QLabel, "dataset_rebin_memory_estimate"
+    )
+    assert memory_estimate is not None
+    assert "result memory" in memory_estimate.text()
+    assert "compressed disk size: data-dependent" in memory_estimate.text()
+    assert memory_estimate.toolTip()
     assignment = rebin_panel.findChild(
         QtWidgets.QComboBox, "dataset_rebin_axis_assignment_0"
     )
@@ -1651,6 +1715,12 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
         "Physics",
         "Bin information",
     ]
+    memory_estimate = explorer.details_widget.findChild(
+        QtWidgets.QLabel, "group_composite_memory_estimate"
+    )
+    assert memory_estimate is not None
+    assert "result memory" in memory_estimate.text()
+    assert "compressed disk size: data-dependent" in memory_estimate.text()
     binning_combo = explorer.details_widget.findChild(
         QtWidgets.QComboBox, "group_composite_binning"
     )

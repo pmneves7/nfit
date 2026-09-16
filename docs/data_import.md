@@ -611,7 +611,11 @@ including physical and metadata-axis rows, **Metadata dimensions** for defining
 metadata sources and nominal assignments, and expandable **Bin information**.
 The information tab reports each axis's count, limits, centers, edges, grid
 mode, assignment mode, total bins, and numeric payload estimate; after a current
-rebin it uses the exact cached grid.
+rebin it uses the exact cached grid. The **Rebin settings** tab also shows the
+estimated result-array memory beside the editable controls. This is the
+persistent numerical payload rather than peak working memory. Compressed disk
+size is reported as data-dependent because it cannot be predicted reliably
+before the values and masks are compressed.
 
 Automatic rebinning turns off when an edit raises the estimate above 5,000,000
 point contributions or 2,000,000 output bins. It may be manually re-enabled;
@@ -632,12 +636,16 @@ All rebin workflows use the same compact progress dialog. When a task prepares
 several datasets or dataset-group composites, it uses two levels: the upper bar
 reports completed viewer entries and the lower bar reports progress within the
 named current entry. A one-entry task hides the redundant upper status and bar.
-Both levels show elapsed time and, once their progress is determinate, estimated
-time remaining. Large integer counters use grouped thousands, and resource
-details below the lower status report output bins, CPUs, and estimated working
-memory. Symmetry-equivalent duplicates still count as examined work, so detailed
-progress reaches completion even when those duplicates are omitted from the
-histogram.
+Both levels show elapsed time without predicting time remaining. Large integer
+counters use grouped thousands, and resource details below the lower status
+report output bins, CPUs, and estimated working memory. Symmetry-equivalent
+duplicates still count as examined work, so detailed progress reaches
+completion even when those duplicates are omitted from the histogram.
+
+A small green dot on a dataset or composite folder icon means every enabled
+named binning for that item is cached and matches its current source, masks,
+backgrounds, and numerical settings. The dot disappears as soon as an edit
+makes any enabled cache stale and returns after the required rebins complete.
 
 Native MDEvent reductions report event accumulation, detector-trajectory setup,
 detector-normalization integration, output finalization, derived-data

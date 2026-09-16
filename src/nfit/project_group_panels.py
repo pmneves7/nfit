@@ -603,13 +603,35 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     symmetry_row.addWidget(symmetry_mode)
     symmetry_row.addWidget(symmetry_expression, 1)
     controls_layout.addLayout(symmetry_row, footer_row + 2, 0, 1, len(headers))
+    from .metadata_dimensions import MetadataDimension, metadata_rebin_axis_config
+    from .project_rebin_panels import rebin_memory_estimate_label
+
+    cached_rebin_data = _peek_cached_composite_dataset_data(
+        group,
+        config_override=None if selected_binning["fit"] else config,
+        binning_id=None if selected_binning["fit"] else selected_binning["id"],
+    )
+    memory_config = {
+        **config,
+        "axes": [
+            *config.get("axes", []),
+            *(
+                metadata_rebin_axis_config(MetadataDimension(**recipe))
+                for recipe in group.metadata.get("metadata_dimensions", [])
+            ),
+        ],
+    }
+    memory_label = rebin_memory_estimate_label(
+        memory_config, data=cached_rebin_data, object_prefix="group_composite"
+    )
+    controls_layout.addWidget(memory_label, footer_row + 3, 0, 1, len(headers))
     status_label = QtWidgets.QLabel(_composite_rebin_status_text(group, config))
     status_label.setObjectName("group_composite_status")
     status_label.setWordWrap(True)
     status_label.setToolTip(
         "Shows whether the cached composite rebin is current. Pending manual rebinning will be forced automatically for fit and viewer operations."
     )
-    controls_layout.addWidget(status_label, footer_row + 3, 0, 1, len(headers))
+    controls_layout.addWidget(status_label, footer_row + 4, 0, 1, len(headers))
     action_row = QtWidgets.QHBoxLayout()
     rebin_now_button = QtWidgets.QPushButton("Rebin now")
     rebin_now_button.setObjectName("group_composite_rebin_now")
@@ -642,7 +664,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     )
     action_row.addStretch(1)
     action_row.addWidget(materialize_button)
-    controls_layout.addLayout(action_row, footer_row + 4, 0, 1, len(headers))
+    controls_layout.addLayout(action_row, footer_row + 5, 0, 1, len(headers))
     controls.addTab(settings_tab, "Rebin settings")
 
     metadata_tab = QtWidgets.QWidget()
@@ -658,24 +680,12 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     if physics_panel is not None:
         controls.addTab(physics_panel, "Physics")
 
-    from .metadata_dimensions import MetadataDimension, metadata_rebin_axis_config
     from .project_rebin_panels import rebin_bin_information_widget
-
-    bin_information_config = {
-        **config,
-        "axes": [
-            *config.get("axes", []),
-            *(
-                metadata_rebin_axis_config(MetadataDimension(**recipe))
-                for recipe in group.metadata.get("metadata_dimensions", [])
-            ),
-        ],
-    }
 
     controls.addTab(
         rebin_bin_information_widget(
-            bin_information_config,
-            data=_peek_cached_composite_dataset_data(group),
+            memory_config,
+            data=cached_rebin_data,
             object_prefix="group_composite",
         ),
         "Bin information",

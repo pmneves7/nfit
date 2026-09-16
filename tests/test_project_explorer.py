@@ -2483,7 +2483,7 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
         "Rebinning 8 dataset groups: 2/8 dataset groups binned (25.0%)"
     )
     assert "elapsed " in rebin_dialog._nfit_batch_label.text()
-    assert "remaining ~" in rebin_dialog._nfit_batch_label.text()
+    assert "remaining" not in rebin_dialog._nfit_batch_label.text()
     assert rebin_dialog._nfit_current_label.text() == (
         "Current dataset group: MACS SPEC 5meV 2K"
     )
@@ -2511,7 +2511,7 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
         "rebinning 7 datasets (80.0%)"
     )
     assert "elapsed " in rebin_dialog._nfit_label.text()
-    assert "remaining ~" in rebin_dialog._nfit_label.text()
+    assert "remaining" not in rebin_dialog._nfit_label.text()
     progress_layout = rebin_dialog.layout()
     assert progress_layout.indexOf(rebin_dialog._nfit_batch_label) < progress_layout.indexOf(
         batch_bar
@@ -2549,6 +2549,7 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     assert not single_dialog._nfit_current_label.isVisible()
     assert "23,301,675/123,690,949" in single_dialog._nfit_label.text()
     assert "elapsed " in single_dialog._nfit_label.text()
+    assert "remaining" not in single_dialog._nfit_label.text()
     single_rebin(
         {
             "stage": "mdevent_events",

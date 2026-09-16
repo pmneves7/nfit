@@ -45,7 +45,8 @@ A few of its main capabilities are:
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
 - construct and inspect crystal, tight-binding, Lindhard, and RPA models;
 - save complete `.nfit` projects, retain bounded compressed binnings in RAM,
-  choose where to save an older result when that cache fills, and export editable analysis scripts; and
+  see result-memory estimates and current-cache badges, choose where to save an
+  older result when that cache fills, and export editable analysis scripts; and
 - use native desktop installers or the Python package on macOS, Windows, and Linux.
 
 See the [detailed feature overview](https://nfit.readthedocs.io/en/stable/features.html)

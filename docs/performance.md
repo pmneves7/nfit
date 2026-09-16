@@ -160,6 +160,10 @@ plus the batch target and warn at the same threshold. The native reducer still
 blocks an unapproved estimate above 70%. Opening a data viewer also warns
 before starting pending large rebins. A memory estimate is advisory: source
 data, other caches, and the operating system can change the actual peak.
+The rebin-settings panel separately displays the estimated persistent result
+payload for its configured grid. An exact value is shown when the result is
+already cached. Compressed disk size remains data-dependent because sparse
+masks, repeated values, and numerical content change the compression ratio.
 On macOS, available memory includes inactive and speculative pages that the
 operating system can reclaim; this prevents the worker planner from falling to
 one CPU merely because the file cache has consumed most completely free pages.
@@ -180,7 +184,9 @@ its restored binning. Editing one named binning invalidates only that result;
 other fit or visualization binnings remain available when their own inputs and
 settings are unchanged. When an operation processes multiple named binnings,
 the progress dialog reports how many binnings are complete and identifies the
-current binning in the existing status area.
+current binning in the existing status area. Dataset and composite icons carry
+a green dot while all of their enabled named binnings have current cache
+signatures.
 
 ## Heisenberg RPA
 

@@ -5002,14 +5002,15 @@ _TREE_ICON_COLORS = {
 }
 
 
-_TREE_ICON_CACHE: dict[str, Any] = {}
+_TREE_ICON_CACHE: dict[tuple[str, bool], Any] = {}
 
 
-def _tree_item_icon(kind: str) -> Any:
+def _tree_item_icon(kind: str, *, cached: bool = False) -> Any:
     from PySide6 import QtCore, QtGui
 
-    if kind in _TREE_ICON_CACHE:
-        return _TREE_ICON_CACHE[kind]
+    cache_key = (kind, bool(cached))
+    if cache_key in _TREE_ICON_CACHE:
+        return _TREE_ICON_CACHE[cache_key]
 
     accent = QtGui.QColor(_TREE_ICON_COLORS.get(kind, "#9ca3ad"))
     line = QtGui.QColor("#c7ccd1")
@@ -5100,14 +5101,18 @@ def _tree_item_icon(kind: str) -> Any:
         painter.setBrush(accent)
         painter.drawEllipse(QtCore.QPointF(8.0, 8.0), 0.9, 0.9)
 
+    if cached:
+        painter.setPen(QtGui.QPen(QtGui.QColor("#f4f7f5"), 1.1))
+        painter.setBrush(QtGui.QColor("#22b85a"))
+        painter.drawEllipse(QtCore.QRectF(10.0, 10.0, 5.2, 5.2))
     painter.end()
     icon = QtGui.QIcon(pixmap)
-    _TREE_ICON_CACHE[kind] = icon
+    _TREE_ICON_CACHE[cache_key] = icon
     return icon
 
 
-def _set_tree_item_icon(item: Any, kind: str) -> None:
-    item.setIcon(0, _tree_item_icon(kind))
+def _set_tree_item_icon(item: Any, kind: str, *, cached: bool = False) -> None:
+    item.setIcon(0, _tree_item_icon(kind, cached=cached))
 
 
 def _enabled_state_for_role(
@@ -5233,6 +5238,47 @@ def _project_binning_is_current(
         config_override=(None if fit else config),
         binning_id=(None if fit else binning_id),
     ) is not None
+
+
+def _dataset_cached_binnings_current(
+    group: DataGroup, dataset: DatasetEntry
+) -> bool:
+    """Return whether every enabled configured binning has a current cache."""
+
+    if not isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict):
+        return False
+    enabled = [
+        item
+        for item in dataset_rebin_binnings(dataset)
+        if bool(item["config"].get("enabled", False))
+    ]
+    return bool(enabled) and all(
+        _project_binning_is_current(
+            "dataset", group, dataset, item["id"], item["config"]
+        )
+        for item in enabled
+    )
+
+
+def _composite_cached_binnings_current(
+    group: DataGroup, node: DataGroup | DatasetGroup
+) -> bool:
+    """Return whether every enabled composite binning has a current cache."""
+
+    scope = _composite_scope(group, node)
+    if not data_group_composite_enabled(scope):
+        return False
+    enabled = [
+        item
+        for item in data_group_composite_binnings(scope)
+        if bool(item["config"].get("enabled", False))
+    ]
+    return bool(enabled) and all(
+        _project_binning_is_current(
+            "dataset group", group, scope, item["id"], item["config"]
+        )
+        for item in enabled
+    )
 
 
 def project_binnings_need_refresh(project: NfitProject) -> bool:
@@ -5876,15 +5922,11 @@ def _format_progress_duration(seconds: float) -> str:
     return f"{seconds_value:d}s"
 
 
-def _progress_timer_text(started_at: float, completed: int, total: int) -> str:
-    """Return elapsed and, when meaningful, estimated remaining time."""
+def _progress_timer_text(started_at: float) -> str:
+    """Return elapsed time for a progress display."""
 
     elapsed = max(time.monotonic() - started_at, 0.0)
-    parts = [f"elapsed {_format_progress_duration(elapsed)}"]
-    if total > 0 and completed > 0:
-        remaining = elapsed * max(total - completed, 0) / completed
-        parts.append(f"remaining ~{_format_progress_duration(remaining)}")
-    return " · ".join(parts)
+    return f"elapsed {_format_progress_duration(elapsed)}"
 
 
 class RebinCancellationRequested(RuntimeError):
@@ -5993,13 +6035,9 @@ class _RebinProgressDialog:
 
     def _refresh_labels(self) -> None:
         if self._batch_total > 1:
-            timer = _progress_timer_text(
-                self._batch_started_at, self._batch_completed, self._batch_total
-            )
+            timer = _progress_timer_text(self._batch_started_at)
             self.batch_label.setText(f"{self._batch_base_text} · {timer}")
-        detail_timer = _progress_timer_text(
-            self._detail_started_at, self._detail_completed, self._detail_total
-        )
+        detail_timer = _progress_timer_text(self._detail_started_at)
         self.detail_label.setText(f"{self._detail_base_text} · {detail_timer}")
 
     def _refresh_current_label(self) -> None:
@@ -7866,6 +7904,7 @@ class NfitProjectExplorer:
             def on_success(view: Any) -> None:
                 if view is not None:
                     self.refresh_slice_viewer(group)
+                    self._refresh_cache_badges()
                     self._set_dataset_details(entry, group)
 
             return self._start_background_task(
@@ -7906,6 +7945,7 @@ class NfitProjectExplorer:
         if view is None:
             return False
         self.refresh_slice_viewer(group)
+        self._refresh_cache_badges()
         self._set_dataset_details(entry, group)
         return True
 
@@ -7961,6 +8001,7 @@ class NfitProjectExplorer:
         def on_success(completed: int) -> None:
             if completed:
                 self.refresh_slice_viewer(group)
+                self._refresh_cache_badges()
                 self._set_dataset_details(entry, group)
 
         if self._interactive:
@@ -10288,7 +10329,12 @@ class NfitProjectExplorer:
 
             datasets_item = QtWidgets.QTreeWidgetItem(["Datasets"])
             _style_tree_hierarchy_item(datasets_item, bold=True)
-            _set_tree_item_icon(datasets_item, "folder")
+            root_cached = _composite_cached_binnings_current(group, group)
+            _set_tree_item_icon(datasets_item, "folder", cached=root_cached)
+            if root_cached:
+                datasets_item.setToolTip(
+                    0, "All enabled composite binnings are cached and up to date."
+                )
             self._remember_item(datasets_item, "datasets", group)
             group_item.addChild(datasets_item)
             found = self._render_dataset_node(
@@ -10487,7 +10533,14 @@ class NfitProjectExplorer:
         for subgroup in node.subgroups:
             subgroup_item = QtWidgets.QTreeWidgetItem([subgroup.name])
             subgroup_item.setFlags(subgroup_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-            _set_tree_item_icon(subgroup_item, "folder")
+            subgroup_cached = _composite_cached_binnings_current(group, subgroup)
+            _set_tree_item_icon(
+                subgroup_item, "folder", cached=subgroup_cached
+            )
+            if subgroup_cached:
+                subgroup_item.setToolTip(
+                    0, "All enabled composite binnings are cached and up to date."
+                )
             self._remember_item(subgroup_item, "dataset_group", group, node=subgroup)
             _style_enabled_tree_item(subgroup_item, subgroup.enabled)
             parent_item.addChild(subgroup_item)
@@ -10531,6 +10584,63 @@ class NfitProjectExplorer:
                 )
         return found
 
+    def _refresh_cache_badges(self, item: Any | None = None) -> None:
+        """Refresh green cache indicators without rebuilding the project tree."""
+
+        from PySide6 import QtCore
+
+        def tree_items(parent: Any | None = None):
+            count = (
+                self.tree.topLevelItemCount()
+                if parent is None
+                else parent.childCount()
+            )
+            for index in range(count):
+                item = (
+                    self.tree.topLevelItem(index)
+                    if parent is None
+                    else parent.child(index)
+                )
+                yield item
+                yield from tree_items(item)
+
+        blocker = QtCore.QSignalBlocker(self.tree)
+        try:
+            items = tree_items() if item is None else (item,)
+            for candidate in items:
+                group, entry, _mask, _model, role = self._objects_for_item(candidate)
+                if role == "dataset" and group is not None and entry is not None:
+                    current = _dataset_cached_binnings_current(group, entry)
+                    _set_tree_item_icon(candidate, "dataset", cached=current)
+                    candidate.setToolTip(
+                        0,
+                        "All enabled binnings are cached and up to date."
+                        if current
+                        else "",
+                    )
+                elif role == "dataset_group" and group is not None:
+                    node = self._dataset_group_for_item(candidate)
+                    if node is not None:
+                        current = _composite_cached_binnings_current(group, node)
+                        _set_tree_item_icon(candidate, "folder", cached=current)
+                        candidate.setToolTip(
+                            0,
+                            "All enabled composite binnings are cached and up to date."
+                            if current
+                            else "",
+                        )
+                elif role == "datasets" and group is not None:
+                    current = _composite_cached_binnings_current(group, group)
+                    _set_tree_item_icon(candidate, "folder", cached=current)
+                    candidate.setToolTip(
+                        0,
+                        "All enabled composite binnings are cached and up to date."
+                        if current
+                        else "",
+                    )
+        finally:
+            del blocker
+
     def _add_dataset_tree_item(
         self,
         parent_item: Any,
@@ -10548,7 +10658,12 @@ class NfitProjectExplorer:
         found = None
         dataset_item = QtWidgets.QTreeWidgetItem([dataset.name])
         dataset_item.setFlags(dataset_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-        _set_tree_item_icon(dataset_item, "dataset")
+        dataset_cached = _dataset_cached_binnings_current(group, dataset)
+        _set_tree_item_icon(dataset_item, "dataset", cached=dataset_cached)
+        if dataset_cached:
+            dataset_item.setToolTip(
+                0, "All enabled binnings are cached and up to date."
+            )
         self._remember_item(dataset_item, "dataset", group, dataset)
         _style_enabled_tree_item(dataset_item, dataset.enabled)
         parent_item.addChild(dataset_item)
@@ -10862,8 +10977,10 @@ class NfitProjectExplorer:
         return None if item is None else self._plot_item_roles.get(id(item))
 
     def _sync_details(self) -> None:
-        group, entry, mask, model, role = self._objects_for_item(self._current_item())
-        fit_entry = self._fit_entry_for_item(self._current_item())
+        current_item = self._current_item()
+        self._refresh_cache_badges(current_item)
+        group, entry, mask, model, role = self._objects_for_item(current_item)
+        fit_entry = self._fit_entry_for_item(current_item)
         can_import = role in {"group", "datasets", "dataset_group"}
         can_add_model = role in {"group", "models"}
         analysis_selection = role in {"analyses", "analysis", "analysis_output"}
@@ -15300,6 +15417,7 @@ class NfitProjectExplorer:
         self._mark_dirty()
         if group is not None and bool(config.get("auto_rebin", True)):
             self.refresh_slice_viewer(group)
+        self._refresh_cache_badges(self._current_item())
         if not self._refresh_dataset_rebin_controls(dataset, group):
             self._set_dataset_details_preserving_scroll(
                 dataset,
@@ -15408,6 +15526,32 @@ class NfitProjectExplorer:
         status = self.details_widget.findChild(QtWidgets.QLabel, "dataset_rebin_status")
         if status is not None:
             status.setText(_dataset_rebin_status_text(dataset, config))
+        memory = self.details_widget.findChild(
+            QtWidgets.QLabel, "dataset_rebin_memory_estimate"
+        )
+        if memory is not None:
+            from .project_rebin_panels import rebin_memory_estimate_text
+
+            selected_binning = self._selected_dataset_binning(dataset)
+            memory.setText(
+                rebin_memory_estimate_text(
+                    config,
+                    data=_peek_cached_dataset_view(
+                        dataset,
+                        extra_masks=(
+                            effective_dataset_masks(group, dataset)
+                            if group is not None
+                            else None
+                        ),
+                        rebin_config=config,
+                        cache_id=(
+                            None
+                            if selected_binning["fit"]
+                            else selected_binning["id"]
+                        ),
+                    ),
+                )
+            )
         symmetry = symmetry_spec_from_config(config.get("symmetry"))
         symmetry_mode = self.details_widget.findChild(
             QtWidgets.QComboBox, "dataset_rebin_symmetry_mode"
@@ -15463,6 +15607,12 @@ class NfitProjectExplorer:
                                 effective_dataset_masks(group, dataset)
                                 if group is not None
                                 else None
+                            ),
+                            rebin_config=config,
+                            cache_id=(
+                                None
+                                if self._selected_dataset_binning(dataset)["fit"]
+                                else self._selected_dataset_binning(dataset)["id"]
                             ),
                         ),
                         object_prefix="dataset_rebin",
