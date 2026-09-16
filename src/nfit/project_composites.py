@@ -867,10 +867,30 @@ def _composite_cache_signature(
         else data_group_composite_config(group, config_override=dict(config_override))
     )
     child_scopes = _hierarchical_composite_scopes(group)
+    dimensions = group.metadata.get("metadata_dimensions", [])
+    node = group.node if isinstance(group, _CompositeScope) else group
+    raw_config = node.metadata.get("raw_dgs", {}) if isinstance(node, DatasetGroup) else {}
+    event_pulse_metadata = bool(dimensions) and (
+        raw_config.get("format") == "corelli-correlation-nexus"
+        and all(
+            isinstance(recipe, Mapping)
+            and recipe.get("sampling") == "event_pulse_time"
+            for recipe in dimensions
+        )
+    )
     payload = [
         json.dumps(_composite_numerical_config(group, config), sort_keys=True, default=str),
-        group.metadata.get("metadata_dimensions", []),
-        metadata_dimension_preview(group) if group.metadata.get("metadata_dimensions") else [],
+        dimensions,
+        # Raw CORELLI event metadata are evaluated directly from the NeXus
+        # timestamp log during rebinning. They are not scalar DatasetEntry
+        # channels, so previewing them here prevents the GUI tree from
+        # rendering before a rebin has been requested. The raw source-file
+        # signature below and the serialized recipe still invalidate caches.
+        []
+        if event_pulse_metadata
+        else metadata_dimension_preview(group)
+        if dimensions
+        else [],
         [[child.name, _composite_cache_signature(child, trail)] for child in child_scopes],
         [
             [

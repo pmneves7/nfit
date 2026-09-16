@@ -20,6 +20,7 @@ from nfit.corelli import (
     _load_corelli_flux,
     _solve_incident_energy,
 )
+from nfit.project_composites import _composite_cache_signature, set_metadata_dimensions
 from nfit.raw_dgs import _detector_geometry
 
 
@@ -213,6 +214,27 @@ def test_corelli_event_pulse_time_metadata_adds_a_histogram_axis(tmp_path):
     assert [axis.name for axis in result.axes] == ["H", "K", "L", "DeltaE", "Temperature"]
     assert result.num_events.sum() == pytest.approx(1.0)
     assert result.axes[-1].metadata["interpolation"] == "pulse_time_linear"
+
+
+def test_corelli_event_pulse_time_metadata_allows_project_tree_cache_signature(tmp_path):
+    """The GUI must inspect a raw event collection before its first rebin."""
+    source = tmp_path / "CORELLI_7.nxs.h5"
+    _write_corelli(source)
+    group = corelli_dataset_group([source])
+    set_metadata_dimensions(
+        group,
+        [
+            {
+                "name": "Temperature",
+                "source": "entry/DASlogs/sample_temperature",
+                "units": "K",
+                "sampling": "event_pulse_time",
+                "binning": {"bin_edges": [0.0, 10.0, 20.0]},
+            }
+        ],
+    )
+
+    assert _composite_cache_signature(group)
 
 
 def test_generic_raw_import_dispatches_corelli_batches(tmp_path, monkeypatch):
