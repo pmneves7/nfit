@@ -972,7 +972,13 @@ def _viewer_view_signature(
         # A live recipe has no numerical payload of its own. In particular,
         # id(None) cannot identify it across processes. The complete recipe and
         # source signatures below determine whether its result is still valid.
-        identity = ("derived_recipe", dataset.id)
+        # Temporary viewer aliases use a suffixed ID to keep their cache keys
+        # distinct for named binnings.  They still represent the same live
+        # recipe, however, so retain the canonical ID in the signature.
+        identity = (
+            "derived_recipe",
+            str(getattr(dataset, "_viewer_source_dataset_id", dataset.id)),
+        )
     payload = [
         identity,
         dataset.data_type,

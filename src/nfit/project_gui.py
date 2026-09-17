@@ -2446,6 +2446,7 @@ def _entries_with_visualization_binnings(
             # a live derived recipe can still resolve its owning analysis.
             fit_entry._derived_owner_group = owner
         fit_entry.id = dataset.id
+        fit_entry._viewer_source_dataset_id = dataset.id
         fit_entry.enabled = _dataset_is_effectively_enabled(group, dataset)
         fit_entry.metadata = {
             **copy.deepcopy(dataset.metadata),
@@ -2489,6 +2490,7 @@ def _entries_with_visualization_binnings(
                 if owner is not None:
                     auxiliary._derived_owner_group = owner
             auxiliary.id = f"{dataset.id}:{item['id']}"
+            auxiliary._viewer_source_dataset_id = dataset.id
             auxiliary.fit_weight = 0.0
             auxiliary.scale_factor_vary = False
             auxiliary.metadata = {

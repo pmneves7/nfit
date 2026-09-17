@@ -94,6 +94,14 @@ group = project.data_groups[0]
 derived = next(item for item in group.iter_datasets() if item.id == sys.argv[2])
 assert not gui.project_binnings_need_refresh(project)
 with np.load(sys.argv[3]) as expected:
+    aliases = gui._entries_with_visualization_binnings(
+        group, [derived], force_rebin=True,
+    )
+    assert len(aliases) == 3
+    for alias in aliases:
+        result = data.dataset_for_slice_viewer(alias)
+        for field in expected.files:
+            np.testing.assert_equal(getattr(result, field), expected[field])
     for binning in data.dataset_rebin_binnings(derived):
         config = binning["config"]
         assert gui._saved_binning_compressed_size(
