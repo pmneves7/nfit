@@ -115,6 +115,8 @@ add that file to the project automatically. A binning too large for the
 compressed tier is not retained there. Scripting workflows evict old results
 without a GUI prompt. The shared budget counts distinct NumPy array payloads and
 compressed bytes, with small Python-object overhead excluded.
+On Linux and remote desktops, the memory-choice dialog is attached to the
+active rebin window so it remains visible and interactive above progress.
 The prepared-table cache defaults to 128 MiB and the model-overlay cache to
 256 MiB. Viewer and composite bin results use the one combined **Total rebin
 memory ceiling** configured in **Preferences → Performance**; there are no

@@ -69,6 +69,32 @@ def test_full_compressed_cache_dialog_explains_save_and_discard(monkeypatch):
     assert len(seen) == 1
 
 
+def test_full_compressed_cache_dialog_uses_active_modal_parent(monkeypatch):
+    from PySide6 import QtCore, QtWidgets
+
+    from nfit.project_cache_gui import CompressedCachePrompt
+    from nfit.rebin_cache import CompressedBinning
+    from tests.project_gui_test_support import _tiny_mdhisto_data
+
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("cache")]))
+    progress = QtWidgets.QDialog(explorer.window)
+    progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+    progress.show()
+    QtWidgets.QApplication.processEvents()
+    prompt = CompressedCachePrompt(explorer.window)
+    artifact = CompressedBinning.from_data(_tiny_mdhisto_data(1.0), max_bytes=10_000)
+
+    def choose_discard(message):
+        assert message.parentWidget() is progress
+        next(
+            button for button in message.buttons() if "Discard" in button.text()
+        ).click()
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec", choose_discard)
+    prompt.request("old bin", artifact)
+    progress.close()
+
+
 def _write_mdevent(path):
     h5py = pytest.importorskip("h5py")
     with h5py.File(path, "w") as handle:

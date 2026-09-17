@@ -57,7 +57,11 @@ class CompressedCachePrompt(QtCore.QObject):
         filename = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("_")[:80]
         filename = filename or "nfit_binning"
         while True:
-            message = QtWidgets.QMessageBox(self.parent_window)
+            # A rebin progress dialog is window-modal and stays above the main
+            # window on Linux. Parent the choice to that active modal so ThinLinc
+            # and other remote desktops cannot hide it behind the progress UI.
+            parent = QtWidgets.QApplication.activeModalWidget() or self.parent_window
+            message = QtWidgets.QMessageBox(parent)
             message.setIcon(QtWidgets.QMessageBox.Icon.Warning)
             message.setWindowTitle("Compressed binning cache is full")
             message.setText(
