@@ -97,10 +97,11 @@ Windows may require **More info > Run anyway** in Microsoft Defender
 SmartScreen. Signing and notarization can be enabled later without changing the
 application or update design.
 
-When nfit opens, a splash screen displays the full logo, version, authorship,
-documentation link, and an animated loading indicator. The documentation link
-and the application's **Help** button open the bundled pages, so the manual and
-its mathematical notation work without internet access.
+When nfit opens, a splash screen centered on the active display shows the full
+logo, version, authorship, documentation link, and an animated loading
+indicator. The documentation link and the application's **Help** button open
+the bundled pages, so the manual and its mathematical notation work without
+internet access.
 
 ## Requirements and bundled dependencies
 

@@ -167,6 +167,22 @@ class StartupSplash(QtWidgets.QWidget):
         layout.addWidget(progress)
         self.setFixedSize(520, 455)
 
+    def center_on_screen(self, screen: QtGui.QScreen | None = None) -> None:
+        """Center the splash in the usable area of its display.
+
+        Unlike ``QSplashScreen``, this custom frameless widget is not
+        positioned by Qt.  Set an explicit position so remote X11 sessions,
+        including ThinLinc, do not fall back to the top-left corner.
+        """
+        target_screen = screen or self.screen() or QtGui.QGuiApplication.primaryScreen()
+        if target_screen is None:
+            return
+        available = target_screen.availableGeometry()
+        self.move(
+            available.x() + (available.width() - self.width()) // 2,
+            available.y() + (available.height() - self.height()) // 2,
+        )
+
     def show_status(self, text: str) -> None:
         self.status.setText(text)
         QtWidgets.QApplication.processEvents()
@@ -180,7 +196,10 @@ def show_startup_splash() -> tuple[QtWidgets.QApplication, StartupSplash]:
     if (icon_path := _icon_path()) is not None:
         app.setWindowIcon(QtGui.QIcon(str(icon_path)))
     splash = StartupSplash()
+    splash.center_on_screen()
     splash.show()
+    # A window manager can assign the target display during ``show()``.
+    splash.center_on_screen()
     splash.raise_()
     app.processEvents()
     app._nfit_startup_splash = splash

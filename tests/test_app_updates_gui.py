@@ -177,6 +177,32 @@ def test_splash_shows_branding_progress_and_offline_help(monkeypatch):
         app.processEvents()
 
 
+def test_splash_centers_in_the_available_screen_geometry(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+
+    from tools.distribution.startup_splash import StartupSplash
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    splash = StartupSplash()
+    try:
+        screen = app.primaryScreen()
+        assert screen is not None
+        available = screen.availableGeometry()
+
+        splash.center_on_screen(screen)
+
+        assert splash.geometry().x() == (
+            available.x() + (available.width() - splash.width()) // 2
+        )
+        assert splash.geometry().y() == (
+            available.y() + (available.height() - splash.height()) // 2
+        )
+    finally:
+        splash.close()
+        app.processEvents()
+
+
 def test_frozen_entry_shows_splash_before_importing_nfit():
     entry = (
         Path(__file__).parents[1] / "tools/distribution/entry.py"
