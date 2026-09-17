@@ -49,6 +49,9 @@ MDEvent NeXus files are supported without Mantid through `nfit.mdevent`:
 - `bin_mdevent_group(...)` streams events, converts `Q_sample` to HKL, and
   performs native proton-charge and detector-trajectory normalization. Its
   optional `progress_callback` uses the standard rebinner event dictionary.
+- `project_powder_background_mdevent(...)` forward-projects a gridded
+  $B(|Q|,E)$ background through the selected sample runs and returns an HKLE
+  histogram aligned with the target reconstruction.
 - `load_detector_normalization(path)` reads processed detector values for
   vanadium efficiency and bad-detector masking.
 

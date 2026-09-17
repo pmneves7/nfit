@@ -12482,7 +12482,32 @@ class NfitProjectExplorer:
             )
         )
         layout.addWidget(scale, 2, 1)
-        layout.addWidget(QtWidgets.QLabel("Interpolation"), 3, 0)
+        layout.addWidget(QtWidgets.QLabel("Projection"), 3, 0)
+        projection = QtWidgets.QComboBox()
+        projection.setObjectName("background_projection")
+        projection.addItem("Voxel center (legacy)", "center")
+        supports_trajectory_projection = (
+            isinstance(owner, DatasetGroup) and "mdevent" in owner.metadata
+        )
+        if supports_trajectory_projection or background.projection == "sample_trajectories":
+            projection.addItem("Sample detector trajectories", "sample_trajectories")
+        projection.setToolTip(
+            "Voxel center evaluates B(|Q|, E) once at each target-bin center. "
+            "Sample detector trajectories forward-projects a powder background through "
+            "every MDEvent sample angle and the same detector-trajectory normalization; "
+            "it is available for backgrounds owned by MDEvent dataset groups."
+        )
+        projection.setCurrentIndex(max(projection.findData(background.projection), 0))
+        projection.currentIndexChanged.connect(
+            lambda _index: self._update_background(
+                group,
+                owner,
+                background,
+                projection=str(projection.currentData()),
+            )
+        )
+        layout.addWidget(projection, 3, 1)
+        layout.addWidget(QtWidgets.QLabel("Interpolation"), 4, 0)
         interpolation = QtWidgets.QComboBox()
         interpolation.addItem("Linear", "linear")
         interpolation.addItem("Nearest", "nearest")
@@ -12500,7 +12525,7 @@ class NfitProjectExplorer:
                 interpolation=str(interpolation.currentData()),
             )
         )
-        layout.addWidget(interpolation, 3, 1)
+        layout.addWidget(interpolation, 4, 1)
         self.details_layout.addWidget(box)
         self.details_layout.addStretch(1)
 

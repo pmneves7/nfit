@@ -371,6 +371,7 @@ from .mdevent import (
     load_detector_normalization,
     load_mdevent_run_points,
     mdevent_dataset_group,
+    project_powder_background_mdevent,
 )
 from .mdhisto import (
     MDHistoAxis,
@@ -1220,6 +1221,7 @@ __all__ = [
     "mdevent_dataset_group",
     "bin_mdevent_group",
     "bin_mdevent_powder_group",
+    "project_powder_background_mdevent",
     "append_mdevent_file",
     "CorelliRunInfo",
     "bin_corelli_group",

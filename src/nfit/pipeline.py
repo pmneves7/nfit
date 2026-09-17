@@ -36,7 +36,9 @@ class BackgroundSpec:
 
     ``source_dataset_id`` or ``source_group_id`` is the stable project
     reference. Runtime links are restored after loading and deliberately
-    omitted from project serialization.
+    omitted from project serialization. ``projection`` is ``"center"`` for
+    direct powder interpolation or ``"sample_trajectories"`` for MDEvent
+    powder backgrounds forward-projected through the sample acceptance.
     """
 
     name: str
@@ -48,6 +50,7 @@ class BackgroundSpec:
     source_group_id: str | None = None
     source_entry: DatasetEntry | None = field(default=None, repr=False, compare=False)
     source_group: DatasetGroup | None = field(default=None, repr=False, compare=False)
+    projection: str = "center"
 
 
 @dataclass

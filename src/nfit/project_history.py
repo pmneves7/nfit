@@ -67,6 +67,7 @@ def _background_to_dict(background: BackgroundSpec) -> dict[str, Any]:
         "scale": float(background.scale),
         "enabled": bool(background.enabled),
         "interpolation": background.interpolation,
+        "projection": background.projection,
         "metadata": _json_mapping(background.metadata),
     }
 
@@ -83,6 +84,7 @@ def _background_from_dict(payload: dict[str, Any]) -> BackgroundSpec:
         scale=float(payload.get("scale", 1.0)),
         enabled=bool(payload.get("enabled", True)),
         interpolation=str(payload.get("interpolation", "linear")),
+        projection=str(payload.get("projection", "center")),
         metadata=dict(payload.get("metadata", {})),
     )
 

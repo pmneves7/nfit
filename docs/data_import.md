@@ -733,10 +733,12 @@ pressing **Apply masks now** always resolves pending masks first.
 
 A dataset or composite can subtract one or more gridded backgrounds. Each
 background has an enabled state and scale. Powder backgrounds also select
-linear or nearest interpolation.
+linear or nearest interpolation and a projection mode.
 
-For a single-crystal target, nfit interpolates the powder background in
-$|Q|$ and energy and propagates independent uncertainties:
+**Voxel center (legacy)** evaluates the powder field once at each target-bin
+center, $B(|Q_{\rm center}|,E_{\rm center})$. This is fast and remains the
+default for existing projects. For a single-crystal target, nfit propagates
+independent uncertainties through this interpolation:
 
 $$
 \sigma_{\rm corrected}^2
@@ -747,6 +749,24 @@ where $a$ is the dimensionless fixed background scale and each $\sigma$
 is a one-sigma uncertainty in the signal unit. This assumes independent
 sample/background values and does not propagate uncertainty in $a$. Values outside the background domain are
 masked rather than extrapolated.
+
+**Sample detector trajectories** is available for a background owned by an
+MDEvent dataset group. It treats the measured powder map as the intensity that
+would have been observed at every sample goniometer angle. nfit evaluates that
+map along each selected sample run's detector trajectories, accumulates a
+synthetic numerator on the target HKLE grid, and divides by the same
+proton-charge, detector-efficiency, mask, symmetry, and trajectory denominator
+used for the sample reconstruction. This finite-voxel projection is appropriate
+for narrow radial instrument features whose voxel average differs from their
+value at the voxel center. It adds a second trajectory pass and is therefore
+slower than voxel-center interpolation.
+
+The projected uncertainty retains the correlation created by reusing one
+measured powder map at every angle: nfit averages the pointwise interpolated
+one-sigma uncertainty through the sample trajectories. This is a conservative
+upper bound when distinct powder bins are statistically independent. A target
+bin is masked if any of its trajectory acceptance falls outside measured powder
+coverage rather than extrapolating the background.
 
 For a group background referencing raw neutron point data, nfit bins the
 reference onto the sample's resolved momentum/energy grid automatically,

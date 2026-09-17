@@ -3,7 +3,9 @@ import pytest
 
 import nfit.mdevent as mdevent
 from nfit import (
+    BackgroundSpec,
     DataGroup,
+    DatasetEntry,
     NfitProject,
     append_mdevent_file,
     bin_mdevent_group,
@@ -14,11 +16,14 @@ from nfit import (
     load_mdevent_run_points,
     load_project,
     mdevent_dataset_group,
+    project_powder_background_mdevent,
     save_project,
 )
+from nfit.mdhisto import MDHistoAxis, MDHistoData
 from nfit.plotting import _mdhisto_channel_array
 from nfit.project_gui import (
     NfitProjectExplorer,
+    _apply_composite_backgrounds,
     _composite_scope,
     _point_data_from_mdhisto_view,
     data_group_composite_config,
@@ -261,6 +266,87 @@ def test_native_mdevent_powder_binning_uses_radial_trajectory_normalization(tmp_
     assert not result.mask.item()
     assert result.metadata["signal_semantics_source"] == (
         "nfit_mdevent_powder_reduction"
+    )
+
+
+def test_mdevent_powder_background_projects_through_sample_trajectories(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+    target = bin_mdevent_group(
+        group,
+        lower=[-1.0, -1.0, -1.0, -1.0],
+        upper=[1.0, 1.0, 1.0, 1.0],
+        num_bins=[1, 1, 1, 1],
+    )
+    background = MDHistoData(
+        axes=(
+            MDHistoAxis("|Q|", np.array([-0.5, 0.5, 1.5]), "1/angstrom", "momentum"),
+            MDHistoAxis("DeltaE", np.array([-2.0, 0.0, 2.0]), "meV", "energy"),
+        ),
+        signal=np.array([[0.0, 0.0], [1.0, 1.0]]),
+        errors=np.full((2, 2), 0.2),
+        mask=np.zeros((2, 2), dtype=bool),
+        num_events=np.ones((2, 2)),
+        metadata={"signal_semantics": "density"},
+    )
+
+    progress = []
+    projected = project_powder_background_mdevent(
+        group,
+        background,
+        target,
+        progress_callback=progress.append,
+    )
+
+    # The target voxel is centered at Q=0, where center interpolation would
+    # return zero. Trajectory projection instead averages the finite |Q| path.
+    assert 0.0 < projected.signal.item() < 1.0
+    assert np.sqrt(0.5) * 0.2 <= projected.errors.item() <= 0.2
+    assert not projected.mask.item()
+    assert projected.metadata["background_projection"]["mode"] == "sample_trajectories"
+    projection_progress = [
+        event
+        for event in progress
+        if event["stage"] == "mdevent_background_projection"
+    ]
+    assert projection_progress[0]["iteration"] == 0
+    assert projection_progress[-1]["iteration"] == projection_progress[-1]["total"]
+    np.testing.assert_allclose(
+        projected.auxiliary_channels["background_projection_coverage"].values,
+        1.0,
+    )
+
+    monkeypatch.setattr(mdevent, "_MDEVENT_NUMBA", None)
+    fallback = project_powder_background_mdevent(group, background, target)
+    np.testing.assert_allclose(fallback.signal, projected.signal)
+    np.testing.assert_allclose(fallback.errors, projected.errors)
+    np.testing.assert_allclose(
+        fallback.metadata["normalization_denominator"],
+        projected.metadata["normalization_denominator"],
+    )
+
+    background_entry = DatasetEntry(
+        "Powder background",
+        background,
+        kind="mdhisto",
+        data_type="powder_inelastic",
+    )
+    group.backgrounds.append(
+        BackgroundSpec(
+            "Projected powder",
+            background_entry.id,
+            projection="sample_trajectories",
+            source_entry=background_entry,
+        )
+    )
+    root = DataGroup("Workspace", datasets=[background_entry], subgroups=[group])
+    corrected = _apply_composite_backgrounds(_composite_scope(root, group), target)
+    np.testing.assert_allclose(corrected.signal, target.signal - projected.signal)
+    assert corrected.metadata["background_subtractions"][0]["projection"]["mode"] == (
+        "sample_trajectories"
     )
 
 

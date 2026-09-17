@@ -14,7 +14,7 @@ import numpy as np
 
 from . import _parallel
 from .dataset import PointData4D
-from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
+from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, mdhisto_measured_bins
 from .pipeline import DatasetEntry, DatasetGroup
 
 try:
@@ -702,6 +702,126 @@ def bin_mdevent_powder_group(
     )
 
 
+def project_powder_background_mdevent(
+    group: DatasetGroup,
+    background: MDHistoData,
+    target: MDHistoData,
+    *,
+    datasets: Iterable[DatasetEntry] | None = None,
+    interpolation: str = "linear",
+    progress_callback: Any | None = None,
+) -> MDHistoData:
+    """Forward-project a powder background through sample detector trajectories.
+
+    The powder field is evaluated along every detector trajectory from the
+    selected sample runs. Its synthetic numerator is accumulated on the target
+    HKLE grid and divided by the corresponding trajectory denominator. This is
+    the detector-acceptance equivalent of measuring the same powder background
+    at every sample goniometer angle.
+
+    Background uncertainties are not independent between repeated sample
+    angles because every trajectory uses the same measured powder map. The
+    projected error therefore averages the pointwise interpolated standard
+    error, a conservative upper bound for independent source powder bins.
+    """
+
+    if interpolation not in {"linear", "nearest"}:
+        raise ValueError("background interpolation must be 'linear' or 'nearest'")
+    if "mdevent" not in group.metadata:
+        raise ValueError("sample-trajectory projection requires an MDEvent dataset group")
+    if len(target.axes) != 4 or target.signal.ndim != 4:
+        raise ValueError("sample-trajectory projection requires a four-dimensional HKLE target")
+    momentum_dims = [
+        index for index, axis in enumerate(background.axes) if axis.role == "q_modulus"
+    ]
+    energy_dims = [
+        index
+        for index, axis in enumerate(background.axes)
+        if axis.kind == "energy" or axis.role == "energy_transfer"
+    ]
+    if len(momentum_dims) != 1 or len(energy_dims) != 1 or background.signal.ndim != 2:
+        raise ValueError("sample-trajectory projection requires a two-dimensional |Q|, energy background")
+    q_dim, energy_dim = momentum_dims[0], energy_dims[0]
+    q_centers = np.asarray(background.axes[q_dim].centers, dtype=float)
+    energy_centers = np.asarray(background.axes[energy_dim].centers, dtype=float)
+    if interpolation == "linear" and (q_centers.size < 2 or energy_centers.size < 2):
+        raise ValueError("linear trajectory projection requires at least two bins on each powder axis")
+    values = np.moveaxis(background.signal, (q_dim, energy_dim), (0, 1))
+    variances = np.square(
+        np.moveaxis(background.errors, (q_dim, energy_dim), (0, 1))
+    )
+    measured = np.moveaxis(
+        mdhisto_measured_bins(background), (q_dim, energy_dim), (0, 1)
+    )
+    values = np.where(measured, values, np.nan)
+    variances = np.where(measured, variances, np.nan)
+    rebin = target.metadata.get("rebin", {})
+    basis = np.asarray(rebin.get("vectors", np.eye(4)), dtype=float)
+    if basis.shape != (4, 4) or np.linalg.matrix_rank(basis) != 4:
+        raise ValueError("target HKLE trajectory basis must be a finite invertible 4x4 matrix")
+    basis_inverse = np.linalg.inv(basis)
+    edges = [np.asarray(axis.values, dtype=float) for axis in target.axes]
+    shape = target.shape
+    selected = list(group.datasets if datasets is None else datasets)
+    signal_sum, sigma_sum, valid_denominator, denominator = (
+        _trajectory_powder_background_projection(
+            group,
+            selected,
+            edges,
+            shape,
+            basis_inverse,
+            target.metadata.get("symmetry_operations_hkl"),
+            q_centers,
+            energy_centers,
+            np.asarray(values, dtype=float),
+            np.asarray(variances, dtype=float),
+            interpolation,
+            progress_callback=progress_callback,
+        )
+    )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        projected_signal = signal_sum / denominator
+        projected_errors = sigma_sum / denominator
+        background_coverage = valid_denominator / denominator
+    measured_projection = (
+        np.isfinite(projected_signal)
+        & np.isfinite(projected_errors)
+        & (denominator > 0.0)
+        & np.isclose(valid_denominator, denominator, rtol=1.0e-8, atol=1.0e-12)
+    )
+    metadata = dict(target.metadata)
+    metadata["background_projection"] = {
+        "mode": "sample_trajectories",
+        "interpolation": interpolation,
+        "source": background.metadata.get("source_file"),
+        "uncertainty": "conservative_trajectory_average_of_point_standard_errors",
+    }
+    metadata["normalization_denominator"] = denominator
+    channels = {
+        "normalization_denominator": MDHistoChannel(
+            denominator,
+            label="Detector-trajectory normalization",
+            unit="arbitrary normalization units",
+        ),
+        "background_projection_coverage": MDHistoChannel(
+            background_coverage,
+            label="Powder-background trajectory coverage",
+            unit="fraction",
+        ),
+    }
+    return MDHistoData(
+        axes=target.axes,
+        signal=np.where(measured_projection, projected_signal, np.nan),
+        errors=np.where(measured_projection, projected_errors, np.nan),
+        mask=~measured_projection,
+        num_events=np.where(measured_projection, target.num_events, 0.0),
+        coordinate_system=target.coordinate_system,
+        visual_normalization=target.visual_normalization,
+        metadata=metadata,
+        auxiliary_channels=channels,
+    )
+
+
 def _validated_minimum_samples(value: float) -> float:
     result = float(value)
     if not np.isfinite(result) or result < 0.0:
@@ -799,22 +919,21 @@ def _trajectory_worker_count(output_size: int) -> int:
     return min(_parallel.num_threads(), memory_workers)
 
 
-def _trajectory_normalization(
+def _trajectory_payloads(
     group,
     datasets,
-    edges,
-    shape,
     basis_inverse,
     symmetry_operations=None,
     *,
     progress_callback=None,
 ):
+    """Prepare the shared run and detector geometry used by trajectory reducers."""
+
     import h5py
 
     config = group.metadata["mdevent"]
     detector_norm = load_detector_normalization(config["normalization_file"]) if config.get("normalization_file") else None
     detector_mask = load_detector_normalization(config["mask_file"]) if config.get("mask_file") else None
-    result = np.zeros(shape)
     symmetry = _symmetry_matrices(symmetry_operations)
     run_payloads = []
     detector_payloads = []
@@ -890,6 +1009,27 @@ def _trajectory_normalization(
                             ),
                         }
                     )
+    return detector_payloads, run_payloads
+
+
+def _trajectory_normalization(
+    group,
+    datasets,
+    edges,
+    shape,
+    basis_inverse,
+    symmetry_operations=None,
+    *,
+    progress_callback=None,
+):
+    result = np.zeros(shape)
+    detector_payloads, run_payloads = _trajectory_payloads(
+        group,
+        datasets,
+        basis_inverse,
+        symmetry_operations,
+        progress_callback=progress_callback,
+    )
     if (
         _MDEVENT_NUMBA is not None
         and detector_payloads
@@ -1007,6 +1147,159 @@ def _trajectory_normalization(
                 }
             )
     return result
+
+
+def _trajectory_powder_background_projection(
+    group,
+    datasets,
+    edges,
+    shape,
+    basis_inverse,
+    symmetry_operations,
+    q_centers,
+    energy_centers,
+    background_signal,
+    background_variance,
+    interpolation,
+    *,
+    progress_callback=None,
+):
+    """Accumulate a powder field and its coverage on an HKLE trajectory grid."""
+
+    outputs = [np.zeros(shape) for _ in range(4)]
+    detector_payloads, run_payloads = _trajectory_payloads(
+        group,
+        datasets,
+        basis_inverse,
+        symmetry_operations,
+        progress_callback=progress_callback,
+    )
+    output_size = int(np.prod(shape))
+    grouped_payloads = [
+        [payload for payload in run_payloads if payload[4] == geometry_index]
+        for geometry_index in range(len(detector_payloads))
+    ]
+    task_total = sum(
+        len(payloads) * int(detector_payloads[index][1].size)
+        for index, payloads in enumerate(grouped_payloads)
+    )
+    accelerated = (
+        _MDEVENT_NUMBA is not None
+        and hasattr(_MDEVENT_NUMBA, "run_trajectory_powder_background")
+        and detector_payloads
+        and run_payloads
+    )
+    workers = _trajectory_worker_count(output_size * 4) if accelerated else 1
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "mdevent_background_projection",
+                "iteration": 0,
+                "total": task_total,
+                "message": (
+                    f"projecting powder background through {task_total:,} "
+                    f"sample detector trajectories"
+                ),
+                "workers": workers,
+                "output_bins": output_size,
+            }
+        )
+    completed = 0
+    interpolation_code = 0 if interpolation == "linear" else 1
+    if accelerated:
+        for geometry_index, payloads in enumerate(grouped_payloads):
+            _, theta, phi, solid = detector_payloads[geometry_index]
+            detector_count = int(theta.size)
+            # Keep the compiled interval short enough for GUI cancellation and
+            # elapsed-time updates without repeatedly clearing the large
+            # thread-private output buffers for every run.
+            payload_batch = max(
+                1,
+                min(128, 16_000_000 // max(detector_count, 1)),
+            )
+            for start in range(0, len(payloads), payload_batch):
+                batch = payloads[start : start + payload_batch]
+                projected = _MDEVENT_NUMBA.run_trajectory_powder_background(
+                    theta,
+                    phi,
+                    solid,
+                    np.asarray([payload[0] for payload in batch]),
+                    np.asarray([payload[1] for payload in batch]),
+                    np.asarray([payload[2] for payload in batch]),
+                    np.asarray([payload[3] for payload in batch]),
+                    *[np.asarray(edge, dtype=float) for edge in edges],
+                    np.asarray(shape, dtype=np.int64),
+                    np.asarray(q_centers, dtype=float),
+                    np.asarray(energy_centers, dtype=float),
+                    np.asarray(background_signal, dtype=float),
+                    np.asarray(background_variance, dtype=float),
+                    interpolation_code,
+                    workers=workers,
+                )
+                for output, values in zip(outputs, projected, strict=True):
+                    output += np.asarray(values, dtype=float).reshape(shape)
+                completed += len(batch) * detector_count
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "stage": "mdevent_background_projection",
+                            "iteration": completed,
+                            "total": task_total,
+                            "message": (
+                                f"projected powder background through "
+                                f"{completed:,}/{task_total:,} sample detector trajectories"
+                            ),
+                            "workers": workers,
+                            "output_bins": output_size,
+                        }
+                    )
+        return tuple(outputs)
+
+    report_stride = max(len(run_payloads) // 100, 1)
+    for payload_index, (inverse, ei, bounds, charge, geometry_index) in enumerate(
+        run_payloads, start=1
+    ):
+        _, theta, phi, solid = detector_payloads[geometry_index]
+        direction = np.column_stack(
+            (
+                np.sin(theta) * np.cos(phi),
+                np.sin(theta) * np.sin(phi),
+                np.cos(theta),
+            )
+        )
+        for detector_index in np.flatnonzero(solid > 0.0):
+            _accumulate_projected_powder_detector_trajectory(
+                outputs,
+                edges,
+                inverse,
+                direction[detector_index],
+                ei,
+                bounds,
+                charge * solid[detector_index],
+                q_centers,
+                energy_centers,
+                background_signal,
+                background_variance,
+                interpolation,
+            )
+        completed += int(theta.size)
+        if progress_callback is not None and (
+            payload_index == len(run_payloads) or payload_index % report_stride == 0
+        ):
+            progress_callback(
+                {
+                    "stage": "mdevent_background_projection",
+                    "iteration": completed,
+                    "total": task_total,
+                    "message": (
+                        f"projected powder background through "
+                        f"{completed:,}/{task_total:,} sample detector trajectories"
+                    ),
+                    "workers": 1,
+                    "output_bins": output_size,
+                }
+            )
+    return tuple(outputs)
 
 
 def _powder_trajectory_normalization(
@@ -1220,6 +1513,181 @@ def _accumulate_detector_trajectory(output, edges, inverse, direction, ei, energ
         flat = _flat_bin_indices(np.asarray([[*hkl, energy]]), edges, output.shape)[0]
         if flat >= 0:
             output.ravel()[flat] += weight * ENERGY_TO_K2 * (second * second - first * first)
+
+
+def _powder_background_point(
+    q_value,
+    energy,
+    q_centers,
+    energy_centers,
+    signal,
+    variance,
+    interpolation,
+):
+    if not (
+        q_centers[0] <= q_value <= q_centers[-1]
+        and energy_centers[0] <= energy <= energy_centers[-1]
+    ):
+        return None
+    if interpolation == "nearest":
+        q_index = int(np.argmin(np.abs(q_centers - q_value)))
+        energy_index = int(np.argmin(np.abs(energy_centers - energy)))
+        value = signal[q_index, energy_index]
+        source_variance = variance[q_index, energy_index]
+        if not np.isfinite(value) or not np.isfinite(source_variance):
+            return None
+        return float(value), float(np.sqrt(max(source_variance, 0.0)))
+    q_upper = int(np.clip(np.searchsorted(q_centers, q_value, side="right"), 1, q_centers.size - 1))
+    e_upper = int(
+        np.clip(
+            np.searchsorted(energy_centers, energy, side="right"),
+            1,
+            energy_centers.size - 1,
+        )
+    )
+    q_lower = q_upper - 1
+    e_lower = e_upper - 1
+    q_fraction = (q_value - q_centers[q_lower]) / (
+        q_centers[q_upper] - q_centers[q_lower]
+    )
+    e_fraction = (energy - energy_centers[e_lower]) / (
+        energy_centers[e_upper] - energy_centers[e_lower]
+    )
+    value = 0.0
+    point_variance = 0.0
+    for q_index, q_weight in (
+        (q_lower, 1.0 - q_fraction),
+        (q_upper, q_fraction),
+    ):
+        for e_index, e_weight in (
+            (e_lower, 1.0 - e_fraction),
+            (e_upper, e_fraction),
+        ):
+            corner_weight = q_weight * e_weight
+            corner_value = signal[q_index, e_index]
+            corner_variance = variance[q_index, e_index]
+            if corner_weight > np.finfo(float).eps and (
+                not np.isfinite(corner_value) or not np.isfinite(corner_variance)
+            ):
+                return None
+            if np.isfinite(corner_value) and np.isfinite(corner_variance):
+                value += corner_weight * corner_value
+                point_variance += corner_weight**2 * corner_variance
+    return float(value), float(np.sqrt(max(point_variance, 0.0)))
+
+
+def _accumulate_projected_powder_detector_trajectory(
+    outputs,
+    edges,
+    inverse,
+    direction,
+    ei,
+    energy_bounds,
+    weight,
+    q_centers,
+    energy_centers,
+    background_signal,
+    background_variance,
+    interpolation,
+):
+    """Reference implementation of sample-trajectory powder projection."""
+
+    signal_sum, sigma_sum, valid_denominator, denominator = outputs
+    ki = np.sqrt(max(ei, 0.0) / ENERGY_TO_K2)
+    kf_values = np.sqrt(
+        np.maximum(ei - np.asarray(energy_bounds, dtype=float), 0.0) / ENERGY_TO_K2
+    )
+    low_kf, high_kf = float(np.min(kf_values)), float(np.max(kf_values))
+    qin = inverse @ np.array([0.0, 0.0, ki])
+    qout = inverse @ direction
+    clipped_low, clipped_high = low_kf, high_kf
+    for dim in range(3):
+        if abs(qout[dim]) <= 1.0e-14:
+            if qin[dim] < edges[dim][0] or qin[dim] > edges[dim][-1]:
+                return
+            continue
+        crossings = (
+            (qin[dim] - edges[dim][0]) / qout[dim],
+            (qin[dim] - edges[dim][-1]) / qout[dim],
+        )
+        clipped_low = max(clipped_low, min(crossings))
+        clipped_high = min(clipped_high, max(crossings))
+        if clipped_high - clipped_low <= 1.0e-12:
+            return
+    energy_kf = np.sqrt(
+        np.maximum(ei - np.asarray([edges[3][-1], edges[3][0]]), 0.0)
+        / ENERGY_TO_K2
+    )
+    clipped_low = max(clipped_low, float(np.min(energy_kf)))
+    clipped_high = min(clipped_high, float(np.max(energy_kf)))
+    if clipped_high - clipped_low <= 1.0e-12:
+        return
+    intersections = [clipped_low, clipped_high]
+    for dim in range(3):
+        if abs(qout[dim]) > 1.0e-14:
+            intersections.extend(
+                value
+                for boundary in edges[dim]
+                if clipped_low
+                < (value := (qin[dim] - boundary) / qout[dim])
+                < clipped_high
+            )
+    intersections.extend(
+        value
+        for boundary in edges[3]
+        if clipped_low
+        < (value := np.sqrt(max(ei - boundary, 0.0) / ENERGY_TO_K2))
+        < clipped_high
+    )
+    cosine = float(direction[2])
+    sine_squared = max(0.0, 1.0 - cosine * cosine)
+    for q_boundary in q_centers:
+        discriminant = q_boundary * q_boundary - ki * ki * sine_squared
+        if discriminant < 0.0:
+            continue
+        root = np.sqrt(discriminant)
+        intersections.extend(
+            value
+            for value in (ki * cosine - root, ki * cosine + root)
+            if clipped_low < value < clipped_high
+        )
+    intersections.extend(
+        value
+        for boundary in energy_centers
+        if clipped_low
+        < (value := np.sqrt(max(ei - boundary, 0.0) / ENERGY_TO_K2))
+        < clipped_high
+    )
+    points = np.unique(np.asarray(intersections, dtype=float))
+    for first, second in zip(points[:-1], points[1:], strict=True):
+        if second - first <= 1.0e-12:
+            continue
+        middle = 0.5 * (first + second)
+        hkl = qin - qout * middle
+        energy = ei - ENERGY_TO_K2 * middle * middle
+        flat = _flat_bin_indices(np.asarray([[*hkl, energy]]), edges, denominator.shape)[0]
+        if flat < 0:
+            continue
+        segment_weight = weight * ENERGY_TO_K2 * (second * second - first * first)
+        denominator.ravel()[flat] += segment_weight
+        q_value = np.sqrt(
+            max(ki * ki + middle * middle - 2.0 * ki * middle * cosine, 0.0)
+        )
+        interpolated = _powder_background_point(
+            q_value,
+            energy,
+            q_centers,
+            energy_centers,
+            background_signal,
+            background_variance,
+            interpolation,
+        )
+        if interpolated is None:
+            continue
+        value, sigma = interpolated
+        valid_denominator.ravel()[flat] += segment_weight
+        signal_sum.ravel()[flat] += segment_weight * value
+        sigma_sum.ravel()[flat] += segment_weight * sigma
 
 
 def _accumulate_powder_detector_trajectory(

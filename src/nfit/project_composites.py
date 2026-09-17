@@ -29,7 +29,11 @@ from .cache_utils import (
     lru_store as _lru_store,
 )
 from .dataset import PointData4D, PointListData
-from .mdevent import bin_mdevent_group, bin_mdevent_powder_group
+from .mdevent import (
+    bin_mdevent_group,
+    bin_mdevent_powder_group,
+    project_powder_background_mdevent,
+)
 from .mdhisto import (
     MDHistoAxis,
     MDHistoChannel,
@@ -916,6 +920,7 @@ def _composite_cache_signature(
                 bool(background.enabled),
                 float(background.scale),
                 background.interpolation,
+                background.projection,
                 (
                     _viewer_view_signature(
                         background.source_entry,
@@ -1596,6 +1601,26 @@ def _apply_composite_backgrounds(
                     source_data = _apply_dataset_backgrounds(source, source_data)
         if not isinstance(source_data, MDHistoData):
             raise TypeError(f"background {background.name!r} must refer to gridded histogram data")
+        if background.projection not in {"center", "sample_trajectories"}:
+            raise ValueError(
+                f"background {background.name!r} has unknown projection mode "
+                f"{background.projection!r}"
+            )
+        if background.projection == "sample_trajectories":
+            node = group.node if isinstance(group, _CompositeScope) else group
+            if not isinstance(node, DatasetGroup) or "mdevent" not in node.metadata:
+                raise ValueError(
+                    "sample-trajectory powder projection requires a background "
+                    "owned by an MDEvent dataset group"
+                )
+            source_data = project_powder_background_mdevent(
+                node,
+                source_data,
+                result,
+                datasets=_composite_candidates(group),
+                interpolation=background.interpolation,
+                progress_callback=progress_callback,
+            )
         source_data = _broadcast_background_over_metadata(source_data, result)
         before_subtraction = result
         cancels_self = (

@@ -51,11 +51,17 @@ def subtract_aligned_background(
     )
     metadata = dict(data.metadata)
     history = list(metadata.get("background_subtractions", []))
+    projection = background.metadata.get("background_projection")
     history.append(
         {
             "scale": factor,
             "interpolation": "aligned",
             "source": background.metadata.get("source_file"),
+            **(
+                {"projection": dict(projection)}
+                if isinstance(projection, dict)
+                else {}
+            ),
         }
     )
     metadata["background_subtractions"] = history
@@ -165,6 +171,7 @@ def subtract_powder_background(
         {
             "scale": factor,
             "interpolation": interpolation,
+            "projection": {"mode": "center"},
             "source": background.metadata.get("source_file"),
         }
     )

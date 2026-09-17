@@ -167,9 +167,15 @@ def test_group_background_specs_round_trip_and_relink_by_dataset_id():
         data_type="single_crystal_inelastic",
         metadata={"source_file": "data.npz"},
     )
-    subgroup = DatasetGroup("Angles", datasets=[target])
+    subgroup = DatasetGroup("Angles", datasets=[target], metadata={"mdevent": {}})
     subgroup.backgrounds.append(
-        BackgroundSpec("Environment", source.id, scale=0.75, source_entry=source)
+        BackgroundSpec(
+            "Environment",
+            source.id,
+            scale=0.75,
+            projection="sample_trajectories",
+            source_entry=source,
+        )
     )
     payload = _project_to_dict(
         NfitProject(data_groups=[DataGroup("Workspace", [source], [subgroup])])
@@ -181,6 +187,7 @@ def test_group_background_specs_round_trip_and_relink_by_dataset_id():
     restored_background = restored_group.subgroups[0].backgrounds[0]
 
     assert restored_background.scale == 0.75
+    assert restored_background.projection == "sample_trajectories"
     assert restored_background.source_dataset_id == restored_source.id
     assert restored_background.source_entry is restored_source
 
@@ -421,7 +428,7 @@ def test_project_tree_exposes_group_background_controls_with_tooltips(monkeypatc
         _powder(np.full((2, 2), 5.0), np.ones((2, 2))),
         data_type="single_crystal_inelastic",
     )
-    subgroup = DatasetGroup("Angles", datasets=[target])
+    subgroup = DatasetGroup("Angles", datasets=[target], metadata={"mdevent": {}})
     background = BackgroundSpec("Environment", source.id, source_entry=source)
     subgroup.backgrounds.append(background)
     explorer = NfitProjectExplorer(
@@ -447,5 +454,11 @@ def test_project_tree_exposes_group_background_controls_with_tooltips(monkeypatc
     scale = explorer.details_widget.findChild(
         QtWidgets.QDoubleSpinBox, "background_scale"
     )
+    projection = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "background_projection"
+    )
     assert source_combo is not None and source_combo.toolTip()
     assert scale is not None and scale.toolTip()
+    assert projection is not None and projection.toolTip()
+    projection.setCurrentIndex(projection.findData("sample_trajectories"))
+    assert background.projection == "sample_trajectories"

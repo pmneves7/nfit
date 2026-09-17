@@ -978,6 +978,7 @@ def _viewer_view_signature(
                 bool(background.enabled),
                 float(background.scale),
                 background.interpolation,
+                background.projection,
                 (
                     dataset_content_signature(background.source_entry)
                     if background.source_entry is not None
@@ -1101,6 +1102,11 @@ def _apply_dataset_backgrounds(
     for background in dataset.backgrounds:
         if not background.enabled:
             continue
+        if background.projection == "sample_trajectories":
+            raise ValueError(
+                "sample-trajectory powder projection must be attached to an "
+                "MDEvent dataset group, not an individual dataset"
+            )
         source = background.source_entry
         if source is None:
             raise ValueError(f"background {background.name!r} refers to a missing dataset")

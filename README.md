@@ -41,7 +41,8 @@ A few of its main capabilities are:
   raw CORELLI finite-energy correlation-chopper reconstruction with fractional
   momentum and discrete reconstructed-energy assignment, and reduced
   CORELLI and WAND² single-crystal data, with conventional major-tick or
-  Brillouin-zone gridline overlays and reversible displayed-axis coarsening;
+  Brillouin-zone gridline overlays, trajectory-projected powder-background
+  subtraction, and reversible displayed-axis coarsening;
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
 - construct and inspect crystal, tight-binding, Lindhard, and RPA models;
 - save complete `.nfit` projects, retain bounded compressed binnings in RAM,

@@ -37,7 +37,8 @@ nfit provides:
   native MDEvent reduction,
   momentum-coordinate matrices, automatic
   zero-aligned uniform grids specified by bin centers, composites, backgrounds
-  with automatic grid matching for unrebinned neutron references, and
+  with automatic grid matching for unrebinned neutron references and optional
+  MDEvent sample-trajectory projection of powder backgrounds, and
   non-destructive analyses, including live hierarchical composites and editable
   source-linked histogram sums, differences, or comparison clones with
   independent raw-data binning, plus lazy navigation for run-heavy projects;

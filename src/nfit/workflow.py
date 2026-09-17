@@ -808,6 +808,7 @@ def _background_spec(background: BackgroundSpec) -> dict[str, Any]:
         "scale": float(background.scale),
         "enabled": bool(background.enabled),
         "interpolation": background.interpolation,
+        "projection": background.projection,
         "metadata": copy.deepcopy(background.metadata),
     }
 
