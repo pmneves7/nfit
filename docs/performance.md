@@ -104,17 +104,20 @@ geometry.
 Cache entries are process-local and evicted by least-recent use. Completed
 viewer and composite binnings share one total memory allowance. Recent results
 use resident arrays; older results are chunk-compressed in RAM as the combined
-cache approaches that allowance. nfit does not write automatic cache
-spill files to `/tmp` or scratch. When the compressed tier fills, the GUI asks
-whether to discard the oldest compressed binning or save it as a compressed
-`.npz` file at a path you choose. A discarded binning can be recomputed from
-its sources. That choice is requested once per nfit session; subsequent old
-compressed binnings are discarded automatically instead of opening repeated
-dialogs. Saving a compressed NPZ exports the numerical result; it does not
-add that file to the project automatically. A binning too large for the
-compressed tier is not retained there. Scripting workflows evict old results
-without a GUI prompt. The shared budget counts distinct NumPy array payloads and
-compressed bytes, with small Python-object overhead excluded.
+cache approaches that allowance. When the compressed tier fills, the GUI can
+discard old binnings, export the oldest as a standalone compressed `.npz`, or
+choose a disk-cache folder. A folder choice is remembered for the rest of the
+session: this and later evictions are stored in a private nfit subdirectory and
+remain available to cache lookups without another prompt. The files are removed
+when their result is replaced or the application exits. If **Cache binnings**
+is enabled for the project, a successful save embeds disk-backed binnings in
+the `.nfit` archive, switches the live cache to that project copy, and removes
+the separate session spill files. A standalone NPZ export is not added to the
+project automatically, and choosing export or discard retains the prior policy
+of silently discarding later old binnings for that session. A binning too large
+for the compressed tier is not retained there. Scripting workflows evict old
+results without a GUI prompt. The shared budget counts distinct NumPy array
+payloads and compressed bytes, with small Python-object overhead excluded.
 On Linux and remote desktops, the memory-choice dialog is attached to the
 active rebin window so it remains visible and interactive above progress.
 The prepared-table cache defaults to 128 MiB and the model-overlay cache to
@@ -166,6 +169,21 @@ already cached. It reports the actual compressed artifact size when that
 binning is embedded in the saved `.nfit` project, and a dash otherwise. A
 future compressed size is not estimated because sparse masks, repeated values,
 and numerical content change the compression ratio.
+
+Before a GUI operation starts one or more pending rebins, nfit also adds their
+estimated result payloads to the memory already occupied by the shared rebin
+cache. It warns when that projected total reaches 80% of the **Total rebin
+memory ceiling**. This preflight applies to explicit single and batch rebins,
+dataset and composite materialization, data and project saves, fitting and
+posterior sampling, and opening the data viewer. The dialog defaults to
+**Cancel**, so the operation can stop before numerical work begins; **Continue
+anyway** accepts that cached results may be evicted, while **Choose disk cache
+& continue…** designates the session folder before numerical work begins. Later
+evictions then use that folder without interrupting the operation. This estimate is
+conservative when an operation replaces an existing cached result, and dynamic
+Discrete or Tolerance axes remain approximate until their coordinates are
+resolved.
+
 On macOS, available memory includes inactive and speculative pages that the
 operating system can reclaim; this prevents the worker planner from falling to
 one CPU merely because the file cache has consumed most completely free pages.

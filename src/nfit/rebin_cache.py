@@ -5,18 +5,37 @@ from __future__ import annotations
 import zlib
 from collections import OrderedDict
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import numpy as np
 
-from .analysis.artifacts import _payload, dataset_artifact_from_payload
+from .analysis.artifacts import (
+    _payload,
+    dataset_artifact_from_payload,
+    read_dataset_artifact,
+    read_project_dataset_artifact,
+)
 from .cache_utils import array_payload_nbytes
 from .dataset import PointListData
 from .mdhisto import MDHistoData
 
 _CHUNK_BYTES = 8 * 1024**2
+
+
+@dataclass(frozen=True)
+class _DiskBinning:
+    signature: str
+    path: Path
+    project_member: str | None = None
+    owned: bool = True
+
+    def restore(self) -> MDHistoData | PointListData:
+        if self.project_member is None:
+            return read_dataset_artifact(self.path)
+        return read_project_dataset_artifact(self.path, self.project_member)
 
 
 class CompressedBinning:
@@ -176,11 +195,14 @@ class RebinCache(OrderedDict):
         self._budget = budget or RebinCacheBudget()
         self._budget.register(self)
         self._compressed: OrderedDict[Any, tuple[str, CompressedBinning]] = OrderedDict()
+        self._disk: OrderedDict[Any, _DiskBinning] = OrderedDict()
         self._compressed_bytes = 0
         self._resident_ticks: dict[Any, int] = {}
         self._compressed_ticks: dict[Any, int] = {}
         self._labels: dict[Any, str] = {}
-        self.before_discard: Callable[[Any, CompressedBinning], None] | None = None
+        self.before_discard: (
+            Callable[[Any, CompressedBinning], str | Path | None] | None
+        ) = None
 
     def set_label(self, key: Any, label: str) -> None:
         """Associate a human-readable bin name with a process-local cache key."""
@@ -202,6 +224,7 @@ class RebinCache(OrderedDict):
         self._budget.enforce()
 
     def __setitem__(self, key, value):
+        self._drop_disk(key)
         old = self._compressed.pop(key, None)
         if old is not None:
             self._compressed_bytes -= old[1].nbytes
@@ -213,15 +236,27 @@ class RebinCache(OrderedDict):
         if super().__contains__(key):
             return super().get(key, default)
         stored = self._compressed.get(key)
-        if stored is None:
+        if stored is not None:
+            self._compressed.move_to_end(key)
+            self._compressed_ticks[key] = self._budget.next_tick()
+            signature, artifact = stored
+            return signature, artifact.restore()
+        disk = self._disk.get(key)
+        if disk is None:
             return default
-        self._compressed.move_to_end(key)
-        self._compressed_ticks[key] = self._budget.next_tick()
-        signature, artifact = stored
-        return signature, artifact.restore()
+        self._disk.move_to_end(key)
+        try:
+            return disk.signature, disk.restore()
+        except (KeyError, OSError, ValueError):
+            self._drop_disk(key)
+            return default
 
     def __contains__(self, key):
-        return super().__contains__(key) or key in self._compressed
+        return (
+            super().__contains__(key)
+            or key in self._compressed
+            or key in self._disk
+        )
 
     def has_signature(self, key, signature):
         """Check freshness without decompressing a potentially large grid."""
@@ -230,7 +265,10 @@ class RebinCache(OrderedDict):
         if resident is not None:
             return resident[0] == signature
         stored = self._compressed.get(key)
-        return stored is not None and stored[0] == signature
+        if stored is not None:
+            return stored[0] == signature
+        disk = self._disk.get(key)
+        return disk is not None and disk.signature == signature and disk.path.exists()
 
     def move_to_end(self, key, last=True):
         if super().__contains__(key):
@@ -239,6 +277,50 @@ class RebinCache(OrderedDict):
         elif key in self._compressed:
             self._compressed.move_to_end(key, last=last)
             self._compressed_ticks[key] = self._budget.next_tick()
+        elif key in self._disk:
+            self._disk.move_to_end(key, last=last)
+
+    def _drop_disk(self, key: Any) -> None:
+        disk = self._disk.pop(key, None)
+        if disk is not None and disk.owned:
+            try:
+                disk.path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def set_project_backing(
+        self,
+        key: Any,
+        *,
+        signature: str,
+        project_path: str | Path,
+        member: str,
+    ) -> None:
+        """Replace a session spill with a lazy reference to a saved project member."""
+
+        if key not in self._disk:
+            return
+        self._drop_disk(key)
+        self._disk[key] = _DiskBinning(
+            signature=str(signature),
+            path=Path(project_path),
+            project_member=str(member),
+            owned=False,
+        )
+
+    def clear_disk_cache(self) -> None:
+        """Forget disk-backed entries and remove only nfit-owned session files."""
+
+        for key in tuple(self._disk):
+            self._drop_disk(key)
+
+    def clear_project_backing(self, project_path: str | Path) -> None:
+        """Forget lazy members owned by one project archive without deleting it."""
+
+        target = Path(project_path)
+        for key, disk in tuple(self._disk.items()):
+            if not disk.owned and disk.path == target:
+                self._drop_disk(key)
 
     def _oldest_candidate(self) -> tuple[int, str, Any] | None:
         candidates = [
@@ -271,13 +353,20 @@ class RebinCache(OrderedDict):
         stored = self._compressed.get(key)
         if stored is None:
             return
-        _signature, artifact = stored
+        signature, artifact = stored
+        destination = None
         if self.before_discard is not None:
-            self.before_discard(self._labels.get(key, key), artifact)
+            destination = self.before_discard(self._labels.get(key, key), artifact)
         self._compressed.pop(key)
         self._compressed_bytes -= artifact.nbytes
         self._compressed_ticks.pop(key, None)
-        self._labels.pop(key, None)
+        if destination is None:
+            self._labels.pop(key, None)
+        else:
+            self._disk[key] = _DiskBinning(
+                signature=signature,
+                path=Path(destination),
+            )
 
     def popitem(self, last=True):
         key = next(reversed(self)) if last else next(iter(self))
@@ -287,9 +376,12 @@ class RebinCache(OrderedDict):
         return result
 
     def clear(self):
+        """Clear resident, compressed, and disk-backed cache tiers."""
+
         super().clear()
         self._compressed.clear()
         self._compressed_bytes = 0
         self._resident_ticks.clear()
         self._compressed_ticks.clear()
+        self.clear_disk_cache()
         self._labels.clear()

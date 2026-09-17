@@ -121,7 +121,11 @@ from .model_registry import (
     model_plot_definitions,
     model_types_in_category,
 )
-from .performance import assess_output_rebin_memory
+from .performance import (
+    assess_output_rebin_memory,
+    assess_rebin_cache_memory,
+    estimate_rebin_result_bytes,
+)
 from .pipeline import (
     BackgroundSpec,
     DataGroup,
@@ -221,6 +225,7 @@ from .project_models import reconcile_model_orbit_parameters
 from .project_rebinning import estimated_rebin_shape
 from .qt_branding import configure_application_icon
 from .qt_controls import configure_numeric_spin_boxes
+from .rebin_cache import SHARED_REBIN_CACHE_BUDGET
 from .spectral_channels import (
     SPECTRAL_CHANNEL_CONFIG_KEY,
     default_spectral_channel_config,  # noqa: F401 - compatibility re-export
@@ -5579,6 +5584,68 @@ def _project_binning_artifacts(
     return artifacts, entries
 
 
+def _adopt_saved_project_binning_backing(
+    project: NfitProject,
+    path: Path,
+    entries: list[dict[str, Any]],
+) -> None:
+    """Replace session spill files with lazy references to saved project members."""
+
+    for entry in entries:
+        try:
+            group = project.data_groups[int(entry["group_index"])]
+            binning_id = str(entry["binning_id"])
+            signature = str(entry["signature"])
+            member = str(entry["member"])
+            if entry.get("type") == "dataset":
+                dataset = next(
+                    item
+                    for item in group.iter_datasets()
+                    if item.id == str(entry["dataset_id"])
+                )
+                config = dataset_rebin_config_by_id(dataset, binning_id)
+                key = (
+                    dataset.id
+                    if config is _fit_dataset_rebin_config(dataset)
+                    else f"{dataset.id}:{binning_id}"
+                )
+                _VIEWER_VIEW_CACHE.set_project_backing(
+                    key,
+                    signature=signature,
+                    project_path=path,
+                    member=member,
+                )
+            elif entry.get("type") == "composite":
+                node_id = entry.get("node_id")
+                scope = (
+                    group
+                    if node_id is None
+                    else _composite_scope(
+                        group,
+                        next(
+                            node
+                            for node in group.iter_subgroups()
+                            if node.id == str(node_id)
+                        ),
+                    )
+                )
+                config = data_group_composite_config_by_id(scope, binning_id)
+                key = _composite_cache_key(
+                    scope,
+                    None
+                    if config is _fit_data_group_composite_config(scope)
+                    else binning_id,
+                )
+                _COMPOSITE_DATA_CACHE.set_project_backing(
+                    key,
+                    signature=signature,
+                    project_path=path,
+                    member=member,
+                )
+        except (IndexError, KeyError, StopIteration, TypeError, ValueError):
+            continue
+
+
 def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
     """Restore embedded binnings into the process-local caches."""
 
@@ -5738,6 +5805,7 @@ def save_project(
                 preserve_existing=asset_source is not None,
                 binning_artifacts=artifacts,
             )
+        _adopt_saved_project_binning_backing(project, target, entries)
     else:
         project.settings.pop(PROJECT_BINNING_CACHE_ENTRIES_KEY, None)
         write_project_manifest(
@@ -5747,6 +5815,8 @@ def save_project(
             preserve_existing=asset_source is not None,
             binning_artifacts={},
         )
+        _COMPOSITE_DATA_CACHE.clear_project_backing(target)
+        _VIEWER_VIEW_CACHE.clear_project_backing(target)
     project._project_path = target
     _bind_project_analysis_sources(project, target, load_data=False)
 
@@ -6746,6 +6816,7 @@ class NfitProjectExplorer:
         self._auxiliary_windows: dict[int, Any] = {}
         self._overlay_refresh_timer = None
         self._pending_overlay_groups: dict[int, DataGroup] = {}
+        self._compressed_cache_prompt = None
         # True only while the Qt event loop is running (set in run()); in
         # headless/test use it stays False so overlay refreshes are synchronous.
         self._interactive = False
@@ -6822,6 +6893,7 @@ class NfitProjectExplorer:
         from .project_cache_gui import CompressedCachePrompt
 
         cache_prompt = CompressedCachePrompt(self.window)
+        self._compressed_cache_prompt = cache_prompt
         _COMPOSITE_DATA_CACHE.before_discard = cache_prompt.request
         _VIEWER_VIEW_CACHE.before_discard = cache_prompt.request
         self._update_controller.schedule_startup()
@@ -6836,6 +6908,10 @@ class NfitProjectExplorer:
         finally:
             _COMPOSITE_DATA_CACHE.before_discard = None
             _VIEWER_VIEW_CACHE.before_discard = None
+            _COMPOSITE_DATA_CACHE.clear_disk_cache()
+            _VIEWER_VIEW_CACHE.clear_disk_cache()
+            cache_prompt.cleanup()
+            self._compressed_cache_prompt = None
             if self._external_change_timer is not None:
                 self._external_change_timer.stop()
             if interrupt_timer is not None:
@@ -7590,6 +7666,15 @@ class NfitProjectExplorer:
                 return self.save_as()
             if action != "overwrite":
                 return False
+        if (
+            project_cache_binnings_enabled(self.project)
+            and project_binnings_need_refresh(self.project)
+            and not self._confirm_rebin_cache_memory(
+                self._pending_project_rebin_cache_bytes(),
+                operation="Saving the project",
+            )
+        ):
+            return False
         self._stamp_active_fit_path()
         progress = (
             self._make_rebin_progress_callback(
@@ -7626,6 +7711,15 @@ class NfitProjectExplorer:
             "nfit projects (*.nfit);;All files (*)",
         )
         if not path:
+            return False
+        if (
+            project_cache_binnings_enabled(self.project)
+            and project_binnings_need_refresh(self.project)
+            and not self._confirm_rebin_cache_memory(
+                self._pending_project_rebin_cache_bytes(),
+                operation="Saving the project",
+            )
+        ):
             return False
         old_path = self.project_path
         new_path = Path(path)
@@ -7907,7 +8001,9 @@ class NfitProjectExplorer:
             return None
         selected = self._selected_dataset_binning(entry)
         config = selected["config"]
-        if not self._confirm_dataset_rebin_memory([selected]):
+        if not self._confirm_dataset_rebin_memory(
+            [selected], operation="Creating a dataset from the rebin"
+        ):
             return None
         progress = self._make_rebin_progress_callback("Creating rebinned dataset...") if _dataset_rebin_is_large(entry, config) else None
         try:
@@ -7949,7 +8045,9 @@ class NfitProjectExplorer:
             return False
         selected = self._selected_dataset_binning(entry)
         config = selected["config"]
-        if not self._confirm_dataset_rebin_memory([selected]):
+        if not self._confirm_dataset_rebin_memory(
+            [selected], operation="Saving the rebinned dataset"
+        ):
             return False
         progress = self._make_rebin_progress_callback("Saving rebinned dataset...") if _dataset_rebin_is_large(entry, config) else None
         try:
@@ -7997,7 +8095,9 @@ class NfitProjectExplorer:
         selected = self._selected_dataset_binning(entry)
         config = selected["config"]
         cache_id = None if selected["fit"] else selected["id"]
-        if not self._confirm_dataset_rebin_memory([selected]):
+        if not self._confirm_dataset_rebin_memory(
+            [selected], operation="Rebinning the selected dataset"
+        ):
             return False
         if self._interactive:
             def task(progress_callback: Any) -> Any:
@@ -8074,7 +8174,9 @@ class NfitProjectExplorer:
         ]
         if not binnings:
             return False
-        if not self._confirm_dataset_rebin_memory(binnings):
+        if not self._confirm_dataset_rebin_memory(
+            binnings, operation="Rebinning all dataset binnings"
+        ):
             return False
 
         def task(progress_callback: Any | None) -> int:
@@ -8143,12 +8245,99 @@ class NfitProjectExplorer:
         on_success(completed)
         return bool(completed)
 
+    def _estimated_rebin_cache_bytes(
+        self, config: dict[str, Any], *, composite: bool
+    ) -> int:
+        """Estimate the persistent numerical payload of one requested result."""
+
+        try:
+            if composite:
+                _lower, _upper, shape = _composite_rebin_bounds(config)
+            else:
+                shape = estimated_rebin_shape(config)
+            return estimate_rebin_result_bytes(math.prod(shape)) if shape else 0
+        except (KeyError, TypeError, ValueError):
+            return 0
+
+    def _confirm_rebin_cache_memory(
+        self,
+        result_bytes: list[int],
+        *,
+        operation: str,
+    ) -> bool:
+        """Warn before an operation approaches the shared result-cache ceiling."""
+
+        estimates = [int(value) for value in result_bytes if int(value) > 0]
+        current = SHARED_REBIN_CACHE_BUDGET.total_bytes()
+        added, projected, limit, warn = assess_rebin_cache_memory(
+            estimates,
+            current_cache_bytes=current,
+            cache_limit_bytes=_VIEWER_VIEW_CACHE_MAX_BYTES,
+        )
+        if not warn:
+            return True
+        from .project_cache_gui import confirm_rebin_cache_preflight
+
+        return confirm_rebin_cache_preflight(
+            self.window,
+            operation=operation,
+            result_count=len(estimates),
+            added_bytes=added,
+            current_bytes=current,
+            projected_bytes=projected,
+            limit_bytes=limit,
+            choose_disk_cache=(
+                self._compressed_cache_prompt.choose_cache_directory
+                if self._compressed_cache_prompt is not None
+                else None
+            ),
+        )
+
+    def _pending_project_rebin_cache_bytes(
+        self,
+        *,
+        group: DataGroup | None = None,
+        include_composites: bool = True,
+    ) -> list[int]:
+        """Return result estimates for stale binnings an operation may compute."""
+
+        estimates = []
+        for kind, _name, owner, target, binning_id, config in _project_binning_targets(
+            self.project
+        ):
+            if group is not None and owner is not group:
+                continue
+            if kind != "dataset" and not include_composites:
+                continue
+            if _project_binning_is_current(
+                kind, owner, target, binning_id, config
+            ):
+                continue
+            estimate = self._estimated_rebin_cache_bytes(
+                config, composite=kind != "dataset"
+            )
+            if estimate:
+                estimates.append(estimate)
+        return estimates
+
     def _confirm_dataset_rebin_memory(
-        self, binnings: list[dict[str, Any]]
+        self,
+        binnings: list[dict[str, Any]],
+        *,
+        operation: str = "Rebinning dataset data",
     ) -> bool:
         """Confirm an ordinary rebin when its output workspace is very large."""
 
         from PySide6 import QtWidgets
+
+        if not self._confirm_rebin_cache_memory(
+            [
+                self._estimated_rebin_cache_bytes(item["config"], composite=False)
+                for item in binnings
+            ],
+            operation=operation,
+        ):
+            return False
 
         risky = []
         for item in binnings:
@@ -8180,10 +8369,21 @@ class NfitProjectExplorer:
         self,
         group: DataGroup | _CompositeScope,
         binnings: list[dict[str, Any]],
+        *,
+        operation: str = "Rebinning composite data",
     ) -> bool:
         """Confirm large native or ordinary composite grids before rebinning."""
 
         from PySide6 import QtWidgets
+
+        if not self._confirm_rebin_cache_memory(
+            [
+                self._estimated_rebin_cache_bytes(item["config"], composite=True)
+                for item in binnings
+            ],
+            operation=operation,
+        ):
+            return False
 
         candidates = _composite_candidates(group)
         if not candidates:
@@ -8236,6 +8436,14 @@ class NfitProjectExplorer:
         """Warn once for the largest pending output in a viewer load."""
 
         from PySide6 import QtWidgets
+
+        if not self._confirm_rebin_cache_memory(
+            self._pending_project_rebin_cache_bytes(
+                group=group, include_composites=use_composite
+            ),
+            operation="Opening the data viewer",
+        ):
+            return False
 
         risky = []
         for dataset in group.iter_datasets():
@@ -8311,7 +8519,9 @@ class NfitProjectExplorer:
         if not bool(config.get("enabled", False)):
             return False
         cache_id = None if selected["fit"] else selected["id"]
-        if not self._confirm_composite_rebin_memory(group, [selected]):
+        if not self._confirm_composite_rebin_memory(
+            group, [selected], operation="Rebinning the selected composite"
+        ):
             return False
         if self._interactive:
             def task(progress_callback: Any) -> Any:
@@ -8386,7 +8596,9 @@ class NfitProjectExplorer:
         ]
         if not binnings:
             return False
-        if not self._confirm_composite_rebin_memory(group, binnings):
+        if not self._confirm_composite_rebin_memory(
+            group, binnings, operation="Rebinning all composite binnings"
+        ):
             return False
 
         def task(progress_callback: Any | None) -> int:
@@ -8470,7 +8682,9 @@ class NfitProjectExplorer:
         config = selected["config"]
         if not bool(config.get("enabled", False)):
             return False
-        if not self._confirm_composite_rebin_memory(group, [selected]):
+        if not self._confirm_composite_rebin_memory(
+            group, [selected], operation="Creating a dataset from the composite"
+        ):
             return False
         root = _composite_root(group)
         node = group.node if isinstance(group, _CompositeScope) else root
@@ -8603,9 +8817,19 @@ class NfitProjectExplorer:
     def save_dataset_for_selection(self) -> bool:
         from PySide6 import QtWidgets
 
-        _group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
         if role != "dataset" or entry is None:
             return False
+        if group is not None and dataset_rebin_enabled(entry):
+            selected = next(
+                item for item in dataset_rebin_binnings(entry) if item["fit"]
+            )
+            if not _project_binning_is_current(
+                "dataset", group, entry, selected["id"], selected["config"]
+            ) and not self._confirm_dataset_rebin_memory(
+                [selected], operation="Saving the dataset"
+            ):
+                return False
         path, _selected_filter = get_save_file_name(
             self.window,
             "Save dataset",
@@ -8724,6 +8948,11 @@ class NfitProjectExplorer:
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
         fit_entry = self._fit_entry_for_item(self._current_item())
         if role != "fit" or group is None or fit_entry is None:
+            return None
+        if not self._confirm_rebin_cache_memory(
+            self._pending_project_rebin_cache_bytes(group=group),
+            operation="Running the fit",
+        ):
             return None
         self._set_selected_fit_optimizer_config()
         should_branch = bool(self.fit_branch_check.isChecked()) or _should_branch_fit_now(group, fit_entry)
@@ -8924,6 +9153,11 @@ class NfitProjectExplorer:
         fit_entry = self._fit_entry_for_item(self._current_item())
         if role != "fit" or group is None or fit_entry is None:
             return False
+        if not self._confirm_rebin_cache_memory(
+            self._pending_project_rebin_cache_bytes(group=group),
+            operation="Running the fit",
+        ):
+            return False
         self._set_selected_fit_optimizer_config()
         should_branch = bool(self.fit_branch_check.isChecked()) or _should_branch_fit_now(group, fit_entry)
 
@@ -9119,6 +9353,11 @@ class NfitProjectExplorer:
                 "This fit result does not contain best-fit parameters to start emcee.",
             )
             return False
+        if not self._confirm_rebin_cache_memory(
+            self._pending_project_rebin_cache_bytes(group=group),
+            operation="Running the posterior sampler",
+        ):
+            return False
         progress = self._fit_progress_dialog
         if progress is None:
             progress = _FitProgressDialog(self)
@@ -9186,6 +9425,11 @@ class NfitProjectExplorer:
                 "Posterior sampler",
                 "This fit result does not contain best-fit parameters to start emcee.",
             )
+            return False
+        if not self._confirm_rebin_cache_memory(
+            self._pending_project_rebin_cache_bytes(group=group),
+            operation="Running the posterior sampler",
+        ):
             return False
 
         def task(progress_callback: Any) -> SamplingResult:

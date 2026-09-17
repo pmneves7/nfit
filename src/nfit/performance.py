@@ -10,6 +10,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+REBIN_RESULT_BYTES_PER_BIN = 33
+REBIN_CACHE_WARNING_FRACTION = 0.8
+
 
 def peak_process_memory_mib() -> float:
     """Return the process's peak resident memory in MiB on each supported OS."""
@@ -148,6 +151,32 @@ def assess_output_rebin_memory(
     estimate = max(int(output_bins), 0) * 96 + max(int(max_batch_bytes), 0)
     available = available_memory_bytes()
     return estimate, available, available is not None and estimate > available // 2
+
+
+def estimate_rebin_result_bytes(output_bins: int) -> int:
+    """Estimate the numerical payload retained for an MDHisto rebin result."""
+
+    return max(int(output_bins), 0) * REBIN_RESULT_BYTES_PER_BIN
+
+
+def assess_rebin_cache_memory(
+    result_bytes: list[int] | tuple[int, ...],
+    *,
+    current_cache_bytes: int,
+    cache_limit_bytes: int,
+) -> tuple[int, int, int, bool]:
+    """Estimate whether a batch will approach the shared result-cache ceiling."""
+
+    added = sum(max(int(value), 0) for value in result_bytes)
+    current = max(int(current_cache_bytes), 0)
+    limit = max(int(cache_limit_bytes), 0)
+    projected = current + added
+    warn = bool(
+        result_bytes
+        and limit > 0
+        and projected >= int(limit * REBIN_CACHE_WARNING_FRACTION)
+    )
+    return added, projected, limit, warn
 
 
 def performance_settings_path() -> Path:

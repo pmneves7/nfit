@@ -58,6 +58,33 @@ def test_oldest_compressed_binning_is_offered_before_eviction(tmp_path, monkeypa
     )
 
 
+def test_evicted_binning_uses_and_cleans_session_disk_cache(tmp_path):
+    cache = RebinCache()
+    destination = tmp_path / "session-first.npz"
+
+    def spill_to_disk(_key, artifact):
+        artifact.write_npz(destination)
+        return destination
+
+    cache.before_discard = spill_to_disk
+    artifact = CompressedBinning.from_data(
+        _tiny_mdhisto_data(1.0), max_bytes=10_000
+    )
+    assert artifact is not None
+    budget = artifact.nbytes + artifact.nbytes // 2
+    for key in ("first", "second"):
+        lru_store(cache, key, (key, _tiny_mdhisto_data(1.0)), 0, budget)
+
+    assert destination.exists()
+    assert cache.has_signature("first", "first")
+    signature, restored = cache.get("first")
+    assert signature == "first"
+    np.testing.assert_allclose(restored.signal, _tiny_mdhisto_data(1.0).signal)
+
+    cache.clear()
+    assert not destination.exists()
+
+
 def test_viewer_and_composite_stages_share_one_global_budget():
     budget = RebinCacheBudget()
     viewer = RebinCache(budget)

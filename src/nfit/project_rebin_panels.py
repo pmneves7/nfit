@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from .mdhisto import MDHistoData
+from .performance import estimate_rebin_result_bytes
 from .project_rebinning import (
     _cluster_coordinate_centers,
     _coordinate_center_edges,
@@ -139,7 +140,11 @@ def rebin_memory_estimate(
     axes = _axis_information(config, data if exact else None)
     shape = tuple(item[3] for item in axes)
     total_bins = int(np.prod(shape, dtype=np.int64)) if shape else 0
-    payload_bytes = _mdhisto_payload_bytes(data) if exact else total_bins * 33
+    payload_bytes = (
+        _mdhisto_payload_bytes(data)
+        if exact
+        else estimate_rebin_result_bytes(total_bins)
+    )
     return exact, shape, total_bins, payload_bytes
 
 

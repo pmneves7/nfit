@@ -553,6 +553,53 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
         assert not any(name.startswith("assets/binnings/") for name in archive.namelist())
 
 
+def test_project_save_embeds_session_disk_cache_and_removes_spill(tmp_path):
+    source = tmp_path / "source.nxs"
+    source.write_bytes(b"source placeholder")
+    dataset = DatasetEntry(
+        "scan",
+        _tiny_mdhisto_data(4.0),
+        kind="mdhisto",
+        metadata={"source_file": str(source)},
+    )
+    dataset.replace_data(dataset.data, source_backed=True)
+    group = DataGroup("Workspace1", datasets=[dataset])
+    config = project_gui.dataset_rebin_config(dataset)
+    config.update(enabled=True, minimum_coverage=0.0)
+    project = NfitProject(
+        [group], settings={project_gui.PROJECT_CACHE_BINNINGS_KEY: True}
+    )
+    cache = project_gui._VIEWER_VIEW_CACHE
+    cache.clear()
+    project_gui.dataset_for_slice_viewer(dataset)
+    spill = tmp_path / "session-spill.npz"
+
+    def spill_to_disk(_label, artifact):
+        artifact.write_npz(spill)
+        return spill
+
+    cache.before_discard = spill_to_disk
+    cache._compress_resident(dataset.id, max_bytes=100_000)
+    cache._discard_compressed(dataset.id)
+    assert spill.exists()
+    assert project_gui._project_binning_is_current(
+        "dataset", group, dataset, config["_binning_id"], config
+    )
+
+    path = tmp_path / "disk-backed.nfit"
+    try:
+        save_project(project, path)
+        assert not spill.exists()
+        assert project_gui._project_binning_is_current(
+            "dataset", group, dataset, config["_binning_id"], config
+        )
+        restored = project_gui._peek_cached_dataset_view(dataset)
+        np.testing.assert_allclose(restored.signal, 4.0)
+    finally:
+        cache.before_discard = None
+        cache.clear()
+
+
 def test_persisted_binning_restore_primes_dependencies_before_caching(tmp_path, monkeypatch):
     source = tmp_path / "source.npz"
     source.write_bytes(b"source placeholder")

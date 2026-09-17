@@ -55,7 +55,7 @@ def test_full_compressed_cache_dialog_explains_save_and_discard(monkeypatch):
 
     def choose_discard(message):
         buttons = message.buttons()
-        assert len(buttons) == 2
+        assert len(buttons) == 3
         assert all(button.toolTip() for button in buttons)
         seen.append(message.text())
         next(button for button in buttons if "Discard" in button.text()).click()
@@ -65,8 +65,104 @@ def test_full_compressed_cache_dialog_explains_save_and_discard(monkeypatch):
     prompt.request("another old bin", artifact)
     assert "named oldest bin" in seen[0]
     assert "compressed NPZ" in seen[0]
-    assert "single combined allowance" in seen[0]
+    assert "single combined allowance" not in seen[0]
     assert len(seen) == 1
+
+
+def test_compressed_cache_dialog_reuses_chosen_session_folder(
+    monkeypatch, tmp_path
+):
+    from PySide6 import QtWidgets
+
+    from nfit import project_cache_gui
+    from nfit.project_cache_gui import CompressedCachePrompt
+    from nfit.rebin_cache import CompressedBinning
+    from tests.project_gui_test_support import _tiny_mdhisto_data
+
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("cache")]))
+    prompt = CompressedCachePrompt(explorer.window)
+    artifact = CompressedBinning.from_data(_tiny_mdhisto_data(1.0), max_bytes=10_000)
+    prompts = []
+
+    def choose_cache(message):
+        prompts.append(message.text())
+        next(
+            button for button in message.buttons() if "disk cache" in button.text()
+        ).click()
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec", choose_cache)
+    monkeypatch.setattr(
+        project_cache_gui,
+        "get_existing_directory",
+        lambda *_args, **_kwargs: str(tmp_path),
+    )
+    first = prompt.request("first bin", artifact)
+    second = prompt.request("second bin", artifact)
+
+    assert first is not None and first.exists()
+    assert second is not None and second.exists()
+    assert first.parent == second.parent
+    assert len(prompts) == 1
+    first.unlink()
+    second.unlink()
+    prompt.cleanup()
+
+
+def test_batch_cache_dialog_cancels_before_rebinning_by_default(monkeypatch):
+    from PySide6 import QtWidgets
+
+    from nfit.project_cache_gui import confirm_rebin_cache_preflight
+
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("cache")]))
+    seen = []
+
+    def choose_cancel(message):
+        assert message.defaultButton().text() == "Cancel"
+        assert all(button.toolTip() for button in message.buttons())
+        seen.append(message.text())
+        next(button for button in message.buttons() if button.text() == "Cancel").click()
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec", choose_cancel)
+    assert not confirm_rebin_cache_preflight(
+        explorer.window,
+        operation="Opening the data viewer",
+        result_count=3,
+        added_bytes=700 * 1024**2,
+        current_bytes=200 * 1024**2,
+        projected_bytes=900 * 1024**2,
+        limit_bytes=1024**3,
+    )
+    assert "download more RAM" in seen[0]
+    assert "Opening the data viewer" in seen[0]
+
+
+def test_batch_cache_dialog_can_choose_disk_before_start(monkeypatch):
+    from PySide6 import QtWidgets
+
+    from nfit.project_cache_gui import confirm_rebin_cache_preflight
+
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("cache")]))
+    choices = []
+
+    def choose_cache(message):
+        next(
+            button
+            for button in message.buttons()
+            if button.text().startswith("Choose disk cache")
+        ).click()
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec", choose_cache)
+    assert confirm_rebin_cache_preflight(
+        explorer.window,
+        operation="Running the fit",
+        result_count=2,
+        added_bytes=800 * 1024**2,
+        current_bytes=200 * 1024**2,
+        projected_bytes=1000 * 1024**2,
+        limit_bytes=1024**3,
+        choose_disk_cache=lambda: choices.append(True) or True,
+    )
+    assert choices == [True]
 
 
 def test_full_compressed_cache_dialog_uses_active_modal_parent(monkeypatch):

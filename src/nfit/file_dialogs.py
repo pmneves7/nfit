@@ -277,3 +277,37 @@ def get_save_file_name(
     if result[0]:
         remember_file_dialog_path(result[0])
     return result
+
+
+def get_existing_directory(
+    parent: Any,
+    caption: str,
+    directory: str = "",
+    *,
+    project_path=None,
+) -> str:
+    """Choose and remember an existing directory with the shared dialog policy."""
+
+    initial = _initial_path(directory, project_path)
+    if sys.platform.startswith("linux"):
+        selected, _selected_filter = _exec_linux_file_dialog(
+            _linux_file_dialog(
+                parent,
+                caption,
+                initial,
+                "",
+                file_mode=QtWidgets.QFileDialog.FileMode.Directory,
+                accept_mode=QtWidgets.QFileDialog.AcceptMode.AcceptOpen,
+            )
+        )
+        result = selected[0] if selected else ""
+    else:
+        result = QtWidgets.QFileDialog.getExistingDirectory(
+            parent,
+            caption,
+            initial,
+            options=_dialog_options() | QtWidgets.QFileDialog.Option.ShowDirsOnly,
+        )
+    if result:
+        remember_file_dialog_path(result)
+    return result
