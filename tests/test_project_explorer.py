@@ -2561,6 +2561,31 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
         batch_bar
     )
     assert rebin_dialog.minimumWidth() == rebin_dialog.maximumWidth() == 680
+    rebin(
+        {
+            "stage": "rebin",
+            "iteration": 100,
+            "total": 100,
+            "message": "finishing the current internal stage",
+        }
+    )
+    assert batch_bar.value() == 2
+    assert detail_bar.maximum() == 100
+    assert detail_bar.value() == 99
+    rebin(
+        {
+            "stage": "rebin_batch",
+            "batch_total": 8,
+            "batch_completed": 3,
+            "batch_name": "MACS SPEC 5meV 2K",
+            "batch_kind": "dataset group",
+            "batch_item_complete": True,
+        }
+    )
+    assert batch_bar.value() == 3
+    assert detail_bar.maximum() == detail_bar.value() == 1
+    rebin._nfit_progress_controller.finish("Rebinning complete")
+    assert batch_bar.value() == batch_bar.maximum() == 8
     explorer._close_rebin_progress(rebin)
 
     single_rebin = explorer._make_rebin_progress_callback("Rebinning dataset...")

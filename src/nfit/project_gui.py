@@ -1989,7 +1989,7 @@ def _effective_dataset_entries(
     force_masks: bool,
     progress_callback: Any | None,
     include_disabled_groups: bool = True,
-    batch_progress: dict[str, int] | None = None,
+    batch_progress: dict[str, Any] | None = None,
 ):
     if (
         isinstance(node, DatasetGroup)
@@ -2019,7 +2019,9 @@ def _effective_dataset_entries(
             completed=True,
         )
         return
-    if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
+    if isinstance(node, DatasetGroup) and isinstance(
+        node.metadata.get("mdevent"), dict
+    ):
         return
     for dataset in node.datasets:
         _report_effective_dataset_batch(
@@ -2081,9 +2083,90 @@ def _effective_dataset_entry_count(
     )
 
 
+def _viewer_progress_work_counts(
+    group: DataGroup,
+    node: DataGroup | DatasetGroup,
+    *,
+    use_composite: bool,
+    include_disabled_groups: bool = True,
+) -> tuple[int, int, int]:
+    """Count materializations, named composites, and viewer-ready entries."""
+
+    if (
+        isinstance(node, DatasetGroup)
+        and not node.enabled
+        and not include_disabled_groups
+    ):
+        return 0, 0, 0
+    scope = _composite_scope(group, node)
+    if use_composite and data_group_composite_enabled(scope):
+        binnings = data_group_composite_binnings(scope)
+        named = sum(
+            bool(item["config"].get("enabled", False))
+            for item in binnings[1:]
+        )
+        return 1, named, 1 + named
+    if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
+        return 0, 0, 0
+
+    materializations = len(node.datasets)
+    viewer_entries = 0
+    for dataset in node.datasets:
+        binnings = (
+            dataset_rebin_binnings(dataset)
+            if isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict)
+            else []
+        )
+        viewer_entries += 1 + sum(
+            bool(item["config"].get("enabled", False))
+            for item in binnings[1:]
+        )
+    named_composites = 0
+    for subgroup in node.subgroups:
+        child_materializations, child_named, child_viewer_entries = (
+            _viewer_progress_work_counts(
+                group,
+                subgroup,
+                use_composite=use_composite,
+                include_disabled_groups=include_disabled_groups,
+            )
+        )
+        materializations += child_materializations
+        named_composites += child_named
+        viewer_entries += child_viewer_entries
+    return materializations, named_composites, viewer_entries
+
+
+def _viewer_batch_progress_state(
+    group: DataGroup,
+    *,
+    use_composite: bool,
+    include_window: bool,
+    completed: int = 0,
+) -> dict[str, Any]:
+    """Return a truthful outer-work denominator for opening a data viewer."""
+
+    materializations, named_composites, viewer_entries = _viewer_progress_work_counts(
+        group,
+        group,
+        use_composite=use_composite,
+    )
+    return {
+        "total": (
+            materializations
+            + named_composites
+            + viewer_entries
+            + int(include_window)
+        ),
+        "completed": completed,
+        "batch_operation": "Preparing data viewer",
+        "batch_unit": "work item",
+    }
+
+
 def _report_effective_dataset_batch(
     progress_callback: Any | None,
-    batch_progress: dict[str, int] | None,
+    batch_progress: dict[str, Any] | None,
     *,
     name: str,
     kind: str,
@@ -2095,21 +2178,23 @@ def _report_effective_dataset_batch(
         return
     if completed:
         batch_progress["completed"] += 1
-    progress_callback(
-        {
-            "stage": "rebin_batch",
-            "batch_total": batch_progress["total"],
-            "batch_completed": batch_progress["completed"],
-            "batch_name": name,
-            "batch_kind": kind,
-            "batch_item_complete": completed,
-            "message": (
-                f"finished {kind} {name}"
-                if completed
-                else f"preparing {kind} {name}"
-            ),
-        }
-    )
+    event = {
+        "stage": "rebin_batch",
+        "batch_total": batch_progress["total"],
+        "batch_completed": batch_progress["completed"],
+        "batch_name": name,
+        "batch_kind": kind,
+        "batch_item_complete": completed,
+        "message": (
+            f"finished {kind} {name}"
+            if completed
+            else f"preparing {kind} {name}"
+        ),
+    }
+    if batch_progress.get("batch_operation"):
+        event["batch_operation"] = batch_progress["batch_operation"]
+        event["batch_unit"] = batch_progress.get("batch_unit", "work item")
+    progress_callback(event)
 
 
 def _named_binning_progress_callback(
@@ -2197,8 +2282,13 @@ def slice_viewer_datasets(
     force_rebin: bool = True,
     force_masks: bool = True,
     progress_callback: Any | None = None,
+    defer_progress_completion: bool = False,
 ) -> tuple[list[MDHistoData], list[str]]:
-    """Return data and labels for every dataset in the group tree, with shared masks."""
+    """Return data and labels for every dataset in the group tree, with shared masks.
+
+    GUI callers may set ``defer_progress_completion`` while they construct and
+    render the viewer window after these numerical preparations return.
+    """
 
     data: list[MDHistoData] = []
     names: list[str] = []
@@ -2208,39 +2298,45 @@ def slice_viewer_datasets(
         unmask_model=unmask_model,
     )
     batch_progress = (
-        {
-            "total": _effective_dataset_entry_count(
-                group,
-                group,
-                use_composite=use_composite,
-            ),
-            "completed": 0,
-        }
+        _viewer_batch_progress_state(
+            group,
+            use_composite=use_composite,
+            include_window=defer_progress_completion,
+        )
         if progress_callback is not None
         else None
     )
-    entries = _effective_dataset_entries(
-        group,
-        group,
-        use_composite=use_composite,
-        force_rebin=force_rebin,
-        force_masks=force_masks,
-        progress_callback=progress_callback,
-        batch_progress=batch_progress,
+    entries = list(
+        _effective_dataset_entries(
+            group,
+            group,
+            use_composite=use_composite,
+            force_rebin=force_rebin,
+            force_masks=force_masks,
+            progress_callback=progress_callback,
+            batch_progress=batch_progress,
+        )
     )
     entries = _entries_with_visualization_binnings(
         group,
         entries,
         force_rebin=force_rebin,
         progress_callback=progress_callback,
+        batch_progress=batch_progress,
     )
-    viewer_total = len(entries)
-    for viewer_index, dataset in enumerate(entries):
+    for dataset in entries:
+        _report_effective_dataset_batch(
+            progress_callback,
+            batch_progress,
+            name=dataset.name,
+            kind="viewer dataset",
+            completed=False,
+        )
         if progress_callback is not None:
             progress_callback({
                 "stage": "viewer_prepare",
-                "iteration": viewer_index,
-                "total": viewer_total,
+                "iteration": 0,
+                "total": 0,
                 "message": f"preparing viewer data for {dataset.name}",
             })
         is_composite = bool(dataset.metadata.get("composite"))
@@ -2261,14 +2357,47 @@ def slice_viewer_datasets(
             )
             data.append(view_data)
             names.append(dataset.name)
-    if progress_callback is not None and viewer_total:
-        progress_callback({
-            "stage": "viewer_prepare",
-            "iteration": viewer_total,
-            "total": viewer_total,
-            "message": "viewer data prepared",
-        })
+        _report_effective_dataset_batch(
+            progress_callback,
+            batch_progress,
+            name=dataset.name,
+            kind="viewer dataset",
+            completed=True,
+        )
+    if defer_progress_completion:
+        _report_effective_dataset_batch(
+            progress_callback,
+            batch_progress,
+            name="viewer window",
+            kind="stage",
+            completed=False,
+        )
     return data, names
+
+
+def _finish_viewer_batch_progress(
+    group: DataGroup,
+    *,
+    use_composite: bool,
+    progress_callback: Any | None,
+) -> None:
+    """Complete the viewer-window work item reserved by the data preparation."""
+
+    if progress_callback is None:
+        return
+    state = _viewer_batch_progress_state(
+        group,
+        use_composite=use_composite,
+        include_window=True,
+    )
+    state["completed"] = max(state["total"] - 1, 0)
+    _report_effective_dataset_batch(
+        progress_callback,
+        state,
+        name="viewer window",
+        kind="stage",
+        completed=True,
+    )
 
 
 def _binning_view_name(source_name: str, binning_name: str) -> str:
@@ -2281,6 +2410,7 @@ def _entries_with_visualization_binnings(
     *,
     force_rebin: bool,
     progress_callback: Any | None = None,
+    batch_progress: dict[str, Any] | None = None,
 ) -> list[DatasetEntry]:
     """Add zero-weight named visualization binnings beside canonical fit entries."""
 
@@ -2327,6 +2457,13 @@ def _entries_with_visualization_binnings(
                 continue
             view_name = _binning_view_name(source_name, str(item["name"]))
             if scope is not None:
+                _report_effective_dataset_batch(
+                    progress_callback,
+                    batch_progress,
+                    name=view_name,
+                    kind="named composite binning",
+                    completed=False,
+                )
                 aux_data = _cached_composite_dataset_data(
                     scope,
                     force_rebin=force_rebin,
@@ -2335,6 +2472,13 @@ def _entries_with_visualization_binnings(
                     binning_id=item["id"],
                 )
                 auxiliary = dataset.copy(data=aux_data, name=view_name)
+                _report_effective_dataset_batch(
+                    progress_callback,
+                    batch_progress,
+                    name=view_name,
+                    kind="named composite binning",
+                    completed=True,
+                )
             else:
                 parameters = copy.deepcopy(dataset.parameters)
                 parameters[DATASET_REBIN_KEY] = config
@@ -6114,6 +6258,8 @@ class _RebinProgressDialog:
         self._title = title
         self._batch_name = ""
         self._batch_kind = ""
+        self._batch_operation = ""
+        self._batch_unit = "work item"
         self._rebin_name = ""
         self._rebin_completed = 0
         self._rebin_total = 0
@@ -6160,7 +6306,7 @@ class _RebinProgressDialog:
         self.batch_bar.setObjectName("rebin_batch_progress")
         self.batch_bar.setTextVisible(False)
         self.batch_bar.setToolTip(
-            "Completed datasets or dataset groups across this complete rebin task."
+            "Completed work items across the complete rebin and preparation task."
         )
         layout.addWidget(self.batch_bar)
 
@@ -6173,7 +6319,8 @@ class _RebinProgressDialog:
         self.detail_bar.setObjectName("rebin_detail_progress")
         self.detail_bar.setTextVisible(False)
         self.detail_bar.setToolTip(
-            "Progress within the current dataset or dataset group."
+            "Progress within the current work item. This bar reaches its end only "
+            "when the overall bar advances."
         )
         self.detail_bar.setRange(0, 0)
         layout.addWidget(self.detail_bar)
@@ -6241,6 +6388,8 @@ class _RebinProgressDialog:
         self._batch_completed = self._batch_total = 0
         self._detail_completed = self._detail_total = 0
         self._batch_name = self._batch_kind = ""
+        self._batch_operation = ""
+        self._batch_unit = "work item"
         self._rebin_name = ""
         self._rebin_completed = self._rebin_total = 0
         self._batch_base_text = self._title
@@ -6276,6 +6425,9 @@ class _RebinProgressDialog:
                 if start_key != self._detail_start_key:
                     self._detail_start_key = start_key
                     self._detail_started_at = time.monotonic()
+        if event.get("batch_operation") is not None:
+            self._batch_operation = str(event["batch_operation"])
+            self._batch_unit = str(event.get("batch_unit") or "work item")
 
         if event.get("rebin_name") is not None:
             self._rebin_name = str(event["rebin_name"])
@@ -6302,21 +6454,24 @@ class _RebinProgressDialog:
                 self.batch_bar.setRange(0, batch_total)
                 self.batch_bar.setValue(batch_completed)
                 percentage = 100.0 * batch_completed / batch_total
-                item_kind = self._batch_kind or "dataset group"
-                plural_kind = item_kind if batch_total == 1 else f"{item_kind}s"
-                self._batch_base_text = (
-                    f"Rebinning {batch_total:,} {plural_kind}: "
-                    f"{batch_completed:,}/{batch_total:,} {plural_kind} binned "
-                    f"({percentage:.1f}%)"
-                )
+                if self._batch_operation:
+                    unit = self._batch_unit
+                    plural_unit = unit if batch_total == 1 else f"{unit}s"
+                    self._batch_base_text = (
+                        f"{self._batch_operation}: "
+                        f"{batch_completed:,}/{batch_total:,} {plural_unit} completed "
+                        f"({percentage:.1f}%)"
+                    )
+                else:
+                    item_kind = self._batch_kind or "dataset group"
+                    plural_kind = item_kind if batch_total == 1 else f"{item_kind}s"
+                    self._batch_base_text = (
+                        f"Rebinning {batch_total:,} {plural_kind}: "
+                        f"{batch_completed:,}/{batch_total:,} {plural_kind} binned "
+                        f"({percentage:.1f}%)"
+                    )
         if self.current_label.isVisible():
             self._refresh_current_label()
-
-        if event.get("stage") == "viewer_prepare" and self._batch_total > 1:
-            self._batch_base_text = (
-                f"{self._batch_completed:,}/{self._batch_total:,} dataset groups binned; "
-                "preparing viewer data"
-            )
 
         total = max(int(event.get("total") or 0), 0)
         iteration = max(int(event.get("iteration") or 0), 0)
@@ -6334,17 +6489,22 @@ class _RebinProgressDialog:
         if working_bytes:
             details.append(f"~{working_bytes / 1024**2:.1f} MiB working memory")
         if total:
+            batch_boundary = bool(event.get("batch_item_complete"))
             if total <= 2_000_000_000:
                 self.detail_bar.setRange(0, total)
-                self.detail_bar.setValue(self._detail_completed)
+                detail_value = self._detail_completed
+                if self._batch_total > 1 and not batch_boundary:
+                    detail_value = min(detail_value, max(total - 1, 0))
+                self.detail_bar.setValue(detail_value)
             else:
                 # QProgressBar uses signed C++ integers.  Preserve smooth
                 # progress for symmetry-expanded event counts beyond that
                 # range by displaying a fixed-resolution fraction.
                 self.detail_bar.setRange(0, 10_000)
-                self.detail_bar.setValue(
-                    round(10_000 * self._detail_completed / total)
-                )
+                detail_value = round(10_000 * self._detail_completed / total)
+                if self._batch_total > 1 and not batch_boundary:
+                    detail_value = min(detail_value, 9_999)
+                self.detail_bar.setValue(detail_value)
             percentage = 100.0 * self._detail_completed / total
             suffix = f"\n{' · '.join(details)}" if details else ""
             self._detail_base_text = f"{message} ({percentage:.1f}%){suffix}"
@@ -6381,6 +6541,29 @@ class _RebinProgressDialog:
 
     def finish(self, message: str, **_kwargs: Any) -> None:
         self._detail_base_text = message
+        if self._batch_total > 1 and self._batch_completed < self._batch_total:
+            self._batch_completed = self._batch_total
+            self.batch_bar.setValue(self._batch_total)
+            if self._batch_operation:
+                plural_unit = (
+                    self._batch_unit
+                    if self._batch_total == 1
+                    else f"{self._batch_unit}s"
+                )
+                self._batch_base_text = (
+                    f"{self._batch_operation}: {self._batch_total:,}/"
+                    f"{self._batch_total:,} {plural_unit} completed (100.0%)"
+                )
+            else:
+                item_kind = self._batch_kind or "dataset group"
+                plural_kind = (
+                    item_kind if self._batch_total == 1 else f"{item_kind}s"
+                )
+                self._batch_base_text = (
+                    f"Rebinning {self._batch_total:,} {plural_kind}: "
+                    f"{self._batch_total:,}/{self._batch_total:,} "
+                    f"{plural_kind} binned (100.0%)"
+                )
         if self._detail_total > 0:
             self._detail_completed = self._detail_total
             self.detail_bar.setValue(
@@ -9642,6 +9825,7 @@ class NfitProjectExplorer:
                 use_composite=use_composite,
                 force_rebin=True,
                 progress_callback=progress,
+                defer_progress_completion=progress is not None,
             )
         except RebinCancellationRequested:
             self._close_rebin_progress(progress)
@@ -9732,6 +9916,11 @@ class NfitProjectExplorer:
                         "total": 3,
                         "message": "data viewer ready",
                     }
+                )
+                _finish_viewer_batch_progress(
+                    group,
+                    use_composite=use_composite,
+                    progress_callback=progress,
                 )
             return viewer
         finally:

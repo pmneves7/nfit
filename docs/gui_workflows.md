@@ -101,6 +101,9 @@ and edges. Rebin progress distinguishes numerical output construction from the
 subsequent viewer and control refresh, so a slow plot redraw is not reported as
 continued bin accumulation. Its common compact dialog shows one timed progress
 level for a single entry and separate timed overall/detail levels for batch jobs.
+The overall count includes base datasets or composites, enabled named binnings,
+each viewer-ready output, and final window construction. An internal detail stage
+stays just short of a full bar until its corresponding overall work item advances.
 Use **Cancel** to stop a rebin cooperatively at the next processing checkpoint;
 already completed binnings remain available.
 Selecting a collection with a complete saved grid is metadata-only: it neither

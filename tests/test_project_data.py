@@ -391,12 +391,18 @@ def test_viewer_batch_progress_and_cache_cover_more_than_four_composites():
         event for event in first_events if event.get("stage") == "rebin_batch"
     ]
     assert [event["batch_completed"] for event in batch_events] == [
-        0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6
+        0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6,
+        6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12,
     ]
     assert [event["batch_name"] for event in batch_events[::2]] == [
-        f"Group {index}" for index in range(1, 7)
+        *[f"Group {index}" for index in range(1, 7)],
+        *[f"Group {index} Composite" for index in range(1, 7)],
     ]
-    assert all(event["batch_total"] == 6 for event in batch_events)
+    assert all(event["batch_total"] == 12 for event in batch_events)
+    assert all(
+        event["batch_operation"] == "Preparing data viewer"
+        for event in batch_events
+    )
     assert len(project_gui._COMPOSITE_DATA_CACHE) == 6
 
     second_events = []
@@ -406,7 +412,67 @@ def test_viewer_batch_progress_and_cache_cover_more_than_four_composites():
     )
     assert len(
         [event for event in second_events if event.get("stage") == "rebin_batch"]
-    ) == 12
+    ) == 24
+
+
+def test_viewer_progress_counts_named_composite_and_viewer_preparation_work():
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    group = DataGroup(
+        "Workspace1",
+        datasets=[DatasetEntry("scan", _tiny_mdhisto_data(2.0), kind="mdhisto")],
+    )
+    fit = project_gui.data_group_composite_config(group)
+    fit.update(enabled=True, minimum_coverage=0.0)
+    auxiliary_id = project_data.add_data_group_composite_binning(
+        group, name="Overview"
+    )
+    auxiliary = project_data.data_group_composite_config_by_id(group, auxiliary_id)
+    auxiliary.update(enabled=True, minimum_coverage=0.0)
+
+    events = []
+    _datasets, names = project_gui.slice_viewer_datasets(
+        group,
+        progress_callback=events.append,
+    )
+
+    assert names == ["Workspace1 Composite", "Workspace1 Composite · Overview"]
+    boundaries = [
+        event for event in events if event.get("stage") == "rebin_batch"
+    ]
+    assert [event["batch_total"] for event in boundaries] == [4] * 8
+    assert [event["batch_completed"] for event in boundaries] == [
+        0, 1, 1, 2, 2, 3, 3, 4,
+    ]
+    assert [event["batch_kind"] for event in boundaries[::2]] == [
+        "dataset group",
+        "named composite binning",
+        "viewer dataset",
+        "viewer dataset",
+    ]
+
+
+def test_viewer_progress_counts_multiple_binnings_of_one_dataset():
+    dataset = DatasetEntry("scan", _tiny_mdhisto_data(2.0), kind="mdhisto")
+    fit = project_data.dataset_rebin_config(dataset)
+    fit.update(enabled=True, minimum_coverage=0.0)
+    for name in ("Overview", "High resolution"):
+        binning_id = project_data.add_dataset_rebin_binning(dataset, name=name)
+        project_data.dataset_rebin_config_by_id(dataset, binning_id).update(
+            enabled=True,
+            minimum_coverage=0.0,
+        )
+    group = DataGroup("Workspace1", datasets=[dataset])
+
+    assert project_gui._viewer_progress_work_counts(
+        group,
+        group,
+        use_composite=True,
+    ) == (1, 0, 3)
+    assert project_gui._viewer_batch_progress_state(
+        group,
+        use_composite=True,
+        include_window=True,
+    )["total"] == 5
 
 
 def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monkeypatch):
