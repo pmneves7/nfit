@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 
+from . import project_clipboard as _project_clipboard
 from . import project_data as _project_data
 from . import project_data_panels as _project_data_panels
 from . import project_lindhard_editor as _project_lindhard_editor
@@ -357,6 +358,8 @@ def data_group_composite_config(
         except KeyError:
             pass
     return _fit_data_group_composite_config(group)
+
+
 _rebin_settings_clipboard_text = _project_data._rebin_settings_clipboard_text
 _rebin_config_from_clipboard_text = _project_data._rebin_config_from_clipboard_text
 dataset_mask_application_config = _project_data.dataset_mask_application_config
@@ -486,7 +489,9 @@ _mdhisto_axis_coordinate_vector = _project_data._mdhisto_axis_coordinate_vector
 _axis_projection_vector = _project_data._axis_projection_vector
 _projection_piece_value = _project_data._projection_piece_value
 _mdhisto_q_modulus_grid = _project_data._mdhisto_q_modulus_grid
-_metadata_coordinate_units_are_inv_angstrom_for_mdhisto = _project_data._metadata_coordinate_units_are_inv_angstrom_for_mdhisto
+_metadata_coordinate_units_are_inv_angstrom_for_mdhisto = (
+    _project_data._metadata_coordinate_units_are_inv_angstrom_for_mdhisto
+)
 _mdhisto_q_matrix = _project_data._mdhisto_q_matrix
 _matrix_includes_2pi = _project_data._matrix_includes_2pi
 _dataset_data_point_count = _project_data._dataset_data_point_count
@@ -792,7 +797,6 @@ MASK_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
 }
 
 
-
 def _new_gui_project() -> NfitProject:
     """Return the clean initial project shown by the GUI."""
 
@@ -925,8 +929,6 @@ def set_background_collection(
             background.scale = float(scale)
 
 
-
-
 def create_mask(dataset: DatasetEntry, name: str | None = None, *, type: str = "coordinate_range") -> MaskSpec:
     """Add a mask spec to a dataset and return it."""
 
@@ -1014,54 +1016,14 @@ def copy_dataset_group_to_parent(
     parent_node: DataGroup | DatasetGroup,
 ) -> DatasetGroup:
     """Deep-copy a dataset-group subtree with fresh group and dataset IDs."""
-
-    used_group_names = {item.name for item in data_group.iter_subgroups()}
-    used_dataset_names = set(data_group.dataset_names)
-    dataset_id_map: dict[str, DatasetEntry] = {}
-    group_id_map: dict[str, DatasetGroup] = {}
-
-    def clone(node: DatasetGroup) -> DatasetGroup:
-        name = _unique_name(node.name, used_group_names)
-        used_group_names.add(name)
-        copied = DatasetGroup(
-            name=name,
-            enabled=bool(node.enabled),
-            masks=copy.deepcopy(node.masks),
-            backgrounds=copy.deepcopy(node.backgrounds),
-            resolution=copy.deepcopy(node.resolution),
-            metadata=copy.deepcopy(node.metadata),
-        )
-        group_id_map[node.id] = copied
-        for dataset in node.datasets:
-            item = copy.deepcopy(dataset).copy()
-            item.name = _unique_name(item.name, used_dataset_names)
-            used_dataset_names.add(item.name)
-            dataset_id_map[dataset.id] = item
-            copied.datasets.append(item)
-        copied.subgroups = [clone(child) for child in node.subgroups]
-        return copied
-
-    result = clone(source)
-    existing_datasets = {item.id: item for item in data_group.iter_datasets()}
-    existing_groups = {item.id: item for item in data_group.iter_subgroups()}
-    for node in (result, *result.iter_subgroups()):
-        owners = [*node.datasets, node]
-        for owner in owners:
-            for background in owner.backgrounds:
-                replacement = dataset_id_map.get(
-                    background.source_dataset_id
-                ) or existing_datasets.get(background.source_dataset_id)
-                if replacement is not None:
-                    background.source_dataset_id = replacement.id
-                background.source_entry = replacement
-                replacement_group = group_id_map.get(
-                    background.source_group_id or ""
-                ) or existing_groups.get(background.source_group_id or "")
-                if replacement_group is not None:
-                    background.source_group_id = replacement_group.id
-                background.source_group = replacement_group
-    parent_node.subgroups.append(result)
-    return result
+    payload = _project_clipboard.make_payload("dataset_group", (source,))
+    pasted = _project_clipboard.paste_payload(
+        payload,
+        target_role="dataset_group",
+        data_group=data_group,
+        dataset_node=parent_node,
+    )
+    return pasted.items[0]
 
 
 def delete_dataset_group(data_group: DataGroup, subgroup: DatasetGroup) -> bool:
@@ -1310,9 +1272,12 @@ def current_state_fit_entry(
 
 
 def delete_fit_entry(group: DataGroup, fit_entry: FitTimelineEntry) -> bool:
-    """Delete a fit-history entry from a group unless it is the only Initial state."""
+    """Delete a fit-history entry, preserving the immutable Initial state."""
 
-    if fit_entry.kind == "initial" and len(group.fits) == 1:
+    # ``Initial`` is the durable anchor for a fit history.  Keeping it also
+    # means that deleting a selection of historical results cannot leave a
+    # half-formed timeline behind.
+    if fit_entry.kind == "initial":
         return False
     siblings = _fit_siblings(group.fits, fit_entry)
     if siblings is None:
@@ -1338,9 +1303,30 @@ def delete_model_component(group: DataGroup, model: ModelComponentSpec) -> None:
 # never sweeps in the enclosing workspace or folder headers.
 _DELETABLE_TREE_ROLES = frozenset(
     {
-        "group", "dataset", "mask", "background", "group_background",
-        "dataset_group", "group_mask", "model", "fit", "fit_timeline",
-        "analysis", "plot",
+        "group",
+        "dataset",
+        "mask",
+        "background",
+        "group_background",
+        "dataset_group",
+        "group_mask",
+        "model",
+        "fit",
+        "fit_timeline",
+        "analysis",
+        "plot",
+        # Folder rows delete their contents while retaining the folder itself.
+        # This makes toolbar, keyboard, and context-menu deletion agree.
+        "datasets",
+        "dataset_page",
+        "masks",
+        "backgrounds",
+        "group_masks",
+        "group_backgrounds",
+        "models",
+        "fits",
+        "analyses",
+        "plots",
     }
 )
 
@@ -1349,6 +1335,22 @@ _DELETABLE_TREE_ROLES = frozenset(
 _DELETABLE_ROLE_GROUP: dict[str, frozenset[str]] = {
     "fit": frozenset({"fit", "fit_timeline"}),
     "fit_timeline": frozenset({"fit", "fit_timeline"}),
+    "dataset": frozenset({"dataset", "dataset_page"}),
+    "dataset_page": frozenset({"dataset", "dataset_page"}),
+    "mask": frozenset({"mask", "masks"}),
+    "masks": frozenset({"mask", "masks"}),
+    "background": frozenset({"background", "backgrounds"}),
+    "backgrounds": frozenset({"background", "backgrounds"}),
+    "group_mask": frozenset({"group_mask", "group_masks"}),
+    "group_masks": frozenset({"group_mask", "group_masks"}),
+    "group_background": frozenset({"group_background", "group_backgrounds"}),
+    "group_backgrounds": frozenset({"group_background", "group_backgrounds"}),
+    "model": frozenset({"model", "models"}),
+    "models": frozenset({"model", "models"}),
+    "analysis": frozenset({"analysis", "analyses"}),
+    "analyses": frozenset({"analysis", "analyses"}),
+    "plot": frozenset({"plot", "plots"}),
+    "plots": frozenset({"plot", "plots"}),
 }
 
 
@@ -1484,8 +1486,6 @@ def _mask_parameter_names(mask: MaskSpec, dataset: DatasetEntry | None = None) -
         key=lambda key: int(key[len(COORDINATE_RANGE_AXIS_PREFIX) :]),
     )
     return [*names, *axis_names]
-
-
 
 
 def _model_parameter_from_qualified_name(
@@ -1633,8 +1633,6 @@ DEFAULT_BOND_CUTOFF_ANGSTROM = 6.0
 
 class _NoChange(Exception):
     """Signals that a model-config mutation left the state untouched."""
-
-
 
 
 def _mark_tight_binding_crystal_manual(
@@ -1990,6 +1988,7 @@ def dataset_detail_sections(
         ("Source", source_lines or ["No source file recorded."]),
         ("Metadata", metadata_lines or ["No additional metadata."]),
     ]
+
 
 def _effective_dataset_entries(
     group: DataGroup,
@@ -3610,8 +3609,6 @@ def _fit_parameter_limit_hits(specs: Any, params: dict[str, Any]) -> list[dict[s
                 hits.append({"name": name, "side": side, "bound": bound_value})
                 break
     return hits
-
-
 
 
 def _fit_limit_hits_from_goodness(goodness: Any) -> dict[str, dict[str, Any]]:
@@ -5521,45 +5518,50 @@ def _saved_binning_compressed_size(
     return None
 
 
-def _dataset_cached_binnings_current(
-    group: DataGroup, dataset: DatasetEntry
-) -> bool:
+def _dataset_cached_binnings_current(group: DataGroup, dataset: DatasetEntry) -> bool:
     """Return whether every enabled configured binning has a current cache."""
 
-    if not isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict):
-        return False
-    enabled = [
-        item
-        for item in dataset_rebin_binnings(dataset)
-        if bool(item["config"].get("enabled", False))
-    ]
-    return bool(enabled) and all(
-        _project_binning_is_current(
-            "dataset", group, dataset, item["id"], item["config"]
+    try:
+        if not isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict):
+            return False
+        enabled = [
+            item
+            for item in dataset_rebin_binnings(dataset)
+            if bool(item["config"].get("enabled", False))
+        ]
+        return bool(enabled) and all(
+            _project_binning_is_current(
+                "dataset", group, dataset, item["id"], item["config"]
+            )
+            for item in enabled
         )
-        for item in enabled
-    )
+    except (KeyError, OSError, TypeError, ValueError):
+        # A partially deleted live-analysis dependency makes a saved cache
+        # stale.  It must not leave a Qt tree half rebuilt before its other
+        # top-level sections are rendered.
+        return False
 
 
-def _composite_cached_binnings_current(
-    group: DataGroup, node: DataGroup | DatasetGroup
-) -> bool:
+def _composite_cached_binnings_current(group: DataGroup, node: DataGroup | DatasetGroup) -> bool:
     """Return whether every enabled composite binning has a current cache."""
 
-    scope = _composite_scope(group, node)
-    if not data_group_composite_enabled(scope):
-        return False
-    enabled = [
-        item
-        for item in data_group_composite_binnings(scope)
-        if bool(item["config"].get("enabled", False))
-    ]
-    return bool(enabled) and all(
-        _project_binning_is_current(
-            "dataset group", group, scope, item["id"], item["config"]
+    try:
+        scope = _composite_scope(group, node)
+        if not data_group_composite_enabled(scope):
+            return False
+        enabled = [
+            item
+            for item in data_group_composite_binnings(scope)
+            if bool(item["config"].get("enabled", False))
+        ]
+        return bool(enabled) and all(
+            _project_binning_is_current(
+                "dataset group", group, scope, item["id"], item["config"]
+            )
+            for item in enabled
         )
-        for item in enabled
-    )
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
 
 
 def project_binnings_need_refresh(project: NfitProject) -> bool:
@@ -7031,9 +7033,7 @@ class NfitProjectExplorer:
         self.app = _qt_app()
         self.project = _new_gui_project() if project is None else project
         stored_path = getattr(self.project, "_project_path", None)
-        self.project_path: Path | None = (
-            None if stored_path is None else Path(stored_path)
-        )
+        self.project_path: Path | None = None if stored_path is None else Path(stored_path)
         self._saved_project_size_bytes = _project_file_size(self.project_path)
         set_active_project_path(self.project_path)
         self._project_disk_signature: tuple[int, int, int, int] | None = None
@@ -7130,10 +7130,7 @@ class NfitProjectExplorer:
         self.collapse_all_button = None
         self.create_group_button = None
         self.delete_button = None
-        self._clipboard: tuple[
-            str,
-            DatasetEntry | DatasetGroup | MaskSpec | list[DatasetEntry],
-        ] | None = None
+        self._clipboard: _project_clipboard.ProjectClipboardPayload | tuple[str, Any] | None = None
         self._analysis_window = None
         self._slice_viewers: dict[int, list[Any]] = {}
         self._auxiliary_windows: dict[int, Any] = {}
@@ -7592,7 +7589,58 @@ class NfitProjectExplorer:
         ]
         if current is not None and current not in items:
             items.append(current)
-        return items
+        # A selected folder/page already owns every selected descendant.  Do
+        # not delete those descendants a second time after the folder has
+        # removed them from the model.  This is particularly important for a
+        # lazy run page: its children are merely views of the page payload.
+        selected_ids = {id(item) for item in items}
+
+        def covered_by_selected_ancestor(item: Any) -> bool:
+            parent = item.parent()
+            while parent is not None:
+                if (
+                    id(parent) in selected_ids
+                    and self._objects_for_item(parent)[4] in _DELETABLE_TREE_ROLES
+                ):
+                    return True
+                parent = parent.parent()
+            return False
+
+        return [item for item in items if not covered_by_selected_ancestor(item)]
+
+    def _can_delete_tree_item(self, item: Any) -> bool:
+        """Whether an item owns content that the Delete action may remove."""
+
+        group, entry, _mask, _model, role = self._objects_for_item(item)
+        if role not in _DELETABLE_TREE_ROLES:
+            return False
+        if role in {"fit", "fit_timeline"}:
+            fit = self._fit_entry_for_item(item)
+            return fit is not None and fit.kind != "initial"
+        if role == "fits" and group is not None:
+            return any(fit.kind != "initial" for fit in _walk_fit_entries(group.fits))
+        if role == "dataset_page":
+            page = self._dataset_page_roles.get(id(item))
+            return bool(page and page[1])
+        if role == "datasets" and group is not None:
+            return bool(group.datasets or group.subgroups or group.backgrounds or group.masks)
+        if role == "masks":
+            return bool(entry is not None and entry.masks)
+        if role == "backgrounds":
+            return bool(entry is not None and entry.backgrounds)
+        if role == "group_masks":
+            node = self._dataset_group_for_item(item)
+            return bool(node is not None and node.masks)
+        if role == "group_backgrounds":
+            owner = self._background_owner_for_item(item)
+            return bool(owner is not None and owner.backgrounds)
+        if role == "models" and group is not None:
+            return bool(group.models)
+        if role == "analyses" and group is not None:
+            return bool(group.analyses)
+        if role == "plots" and group is not None:
+            return bool(group.plots)
+        return True
 
     def _delete_tree_item(self, item: Any) -> tuple[bool, DataGroup | None]:
         """Delete a single tree item's object without refreshing the tree.
@@ -7612,6 +7660,44 @@ class NfitProjectExplorer:
             return True, None
         if role == "dataset" and group is not None and entry is not None:
             delete_dataset(group, entry)
+            self._record_data_group_state_change(group)
+            return True, group
+        if role == "dataset_page" and group is not None:
+            payload = self._dataset_page_roles.get(id(item))
+            if payload is None:
+                return False, None
+            _node, datasets, _start = payload
+            removed = False
+            # The page payload is authoritative even when the page has not
+            # been expanded, so deleting it never materializes fifty run rows.
+            for dataset in tuple(datasets):
+                if _dataset_parent_node(group, dataset) is not None:
+                    delete_dataset(group, dataset)
+                    removed = True
+            if removed:
+                self._record_data_group_state_change(group)
+                return True, group
+            return False, None
+        if role == "datasets" and group is not None:
+            if not (group.datasets or group.subgroups or group.backgrounds or group.masks):
+                return False, None
+            group.datasets.clear()
+            group.subgroups.clear()
+            group.backgrounds.clear()
+            group.masks.clear()
+            self._record_data_group_state_change(group)
+            return True, group
+        if role == "masks" and group is not None and entry is not None:
+            if not entry.masks:
+                return False, None
+            self._mark_mask_datasets_stale([entry])
+            entry.masks.clear()
+            self._record_data_group_state_change(group)
+            return True, group
+        if role == "backgrounds" and group is not None and entry is not None:
+            if not entry.backgrounds:
+                return False, None
+            entry.backgrounds.clear()
             self._record_data_group_state_change(group)
             return True, group
         if role == "mask" and group is not None and entry is not None and mask is not None:
@@ -7646,8 +7732,29 @@ class NfitProjectExplorer:
                 self._record_data_group_state_change(group)
                 return True, group
             return False, None
+        if role == "group_masks" and group is not None:
+            subgroup = self._dataset_group_for_item(item)
+            if subgroup is None or not subgroup.masks:
+                return False, None
+            self._mark_mask_datasets_stale(list(subgroup.iter_datasets()))
+            subgroup.masks.clear()
+            self._record_data_group_state_change(group)
+            return True, group
+        if role == "group_backgrounds" and group is not None:
+            owner = self._background_owner_for_item(item)
+            if owner is None or not owner.backgrounds:
+                return False, None
+            owner.backgrounds.clear()
+            self._record_data_group_state_change(group)
+            return True, group
         if role == "model" and group is not None and model is not None:
             delete_model_component(group, model)
+            self._record_data_group_state_change(group)
+            return True, group
+        if role == "models" and group is not None:
+            if not group.models:
+                return False, None
+            group.models.clear()
             self._record_data_group_state_change(group)
             return True, group
         if role in {"fit", "fit_timeline"} and group is not None:
@@ -7655,23 +7762,50 @@ class NfitProjectExplorer:
             if fit_entry is not None and delete_fit_entry(group, fit_entry):
                 return True, group
             return False, None
+        if role == "fits" and group is not None:
+            ensure_fit_history(group)
+            initial = next(
+                (fit for fit in _walk_fit_entries(group.fits) if fit.kind == "initial"),
+                None,
+            )
+            if initial is None:
+                return False, None
+            if group.fits == [initial] and not initial.children:
+                return False, None
+            initial.children.clear()
+            group.fits[:] = [initial]
+            self._set_active_fit_state(group, initial)
+            return True, group
         if role == "analysis" and group is not None:
             analysis = self._analysis_item_roles.get(id(item))
             if analysis is not None and self._delete_analysis_entry(group, analysis):
-                if (
-                    self._analysis_window is not None
-                    and self._analysis_window.group is group
-                ):
+                if self._analysis_window is not None and self._analysis_window.group is group:
                     self._analysis_window._refresh_analysis_list()
                     self._analysis_window._clear_result_views()
                 return True, group
             return False, None
+        if role == "analyses" and group is not None:
+            if not group.analyses:
+                return False, None
+            for analysis in tuple(group.analyses):
+                self._delete_analysis_entry(group, analysis)
+            if self._analysis_window is not None and self._analysis_window.group is group:
+                self._analysis_window._refresh_analysis_list()
+                self._analysis_window._clear_result_views()
+            return True, group
         if role == "plot" and group is not None:
             plot = self._plot_for_item(item)
             if plot is not None and plot in group.plots:
                 group.plots.remove(plot)
                 self._plot_windows.pop(plot.id, None)
                 return True, group
+        if role == "plots" and group is not None:
+            if not group.plots:
+                return False, None
+            for plot in group.plots:
+                self._plot_windows.pop(plot.id, None)
+            group.plots.clear()
+            return True, group
         return False, None
 
     def new_project(self) -> bool:
@@ -10511,100 +10645,170 @@ class NfitProjectExplorer:
         if dialog is not None:
             dialog.close()
 
-    def copy_selected(self) -> None:
-        _group, entry, mask, _model, role = self._objects_for_item(self._current_item())
-        if role == "dataset" and entry is not None:
-            datasets = [
-                self._objects_for_item(item)[1]
-                for item in self._selected_items_for_drag_role("dataset")
+    def _copy_objects_for_items(self, role: str, items: list[Any]) -> list[Any]:
+        """Resolve the project objects represented by an explorer selection."""
+
+        current = items[-1] if items else None
+        group, entry, _mask, _model, _current_role = self._objects_for_item(current)
+        if role in {"dataset", "dataset_page"}:
+            # A loaded row and the lazy page that owns it both represent
+            # datasets.  Combining them here makes Copy agree with Delete and
+            # prevents a selected page/child overlap from copying a run twice.
+            objects: list[Any] = []
+            seen_ids: set[str] = set()
+            for item in items:
+                _item_group, item_entry, _item_mask, _item_model, item_role = self._objects_for_item(item)
+                datasets = (
+                    () if item_role != "dataset_page"
+                    else (self._dataset_page_roles.get(id(item)) or (None, (), 0))[1]
+                )
+                if item_role == "dataset" and item_entry is not None:
+                    datasets = (item_entry,)
+                for dataset in datasets:
+                    if dataset.id not in seen_ids:
+                        objects.append(dataset)
+                        seen_ids.add(dataset.id)
+            return objects
+        objects: list[Any] = []
+        for item in items:
+            item_group, item_entry, item_mask, item_model, _ = self._objects_for_item(item)
+            if role == "group" and item_group is not None:
+                objects.append(item_group)
+            elif role == "dataset" and item_entry is not None:
+                objects.append(item_entry)
+            elif role == "dataset_group":
+                node = self._dataset_group_for_item(item)
+                if node is not None:
+                    objects.append(node)
+            elif role in {"mask", "group_mask"} and item_mask is not None:
+                objects.append(item_mask)
+            elif role in {"background", "group_background"}:
+                background = self._background_item_roles.get(id(item))
+                if background is not None:
+                    objects.append(background)
+            elif role == "model" and item_model is not None:
+                objects.append(item_model)
+            elif role in {"fit", "fit_timeline"}:
+                fit = self._fit_item_roles.get(id(item))
+                if fit is not None:
+                    objects.append(fit)
+            elif role == "analysis":
+                analysis = self._analysis_item_roles.get(id(item))
+                if analysis is not None:
+                    objects.append(analysis)
+            elif role == "plot":
+                plot = self._plot_item_roles.get(id(item))
+                if plot is not None:
+                    objects.append(plot)
+        if role == "datasets" and group is not None:
+            objects = [
+                *group.datasets,
+                *group.subgroups,
+                *group.masks,
+                *group.backgrounds,
             ]
-            datasets = [item for item in datasets if item is not None]
-            if len(datasets) > 1:
-                self._clipboard = ("datasets", copy.deepcopy(datasets))
-            else:
-                self._clipboard = ("dataset", copy.deepcopy(entry))
-        elif role == "mask" and mask is not None:
-            self._clipboard = ("mask", copy.deepcopy(mask))
-        elif role == "dataset_group":
-            subgroup = self._dataset_group_for_item(self._current_item())
-            if subgroup is not None:
-                self._clipboard = ("dataset_group", copy.deepcopy(subgroup))
+        elif role == "masks" and entry is not None:
+            objects = list(entry.masks)
+        elif role == "backgrounds" and entry is not None:
+            objects = list(entry.backgrounds)
+        elif role in {"group_masks", "group_backgrounds"}:
+            node = self._dataset_group_for_item(current)
+            if node is not None:
+                objects = list(node.masks if role == "group_masks" else node.backgrounds)
+        elif role == "models" and group is not None:
+            objects = list(group.models.values())
+        elif role == "fits" and group is not None:
+            objects = list(group.fits)
+        elif role == "analyses" and group is not None:
+            objects = list(group.analyses)
+        elif role == "plots" and group is not None:
+            objects = list(group.plots)
+        return objects
+
+    def _copy_objects_for_item_context(self, item: Any) -> tuple[str, list[Any]]:
+        """Return the same effective selection a context-menu Copy will use."""
+
+        role = self._objects_for_item(item)[4]
+        if item in self.tree.selectedItems() and role in {"dataset", "dataset_page"}:
+            selected = [
+                candidate for candidate in self.tree.selectedItems()
+                if self._objects_for_item(candidate)[4] in {"dataset", "dataset_page"}
+            ]
+            selected.sort(key=self._tree_item_sort_key)
+        else:
+            selected = self._selected_items_for_drag_role(role) if item in self.tree.selectedItems() else [item]
+        return role, self._copy_objects_for_items(role, selected)
+
+    def copy_selected(self) -> None:
+        current = self._current_item()
+        _group, _entry, _mask, _model, role = self._objects_for_item(current)
+        if role in {"dataset", "dataset_page"}:
+            selected = [
+                item for item in self.tree.selectedItems()
+                if self._objects_for_item(item)[4] in {"dataset", "dataset_page"}
+            ]
+            if current is not None and current not in selected:
+                selected.append(current)
+            selected.sort(key=self._tree_item_sort_key)
+        else:
+            selected = self._selected_items_for_drag_role(role)
+        objects = self._copy_objects_for_items(role, selected)
+        capability = _project_clipboard.copy_capability(role, objects)
+        if capability.allowed:
+            self._clipboard = _project_clipboard.make_payload(role, objects)
 
     def paste_into_selection(self) -> None:
         if self._clipboard is None:
             return
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
-        clip_role, payload = self._clipboard
-        if (
-            clip_role == "dataset"
-            and isinstance(payload, DatasetEntry)
-            and role in {"group", "datasets", "dataset_group"}
-            and group is not None
-        ):
-            target = (
-                self._dataset_group_for_item(self._current_item())
-                if role == "dataset_group"
-                else group
+        # Accept old payloads retained by extensions and older tests.
+        if not isinstance(self._clipboard, _project_clipboard.ProjectClipboardPayload):
+            clip_role, legacy = self._clipboard
+            legacy_role = "dataset" if clip_role == "datasets" else clip_role
+            legacy_items = legacy if isinstance(legacy, list) else [legacy]
+            self._clipboard = _project_clipboard.make_payload(legacy_role, legacy_items)
+        payload = self._clipboard
+        target_node: Any = group
+        if role in {"dataset_group", "group_masks", "group_backgrounds"}:
+            target_node = self._dataset_group_for_item(self._current_item())
+        elif role in {"dataset", "masks", "backgrounds", "dataset_page"} and group is not None:
+            if role == "dataset_page":
+                page = self._dataset_page_roles.get(id(self._current_item()))
+                target_node = page[0] if page is not None else group
+            elif entry is not None:
+                target_node = _dataset_parent_node(group, entry)
+        try:
+            result = _project_clipboard.paste_payload(
+                payload,
+                target_role=role,
+                data_group=group,
+                dataset_node=target_node,
+                dataset=entry,
+                project_groups=self.project.data_groups,
             )
-            if target is None:
-                return
-            copied = copy.deepcopy(payload).copy()
-            copied.name = _unique_name(copied.name, group.dataset_names)
-            target.datasets.append(copied)
-            self._record_data_group_state_change(group)
-            self._mark_dirty()
-            self._refresh_tree(select_group=group, select_dataset=copied)
-        elif (
-            clip_role == "datasets"
-            and isinstance(payload, list)
-            and role in {"group", "datasets", "dataset_group"}
-            and group is not None
-        ):
-            target = (
-                self._dataset_group_for_item(self._current_item())
-                if role == "dataset_group"
-                else group
+        except ValueError as exc:
+            from PySide6 import QtWidgets
+
+            QtWidgets.QMessageBox.information(
+                self.window, "Cannot paste here", str(exc)
             )
-            if target is None:
-                return
-            copied = [
-                copy.deepcopy(item).copy()
-                for item in payload
-                if isinstance(item, DatasetEntry)
-            ]
-            if not copied:
-                return
-            used_names = set(group.dataset_names)
-            for item in copied:
-                item.name = _unique_name(item.name, used_names)
-                used_names.add(item.name)
-                target.datasets.append(item)
+            return
+        if group is not None and payload.kind != "group":
+            if result.changed_datasets:
+                self._mark_mask_datasets_stale(list(group.iter_datasets()))
             self._record_data_group_state_change(group)
-            self._mark_dirty()
-            self._refresh_tree(select_group=group, select_dataset=copied[-1])
-        elif (
-            clip_role == "dataset_group"
-            and isinstance(payload, DatasetGroup)
-            and role in {"group", "datasets", "dataset_group"}
-            and group is not None
-        ):
-            parent = (
-                self._dataset_group_for_item(self._current_item())
-                if role == "dataset_group"
-                else group
-            )
-            if parent is None:
-                return
-            copied = copy_dataset_group_to_parent(group, payload, parent)
-            self._record_data_group_state_change(group)
-            self._mark_dirty()
-            self._refresh_tree(select_group=group, select_dataset_group=copied)
-        elif clip_role == "mask" and isinstance(payload, MaskSpec) and role in {"dataset", "masks"} and group is not None and entry is not None:
-            copied = copy_mask_to_dataset(payload, entry)
-            self._mark_mask_datasets_stale([entry])
-            self._record_data_group_state_change(group)
-            self._mark_dirty()
-            self._refresh_tree(select_group=group, select_mask=copied)
+        self._mark_dirty()
+        selected = result.items[-1] if result.items else None
+        self._refresh_tree(
+            select_group=selected if isinstance(selected, DataGroup) else group,
+            select_dataset=selected if isinstance(selected, DatasetEntry) else None,
+            select_mask=selected if isinstance(selected, MaskSpec) else None,
+            select_background=selected if isinstance(selected, BackgroundSpec) else None,
+            select_model=selected if isinstance(selected, ModelComponentSpec) else None,
+            select_fit=selected if isinstance(selected, FitTimelineEntry) else None,
+            select_plot=selected if isinstance(selected, PlotEntry) else None,
+            select_dataset_group=selected if isinstance(selected, DatasetGroup) else None,
+        )
 
     def rename_selected(self) -> None:
         item = self._current_item()
@@ -11026,7 +11230,10 @@ class NfitProjectExplorer:
         self._plot_item_roles.clear()
         self._dataset_group_roles.clear()
         self._dataset_page_roles.clear()
-        self.tree.blockSignals(True)
+        # Rebuilding destroys the old items.  QSignalBlocker restores the
+        # previous signal state during stack unwinding as well, so a rendering
+        # failure cannot leave the explorer permanently disconnected.
+        tree_signal_blocker = QtCore.QSignalBlocker(self.tree)
         # Clear the stale accessible/current index before removing every row.
         # Otherwise Qt's accessibility bridge can query the old timeline row
         # while QTreeWidget has already resized its model to zero rows.
@@ -11143,7 +11350,7 @@ class NfitProjectExplorer:
             plots_item.setExpanded(self._expanded_state.get(("plots", id(group)), True))
             if select_group is group and item_to_select is None:
                 item_to_select = group_item
-        self.tree.blockSignals(False)
+        del tree_signal_blocker
         if item_to_select is not None:
             self.tree.setCurrentItem(item_to_select)
             if edit_group:
@@ -11193,7 +11400,7 @@ class NfitProjectExplorer:
                     or any(select_mask in dataset.masks for dataset in page)
                     or any(select_background in dataset.backgrounds for dataset in page)
                 )
-                page_key = ("dataset_page", id(node), start)
+                page_key = ("dataset_page", self._tree_state_identity(node), start)
                 if target_on_page or self._expanded_state.get(page_key, False):
                     page_found = self._populate_dataset_page(
                         page_item,
@@ -11228,9 +11435,7 @@ class NfitProjectExplorer:
                 "Background histograms subtracted after the enabled datasets in this group are combined.",
             )
             _set_tree_item_icon(group_backgrounds_item, "background_folder")
-            self._remember_item(
-                group_backgrounds_item, "group_backgrounds", group, node=node
-            )
+            self._remember_item(group_backgrounds_item, "group_backgrounds", group, node=node)
             parent_item.addChild(group_backgrounds_item)
             for background in node.backgrounds:
                 background_item = QtWidgets.QTreeWidgetItem([background.name])
@@ -11241,25 +11446,23 @@ class NfitProjectExplorer:
                     0, "Background histogram applied once to this group's composite."
                 )
                 _set_tree_item_icon(background_item, "dataset")
-                self._remember_item(
-                    background_item, "group_background", group, node=node
-                )
+                self._remember_item(background_item, "group_background", group, node=node)
                 self._background_item_roles[id(background_item)] = background
                 _style_enabled_tree_item(background_item, background.enabled)
                 group_backgrounds_item.addChild(background_item)
                 if select_background is background and found is None:
                     found = background_item
             group_backgrounds_item.setExpanded(
-                self._expanded_state.get(("group_backgrounds", id(node)), False)
+                self._expanded_state.get(
+                    ("group_backgrounds", self._tree_state_identity(node)), False
+                )
             )
 
         for subgroup in node.subgroups:
             subgroup_item = QtWidgets.QTreeWidgetItem([subgroup.name])
             subgroup_item.setFlags(subgroup_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
             subgroup_cached = _composite_cached_binnings_current(group, subgroup)
-            _set_tree_item_icon(
-                subgroup_item, "folder", cached=subgroup_cached
-            )
+            _set_tree_item_icon(subgroup_item, "folder", cached=subgroup_cached)
             if subgroup_cached:
                 subgroup_item.setToolTip(
                     0, "All enabled composite binnings are cached and up to date."
@@ -11298,12 +11501,14 @@ class NfitProjectExplorer:
             default_expanded = len(subgroup.datasets) <= TREE_DATASET_COMPACT_THRESHOLD
             subgroup_item.setExpanded(
                 self._expanded_state.get(
-                    ("dataset_group", id(subgroup)), default_expanded
+                    ("dataset_group", self._tree_state_identity(subgroup)), default_expanded
                 )
             )
             if gmasks_item is not None:
                 gmasks_item.setExpanded(
-                    self._expanded_state.get(("group_masks", id(subgroup)), False)
+                    self._expanded_state.get(
+                        ("group_masks", self._tree_state_identity(subgroup)), False
+                    )
                 )
         return found
 
@@ -11384,9 +11589,7 @@ class NfitProjectExplorer:
         dataset_cached = _dataset_cached_binnings_current(group, dataset)
         _set_tree_item_icon(dataset_item, "dataset", cached=dataset_cached)
         if dataset_cached:
-            dataset_item.setToolTip(
-                0, "All enabled binnings are cached and up to date."
-            )
+            dataset_item.setToolTip(0, "All enabled binnings are cached and up to date.")
         self._remember_item(dataset_item, "dataset", group, dataset)
         _style_enabled_tree_item(dataset_item, dataset.enabled)
         parent_item.addChild(dataset_item)
@@ -11427,14 +11630,16 @@ class NfitProjectExplorer:
                     found = background_item
         if select_dataset is dataset and found is None:
             found = dataset_item
-        dataset_item.setExpanded(self._expanded_state.get(("dataset", id(dataset)), False))
+        dataset_item.setExpanded(
+            self._expanded_state.get(("dataset", self._tree_state_identity(dataset)), False)
+        )
         if masks_item is not None:
             masks_item.setExpanded(
-                self._expanded_state.get(("masks", id(dataset)), False)
+                self._expanded_state.get(("masks", self._tree_state_identity(dataset)), False)
             )
         if backgrounds_item is not None:
             backgrounds_item.setExpanded(
-                self._expanded_state.get(("backgrounds", id(dataset)), False)
+                self._expanded_state.get(("backgrounds", self._tree_state_identity(dataset)), False)
             )
         return found
 
@@ -11477,7 +11682,7 @@ class NfitProjectExplorer:
         if payload is None:
             return
         node, _datasets, start = payload
-        self._expanded_state[("dataset_page", id(node), start)] = True
+        self._expanded_state[("dataset_page", self._tree_state_identity(node), start)] = True
         self._populate_dataset_page(item)
 
     def _dataset_page_collapsed(self, item: Any) -> None:
@@ -11485,7 +11690,7 @@ class NfitProjectExplorer:
         if payload is None:
             return
         node, _datasets, start = payload
-        self._expanded_state[("dataset_page", id(node), start)] = False
+        self._expanded_state[("dataset_page", self._tree_state_identity(node), start)] = False
 
     def _current_expanded_state(self) -> dict[tuple[Any, ...], bool]:
         state: dict[tuple[Any, ...], bool] = {}
@@ -11500,21 +11705,23 @@ class NfitProjectExplorer:
             elif role in {"datasets", "models", "fits", "analyses", "plots"} and group is not None:
                 state[(role, id(group))] = item.isExpanded()
             elif role == "dataset_group" and node is not None:
-                state[("dataset_group", id(node))] = item.isExpanded()
+                state[("dataset_group", self._tree_state_identity(node))] = item.isExpanded()
             elif role in {"group_masks", "group_backgrounds"} and node is not None:
-                state[(role, id(node))] = item.isExpanded()
+                state[(role, self._tree_state_identity(node))] = item.isExpanded()
             elif role == "dataset" and dataset is not None:
-                state[("dataset", id(dataset))] = item.isExpanded()
+                state[("dataset", self._tree_state_identity(dataset))] = item.isExpanded()
             elif role in {"masks", "backgrounds"} and dataset is not None:
-                state[(role, id(dataset))] = item.isExpanded()
+                state[(role, self._tree_state_identity(dataset))] = item.isExpanded()
             elif role == "dataset_page":
                 payload = self._dataset_page_roles.get(id(item))
                 if payload is not None:
                     page_node, _datasets, start = payload
-                    state[("dataset_page", id(page_node), start)] = item.isExpanded()
+                    state[("dataset_page", self._tree_state_identity(page_node), start)] = (
+                        item.isExpanded()
+                    )
             fit_entry = self._fit_entry_for_item(item)
             if fit_entry is not None:
-                state[("fit", id(fit_entry))] = item.isExpanded()
+                state[("fit", self._tree_state_identity(fit_entry))] = item.isExpanded()
             for child_index in range(item.childCount()):
                 visit(item.child(child_index))
 
@@ -11522,12 +11729,27 @@ class NfitProjectExplorer:
             visit(self.tree.topLevelItem(index))
         return state
 
+    @staticmethod
+    def _tree_state_identity(value: Any) -> str | int:
+        """Return the persistent identity used by the tree-state cache.
+
+        Dataset groups, datasets, and fit-history entries have serialized IDs.
+        Using those IDs keeps expansion state attached to the project object
+        when Qt recreates tree rows, and avoids an accidental match if Python
+        reuses an object's memory address after a deletion.  ``DataGroup`` and
+        the older small configuration objects do not have an ID, so their
+        process-local identity remains the appropriate fallback.
+        """
+
+        persistent_id = getattr(value, "id", None)
+        return persistent_id if isinstance(persistent_id, str) and persistent_id else id(value)
+
     def _collect_fit_expanded_state(self, item: Any, state: dict[tuple[Any, ...], bool]) -> None:
         for index in range(item.childCount()):
             child = item.child(index)
             fit_entry = self._fit_entry_for_item(child)
             if fit_entry is not None:
-                state[("fit", id(fit_entry))] = child.isExpanded()
+                state[("fit", self._tree_state_identity(fit_entry))] = child.isExpanded()
                 self._collect_fit_expanded_state(child, state)
 
     def _remember_item(
@@ -11590,7 +11812,7 @@ class NfitProjectExplorer:
             self._add_fit_tree_item(item, group, child, select_fit=select_fit)
         item.setExpanded(
             self._expanded_state.get(
-                ("fit", id(fit_entry)),
+                ("fit", self._tree_state_identity(fit_entry)),
                 fit_entry.kind == "timeline" or _fit_entry_in_tree(fit_entry.children, select_fit),
             )
         )
@@ -11744,9 +11966,7 @@ class NfitProjectExplorer:
         self.save_dataset_button.setEnabled(
             bool(role == "dataset" and entry is not None and _dataset_can_save(entry))
         )
-        self.delete_button.setEnabled(
-            role in _DELETABLE_TREE_ROLES
-        )
+        self.delete_button.setEnabled(self._can_delete_tree_item(current_item))
         mask_editing = role in {"mask", "group_mask"}
         self.mask_type_combo.setVisible(mask_editing)
         self.mask_parameter_widget.setVisible(mask_editing)
@@ -14465,29 +14685,64 @@ class NfitProjectExplorer:
     # column header, tooltip).
     _DIAGNOSTIC_COLUMNS = (
         ("temperature", "T (K)", "Dataset temperature."),
-        ("mu_eff_sq", "mu_eff^2", "Effective fluctuating moment per site: the "
-         "Brillouin-zone and energy integral of chi'' (with the closure's "
-         "energy cutoff), in model units."),
-        ("chi_static_q0", "chi(0)", "Uniform static susceptibility at Q=0 "
-         "(Kramers-Kronig of the modes); the zero-field bulk susceptibility."),
-        ("chi_static_qpeak", "chi_peak", "Peak static susceptibility over the "
-         "BZ grid; locates the incipient ordering vector."),
-        ("chi0_gamma0", "chi0*gamma0", "Product of the local susceptibility and "
-         "relaxation rate (tracks the local spectral weight)."),
-        ("stability_margin", "D_min", "Smallest RPA denominator on the "
-         "Brillouin-zone grid: positive is stable, zero is the ordering "
-         "boundary, and negative is unstable."),
-        ("stability_ratio", "r_max", "Largest dimensionless RPA feedback "
-         "(lambda_max - lambda_shift) * chi0_eff; D_min = 1 - r_max."),
-        ("minimum_relative_singular_value", "RPA s_min", "Smallest relative "
-         "singular value of the evaluated electronic-RPA denominator. Values "
-         "near zero indicate a sampled pole."),
-        ("lambda_shift", "lambda_shift", "Onsager reaction-field energy "
-         "subtracted from every interaction eigenvalue to enforce the moment "
-         "sum rule. It is zero without an Onsager closure."),
-        ("chi0_eff", "chi0_eff", "Effective local susceptibility after the "
-         "closure: the value actually used in the RPA denominator. It equals "
-         "the fitted chi0 when no closure is active."),
+        (
+            "mu_eff_sq",
+            "mu_eff^2",
+            "Effective fluctuating moment per site: the "
+            "Brillouin-zone and energy integral of chi'' (with the closure's "
+            "energy cutoff), in model units.",
+        ),
+        (
+            "chi_static_q0",
+            "chi(0)",
+            "Uniform static susceptibility at Q=0 "
+            "(Kramers-Kronig of the modes); the zero-field bulk susceptibility.",
+        ),
+        (
+            "chi_static_qpeak",
+            "chi_peak",
+            "Peak static susceptibility over the BZ grid; locates the incipient ordering vector.",
+        ),
+        (
+            "chi0_gamma0",
+            "chi0*gamma0",
+            "Product of the local susceptibility and "
+            "relaxation rate (tracks the local spectral weight).",
+        ),
+        (
+            "stability_margin",
+            "D_min",
+            "Smallest RPA denominator on the "
+            "Brillouin-zone grid: positive is stable, zero is the ordering "
+            "boundary, and negative is unstable.",
+        ),
+        (
+            "stability_ratio",
+            "r_max",
+            "Largest dimensionless RPA feedback "
+            "(lambda_max - lambda_shift) * chi0_eff; D_min = 1 - r_max.",
+        ),
+        (
+            "minimum_relative_singular_value",
+            "RPA s_min",
+            "Smallest relative "
+            "singular value of the evaluated electronic-RPA denominator. Values "
+            "near zero indicate a sampled pole.",
+        ),
+        (
+            "lambda_shift",
+            "lambda_shift",
+            "Onsager reaction-field energy "
+            "subtracted from every interaction eigenvalue to enforce the moment "
+            "sum rule. It is zero without an Onsager closure.",
+        ),
+        (
+            "chi0_eff",
+            "chi0_eff",
+            "Effective local susceptibility after the "
+            "closure: the value actually used in the RPA denominator. It equals "
+            "the fitted chi0 when no closure is active.",
+        ),
     )
 
     def _fit_diagnostics_group_box(self, fit_entry: FitTimelineEntry) -> Any:
@@ -16769,16 +17024,17 @@ class NfitProjectExplorer:
         has_source = bool(entry is not None and _dataset_source_path(entry) is not None)
         enabled_state = _enabled_state_for_role(role, entry, mask, model)
         specs: list[tuple[str, bool]] = []
-        if role in {"dataset", "dataset_group", "mask"}:
+        copy_role, copy_objects = self._copy_objects_for_item_context(item)
+        if _project_clipboard.copy_capability(copy_role, copy_objects).allowed:
             specs.append(("Copy", True))
-        if role in {"group", "datasets", "dataset", "dataset_group", "masks"}:
+        if role in {"group", "datasets", "dataset", "dataset_group", "masks"} or can_paste:
             specs.append(("Paste", can_paste))
         if enabled_state is not None:
             specs.append(("Disable" if enabled_state else "Enable", True))
         if role in {"group", "dataset", "mask", "background", "group_background", "model", "fit", "fit_timeline", "dataset_group", "group_mask", "plot"}:
             specs.append(("Rename", True))
         if role in _DELETABLE_TREE_ROLES:
-            specs.append(("Delete", True))
+            specs.append(("Delete", self._can_delete_tree_item(item)))
         if role in {"group", "datasets", "dataset", "analyses", "analysis", "analysis_output"}:
             specs.append(("Open Analysis Window", True))
         if role == "analyses":
@@ -16825,15 +17081,22 @@ class NfitProjectExplorer:
     def _show_context_menu(self, item: Any | None, global_pos: Any) -> None:
         from PySide6 import QtCore, QtWidgets
 
-        if item is None:
-            return
-        if item in self.tree.selectedItems():
-            self.tree.selectionModel().setCurrentIndex(
-                self.tree.indexFromItem(item),
-                QtCore.QItemSelectionModel.SelectionFlag.NoUpdate,
-            )
-        else:
-            self.tree.setCurrentItem(item)
+        if item is not None:
+            # A context menu operates on the visible selection.  Right-clicking an
+            # already selected row keeps its batch; right-clicking another row
+            # starts a new single-item operation.  Relying on platform-specific
+            # QTreeWidget right-click selection here made collections intermittently
+            # act on a stale prior selection.
+            if item in self.tree.selectedItems():
+                self.tree.selectionModel().setCurrentIndex(
+                    self.tree.indexFromItem(item),
+                    QtCore.QItemSelectionModel.SelectionFlag.NoUpdate,
+                )
+            else:
+                self.tree.selectionModel().setCurrentIndex(
+                    self.tree.indexFromItem(item),
+                    QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+                )
         menu = QtWidgets.QMenu(self.tree)
         menu.setToolTipsVisible(True)
         actions = {
@@ -16865,8 +17128,8 @@ class NfitProjectExplorer:
         tooltips = {
             "Open Analysis Window": "Create, configure, run, and inspect non-fitting dataset analyses.",
             "New analysis": "Open the Analysis Window with a fresh analysis recipe for this workspace.",
-            "Copy": "Copy the selected dataset batch, dataset group, or mask so it can be pasted elsewhere in the project.",
-            "Paste": "Paste the copied datasets, dataset group, or mask into the selected compatible destination.",
+            "Copy": "Copy the selected compatible project items so they can be pasted elsewhere in the project.",
+            "Paste": "Paste compatible copied project items into this destination.",
             "Rename": "Rename the selected tree item.",
             "Delete": "Delete all selected compatible items when that operation is allowed.",
             "View in data viewer": "Open or refresh the data viewer for this selection.",
@@ -16877,12 +17140,10 @@ class NfitProjectExplorer:
             "Show file location": "Reveal the selected dataset's source file in the operating system file browser.",
             "Change file source": "Point this dataset at a different source file on disk.",
             "Copy workflow script": (
-                "Copy readable Python that reloads and prepares this dataset "
-                "from its source files."
+                "Copy readable Python that reloads and prepares this dataset from its source files."
             ),
             "Save workflow script...": (
-                "Save readable Python that reloads and prepares this dataset "
-                "from its source files."
+                "Save readable Python that reloads and prepares this dataset from its source files."
             ),
             "Add dataset": "Choose data files to import into this dataset collection.",
             "Add mask": "Create a new mask for the selected dataset or shared mask folder.",
@@ -16981,18 +17242,19 @@ class NfitProjectExplorer:
     def _can_paste_into_role(self, role: str, entry: DatasetEntry | None) -> bool:
         if self._clipboard is None:
             return False
-        clip_role, payload = self._clipboard
-        if clip_role == "dataset" and isinstance(payload, DatasetEntry):
-            return role in {"group", "datasets", "dataset_group"}
-        if clip_role == "datasets" and isinstance(payload, list):
-            return role in {"group", "datasets", "dataset_group"} and all(
-                isinstance(item, DatasetEntry) for item in payload
-            )
-        if clip_role == "dataset_group" and isinstance(payload, DatasetGroup):
-            return role in {"group", "datasets", "dataset_group"}
-        if clip_role == "mask" and isinstance(payload, MaskSpec):
-            return role in {"dataset", "masks"} and entry is not None
-        return False
+        payload = self._clipboard
+        if not isinstance(payload, _project_clipboard.ProjectClipboardPayload):
+            clip_role, legacy = payload
+            legacy_role = "dataset" if clip_role == "datasets" else clip_role
+            legacy_items = legacy if isinstance(legacy, list) else [legacy]
+            try:
+                payload = _project_clipboard.make_payload(legacy_role, legacy_items)
+            except ValueError:
+                return False
+        group = self._objects_for_item(self._current_item())[0]
+        return _project_clipboard.paste_capability(
+            payload, role, data_group=group
+        ).allowed
 
     def _sync_window_title(self) -> None:
         suffix = "Untitled" if self.project_path is None else str(self.project_path)
@@ -20179,8 +20441,17 @@ def _make_project_tree_class():
             super().mousePressEvent(event)
 
         def keyPressEvent(self, event):
-            if event.key() == QtCore.Qt.Key.Key_Delete:
+            if (
+                event.matches(QtGui.QKeySequence.StandardKey.Delete)
+                or event.key() == QtCore.Qt.Key.Key_Delete
+                or (
+                    platform.system() == "Darwin"
+                    and event.key() == QtCore.Qt.Key.Key_Backspace
+                    and event.modifiers() == QtCore.Qt.KeyboardModifier.NoModifier
+                )
+            ):
                 self.explorer.delete_selected()
+                event.accept()
                 return
             if event.matches(QtGui.QKeySequence.StandardKey.Copy):
                 self.explorer.copy_selected()
@@ -20234,13 +20505,10 @@ def _make_project_tree_class():
             if event.mimeData().hasFormat("application/x-nfit-tree-item"):
                 target = self.itemAt(event.position().toPoint())
                 copied = event.dropAction() == QtCore.Qt.DropAction.CopyAction
-                if (
-                    target is not None
-                    and self.explorer.move_or_copy_selected_to_item(
-                        target,
-                        copy_item=copied,
-                        drop_position=self.dropIndicatorPosition(),
-                    )
+                if target is not None and self.explorer.move_or_copy_selected_to_item(
+                    target,
+                    copy_item=copied,
+                    drop_position=self.dropIndicatorPosition(),
                 ):
                     event.acceptProposedAction()
                 else:
@@ -20877,8 +21145,6 @@ def _fit_result_limit_hits(
     return hits
 
 
-
-
 def _metadata_tree_value_summary(value: Any) -> str:
     if isinstance(value, dict):
         return f"{len(value)} field(s)"
@@ -20993,53 +21259,11 @@ def _point_data_nbytes(data: PointData4D) -> int:
     return int(sum(array.nbytes for array in arrays))
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def _model_key(group: DataGroup, model: ModelComponentSpec) -> str | None:
     for name, existing in group.models.items():
         if existing is model:
             return name
     return None
-
-
 
 
 def _qt_app():
@@ -21096,10 +21320,6 @@ def _unique_name(base: str, existing: list[str]) -> str:
     while f"{candidate}{index}" in existing:
         index += 1
     return f"{candidate}{index}"
-
-
-
-
 
 
 def _parse_parameter_text(text: str) -> Any:

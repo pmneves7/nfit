@@ -197,6 +197,7 @@ def test_analyses_branch_new_analysis_button_opens_fresh_recipe(monkeypatch):
     assert playground.analysis_combo.currentData() is None
     assert playground.name_edit.text() == "Analysis"
     assert explorer.context_menu_action_names(analyses_item) == [
+        "Delete",
         "Open Analysis Window",
         "New analysis",
     ]

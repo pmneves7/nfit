@@ -1746,18 +1746,19 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
     ]
 
     model_item = explorer.tree.topLevelItem(0).child(1).child(0)
-    assert explorer.context_menu_action_names(model_item) == ["Disable", "Rename", "Delete"]
+    assert explorer.context_menu_action_names(model_item) == ["Copy", "Disable", "Rename", "Delete"]
     explorer.tree.setCurrentItem(model_item)
     explorer.enabled_check.setChecked(False)
     assert model.enabled is False
     assert explorer.context_menu_action_names(explorer.tree.currentItem()) == [
+        "Copy",
         "Enable",
         "Rename",
         "Delete",
     ]
 
     models_item = explorer.tree.topLevelItem(0).child(1)
-    assert explorer.context_menu_action_names(models_item) == ["Add model"]
+    assert explorer.context_menu_action_names(models_item) == ["Copy", "Delete", "Add model"]
     datasets_item = explorer.tree.topLevelItem(0).child(0)
     assert "Add dataset" in explorer.context_menu_action_names(datasets_item)
     assert model.name in group.models

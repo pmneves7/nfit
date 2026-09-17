@@ -17,6 +17,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "rebin_cache.py",
     PACKAGE_ROOT / "slice_viewer_cache.py",
     PACKAGE_ROOT / "project_composites.py",
+    PACKAGE_ROOT / "project_clipboard.py",
     PACKAGE_ROOT / "project_data.py",
     PACKAGE_ROOT / "project_history.py",
     PACKAGE_ROOT / "project_imports.py",
@@ -59,6 +60,17 @@ def _imports_project_gui(path: Path) -> list[int]:
 @pytest.mark.parametrize("path", GUI_INDEPENDENT_MODULES, ids=lambda path: path.stem)
 def test_project_services_do_not_import_project_gui(path: Path) -> None:
     assert _imports_project_gui(path) == []
+
+
+def test_project_clipboard_service_does_not_import_qt() -> None:
+    tree = ast.parse((PACKAGE_ROOT / "project_clipboard.py").read_text(encoding="utf-8"))
+    modules = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            modules.append(node.module or "")
+    assert not any(module.startswith(("PySide", "PyQt")) for module in modules)
 
 
 def test_composite_service_does_not_import_project_data_facade() -> None:

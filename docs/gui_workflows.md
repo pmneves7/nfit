@@ -55,12 +55,11 @@ as an editable recipe in the workspace's **Plots** branch.
 The viewer's **Figure** section can place the current hidden-axis binning above
 the plot, including projected-axis labels and units.
 
-The project tree supports Shift- and Ctrl/Command-selection of multiple items
-of the same kind. Right-clicking any selected dataset preserves the whole
-selection; **Enable**, **Disable**, **Delete**, and **Copy** apply to the batch,
-and a copied dataset batch can be pasted into another workspace or nested
-dataset group. Dataset groups can also be copied and pasted, including their
-children and group-level configuration.
+The project tree supports Shift- and Ctrl/Command-selection of compatible items,
+including lazy run pages. Right-clicking a selected row preserves the selection;
+clipboard actions and deletion operate on that selection. See
+[Organize a project](project_explorer.md) for collection actions, compatible paste
+destinations, and protected history and result entries.
 
 ## Launch
 
@@ -129,10 +128,8 @@ Most actions are available from buttons and right-click menus. Files may also be
 dragged into a workspace or dataset group. Dropping a `.nfit` file opens that
 project after the usual unsaved-change check.
 
-Multiple objects of the same kind can be selected with Shift-click or
-Ctrl/Command-click and deleted together. Drag and drop reorders compatible
-objects; copy and paste can transfer datasets between workspaces and masks
-between datasets.
+Drag and drop reorders compatible objects. Copy and paste transfer project
+items between compatible containers; copied collections include their contents.
 
 The **File** menu provides New, Open, Recent projects, Reload from Disk, Save,
 Save As, Close, and Quit. Closing or reloading a modified project asks before

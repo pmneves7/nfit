@@ -18,7 +18,7 @@ University, pneves1@jhu.edu). AI and large-language-model coding tools have
 assisted with portions of the code, tests, and documentation. Authorship and
 responsibility for the project remain with Paul M. Neves.
 
-Current package version: 0.95.5.
+Current package version: 0.96.0.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the
@@ -33,6 +33,7 @@ getting_started
 desktop_installers
 features
 gui_workflows
+project_explorer
 workflow_scripts
 data_import
 gui_fitting
