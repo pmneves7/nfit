@@ -56,7 +56,7 @@ from .project_masks import _mdhisto_with_nfit_masks, _point_data_with_nfit_masks
 from .project_point_lists import prepared_point_list_data
 from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group
 from .rebin import rebin_nd
-from .rebin_cache import RebinCache
+from .rebin_cache import SHARED_REBIN_CACHE_BUDGET, RebinCache
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
 from .symmetry import SymmetrySpec, symmetry_config
 
@@ -174,13 +174,12 @@ _validate_mdhisto_rebin_basis = _backend_function("_validate_mdhisto_rebin_basis
 _viewer_view_signature = _backend_function("_viewer_view_signature")
 effective_dataset_masks = _backend_function("effective_dataset_masks")
 
-_COMPOSITE_DATA_CACHE: OrderedDict[Any, tuple[str, Any]] = RebinCache()
-_COMPOSITE_DATA_CACHE_LIMIT = 64
-# Large four-dimensional event reductions commonly retain about 0.5 GiB per
-# result.  A 256 MiB budget therefore discarded every such entry immediately,
-# forcing source composites to be recomputed for downstream derived datasets in
-# the same viewer request.  Scale the capacity to the host while retaining a
-# conservative cap; this does not allocate memory in advance.
+_COMPOSITE_DATA_CACHE: OrderedDict[Any, tuple[str, Any]] = RebinCache(
+    SHARED_REBIN_CACHE_BUDGET
+)
+_COMPOSITE_DATA_CACHE_LIMIT = None
+# Viewer-ready and composite bin results use the same machine-level allowance;
+# this snapshots that preference when the application starts.
 _COMPOSITE_DATA_CACHE_MAX_BYTES = scientific_cache_budget_bytes()
 
 

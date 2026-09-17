@@ -101,10 +101,10 @@ rebin settings, backgrounds, or model structure. `DatasetEntry.replace_data`
 advances the revision; changing only a model parameter can still reuse compiled
 geometry.
 
-Cache entries are process-local and evicted by least-recent use. Each GUI data
-cache has both an entry-count limit and an estimated numerical-array memory
-budget. Completed viewer and composite binnings first use resident arrays,
-then a bounded, chunk-compressed RAM tier. nfit does not write automatic cache
+Cache entries are process-local and evicted by least-recent use. Completed
+viewer and composite binnings share one total memory allowance. Recent results
+use resident arrays; older results are chunk-compressed in RAM as the combined
+cache approaches that allowance. nfit does not write automatic cache
 spill files to `/tmp` or scratch. When the compressed tier fills, the GUI asks
 whether to discard the oldest compressed binning or save it as a compressed
 `.npz` file at a path you choose. A discarded binning can be recomputed from
@@ -113,23 +113,17 @@ compressed binnings are discarded automatically instead of opening repeated
 dialogs. Saving a compressed NPZ exports the numerical result; it does not
 add that file to the project automatically. A binning too large for the
 compressed tier is not retained there. Scripting workflows evict old results
-without a GUI prompt. The budgets count distinct NumPy array payloads and
+without a GUI prompt. The shared budget counts distinct NumPy array payloads and
 compressed bytes, with small Python-object overhead excluded.
 The prepared-table cache defaults to 128 MiB and the model-overlay cache to
-256 MiB. Viewer and composite cache capacities use one sixteenth of physical
-memory, bounded between 768 MiB and 4 GiB for each cache. Three quarters of
-each allowance holds resident arrays and one quarter holds compressed results.
-This cache allowance is separate from the **Transient memory ceiling**, which
-controls temporary rebin batches and parallel worker accumulators.
-This capacity is not allocated in
+256 MiB. Viewer and composite bin results use the one combined **Total rebin
+memory ceiling** configured in **Preferences → Performance**; there are no
+per-result, per-bin, or per-stage memory quotas. The same ceiling controls
+temporary rebin batches and parallel worker accumulators. This capacity is not allocated in
 advance: small projects retain only the arrays they produce. The adaptive
 budget can retain a practical four-dimensional reduction that exceeded the old
 256 MiB limit, avoiding immediate eviction and duplicate work while preparing
 derived datasets or reopening a viewer.
-Caches also have defensive entry-count limits. The composite cache accepts up
-to 64 entries within its memory budget so projects with several dataset-group
-composites do not repeatedly evict and rebuild one another while reopening a
-viewer.
 Parent composites also retain child reductions on matching grids; saving the
 children later reuses those results. Changed source data, masks, backgrounds,
 or numerical bin settings invalidate the corresponding cached results.
@@ -151,7 +145,7 @@ test a custom candidate list when a cluster node warrants a broader sweep. The
 default benchmark sweep includes the machine's full detected CPU allowance in
 addition to conservative smaller ceilings.
 
-**Preferences → Performance → Transient memory ceiling** controls that share
+**Preferences → Performance → Total rebin memory ceiling** controls that share
 of currently available memory. The automatic value is 25%, and an explicit
 value may range up to 80%. The same ceiling limits thread-private rebin
 accumulators and clamps each saved per-rebin batch target, so increasing a

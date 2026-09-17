@@ -65,7 +65,7 @@ def test_full_compressed_cache_dialog_explains_save_and_discard(monkeypatch):
     prompt.request("another old bin", artifact)
     assert "named oldest bin" in seen[0]
     assert "compressed NPZ" in seen[0]
-    assert "separate from available system RAM" in seen[0]
+    assert "single combined allowance" in seen[0]
     assert len(seen) == 1
 
 

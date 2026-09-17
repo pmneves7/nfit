@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
@@ -36,39 +35,12 @@ def dataset_content_signature(dataset: Any) -> tuple[Any, ...]:
     return "memory", *tuple(dataset.data_cache_token)
 
 
-def scientific_cache_budget_bytes(
-    *,
-    minimum: int = 768 * 1024**2,
-    maximum: int = 4 * 1024**3,
-    memory_fraction: float = 1.0 / 16.0,
-) -> int:
-    """Return a memory-aware budget for cached scientific array payloads.
+def scientific_cache_budget_bytes() -> int:
+    """Return the configured total allowance for all cached rebin results."""
 
-    The floor is large enough to retain one typical four-dimensional reduction,
-    while the cap prevents high-memory workstations from growing an unbounded
-    process cache.  This is a capacity limit, not an allocation: small projects
-    retain only the arrays they actually produce.
-    """
+    from .performance import rebin_memory_limit_bytes
 
-    total_memory = _total_physical_memory_bytes()
-    if total_memory is None:
-        return int(minimum)
-    proportional = int(total_memory * float(memory_fraction))
-    return min(max(proportional, int(minimum)), int(maximum))
-
-
-def _total_physical_memory_bytes() -> int | None:
-    try:
-        import psutil
-
-        return int(psutil.virtual_memory().total)
-    except (ImportError, AttributeError):
-        try:
-            return int(
-                os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
-            )
-        except (AttributeError, OSError, ValueError):
-            return None
+    return rebin_memory_limit_bytes()
 
 
 def readonly_array(value: ArrayLike, dtype: Any) -> np.ndarray:
@@ -155,24 +127,28 @@ def lru_store(
     cache: OrderedDict,
     key: Any,
     value: Any,
-    limit: int,
+    limit: int | None,
     max_array_bytes: int | None = None,
 ) -> None:
     """Store one LRU entry and evict until count and array-byte limits hold."""
 
+    managed_budget = hasattr(cache, "enforce_budget")
     if hasattr(cache, "configure_budget"):
-        max_array_bytes = cache.configure_budget(max_array_bytes)
+        cache.configure_budget(max_array_bytes)
     cache[key] = value
     cache.move_to_end(key)
-    entry_limit = max(int(limit), 0)
+    entry_limit = None if limit is None else max(int(limit), 0)
     byte_limit = (
         None if max_array_bytes is None else max(int(max_array_bytes), 0)
     )
     while cache and (
-        len(cache) > entry_limit
+        (entry_limit is not None and len(cache) > entry_limit)
         or (
-            byte_limit is not None
+            not managed_budget
+            and byte_limit is not None
             and array_payload_nbytes(tuple(cache.values())) > byte_limit
         )
     ):
         cache.popitem(last=False)
+    if managed_budget:
+        cache.enforce_budget()

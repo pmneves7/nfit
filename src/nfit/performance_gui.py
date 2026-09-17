@@ -201,11 +201,11 @@ class PerformancePage(QtWidgets.QWidget):
         self.transient_memory.setSuffix("% available")
         self.transient_memory.setValue(settings["transient_memory_percent"])
         self.transient_memory.setToolTip(
-            "Maximum share of currently available RAM used by temporary rebin "
-            "batches and parallel worker accumulators. Higher values can enable "
-            "more CPUs for large grids but leave less memory for other work."
+            "Maximum share of currently available RAM for all cached bin results "
+            "combined and for rebin working memory. Higher values retain more "
+            "results and can enable more CPUs, but leave less memory for other work."
         )
-        form.addRow("Transient memory ceiling", self.transient_memory)
+        form.addRow("Total rebin memory ceiling", self.transient_memory)
         save = QtWidgets.QPushButton("Save defaults")
         save.setToolTip("Persist these defaults for new rebin configurations; no existing settings are overwritten.")
         save.clicked.connect(self._save)

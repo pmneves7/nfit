@@ -205,8 +205,8 @@ def save_performance_settings(
         temporary.unlink(missing_ok=True)
 
 
-def transient_rebin_memory_limit_bytes(available_memory: int | None = None) -> int:
-    """Return the machine-local ceiling for rebin batches and worker buffers."""
+def rebin_memory_limit_bytes(available_memory: int | None = None) -> int:
+    """Return the machine-local total rebin-memory ceiling."""
 
     if available_memory is None:
         available_memory = available_memory_bytes()
@@ -214,6 +214,12 @@ def transient_rebin_memory_limit_bytes(available_memory: int | None = None) -> i
     if available_memory is None:
         return 512 * 1024**2
     return max(1, int(available_memory) * int(percent) // 100)
+
+
+def transient_rebin_memory_limit_bytes(available_memory: int | None = None) -> int:
+    """Compatibility name for the total rebin-memory ceiling."""
+
+    return rebin_memory_limit_bytes(available_memory)
 
 
 def initialize_rebin_performance(config: dict) -> None:

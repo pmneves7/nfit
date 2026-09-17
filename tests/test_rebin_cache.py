@@ -4,7 +4,7 @@ import numpy as np
 
 from nfit.analysis.artifacts import read_dataset_artifact
 from nfit.cache_utils import lru_store
-from nfit.rebin_cache import CompressedBinning, RebinCache
+from nfit.rebin_cache import CompressedBinning, RebinCache, RebinCacheBudget
 from tests.project_gui_test_support import _tiny_mdhisto_data
 
 
@@ -39,9 +39,14 @@ def test_oldest_compressed_binning_is_offered_before_eviction(tmp_path, monkeypa
         artifact.write_npz(tmp_path / f"{key}.npz")
 
     cache.before_discard = save_before_discard
+    artifact = CompressedBinning.from_data(
+        _tiny_mdhisto_data(1.0), max_bytes=10_000
+    )
+    assert artifact is not None
+    budget = artifact.nbytes + artifact.nbytes // 2
     for key in ("first", "second"):
         cache.set_label(key, f"named {key}")
-        lru_store(cache, key, (key, _tiny_mdhisto_data(1.0)), 0, 2_000)
+        lru_store(cache, key, (key, _tiny_mdhisto_data(1.0)), 0, budget)
 
     assert offered == ["named first"]
     assert "first" not in cache
@@ -51,3 +56,19 @@ def test_oldest_compressed_binning_is_offered_before_eviction(tmp_path, monkeypa
         read_dataset_artifact(tmp_path / "named first.npz").signal,
         _tiny_mdhisto_data(1.0).signal,
     )
+
+
+def test_viewer_and_composite_stages_share_one_global_budget():
+    budget = RebinCacheBudget()
+    viewer = RebinCache(budget)
+    composite = RebinCache(budget)
+    viewer_data = _tiny_mdhisto_data(2.0)
+    composite_data = _tiny_mdhisto_data(3.0)
+    total_limit = 80
+
+    lru_store(viewer, "viewer", ("v", viewer_data), None, total_limit)
+    lru_store(composite, "composite", ("c", composite_data), None, total_limit)
+
+    assert budget.total_bytes() <= total_limit
+    assert "viewer" not in viewer
+    assert composite.has_signature("composite", "c")

@@ -61,10 +61,10 @@ class CompressedCachePrompt(QtCore.QObject):
             message.setIcon(QtWidgets.QMessageBox.Icon.Warning)
             message.setWindowTitle("Compressed binning cache is full")
             message.setText(
-                "nfit has reached its in-memory compressed-binning limit. "
+                "nfit has reached its total in-memory result-cache limit. "
                 f"The oldest bin ({label}) needs to leave memory. "
-                "This bounded result-cache allowance is separate from available "
-                "system RAM and the transient-memory preference. Save this bin "
+                "This is the single combined allowance configured under "
+                "Preferences → Performance. Save this bin "
                 "as a compressed NPZ where you choose, or discard it. After this "
                 "choice, nfit will automatically discard additional old compressed "
                 "bins for the rest of this session."

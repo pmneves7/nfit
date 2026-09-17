@@ -2,7 +2,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-import nfit.cache_utils as cache_utils
+import nfit.performance as performance
 from nfit.cache_utils import (
     array_payload_nbytes,
     lru_store,
@@ -10,14 +10,23 @@ from nfit.cache_utils import (
 )
 
 
-def test_scientific_cache_budget_is_bounded_and_memory_aware(monkeypatch):
+def test_scientific_cache_budget_uses_configured_rebin_total(monkeypatch):
     monkeypatch.setattr(
-        cache_utils,
-        "_total_physical_memory_bytes",
+        performance,
+        "available_memory_bytes",
         lambda: 16 * 1024**3,
     )
+    monkeypatch.setattr(
+        performance,
+        "load_performance_settings",
+        lambda: {
+            "max_batch_mb": 0,
+            "workers": 0,
+            "transient_memory_percent": 40,
+        },
+    )
 
-    assert scientific_cache_budget_bytes() == 1024**3
+    assert scientific_cache_budget_bytes() == int(16 * 1024**3 * 0.4)
 
 
 def test_array_payload_nbytes_counts_shared_arrays_once():

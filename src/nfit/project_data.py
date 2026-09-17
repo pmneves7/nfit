@@ -505,7 +505,7 @@ from .project_view_data import (
 )
 from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group  # noqa: F401
 from .rebin import rebin_nd, rebin_nd_symmetry  # noqa: F401
-from .rebin_cache import RebinCache
+from .rebin_cache import SHARED_REBIN_CACHE_BUDGET, RebinCache
 from .spectral_channels import (  # noqa: F401
     SPECTRAL_CHANNEL_CONFIG_KEY,
     with_paired_spectral_channels,
@@ -551,11 +551,12 @@ _project_rebinning.configure_rebinning_compatibility(globals())
 # Loading, rebinning, and masking full datasets is reused across passive GUI
 # refreshes and script/API calls. Signatures are content based; scale factors
 # are deliberately applied after the cached preparation step.
-_VIEWER_VIEW_CACHE: OrderedDict[str, tuple[str, Any]] = RebinCache()
-_VIEWER_VIEW_CACHE_LIMIT = 8
-# Keep practical four-dimensional views resident without imposing a fixed
-# multi-gigabyte allowance on smaller-memory hosts.  The former 256 MiB limit
-# could not retain even one 13-million-bin HYSPEC reduction.
+_VIEWER_VIEW_CACHE: OrderedDict[str, tuple[str, Any]] = RebinCache(
+    SHARED_REBIN_CACHE_BUDGET
+)
+_VIEWER_VIEW_CACHE_LIMIT = None
+# Viewer-ready and composite bin results use the same machine-level allowance;
+# this snapshots that preference when the application starts.
 _VIEWER_VIEW_CACHE_MAX_BYTES = scientific_cache_budget_bytes()
 
 
