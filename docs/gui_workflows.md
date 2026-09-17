@@ -41,6 +41,8 @@ application preferences, this checkbox is stored in the `.nfit` project.
 Loading an unchanged raw source on demand preserves a restored cache. Changing
 one named binning recomputes only that binning while other current binnings
 remain reusable.
+Green cache indicators update when a rebin finishes or is interrupted, and
+clear immediately when bin settings or another numerical dependency changes.
 
 **View in data viewer** opens a new, independent window each time, so several
 datasets or views of the same dataset can remain visible side by side. Use

@@ -1662,6 +1662,7 @@ def test_background_task_failure_reenables_gui(monkeypatch):
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     explorer = NfitProjectExplorer(NfitProject())
     messages = []
+    settled = []
     monkeypatch.setattr(
         QtWidgets.QMessageBox,
         "warning",
@@ -1676,6 +1677,7 @@ def test_background_task_failure_reenables_gui(monkeypatch):
         failure_title="Analysis failed",
         task=fail,
         on_success=lambda _result: True,
+        on_settled=lambda: settled.append(True),
         success_message="Analysis complete",
     )
     deadline = time.monotonic() + 3.0
@@ -1686,6 +1688,34 @@ def test_background_task_failure_reenables_gui(monkeypatch):
     assert explorer.tree.isEnabled()
     assert explorer.details_scroll.isEnabled()
     assert messages == [(explorer.window, "Analysis failed", "analysis failure")]
+    assert settled == [True]
+
+
+def test_background_task_interruption_runs_settled_callback(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    explorer = NfitProjectExplorer(NfitProject())
+    settled = []
+
+    def interrupt(_progress_callback):
+        raise project_gui.FitCancellationRequested("cancelled")
+
+    assert explorer._start_background_task(
+        title="Rebinning datasets",
+        failure_title="Rebin failed",
+        task=interrupt,
+        on_success=lambda _result: True,
+        on_settled=lambda: settled.append(True),
+        success_message="Rebin complete",
+    )
+    deadline = time.monotonic() + 3.0
+    while explorer._fit_worker_thread is not None and time.monotonic() < deadline:
+        QtWidgets.QApplication.processEvents()
+
+    assert explorer._fit_worker_thread is None
+    assert explorer.tree.isEnabled()
+    assert explorer.details_scroll.isEnabled()
+    assert settled == [True]
 
 
 def test_background_task_can_keep_completed_analysis_log_open(monkeypatch):

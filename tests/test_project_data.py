@@ -229,11 +229,24 @@ def test_tree_cache_badges_follow_current_dataset_and_composite_bins():
     assert "cached and up to date" in subgroup_item.toolTip(0)
 
     explorer.tree.setCurrentItem(dataset_item)
+    explorer._set_dataset_rebin_resolution_mode(direct, root, "bins")
+    assert direct_config["stale"] is True
+    assert dataset_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "dataset"
+    ).cacheKey()
+    assert not dataset_item.toolTip(0)
+
+    assert project_data.dataset_for_slice_viewer(direct, force_rebin=True) is not None
+    explorer._refresh_cache_badges()
+    assert dataset_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "dataset", cached=True
+    ).cacheKey()
+
     direct_config["auto_rebin"] = False
     direct_config["minimum_coverage"] = 0.5
     explorer._after_dataset_rebin_changed(direct, root)
     composite_config["minimum_coverage"] = 0.5
-    explorer._refresh_cache_badges()
+    explorer._after_group_composite_changed(scope)
     assert dataset_item.icon(0).cacheKey() == project_gui._tree_item_icon(
         "dataset"
     ).cacheKey()
@@ -244,6 +257,31 @@ def test_tree_cache_badges_follow_current_dataset_and_composite_bins():
     assert not subgroup_item.toolTip(0)
 
     project_gui._VIEWER_VIEW_CACHE.clear()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+
+
+def test_dataset_weight_change_clears_dependent_composite_cache_badge():
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    dataset = DatasetEntry("scan", _tiny_mdhisto_data(2.0), kind="mdhisto")
+    group = DataGroup("Workspace1", datasets=[dataset])
+    config = project_gui.data_group_composite_config(group)
+    config.update(enabled=True, minimum_coverage=0.0)
+    assert project_gui._cached_composite_dataset_data(group) is not None
+
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    datasets_item = explorer.tree.topLevelItem(0).child(0)
+    dataset_item = datasets_item.child(0)
+    assert datasets_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "folder", cached=True
+    ).cacheKey()
+
+    explorer.tree.setCurrentItem(dataset_item)
+    explorer._set_selected_dataset_fit_weight(2.0)
+
+    assert datasets_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "folder"
+    ).cacheKey()
+    assert not datasets_item.toolTip(0)
     project_gui._COMPOSITE_DATA_CACHE.clear()
 
 
@@ -2135,6 +2173,10 @@ def test_rebin_all_composite_binnings_populates_viewer_entries_and_refreshes(
     auxiliary["axes"][0].update(mode="bins", num_bins=1)
     explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0))
+    datasets_item = explorer.tree.topLevelItem(0).child(0)
+    assert datasets_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "folder"
+    ).cacheKey()
     rebin_all_button = explorer.details_widget.findChild(
         QtWidgets.QPushButton, "group_composite_rebin_all_now"
     )
@@ -2153,8 +2195,43 @@ def test_rebin_all_composite_binnings_populates_viewer_entries_and_refreshes(
     assert project_gui._peek_cached_composite_dataset_data(
         group, config_override=auxiliary, binning_id=auxiliary_id
     ) is not None
+    assert datasets_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "folder", cached=True
+    ).cacheKey()
     _datasets, names = project_gui.slice_viewer_datasets(group, force_rebin=False)
     assert names == ["Datagroup1 Composite", "Datagroup1 Composite · Overview"]
+
+
+def test_interrupted_rebin_all_refreshes_badge_for_completed_cache(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    group = DataGroup(
+        "Workspace1",
+        datasets=[DatasetEntry("scan", _tiny_mdhisto_data(2.0), kind="mdhisto")],
+    )
+    config = project_gui.data_group_composite_config(group)
+    config.update(enabled=True, minimum_coverage=0.0, stale=True)
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    datasets_item = explorer.tree.topLevelItem(0).child(0)
+
+    def interrupt_after_cache(event):
+        if event.get("batch_item_complete"):
+            raise project_gui.RebinCancellationRequested("cancel after cache")
+
+    monkeypatch.setattr(
+        explorer,
+        "_make_rebin_progress_callback",
+        lambda *_args, **_kwargs: interrupt_after_cache,
+    )
+    monkeypatch.setattr(explorer, "_close_rebin_progress", lambda _progress: None)
+
+    assert not explorer.rebin_all_composite_binnings_now(group)
+    assert project_gui._composite_cached_binnings_current(group, group)
+    assert datasets_item.icon(0).cacheKey() == project_gui._tree_item_icon(
+        "folder", cached=True
+    ).cacheKey()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
 
 
 def test_crossing_rebin_size_threshold_disables_auto_until_user_reenables(monkeypatch):

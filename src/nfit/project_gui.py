@@ -7632,6 +7632,7 @@ class NfitProjectExplorer:
         def on_success(reloaded: list[DatasetEntry]) -> None:
             for scope in _composite_scopes(group):
                 data_group_composite_config(scope)["stale"] = True
+            self._refresh_cache_badges()
             self._sync_details()
             self.refresh_slice_viewer(group, force_rebin=True)
 
@@ -8305,6 +8306,7 @@ class NfitProjectExplorer:
                 failure_title="Rebin now",
                 task=task,
                 on_success=on_success,
+                on_settled=self._refresh_cache_badges,
                 success_message="Dataset rebin finished.",
                 finishing_progress_event={
                     "stage": "rebin_ui",
@@ -8334,6 +8336,7 @@ class NfitProjectExplorer:
             return False
         finally:
             self._close_rebin_progress(progress)
+            self._refresh_cache_badges()
         if view is None:
             return False
         self.refresh_slice_viewer(group)
@@ -8405,6 +8408,7 @@ class NfitProjectExplorer:
                 failure_title="Rebin all now",
                 task=task,
                 on_success=on_success,
+                on_settled=self._refresh_cache_badges,
                 success_message="All dataset binnings finished.",
                 finishing_progress_event={
                     "stage": "rebin_ui",
@@ -8425,6 +8429,7 @@ class NfitProjectExplorer:
             return False
         finally:
             self._close_rebin_progress(progress)
+            self._refresh_cache_badges()
         on_success(completed)
         return bool(completed)
 
@@ -8728,6 +8733,7 @@ class NfitProjectExplorer:
                 failure_title="Rebin composite",
                 task=task,
                 on_success=on_success,
+                on_settled=self._refresh_cache_badges,
                 success_message="Composite rebin finished.",
                 finishing_progress_event={
                     "stage": "rebin_ui",
@@ -8755,6 +8761,7 @@ class NfitProjectExplorer:
             return False
         finally:
             self._close_rebin_progress(progress)
+            self._refresh_cache_badges()
         if data is None:
             return False
         root = _composite_root(group)
@@ -8827,6 +8834,7 @@ class NfitProjectExplorer:
                 failure_title="Rebin all now",
                 task=task,
                 on_success=on_success,
+                on_settled=self._refresh_cache_badges,
                 success_message="All composite binnings finished.",
                 finishing_progress_event={
                     "stage": "rebin_ui",
@@ -8849,6 +8857,7 @@ class NfitProjectExplorer:
             return False
         finally:
             self._close_rebin_progress(progress)
+            self._refresh_cache_badges()
         on_success(completed)
         return bool(completed)
 
@@ -9179,6 +9188,7 @@ class NfitProjectExplorer:
         task: Any,
         on_success: Any,
         success_message: str,
+        on_settled: Any | None = None,
         close_on_success: bool = True,
         completion_summary: Any | None = None,
         progress_window_title: str | None = None,
@@ -9236,27 +9246,41 @@ class NfitProjectExplorer:
             def handle_progress(self, event: dict[str, Any]) -> None:
                 progress.update_progress(event)
 
+            def settle(self) -> None:
+                if on_settled is not None:
+                    on_settled()
+
             @QtCore.Slot(object)
             def handle_success(self, result: Any) -> None:
-                if finishing_progress_event is not None:
-                    progress.update_progress(finishing_progress_event)
-                should_finish = on_success(result)
-                if should_finish is not False:
-                    lines = completion_summary(result) if completion_summary is not None else None
-                    progress.finish(success_message, summary_lines=lines)
-                    if close_on_success:
-                        progress.close()
-                worker_thread.quit()
+                try:
+                    if finishing_progress_event is not None:
+                        progress.update_progress(finishing_progress_event)
+                    should_finish = on_success(result)
+                    if should_finish is not False:
+                        lines = completion_summary(result) if completion_summary is not None else None
+                        progress.finish(success_message, summary_lines=lines)
+                        if close_on_success:
+                            progress.close()
+                finally:
+                    try:
+                        self.settle()
+                    finally:
+                        worker_thread.quit()
 
             @QtCore.Slot(object)
             def handle_cancelled(self, result: Any) -> None:
-                on_success(result)
-                lines = completion_summary(result) if completion_summary is not None else None
-                progress.finish(
-                    "emcee posterior sampling cancelled; partial samples saved.",
-                    summary_lines=lines,
-                )
-                worker_thread.quit()
+                try:
+                    on_success(result)
+                    lines = completion_summary(result) if completion_summary is not None else None
+                    progress.finish(
+                        "emcee posterior sampling cancelled; partial samples saved.",
+                        summary_lines=lines,
+                    )
+                finally:
+                    try:
+                        self.settle()
+                    finally:
+                        worker_thread.quit()
 
             @QtCore.Slot(str)
             def handle_failure(self, message: str) -> None:
@@ -9264,13 +9288,21 @@ class NfitProjectExplorer:
                 try:
                     QtWidgets.QMessageBox.warning(self._parent_window, failure_title, message)
                 finally:
-                    worker_thread.quit()
+                    try:
+                        self.settle()
+                    finally:
+                        worker_thread.quit()
 
             @QtCore.Slot()
             def handle_aborted(self) -> None:
-                progress.finish("Operation cancelled.")
-                progress.close()
-                worker_thread.quit()
+                try:
+                    progress.finish("Operation cancelled.")
+                    progress.close()
+                finally:
+                    try:
+                        self.settle()
+                    finally:
+                        worker_thread.quit()
 
         is_rebin_progress = progress_window_title == "Rebin progress"
         if is_rebin_progress:
@@ -11977,6 +12009,7 @@ class NfitProjectExplorer:
         self._mark_dirty()
         if group is not None:
             self.refresh_slice_viewer(group)
+        self._refresh_cache_badges()
         self._sync_details()
 
     def _set_group_shared_scale(self, checked: bool) -> None:
@@ -12019,6 +12052,7 @@ class NfitProjectExplorer:
         if group is not None and branch_created:
             self._refresh_tree(select_group=group, refresh_viewers=False)
             return
+        self._refresh_cache_badges()
         self._sync_details()
 
     def _set_selected_enabled(self, checked: bool) -> None:
@@ -12141,6 +12175,7 @@ class NfitProjectExplorer:
         if group is not None and branch_created:
             self._refresh_tree(select_group=group, select_dataset=entry)
             return
+        self._refresh_cache_badges()
         self._sync_details()
 
     def _set_selected_dataset_scale_factor(self, value: float) -> None:
@@ -12171,6 +12206,7 @@ class NfitProjectExplorer:
             return
         if group is not None:
             self.refresh_slice_viewer(group)
+        self._refresh_cache_badges()
         self._sync_details()
 
     def _set_selected_dataset_scale_factor_vary(self, checked: bool) -> None:
@@ -12232,6 +12268,7 @@ class NfitProjectExplorer:
             return
         if group is not None:
             self.refresh_slice_viewer(group)
+        self._refresh_cache_badges()
         self._sync_details()
 
     def _build_sample_environment_panel(self) -> None:
@@ -12408,6 +12445,7 @@ class NfitProjectExplorer:
             return
         if group is not None:
             self.refresh_slice_viewer(group)
+        self._refresh_cache_badges()
         self._sync_details()
 
     def _commit_field_payload(
@@ -13022,6 +13060,7 @@ class NfitProjectExplorer:
                 data_group_composite_config(_composite_scope(group, owner))["stale"] = True
             self._record_data_group_state_change(group)
             self.refresh_slice_viewer(group, force_rebin=True)
+        self._refresh_cache_badges()
         self._mark_dirty()
 
     def _set_group_details(self, group: DataGroup) -> None:
@@ -13629,6 +13668,7 @@ class NfitProjectExplorer:
             data_group_composite_config(_composite_scope(root, target))["stale"] = True
         self._record_data_group_state_change(root)
         self._mark_dirty()
+        self._refresh_cache_badges()
         self._sync_details()
         return True
 
@@ -13651,6 +13691,7 @@ class NfitProjectExplorer:
         composite = data_group_composite_config(_composite_scope(self._objects_for_item(self._current_item())[0], node))
         composite["stale"] = True
         self._mark_dirty()
+        self._refresh_cache_badges()
 
     def _set_raw_dgs_group_ub(self, node: DatasetGroup, edit: Any) -> None:
         try:
@@ -13695,6 +13736,7 @@ class NfitProjectExplorer:
         composite = data_group_composite_config(_composite_scope(self._objects_for_item(self._current_item())[0], node))
         composite["stale"] = True
         self._mark_dirty()
+        self._refresh_cache_badges()
 
     def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         return _project_data_panels.invoke_panel_builder(
@@ -14045,6 +14087,7 @@ class NfitProjectExplorer:
         self._mark_dirty()
         if bool(config.get("auto_rebin", True)):
             self.refresh_slice_viewer(group)
+        self._refresh_cache_badges()
 
     def _set_dataset_details_preserving_scroll(
         self,
@@ -14727,6 +14770,7 @@ class NfitProjectExplorer:
         self._mark_dirty()
         if group is not None:
             self.refresh_slice_viewer(group)
+        self._refresh_cache_badges()
         self._set_dataset_details(dataset, group)
 
     def _dataset_type_group_box(
@@ -14758,6 +14802,7 @@ class NfitProjectExplorer:
         self._mark_dirty()
         if group is not None:
             self.refresh_slice_viewer(group)
+        self._refresh_cache_badges()
         self._set_dataset_details(dataset, group)
 
     def _dataset_axes_group_box(
@@ -14975,6 +15020,7 @@ class NfitProjectExplorer:
             self._record_data_group_state_change(group)
             self.refresh_slice_viewer(group)
         self._mark_dirty()
+        self._refresh_cache_badges()
         self._set_dataset_details_preserving_scroll(dataset, group)
 
     def _metadata_tree_group_box(
@@ -15067,6 +15113,7 @@ class NfitProjectExplorer:
         self._selected_dataset_binning_ids[dataset.id] = binning_id
         dataset._nfit_selected_binning_id = binning_id
         self._mark_dirty()
+        self._refresh_cache_badges()
         self._set_dataset_details_preserving_scroll(dataset, self._group_for_dataset(dataset))
 
     def _rename_dataset_binning(self, dataset: DatasetEntry) -> None:
@@ -15097,6 +15144,7 @@ class NfitProjectExplorer:
         group = self._group_for_dataset(dataset)
         if group is not None:
             self.refresh_slice_viewer(group)
+        self._refresh_cache_badges()
         self._set_dataset_details_preserving_scroll(dataset, group)
 
     def _make_dataset_fit_binning(self, dataset: DatasetEntry) -> None:
@@ -15108,6 +15156,7 @@ class NfitProjectExplorer:
             self._record_data_group_state_change(group)
             self.refresh_slice_viewer(group, force_rebin=True)
             self._request_overlay_refresh(group)
+        self._refresh_cache_badges()
         self._set_dataset_details_preserving_scroll(dataset, group)
 
     def _add_composite_binning(
@@ -15132,6 +15181,7 @@ class NfitProjectExplorer:
         self._selected_composite_binning_ids[owner_key] = binning_id
         owner._nfit_selected_binning_id = binning_id
         self._mark_dirty()
+        self._refresh_cache_badges()
         self._sync_details()
 
     def _rename_composite_binning(self, group: DataGroup | _CompositeScope) -> None:
@@ -15162,6 +15212,7 @@ class NfitProjectExplorer:
         )
         self._mark_dirty()
         self.refresh_slice_viewer(_composite_root(group))
+        self._refresh_cache_badges()
         self._sync_details()
 
     def _make_composite_fit_binning(self, group: DataGroup | _CompositeScope) -> None:
@@ -15172,6 +15223,7 @@ class NfitProjectExplorer:
         self._mark_dirty()
         self.refresh_slice_viewer(root, force_rebin=True)
         self._request_overlay_refresh(root)
+        self._refresh_cache_badges()
         self._sync_details()
 
     def _pasted_rebin_config(self, target_config: dict[str, Any]) -> dict[str, Any] | None:
@@ -15560,7 +15612,7 @@ class NfitProjectExplorer:
                 axis["step_size"] = _step_size_from_bounds(
                     axis.get("lower", 0.0), axis.get("upper", 0.0), max(int(axis.get("num_bins", 1)), 1)
                 )
-        self._mark_dirty()
+        self._after_group_composite_changed(group)
 
     def _set_group_composite_coordinate_mode(
         self, group: DataGroup | _CompositeScope, value: str
@@ -15891,8 +15943,7 @@ class NfitProjectExplorer:
                 axis["step_size"] = _step_size_from_bounds(
                     axis.get("lower", 0.0), axis.get("upper", 0.0), max(int(axis.get("num_bins", 1)), 1)
                 )
-        self._mark_dirty()
-        self._set_dataset_details_preserving_scroll(dataset, group)
+        self._after_dataset_rebin_changed(dataset, group)
 
     def _set_dataset_rebin_axis_vector(
         self,
@@ -15993,7 +16044,7 @@ class NfitProjectExplorer:
         self._mark_dirty()
         if group is not None and bool(config.get("auto_rebin", True)):
             self.refresh_slice_viewer(group)
-        self._refresh_cache_badges(self._current_item())
+        self._refresh_cache_badges()
         if not self._refresh_dataset_rebin_controls(dataset, group):
             self._set_dataset_details_preserving_scroll(
                 dataset,
@@ -16227,6 +16278,7 @@ class NfitProjectExplorer:
         if bool(config.get("auto_rebin", True)):
             self.refresh_slice_viewer(root)
             self._request_overlay_refresh(root)
+        self._refresh_cache_badges()
         self._sync_details()
 
     def _clear_details_panel(self) -> None:
@@ -17046,6 +17098,8 @@ class NfitProjectExplorer:
     def _mark_mask_datasets_stale(self, datasets: list[DatasetEntry]) -> None:
         for dataset in datasets:
             dataset_mask_application_config(dataset)["stale"] = True
+        if datasets:
+            self._refresh_cache_badges()
         label = self.mask_application_status_label
         if label is not None:
             try:
