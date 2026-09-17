@@ -35,13 +35,36 @@ def set_num_threads(n: int | None) -> None:
 def num_threads() -> int:
     scoped = _SCOPED_THREADS.get()
     if scoped is not None:
-        return scoped
-    if _THREAD_OVERRIDE is not None:
-        return _THREAD_OVERRIDE
-    value = os.environ.get("NFIT_NUM_THREADS")
-    if value:
-        try:
-            return max(1, int(value))
-        except ValueError:
-            pass
-    return detect_cpu_budget()
+        requested = scoped
+    elif _THREAD_OVERRIDE is not None:
+        requested = _THREAD_OVERRIDE
+    else:
+        value = os.environ.get("NFIT_NUM_THREADS")
+        if value:
+            try:
+                requested = max(1, int(value))
+            except ValueError:
+                requested = detect_cpu_budget()
+        else:
+            requested = detect_cpu_budget()
+
+    # Keep the preference storage independent from the allocation policy: the
+    # local import avoids a module import cycle, while scoped task budgets still
+    # obey the user's application-wide CPU ceiling.
+    from .performance import load_resource_limits
+
+    # An affinity/cgroup allocation is a hard upper bound even when an
+    # environment variable, saved setting, or task-specific context asks for
+    # more.  The preference can only make that allocation smaller.
+    requested = min(requested, detect_cpu_budget())
+    limit = load_resource_limits()["cpu_limit"]
+    return max(1, min(requested, limit)) if limit else requested
+
+
+def bounded_worker_count(workers: int | None) -> int:
+    """Resolve a saved worker request without exceeding the shared ceiling."""
+
+    available = num_threads()
+    if workers is None or int(workers) == 0:
+        return available
+    return min(available, max(1, int(workers)))

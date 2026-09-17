@@ -8,10 +8,17 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 REBIN_RESULT_BYTES_PER_BIN = 33
 REBIN_CACHE_WARNING_FRACTION = 0.8
+_DEFAULT_TRANSIENT_MEMORY_PERCENT = 25
+_MEBIBYTE = 1024**2
+_SCOPED_BATCH_BYTES: ContextVar[int | None] = ContextVar(
+    "nfit_batch_bytes", default=None
+)
 
 
 def peak_process_memory_mib() -> float:
@@ -184,13 +191,63 @@ def performance_settings_path() -> Path:
     return Path(os.environ.get("NFIT_PERFORMANCE_FILE", "~/.config/nfit/performance.json")).expanduser()
 
 
-def load_performance_settings() -> dict[str, int]:
-    """Read preferences. Zero selects the documented automatic value."""
+def _raw_performance_settings() -> dict:
+    """Read the preference file without exposing its storage schema."""
     try:
         value = json.loads(performance_settings_path().read_text())
-        return _validated(value)
+        if not isinstance(value, dict):
+            raise ValueError("Performance preferences must be an object.")
+        return value
     except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def load_performance_settings() -> dict[str, int]:
+    """Read legacy rebin defaults.
+
+    This compatibility API retains its original three keys.  New callers should
+    use :func:`load_resource_limits` for the application-wide CPU and RAM
+    ceilings shown in Preferences.
+    """
+
+    raw = _raw_performance_settings()
+    try:
+        return _validated(
+            {
+                "max_batch_mb": raw.get("max_batch_mb", 0),
+                "workers": raw.get("workers", raw.get("cpu_limit", 0)),
+                "transient_memory_percent": raw.get("transient_memory_percent", 0),
+            }
+        )
+    except (TypeError, ValueError, AttributeError):
         return {"max_batch_mb": 0, "workers": 0, "transient_memory_percent": 0}
+
+
+def _validated_resource_limits(value: dict) -> dict[str, int]:
+    result = {
+        "cpu_limit": int(value.get("cpu_limit", value.get("workers", 0))),
+        "ram_limit_mb": int(value.get("ram_limit_mb", 0)),
+    }
+    if not 0 <= result["cpu_limit"] <= 4096 or not 0 <= result["ram_limit_mb"] <= 1_048_576:
+        raise ValueError(
+            "CPU limit must be 0–4096 and RAM limit must be 0–1048576 MiB."
+        )
+    return result
+
+
+def load_resource_limits() -> dict[str, int]:
+    """Return global resource ceilings, with zero selecting automatic limits.
+
+    ``workers`` in older preference files is treated as ``cpu_limit``.  Older
+    percentage-based RAM settings remain active through
+    :func:`scientific_memory_limit_bytes`; they are deliberately not converted
+    to a fixed amount while merely reading preferences.
+    """
+
+    try:
+        return _validated_resource_limits(_raw_performance_settings())
+    except (TypeError, ValueError, AttributeError):
+        return {"cpu_limit": 0, "ram_limit_mb": 0}
 
 
 def _validated(value) -> dict[str, int]:
@@ -214,8 +271,16 @@ def save_performance_settings(
     max_batch_mb: int = 0,
     workers: int = 0,
     transient_memory_percent: int = 0,
+    cpu_limit: int | None = None,
+    ram_limit_mb: int | None = None,
 ) -> None:
-    """Atomically save defaults for newly initialized rebin configurations."""
+    """Atomically save resource limits and legacy rebin defaults.
+
+    ``max_batch_mb``, ``workers``, and ``transient_memory_percent`` are kept
+    for scripts and existing project workflows.  New preferences should pass
+    ``cpu_limit`` and ``ram_limit_mb``.  A zero resource limit selects nfit's
+    automatic policy.
+    """
     values = _validated(
         {
             "max_batch_mb": max_batch_mb,
@@ -223,32 +288,150 @@ def save_performance_settings(
             "transient_memory_percent": transient_memory_percent,
         }
     )
+    limits = _validated_resource_limits(
+        {
+            "cpu_limit": values["workers"] if cpu_limit is None else cpu_limit,
+            "ram_limit_mb": 0 if ram_limit_mb is None else ram_limit_mb,
+        }
+    )
+    # Keep the legacy worker value synchronized so old scripts which read this
+    # file through ``load_performance_settings`` see the global CPU ceiling.
+    values["workers"] = limits["cpu_limit"]
     path = performance_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
         temporary = Path(stream.name)
-        json.dump(values, stream, indent=2)
+        json.dump({**values, **limits}, stream, indent=2)
     try:
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
 
 
-def rebin_memory_limit_bytes(available_memory: int | None = None) -> int:
-    """Return the machine-local total rebin-memory ceiling."""
+def save_resource_limits(*, cpu_limit: int = 0, ram_limit_mb: int = 0) -> None:
+    """Save global resource limits while retaining hidden legacy rebin defaults.
+
+    Saving an explicit Auto RAM choice clears a migrated percentage setting, so
+    Auto consistently means nfit's normal conservative policy.
+    """
+
+    legacy = load_performance_settings()
+    legacy["transient_memory_percent"] = 0
+    save_performance_settings(
+        **legacy,
+        cpu_limit=cpu_limit,
+        ram_limit_mb=ram_limit_mb,
+    )
+
+
+def scientific_memory_limit_bytes(available_memory: int | None = None) -> int:
+    """Return nfit's managed cache and temporary-workspace RAM ceiling.
+
+    This is a shared budget for numerical caches and operations that opt into
+    it.  It cannot cap Python, Qt, mapped files, libraries, or all process RSS.
+    A fixed user ceiling is additionally bounded by currently available RAM.
+    """
 
     if available_memory is None:
         available_memory = available_memory_bytes()
-    percent = load_performance_settings()["transient_memory_percent"] or 25
+    limits = load_resource_limits()
+    fixed = limits["ram_limit_mb"] * _MEBIBYTE
+    if fixed:
+        return max(1, min(fixed, int(available_memory))) if available_memory is not None else fixed
+    percent = (
+        load_performance_settings()["transient_memory_percent"]
+        or _DEFAULT_TRANSIENT_MEMORY_PERCENT
+    )
     if available_memory is None:
         return 512 * 1024**2
     return max(1, int(available_memory) * int(percent) // 100)
+
+
+def rebin_memory_limit_bytes(available_memory: int | None = None) -> int:
+    """Compatibility name for nfit's managed scientific-memory ceiling."""
+
+    return scientific_memory_limit_bytes(available_memory)
 
 
 def transient_rebin_memory_limit_bytes(available_memory: int | None = None) -> int:
     """Compatibility name for the total rebin-memory ceiling."""
 
     return rebin_memory_limit_bytes(available_memory)
+
+
+def operation_worker_count(
+    total_bytes: int,
+    *,
+    bytes_per_worker: int = 16 * _MEBIBYTE,
+    min_parallel_bytes: int = 8 * _MEBIBYTE,
+    requested_workers: int | None = None,
+    memory_limit_bytes: int | None = None,
+) -> int:
+    """Choose a bounded worker count for a large-array operation.
+
+    The result honors the global CPU ceiling through ``num_threads()`` and the
+    managed scientific-memory ceiling.  It is intentionally a planning helper,
+    not a guarantee about total process memory use.
+    """
+
+    work = max(0, int(total_bytes))
+    per_worker = int(bytes_per_worker)
+    threshold = max(0, int(min_parallel_bytes))
+    if per_worker < 1:
+        raise ValueError("bytes_per_worker must be positive")
+    if work < threshold:
+        return 1
+    from ._parallel import num_threads
+
+    cpu_workers = num_threads()
+    if requested_workers is not None:
+        cpu_workers = min(cpu_workers, max(1, int(requested_workers)))
+    budget = (
+        scientific_memory_limit_bytes()
+        if memory_limit_bytes is None
+        else max(1, int(memory_limit_bytes))
+    )
+    memory_workers = max(1, budget // per_worker)
+    return max(1, min(cpu_workers, memory_workers))
+
+
+def operation_batch_bytes(
+    *,
+    minimum_bytes: int = 8 * _MEBIBYTE,
+    maximum_bytes: int = 512 * _MEBIBYTE,
+    budget_fraction: int = 8,
+) -> int:
+    """Choose an internal array-batch target from the central RAM allowance."""
+
+    if minimum_bytes < 1 or maximum_bytes < minimum_bytes or budget_fraction < 1:
+        raise ValueError("invalid automatic batch policy")
+    limit = scientific_memory_limit_bytes()
+    scoped = _SCOPED_BATCH_BYTES.get()
+    if scoped is not None:
+        return max(1, min(int(scoped), limit))
+    return max(
+        1,
+        min(
+            limit,
+            max(
+                int(minimum_bytes),
+                min(int(maximum_bytes), limit // int(budget_fraction)),
+            ),
+        ),
+    )
+
+
+@contextmanager
+def batch_budget(max_batch_bytes: int | None):
+    """Temporarily select an internal batch target for calibration only."""
+
+    token = _SCOPED_BATCH_BYTES.set(
+        None if max_batch_bytes is None else max(1, int(max_batch_bytes))
+    )
+    try:
+        yield
+    finally:
+        _SCOPED_BATCH_BYTES.reset(token)
 
 
 def initialize_rebin_performance(config: dict) -> None:

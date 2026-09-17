@@ -191,10 +191,17 @@ def export_benchmark_script(path, project=None, **target) -> None:
 def _trial(snapshot, output, mb, workers):
     import numpy as np
 
-    from ._parallel import thread_budget
-    from .performance import peak_process_memory_mib
+    from ._parallel import num_threads, thread_budget
+    from .performance import (
+        batch_budget,
+        peak_process_memory_mib,
+        scientific_memory_limit_bytes,
+    )
     from .rebin import rebin_nd
 
+    # Report the resource values actually trialled, including machine limits.
+    workers = min(workers, num_threads())
+    mb = min(mb, max(1, scientific_memory_limit_bytes() // 1024**2))
     with Path(snapshot).open("rb") as stream:
         project, target = pickle.load(stream)
     if project is None:
@@ -228,7 +235,7 @@ def _trial(snapshot, output, mb, workers):
         else:
             def run():
                 return composite_dataset_data(subject)
-    with thread_budget(workers):
+    with thread_budget(workers), batch_budget(mb * 1024**2):
         run()  # compilation and warmup excluded from timing, included in peak RSS
         times = []
         for _ in range(2):

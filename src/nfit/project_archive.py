@@ -1,19 +1,121 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
+import struct
 import tempfile
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, BinaryIO
 
 PROJECT_MANIFEST = "project.json"
 ANALYSIS_ASSET_ROOT = PurePosixPath("assets", "analyses")
 DATASET_ASSET_ROOT = PurePosixPath("assets", "datasets")
 BINNING_ASSET_ROOT = PurePosixPath("assets", "binnings")
-ArchiveContent = bytes | Path
+_ARCHIVE_COPY_BUFFER_BYTES = 8 * 1024**2
+
+@dataclass(frozen=True)
+class ArchiveMember:
+    """A member in another archive that should be streamed into this one."""
+
+    path: Path
+    member: str
+
+
+ArchiveContent = bytes | Path | ArchiveMember
+
+
+class _StoredMemberView(io.RawIOBase):
+    """Seekable, bounded view of one uncompressed ZIP member."""
+
+    def __init__(self, stream: BinaryIO, offset: int, size: int):
+        self._stream = stream
+        self._offset = int(offset)
+        self._size = int(size)
+        self._position = 0
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        if whence == os.SEEK_SET:
+            position = int(offset)
+        elif whence == os.SEEK_CUR:
+            position = self._position + int(offset)
+        elif whence == os.SEEK_END:
+            position = self._size + int(offset)
+        else:
+            raise ValueError(f"unsupported seek mode {whence}")
+        if position < 0:
+            raise ValueError("negative seek position")
+        self._position = min(position, self._size)
+        return self._position
+
+    def readinto(self, buffer: Any) -> int:
+        remaining = self._size - self._position
+        if remaining <= 0:
+            return 0
+        view = memoryview(buffer).cast("B")
+        count = min(len(view), remaining)
+        self._stream.seek(self._offset + self._position)
+        data = self._stream.read(count)
+        view[: len(data)] = data
+        self._position += len(data)
+        return len(data)
+
+
+@contextmanager
+def open_project_artifact(path: str | Path, member: str) -> Iterator[BinaryIO]:
+    """Open one project artifact without materializing its bytes in memory.
+
+    Binning artifacts are stored as uncompressed members of the outer project
+    ZIP.  In that common case the yielded object is a seekable bounded view of
+    the project file, which lets readers such as ``numpy.load`` access the
+    nested NPZ directly.  Older projects with a compressed outer member fall
+    back to ``ZipExtFile``.
+    """
+
+    normalized = _safe_member(member)
+    with zipfile.ZipFile(path, "r") as archive:
+        info = archive.getinfo(normalized)
+        if info.compress_type != zipfile.ZIP_STORED:
+            with archive.open(info, "r") as stream:
+                yield stream
+            return
+        # Let ZipFile validate the local header, filename, overlap bounds, and
+        # encryption flag before bypassing its shared seek lock.  Reading the
+        # nested NPZ later validates each inner member's CRC; this bounded raw
+        # view intentionally does not scan the whole outer member up front.
+        with archive.open(info, "r"):
+            pass
+        with Path(path).open("rb") as raw:
+            raw.seek(info.header_offset)
+            header = raw.read(30)
+            if len(header) != 30:
+                raise ValueError(f"truncated ZIP header for {normalized!r}")
+            fields = struct.unpack("<4s5H3L2H", header)
+            if fields[0] != b"PK\x03\x04":
+                raise ValueError(f"invalid ZIP header for {normalized!r}")
+            data_offset = info.header_offset + 30 + fields[-2] + fields[-1]
+            view = io.BufferedReader(
+                _StoredMemberView(raw, data_offset, info.file_size),
+                buffer_size=1024 * 1024,
+            )
+            try:
+                yield view
+            finally:
+                view.close()
 
 
 def analysis_artifact_member(analysis_id: str, filename: str) -> str:
@@ -206,28 +308,54 @@ def _rewrite_archive(
                                 continue
                             with existing.open(info, "r") as source_stream:
                                 with destination.open(info, "w") as target_stream:
-                                    shutil.copyfileobj(source_stream, target_stream)
+                                    shutil.copyfileobj(
+                                        source_stream,
+                                        target_stream,
+                                        length=_ARCHIVE_COPY_BUFFER_BYTES,
+                                    )
                 except zipfile.BadZipFile as exc:
                     raise ValueError(f"not a single-file nfit project: {source}") from exc
-            for name, content in replacements.items():
-                normalized = _safe_member(name)
-                compression = (
-                    zipfile.ZIP_DEFLATED
-                    if normalized == PROJECT_MANIFEST
-                    else zipfile.ZIP_STORED
-                )
-                if isinstance(content, Path):
-                    destination.write(
-                        content,
-                        arcname=normalized,
-                        compress_type=compression,
+            with ExitStack() as sources:
+                source_archives: dict[Path, zipfile.ZipFile] = {}
+                for name, content in replacements.items():
+                    normalized = _safe_member(name)
+                    compression = (
+                        zipfile.ZIP_DEFLATED
+                        if normalized == PROJECT_MANIFEST
+                        else zipfile.ZIP_STORED
                     )
-                else:
-                    destination.writestr(
-                        normalized,
-                        content,
-                        compress_type=compression,
-                    )
+                    if isinstance(content, ArchiveMember):
+                        source_path = Path(content.path)
+                        source_archive = source_archives.get(source_path)
+                        if source_archive is None:
+                            source_archive = sources.enter_context(
+                                zipfile.ZipFile(source_path, "r")
+                            )
+                            source_archives[source_path] = source_archive
+                        source_info = source_archive.getinfo(
+                            _safe_member(content.member)
+                        )
+                        with source_archive.open(source_info, "r") as source_stream:
+                            with destination.open(
+                                normalized, "w", force_zip64=True
+                            ) as target_stream:
+                                shutil.copyfileobj(
+                                    source_stream,
+                                    target_stream,
+                                    length=_ARCHIVE_COPY_BUFFER_BYTES,
+                                )
+                    elif isinstance(content, Path):
+                        destination.write(
+                            content,
+                            arcname=normalized,
+                            compress_type=compression,
+                        )
+                    else:
+                        destination.writestr(
+                            normalized,
+                            content,
+                            compress_type=compression,
+                        )
         with temporary.open("rb") as stream:
             os.fsync(stream.fileno())
         temporary.replace(target)

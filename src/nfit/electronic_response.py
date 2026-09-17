@@ -1567,11 +1567,7 @@ def _bare_lindhard_direct(
         )
     )
     unique_q, inverse = np.unique(q, axis=0, return_inverse=True)
-    total_workers = (
-        _parallel.num_threads()
-        if workers is None or int(workers) == 0
-        else max(1, int(workers))
-    )
+    total_workers = _parallel.bounded_worker_count(workers)
     q_parallel_work = (
         int(q.shape[0])
         * int(k.shape[0])
@@ -1923,11 +1919,7 @@ def _bare_lindhard_direct(
                     )
                     resolved_transition_backends.add(resolved_transition)
                     if resolved_transition == "numba":
-                        worker_count = (
-                            _parallel.num_threads()
-                            if workers is None or int(workers) == 0
-                            else max(1, int(workers))
-                        )
+                        worker_count = _parallel.bounded_worker_count(workers)
                         _NUMBA_RESPONSE_BACKEND.initialize_num_threads(
                             worker_count
                         )

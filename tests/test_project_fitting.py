@@ -628,18 +628,15 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
         explorer.fit_loss_combo,
         explorer.fit_covariance_mode_combo,
         explorer.fit_f_scale_spin,
-        explorer.fit_finite_difference_workers_spin,
         explorer.fit_de_check,
         explorer.fit_de_maxiter_spin,
         explorer.fit_de_popsize_spin,
-        explorer.fit_de_workers_spin,
         explorer.fit_emcee_check,
         explorer.fit_emcee_walkers_spin,
         explorer.fit_emcee_steps_spin,
         explorer.fit_emcee_burn_spin,
         explorer.fit_emcee_thin_spin,
         explorer.fit_emcee_seed_spin,
-        explorer.fit_emcee_workers_spin,
         explorer.fit_optimizer_config_editor,
         explorer.fit_branch_check,
         explorer.fit_now_button,
@@ -659,37 +656,29 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
         explorer.details_widget.findChild(QtWidgets.QGroupBox, "fit_posterior_settings_group")
         is not None
     )
-    assert explorer.fit_emcee_workers_spin.value() == -1
-    assert explorer.fit_finite_difference_workers_spin.value() == -1
-
     explorer.fit_loss_combo.setCurrentText("soft_l1")
     explorer.fit_covariance_mode_combo.setCurrentIndex(
         explorer.fit_covariance_mode_combo.findData("residual")
     )
     explorer.fit_f_scale_spin.setValue(2.0)
-    explorer.fit_finite_difference_workers_spin.setValue(3)
     explorer.fit_de_check.setChecked(True)
     explorer.fit_de_maxiter_spin.setValue(11)
     explorer.fit_de_popsize_spin.setValue(4)
-    explorer.fit_de_workers_spin.setValue(-1)
     explorer.fit_emcee_check.setChecked(True)
     explorer.fit_emcee_walkers_spin.setValue(16)
     explorer.fit_emcee_steps_spin.setValue(25)
     explorer.fit_emcee_burn_spin.setValue(5)
     explorer.fit_emcee_thin_spin.setValue(2)
-    explorer.fit_emcee_workers_spin.setValue(3)
 
     fit_entry = group.fits[0]
     assert fit_entry.optimizer_config["loss"] == "soft_l1"
     assert fit_entry.optimizer_config["f_scale"] == 2.0
     assert fit_entry.optimizer_config["covariance_mode"] == "residual"
-    assert fit_entry.optimizer_config["finite_difference_workers"] == 3
     assert fit_entry.optimizer_config["initialization"] == {
         "enabled": True,
         "method": "differential_evolution",
         "maxiter": 11,
         "popsize": 4,
-        "workers": -1,
     }
     assert fit_entry.optimizer_config["sampler"] == {
         "enabled": True,
@@ -698,8 +687,45 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
         "n_steps": 25,
         "burn_in": 5,
         "thin": 2,
-        "workers": 3,
     }
+
+
+def test_legacy_fit_parallel_settings_use_the_central_cpu_policy(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    legacy = {
+        "finite_difference_workers": 4,
+        "initialization": {
+            "enabled": True,
+            "method": "differential_evolution",
+            "maxiter": 9,
+            "workers": 4,
+        },
+        "sampler": {
+            "enabled": True,
+            "workers": 3,
+            "kwargs": {"workers": 2, "parallel_workers": 2},
+        },
+    }
+    optimizer = project_gui._optimizer_kwargs(legacy)
+    sampler = project_gui._sampler_config(legacy)
+
+    assert optimizer["finite_difference_workers"] == -1
+    assert optimizer["initialization"]["workers"] == -1
+    assert optimizer["initialization"]["updating"] == "deferred"
+    assert sampler is not None
+    assert sampler.kwargs["workers"] == -1
+    assert "parallel_workers" not in sampler.kwargs
+
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    create_model_component(group)
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.fit_de_check.setChecked(True)
+    updated = explorer._fit_config_from_controls(legacy)
+    assert updated["initialization"].get("workers") is None
+    assert updated["initialization"]["updating"] == "deferred"
+    assert project_gui._optimizer_kwargs(updated)["initialization"]["workers"] == -1
 
 
 def test_sampling_result_serializes_raw_chain_and_rewindows():
@@ -799,7 +825,6 @@ def test_fit_details_posterior_sampler_controls_update_burn_without_timeline(mon
         explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_burn_spin"),
         explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_thin_spin"),
         explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_seed_spin"),
-        explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_workers_spin"),
         explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_apply_button"),
         explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_rerun_button"),
         explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_append_button"),
@@ -808,7 +833,7 @@ def test_fit_details_posterior_sampler_controls_update_burn_without_timeline(mon
     ]
     assert all(control is not None and control.toolTip() for control in controls)
     workers_spin = explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_workers_spin")
-    assert workers_spin.value() == -1
+    assert workers_spin is None
     posterior_group = explorer.window.findChild(QtWidgets.QGroupBox, "fit_posterior_settings_group")
     assert posterior_group is not None
     assert (

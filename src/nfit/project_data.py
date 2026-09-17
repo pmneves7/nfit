@@ -1084,12 +1084,21 @@ def _peek_cached_dataset_view(
     extra_masks: list[MaskSpec] | None = None,
     rebin_config: dict[str, Any] | None = None,
     cache_id: str | None = None,
+    resident_only: bool = False,
 ) -> MDHistoData | PointListData | None:
-    """Return a current cached viewer payload without starting any computation."""
+    """Return a current cached viewer payload without starting any computation.
+
+    ``resident_only`` keeps informational callers from decoding a compressed or
+    project-backed result merely to inspect its shape or byte size.
+    """
 
     config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
     key = dataset.id if cache_id is None else f"{dataset.id}:{cache_id}"
-    cached = _VIEWER_VIEW_CACHE.get(key)
+    cached = (
+        _VIEWER_VIEW_CACHE.peek_resident(key)
+        if resident_only and hasattr(_VIEWER_VIEW_CACHE, "peek_resident")
+        else _VIEWER_VIEW_CACHE.get(key)
+    )
     if cached is None or cached[0] != _viewer_view_signature(dataset, extra_masks, config):
         return None
     return cached[1]
@@ -1669,17 +1678,14 @@ def rebinned_dataset_data(
     progress_callback: Any | None = None,
     config_override: dict[str, Any] | None = None,
 ) -> Any:
-    """Return a rebinned copy using the saved configuration and worker ceiling."""
-    from ._parallel import thread_budget
-
+    """Return a rebinned copy using the central CPU allocation."""
     config = dataset_rebin_config(dataset, config_override=config_override)
-    with thread_budget(config.get("workers")):
-        return _rebinned_dataset_data(
-            dataset,
-            extra_masks=extra_masks,
-            progress_callback=progress_callback,
-            config_override=config,
-        )
+    return _rebinned_dataset_data(
+        dataset,
+        extra_masks=extra_masks,
+        progress_callback=progress_callback,
+        config_override=config,
+    )
 
 
 def _rebinned_dataset_data(

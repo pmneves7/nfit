@@ -192,18 +192,17 @@ def _rebin_minimum_samples(config: dict[str, Any]) -> float:
 
 
 def _rebin_max_batch_mb(config: dict[str, Any]) -> int:
-    default = _compatibility_value("DEFAULT_REBIN_MAX_BATCH_MB", DEFAULT_REBIN_MAX_BATCH_MB)
-    try:
-        return max(int(config.get("max_batch_mb", default)), 1)
-    except (TypeError, ValueError):
-        return int(default)
+    """Return the central automatic target; legacy recipe values are ignored."""
+
+    del config
+    return max(1, _rebin_max_batch_bytes({}) // 1024**2)
 
 
 def _rebin_max_batch_bytes(config: dict[str, Any]) -> int:
-    from .performance import transient_rebin_memory_limit_bytes
+    from .performance import operation_batch_bytes
 
-    requested = _rebin_max_batch_mb(config) * 1024 * 1024
-    return min(requested, transient_rebin_memory_limit_bytes())
+    del config
+    return operation_batch_bytes()
 
 
 def _rebin_max_parallel_bytes() -> int:

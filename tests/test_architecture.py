@@ -10,9 +10,12 @@ import pytest
 
 PACKAGE_ROOT = Path(__file__).parents[1] / "src" / "nfit"
 GUI_INDEPENDENT_MODULES = (
+    PACKAGE_ROOT / "array_archive.py",
+    PACKAGE_ROOT / "analysis" / "artifacts.py",
     PACKAGE_ROOT / "corelli.py",
     PACKAGE_ROOT / "composite_spectral.py",
     PACKAGE_ROOT / "rebin_cache.py",
+    PACKAGE_ROOT / "slice_viewer_cache.py",
     PACKAGE_ROOT / "project_composites.py",
     PACKAGE_ROOT / "project_data.py",
     PACKAGE_ROOT / "project_history.py",

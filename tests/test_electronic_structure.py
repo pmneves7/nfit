@@ -964,7 +964,10 @@ def test_wannier90_tb_and_wsvec_import(tmp_path):
     assert corrected.provenance["wsvec_applied"] is True
 
 
-def test_tight_binding_registry_plots_and_scripts_are_component_driven():
+def test_tight_binding_registry_plots_and_scripts_are_component_driven(monkeypatch):
+    from nfit import performance
+
+    monkeypatch.setattr(performance, "operation_batch_bytes", lambda: 64 * 1024)
     model = _chain_model()
     component = ModelComponentSpec(
         name="bands",
@@ -975,6 +978,8 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
                 for field in model_definition("tight_binding").config_fields
             },
             "model_data": model.to_dict(),
+            "electronic_workers": 1,
+            "electronic_max_batch_mb": 9000,
             "periodic_axes": [0],
             "band_path": [
                 {"label": "G", "k": [0.0, 0.0, 0.0]},
@@ -1044,7 +1049,9 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
         assert "energy_unit = 'eV'" in script
         assert "electronic_energy_to_meV" in script
         assert "electronic_backend = 'auto'" in script
-        assert "max_batch_bytes = 268435456" in script
+        assert namespace["electronic_workers"] is None
+        assert namespace["max_batch_bytes"] == 64 * 1024
+        assert "max_batch_bytes = operation_batch_bytes()" in script
         assert "show_electronic_figure" in script
         if plot.key == "fermi_surface":
             assert "show_fermi_surface_result" in script

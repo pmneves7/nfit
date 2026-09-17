@@ -137,12 +137,14 @@ def test_grid_mode_and_assignment_are_independent_and_legacy_flags_migrate() -> 
 @pytest.mark.parametrize("service", (project_data, project_rebinning))
 def test_rebin_service_uses_live_facade_defaults(monkeypatch, service) -> None:
     monkeypatch.setattr(project_data, "DEFAULT_REBIN_MAX_BATCH_MB", 37)
+    monkeypatch.setattr("nfit.performance.operation_batch_bytes", lambda: 19 * 1024**2)
     monkeypatch.setattr(project_data, "DEFAULT_MINIMUM_COVERAGE", 0.25)
     monkeypatch.setattr(project_data, "DEFAULT_MINIMUM_SAMPLES", 2.5)
     monkeypatch.setattr(project_data, "REBIN_RESOLUTION_MODE_KEY", "legacy_mode")
     monkeypatch.setattr(project_data, "REBIN_AXIS_MODES", frozenset({"legacy"}))
 
-    assert service._rebin_max_batch_mb({}) == 37
+    assert service._rebin_max_batch_mb({}) == 19
+    assert service._rebin_max_batch_mb({"max_batch_mb": 37}) == 19
     assert service._rebin_minimum_coverage({}) == 0.25
     assert service._rebin_minimum_samples({}) == 2.5
     assert service._rebin_resolution_mode({"legacy_mode": "bins"}) == "bins"

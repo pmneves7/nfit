@@ -154,26 +154,49 @@ def test_file_menu_opens_preferences(qt_app, monkeypatch):
 
 
 def test_performance_preferences_save_and_apply(qt_app, monkeypatch, tmp_path):
-    from nfit.performance import load_performance_settings
+    from nfit.performance import load_performance_settings, load_resource_limits
     from nfit.performance_gui import PerformancePage
 
     monkeypatch.setenv("NFIT_PERFORMANCE_FILE", str(tmp_path / "performance.json"))
     page = PerformancePage()
-    page.batch.setValue(64)
-    page.workers.setValue(2)
-    page.transient_memory.setValue(40)
+    page.cpu_limit.setValue(2)
+    page.ram_limit_mb.setValue(4096)
     assert load_performance_settings()["workers"] == 0
     page._save()
     assert load_performance_settings() == {
-        "max_batch_mb": 64,
+        "max_batch_mb": 0,
         "workers": 2,
-        "transient_memory_percent": 40,
+        "transient_memory_percent": 0,
     }
-    assert page.transient_memory.toolTip()
+    assert load_resource_limits() == {"cpu_limit": 2, "ram_limit_mb": 4096}
+    assert page.ram_limit_mb.toolTip()
     page.close()
 
 
-def test_rebin_benchmark_apply_changes_only_selected_config(qt_app, monkeypatch):
+def test_performance_calibration_preserves_the_ram_limit(qt_app, monkeypatch, tmp_path):
+    from nfit.performance import (
+        load_performance_settings,
+        load_resource_limits,
+        save_resource_limits,
+    )
+    from nfit.performance_gui import BenchmarkDialog, PerformancePage
+
+    monkeypatch.setenv("NFIT_PERFORMANCE_FILE", str(tmp_path / "performance.json"))
+    save_resource_limits(cpu_limit=6, ram_limit_mb=4096)
+    page = PerformancePage()
+
+    def execute(dialog):
+        dialog.apply({"max_batch_mb": 32, "workers": 2})
+
+    monkeypatch.setattr(BenchmarkDialog, "exec", execute)
+    page._calibrate()
+
+    assert load_resource_limits() == {"cpu_limit": 2, "ram_limit_mb": 4096}
+    assert load_performance_settings()["max_batch_mb"] == 0
+    page.close()
+
+
+def test_rebin_benchmark_uses_central_resource_limits(qt_app, monkeypatch):
     from PySide6 import QtWidgets
 
     from nfit import DataGroup, DatasetEntry, NfitProject
@@ -185,14 +208,12 @@ def test_rebin_benchmark_apply_changes_only_selected_config(qt_app, monkeypatch)
     second = DatasetEntry("second", _tiny_mdhisto_data(2.0))
     group = DataGroup("group", datasets=[first, second])
     explorer = NfitProjectExplorer(NfitProject([group]))
-    before = dict(dataset_rebin_config(second))
-    changes = []
-    monkeypatch.setattr(explorer, "_after_dataset_rebin_changed", lambda *args: changes.append(args))
+    before = dict(dataset_rebin_config(first))
     opened = []
 
     def execute(dialog):
         opened.append(dialog.target)
-        dialog.apply({"max_batch_mb": 32, "workers": 1})
+        assert dialog.apply_button.isHidden()
 
     monkeypatch.setattr(BenchmarkDialog, "exec", execute)
     holder = QtWidgets.QWidget()
@@ -200,12 +221,9 @@ def test_rebin_benchmark_apply_changes_only_selected_config(qt_app, monkeypatch)
     explorer._add_rebin_performance_controls(row, dataset=first, group=group)
     button = holder.findChild(QtWidgets.QPushButton, "dataset_rebin_benchmark")
     assert button.toolTip()
-    assert holder.findChild(QtWidgets.QSpinBox, "dataset_rebin_workers").toolTip()
+    assert holder.findChild(QtWidgets.QSpinBox, "dataset_rebin_workers") is None
     button.click()
     assert opened == [{"dataset_id": first.id}]
-    assert dataset_rebin_config(first)["max_batch_mb"] == 32
-    assert dataset_rebin_config(first)["workers"] == 1
-    assert dataset_rebin_config(second) == before
-    assert changes == [(first, group)]
+    assert dataset_rebin_config(first) == before
     holder.close()
     explorer.window.close()

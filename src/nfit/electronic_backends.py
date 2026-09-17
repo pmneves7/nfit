@@ -96,11 +96,7 @@ def _executor(workers: int) -> ThreadPoolExecutor:
 def _resolved_workers(workers: int | None) -> int:
     if workers is not None and int(workers) < 0:
         raise ValueError("workers must be nonnegative")
-    return (
-        _parallel.num_threads()
-        if workers is None or int(workers) == 0
-        else int(workers)
-    )
+    return _parallel.bounded_worker_count(workers)
 
 
 def _resolved_backend(

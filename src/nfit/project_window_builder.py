@@ -750,18 +750,8 @@ def _build_fit_settings_panel(self: Any, QtWidgets: Any) -> None:
     optimizer_layout.addWidget(self.fit_covariance_mode_combo, 2, 1)
     optimizer_layout.addWidget(QtWidgets.QLabel("Loss scale"), 3, 0)
     optimizer_layout.addWidget(self.fit_f_scale_spin, 3, 1)
-    optimizer_layout.addWidget(
-        QtWidgets.QLabel("Derivative workers"),
-        4,
-        0,
-    )
-    optimizer_layout.addWidget(
-        self.fit_finite_difference_workers_spin,
-        4,
-        1,
-    )
-    optimizer_layout.addWidget(QtWidgets.QLabel("Advanced config"), 5, 0)
-    optimizer_layout.addWidget(self.fit_optimizer_config_editor, 5, 1)
+    optimizer_layout.addWidget(QtWidgets.QLabel("Advanced config"), 4, 0)
+    optimizer_layout.addWidget(self.fit_optimizer_config_editor, 4, 1)
     fit_settings_layout.addWidget(optimizer_group)
 
     de_group = QtWidgets.QGroupBox("Differential Evolution")
@@ -773,8 +763,6 @@ def _build_fit_settings_panel(self: Any, QtWidgets: Any) -> None:
     de_layout.addWidget(self.fit_de_maxiter_spin, 1, 1)
     de_layout.addWidget(QtWidgets.QLabel("DE population"), 2, 0)
     de_layout.addWidget(self.fit_de_popsize_spin, 2, 1)
-    de_layout.addWidget(QtWidgets.QLabel("DE workers"), 3, 0)
-    de_layout.addWidget(self.fit_de_workers_spin, 3, 1)
     fit_settings_layout.addWidget(de_group)
 
     posterior_group = QtWidgets.QGroupBox("Posterior")
@@ -793,8 +781,6 @@ def _build_fit_settings_panel(self: Any, QtWidgets: Any) -> None:
     posterior_layout.addWidget(self.fit_emcee_thin_spin, 4, 1)
     posterior_layout.addWidget(QtWidgets.QLabel("Seed"), 5, 0)
     posterior_layout.addWidget(self.fit_emcee_seed_spin, 5, 1)
-    posterior_layout.addWidget(QtWidgets.QLabel("emcee workers"), 6, 0)
-    posterior_layout.addWidget(self.fit_emcee_workers_spin, 6, 1)
     fit_settings_layout.addWidget(posterior_group)
 
 

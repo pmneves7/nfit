@@ -56,6 +56,10 @@ from .qt_slice_controls import (
 )
 from .qt_slice_modes import SliceModeControllers
 from .quantities import display_unit
+from .slice_viewer_cache import (
+    mdhisto_source_identity,
+    mdhisto_sources_are_cacheable,
+)
 from .slice_viewer_state import (
     _axis_components,
     _coerce_dataset_group_keys,
@@ -423,6 +427,7 @@ class QtMDHistoSliceViewer:
         self.hidden_controls: dict[int, _HiddenAxisControls] = {}
         self._display_axis_dims: list[int] = []
         self._current_slice: dict[str, np.ndarray] | None = None
+        self._current_slice_source_key: tuple[Any, ...] | None = None
         self._syncing_axes = False
         self._syncing_limits = False
         self._syncing_view_limits = False
@@ -2432,13 +2437,13 @@ class QtMDHistoSliceViewer:
     def _set_show_tile_labels(self, checked: bool) -> None:
         self.show_tile_labels = bool(checked)
         if not self._restoring_dataset_state and self._tiled_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_tile_local_color_scales(self, checked: bool) -> None:
         self.tile_local_color_scales = bool(checked and self.model.autoscale)
         self._sync_tiled_color_controls()
         if not self._restoring_dataset_state and self._tiled_mode_active():
-            self.update_plot(preserve_view=False)
+            self.update_plot(preserve_view=False, reuse_slice=True)
 
     def _sync_tiled_color_controls(self) -> None:
         if self.tile_local_color_scales_check is None:
@@ -2538,7 +2543,7 @@ class QtMDHistoSliceViewer:
 
     def _set_cmap(self, cmap: str) -> None:
         self.model.cmap = str(cmap)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _sync_color_controls(self) -> None:
         """Reflect restored model settings without firing user-edit callbacks."""
@@ -2573,7 +2578,7 @@ class QtMDHistoSliceViewer:
             self.show_major_gridlines = False
             self._set_checkbox_silent(self.show_major_gridlines_check, False)
         self.show_brillouin_zone_boundaries = bool(checked)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_show_major_gridlines(self, checked: bool) -> None:
         if self._restoring_dataset_state:
@@ -2582,7 +2587,7 @@ class QtMDHistoSliceViewer:
             self.show_brillouin_zone_boundaries = False
             self._set_checkbox_silent(self.show_brillouin_zone_check, False)
         self.show_major_gridlines = bool(checked)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_brillouin_zone_color(self, _index: int) -> None:
         if self._restoring_dataset_state or self.brillouin_zone_color_combo is None:
@@ -2590,19 +2595,19 @@ class QtMDHistoSliceViewer:
         self.brillouin_zone_color = str(
             self.brillouin_zone_color_combo.currentData()
         )
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_brillouin_zone_linewidth(self, value: float) -> None:
         if self._restoring_dataset_state:
             return
         self.brillouin_zone_linewidth = float(value)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_brillouin_zone_alpha(self, value: float) -> None:
         if self._restoring_dataset_state:
             return
         self.brillouin_zone_alpha = float(value)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _effective_brillouin_zone_context(self) -> dict[str, Any]:
         context = dict(self.crystal_contexts[self.dataset_index])
@@ -2703,7 +2708,7 @@ class QtMDHistoSliceViewer:
 
     def _toggle_cmap_reverse(self) -> None:
         self.model.cmap_reversed = not bool(self.model.cmap_reversed)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_channel(self, channel: str) -> None:
         if getattr(self.model, "is_point_list", False):
@@ -2867,14 +2872,14 @@ class QtMDHistoSliceViewer:
         self.model.color_scale = str(color_scale)
         self.gamma_label.setVisible(self.model.color_scale == "power")
         self.gamma_spin.setVisible(self.model.color_scale == "power")
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_auto_limits(self, auto_limits: str) -> None:
         self.model.auto_limits = str(auto_limits)
         self.limit_n_spin.setValue(self._current_limit_n())
         self._sync_limit_n_visibility()
         self._set_autoscale_checkbox(True)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_autoscale(self, autoscale: bool) -> None:
         if self._syncing_limits:
@@ -2884,7 +2889,7 @@ class QtMDHistoSliceViewer:
             self.model.manual_vmax = float(self.vmax_spin.value())
         self.model.autoscale = bool(autoscale)
         self._sync_tiled_color_controls()
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_manual_limit(self, which: str, value: float) -> None:
         if self._syncing_limits:
@@ -2897,16 +2902,16 @@ class QtMDHistoSliceViewer:
         else:
             self.model.manual_vmax = float(value)
         self._set_autoscale_checkbox(False)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_power_gamma(self, gamma: float) -> None:
         self.model.power_gamma = max(float(gamma), 1.0e-12)
         if self.model.color_scale == "power":
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_color_alpha(self, alpha: float) -> None:
         self.model.color_alpha = float(np.clip(alpha, -20.0, 20.0))
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_limit_n(self, value: float) -> None:
         if self.model.auto_limits == "N-sigma":
@@ -2917,32 +2922,32 @@ class QtMDHistoSliceViewer:
             self.model.percentile_n = float(np.clip(value, 0.0, 50.0))
         if self.model.auto_limits != "min/max":
             self._set_autoscale_checkbox(True)
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_marker(self, marker_name: str) -> None:
         self.marker = _MARKER_OPTIONS.get(str(marker_name), "o")
         if self._is_effective_1d() or self._waterfall_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_line_style(self, line_style_name: str) -> None:
         self.line_style = _LINE_STYLE_OPTIONS.get(str(line_style_name), "none")
         if self._is_effective_1d() or self._waterfall_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_marker_size(self, value: float) -> None:
         self.marker_size = float(value)
         if self._is_effective_1d() or self._waterfall_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_line_plot_width(self, value: float) -> None:
         self.line_plot_width = float(value)
         if self._is_effective_1d() or self._waterfall_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_marker_edge_width(self, value: float) -> None:
         self.marker_edge_width = float(value)
         if self._is_effective_1d() or self._waterfall_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_marker_face_color(self, color_name: str) -> None:
         self.marker_face_color = (
@@ -2955,27 +2960,27 @@ class QtMDHistoSliceViewer:
         else:
             self._slice_marker_face_color = self.marker_face_color
         if self._is_effective_1d() or self._waterfall_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_line_color(self, color_name: str) -> None:
         self.line_color = _COLOR_OPTIONS.get(str(color_name), "#1f77b4")
         if self._is_effective_1d() or self._waterfall_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_show_errorbars(self, show_errorbars: bool) -> None:
         self.show_errorbars = bool(show_errorbars)
         if self._is_effective_1d() or self._waterfall_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_show_errorbar_caps(self, show_caps: bool) -> None:
         self.show_errorbar_caps = bool(show_caps)
         if self._is_effective_1d() or self._waterfall_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_errorbar_cap_size(self, value: float) -> None:
         self.errorbar_cap_size = float(value)
         if self._is_effective_1d() or self._waterfall_mode_active():
-            self.update_plot()
+            self.update_plot(reuse_slice=True)
 
     def _set_waterfall_step(self, value: float) -> None:
         if self._restoring_dataset_state:
@@ -3022,7 +3027,7 @@ class QtMDHistoSliceViewer:
         if self.waterfall_offset_auto_check is not None and self.waterfall_offset_auto_check.isChecked():
             self._set_checkbox_silent(self.waterfall_offset_auto_check, False)
             self.waterfall_offset_auto = False
-        self.update_plot(preserve_view=False)
+        self.update_plot(preserve_view=False, reuse_slice=True)
 
     def _set_waterfall_offset_from_slider(self, position: int) -> None:
         if self._restoring_dataset_state:
@@ -3035,55 +3040,55 @@ class QtMDHistoSliceViewer:
     def _set_waterfall_offset_auto(self, enabled: bool) -> None:
         self.waterfall_offset_auto = bool(enabled)
         if not self._restoring_dataset_state:
-            self.update_plot(preserve_view=False)
+            self.update_plot(preserve_view=False, reuse_slice=True)
 
     def _set_waterfall_cmap(self, cmap: str) -> None:
         self.waterfall_cmap = str(cmap)
         self._sync_control_visibility()
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_color_range(self, low: int, high: int) -> None:
         self.waterfall_color_min = float(np.clip(low, 0, 1000)) / 1000.0
         self.waterfall_color_max = float(np.clip(high, 0, 1000)) / 1000.0
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_reverse_colors(self, enabled: bool) -> None:
         self.waterfall_reverse_colors = bool(enabled)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_zero_lines(self, enabled: bool) -> None:
         self.waterfall_show_zero_lines = bool(enabled)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_zero_color(self, color_name: str) -> None:
         self.waterfall_zero_color = _COLOR_OPTIONS.get(color_name, "#7f7f7f")
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_zero_style(self, style_name: str) -> None:
         self.waterfall_zero_style = _LINE_STYLE_OPTIONS.get(style_name, "--")
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_zero_width(self, value: float) -> None:
         self.waterfall_zero_width = max(float(value), 0.1)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_model_color(self, color_name: str) -> None:
         self.waterfall_model_color = (
             None if color_name == "match traces" else _COLOR_OPTIONS.get(color_name)
         )
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_trace_labels(self, enabled: bool) -> None:
         self.waterfall_show_trace_labels = bool(enabled)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_trace_label_suffix(self, suffix: str) -> None:
         self.waterfall_trace_label_suffix = str(suffix)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_trace_label_font_size(self, value: float) -> None:
         self.waterfall_trace_label_font_size = max(float(value), 1.0)
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _set_waterfall_trace_label_color(self, color_name: str) -> None:
         self.waterfall_trace_label_color = (
@@ -3091,7 +3096,7 @@ class QtMDHistoSliceViewer:
             if color_name == "match traces"
             else _COLOR_OPTIONS.get(color_name)
         )
-        self.update_plot()
+        self.update_plot(reuse_slice=True)
 
     def _waterfall_step_limits(self) -> tuple[float, float]:
         if self._waterfall_uses_1d_group():
@@ -3781,20 +3786,25 @@ class QtMDHistoSliceViewer:
         if self.show_box_check is not None:
             self._set_box_tool_visible(self.show_box_check.isChecked())
 
-    def update_plot(self, *, preserve_view: bool = True) -> None:
+    def update_plot(
+        self,
+        *,
+        preserve_view: bool = True,
+        reuse_slice: bool = False,
+    ) -> None:
         self._sync_fit_channel_controls()
         previous_xlim = self.ax_image.get_xlim() if preserve_view and self._current_slice is not None else None
         previous_ylim = self.ax_image.get_ylim() if preserve_view and self._current_slice is not None else None
         previous_dims = getattr(self, "_last_plot_dims", None)
         current_dims = (self.model.x_dim, self.model.y_dim)
-        self._current_slice = self._smoothed_slice_view(self.model.slice_arrays())
-        view = self._current_slice
+        source_key = self._slice_source_key()
         if self._waterfall_mode_active():
             self._draw_waterfall_view(
                 previous_xlim,
                 previous_ylim,
                 previous_dims,
                 current_dims,
+                reuse_prepared=reuse_slice,
             )
             return
         if self._tiled_mode_active():
@@ -3803,11 +3813,32 @@ class QtMDHistoSliceViewer:
                 previous_ylim,
                 previous_dims,
                 current_dims,
+                reuse_prepared=reuse_slice,
             )
             return
         if self._fit_panels_active():
-            self._draw_fit_panels_view(previous_xlim, previous_ylim, previous_dims, current_dims)
+            self._draw_fit_panels_view(
+                previous_xlim,
+                previous_ylim,
+                previous_dims,
+                current_dims,
+                reuse_prepared=reuse_slice,
+            )
             return
+        can_reuse_slice = (
+            reuse_slice
+            and self._current_slice is not None
+            and self._current_slice_source_key == source_key
+            and self._slice_sources_are_cacheable()
+            and previous_dims == current_dims
+            and getattr(self, "_last_plot_view_mode", None) == "slice"
+        )
+        if not can_reuse_slice:
+            self._current_slice = self._smoothed_slice_view(self.model.slice_arrays())
+            self._current_slice_source_key = source_key
+        else:
+            self._refresh_cached_metadata_masks()
+        view = self._current_slice
         if self._residual_axes_active():
             self._draw_1d_with_residual(previous_xlim, previous_dims, current_dims)
             return
@@ -3864,18 +3895,122 @@ class QtMDHistoSliceViewer:
         self._apply_autoscale_to_view()
         self.canvas.draw_idle()
 
+    def _slice_source_key(self) -> tuple[Any, ...]:
+        """Return lightweight state that identifies the current numerical view."""
+
+        data = self.model.data
+        if getattr(self.model, "is_point_list", False):
+            return (
+                tuple(id(dataset) for dataset in self.datasets),
+                id(data),
+                self.model.x_key,
+                self.model.channel,
+                float(self.smoothing_x),
+                bool(self.smoothing_fill_nans),
+            )
+        else:
+            selections = tuple(sorted(self.model._normalized_selections().items()))
+        return (
+            tuple(
+                mdhisto_source_identity(dataset)
+                if isinstance(dataset, MDHistoData)
+                else (id(dataset),)
+                for dataset in self.datasets
+            ),
+            mdhisto_source_identity(data),
+            self.model.x_dim,
+            self.model.y_dim,
+            self.model.channel,
+            selections,
+            bool(self.model.masked),
+            float(self.coverage_threshold),
+            float(self.waterfall_coverage_threshold),
+            self.tile_dim,
+            tuple(self.tile_range),
+            float(self.tile_step),
+            float(self.waterfall_step),
+            bool(self.show_fit),
+            bool(self.unmask_model),
+            float(self.smoothing_x),
+            float(self.smoothing_y),
+            bool(self.smoothing_fill_nans),
+            tuple(sorted(self.display_step_factors.items())),
+        )
+
+    def _slice_sources_are_cacheable(self) -> bool:
+        """Reject reuse when a visible numerical source supports in-place edits."""
+
+        data = self.model.data
+        if getattr(self.model, "is_point_list", False):
+            return not bool(getattr(data, "_arrays_mutable", False))
+        visible_metadata_channels = set()
+        if self.model.channel in {"fit", "residual"}:
+            visible_metadata_channels.add(self.model.channel)
+        if (
+            self.model.channel in {"file_mask", "nfit_mask"}
+            and (self._waterfall_mode_active() or self._tiled_mode_active())
+        ):
+            visible_metadata_channels.add(self.model.channel)
+        if self._fit_panels_active() or self.show_fit:
+            visible_metadata_channels.update({"fit", "residual"})
+        datasets = (
+            self.datasets
+            if self._waterfall_mode_active() and self._waterfall_uses_1d_group()
+            else (data,)
+        )
+        return all(
+            not isinstance(dataset, MDHistoData)
+            or mdhisto_sources_are_cacheable(
+                dataset,
+                visible_metadata_channels=visible_metadata_channels,
+            )
+            for dataset in datasets
+        )
+
+    def _refresh_cached_metadata_masks(self) -> None:
+        """Refresh inexpensive mutable mask channels in a reused standard slice."""
+
+        if self._current_slice is None or getattr(self.model, "is_point_list", False):
+            return
+        masks = self.model.slice_metadata_masks()
+        raw_shape = (
+            self.data.shape[self.model.y_dim],
+            self.data.shape[self.model.x_dim],
+        )
+        mask_view = {
+            "signal": np.zeros(raw_shape, dtype=float),
+            "x_edges": self.model._axis_edges(self.model.x_dim),
+            "y_edges": self.model._axis_edges(self.model.y_dim),
+            "x_centers": self.data.axes[self.model.x_dim].centers,
+            "y_centers": self.data.axes[self.model.y_dim].centers,
+            **masks,
+        }
+        refreshed = coarsen_mdhisto_view(
+            mask_view,
+            x_step=self._current_display_step("x"),
+            y_step=self._current_display_step("y"),
+        )
+        self._current_slice = {
+            **self._current_slice,
+            "file_mask": refreshed["file_mask"],
+            "nfit_mask": refreshed["nfit_mask"],
+        }
+
     def _draw_tiled_view(
         self,
         previous_xlim,
         previous_ylim,
         previous_dims,
         current_dims,
+        *,
+        reuse_prepared: bool = False,
     ) -> None:
         self._mode_controllers.tiled._draw_tiled_view(
             previous_xlim,
             previous_ylim,
             previous_dims,
             current_dims,
+            reuse_prepared=reuse_prepared,
         )
 
     def _draw_waterfall_view(
@@ -3884,12 +4019,15 @@ class QtMDHistoSliceViewer:
         previous_ylim,
         previous_dims,
         current_dims,
+        *,
+        reuse_prepared: bool = False,
     ) -> None:
         self._mode_controllers.waterfall._draw_waterfall_view(
             previous_xlim,
             previous_ylim,
             previous_dims,
             current_dims,
+            reuse_prepared=reuse_prepared,
         )
 
     def _draw_fit_panels_view(
@@ -3898,12 +4036,15 @@ class QtMDHistoSliceViewer:
         previous_ylim,
         previous_dims,
         current_dims,
+        *,
+        reuse_prepared: bool = False,
     ) -> None:
         self._mode_controllers.fit_comparison._draw_fit_panels_view(
             previous_xlim,
             previous_ylim,
             previous_dims,
             current_dims,
+            reuse_prepared=reuse_prepared,
         )
 
     def _update_fit_compare_cuts(

@@ -704,6 +704,212 @@ def test_project_save_embeds_session_disk_cache_and_removes_spill(tmp_path):
         cache.clear()
 
 
+def test_current_binning_cache_opens_lazily_and_save_as_reuses_artifact(
+    tmp_path, monkeypatch
+):
+    import zipfile
+
+    import nfit.rebin_cache as rebin_cache
+
+    source = tmp_path / "source.nxs"
+    source.write_bytes(b"source placeholder")
+    dataset = DatasetEntry(
+        "scan",
+        _tiny_mdhisto_data(4.0),
+        kind="mdhisto",
+        metadata={"source_file": str(source)},
+    )
+    dataset.replace_data(dataset.data, source_backed=True)
+    group = DataGroup("Workspace1", datasets=[dataset])
+    project_gui.dataset_rebin_config(dataset).update(
+        enabled=True, minimum_coverage=0.0
+    )
+    project = NfitProject(
+        [group], settings={project_gui.PROJECT_CACHE_BINNINGS_KEY: True}
+    )
+    original = tmp_path / "original.nfit"
+    copied = tmp_path / "copied.nfit"
+    save_project(project, original)
+    member = project.settings[project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY][0][
+        "member"
+    ]
+    with zipfile.ZipFile(original) as archive:
+        original_crc = archive.getinfo(member).CRC
+
+    monkeypatch.setattr(
+        project_gui,
+        "write_dataset_artifact",
+        lambda *_args, **_kwargs: pytest.fail("unchanged binning was recompressed"),
+    )
+    monkeypatch.setattr(
+        rebin_cache,
+        "read_project_dataset_artifact",
+        lambda *_args, **_kwargs: pytest.fail("unchanged binning was decoded"),
+    )
+    # A cache that is still resident retains its newly saved project backing.
+    save_project(project, original)
+
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    monkeypatch.setattr(
+        project_gui,
+        "read_project_dataset_artifact",
+        lambda *_args, **_kwargs: pytest.fail("project open decoded a current binning"),
+    )
+    restored = load_project(original)
+    assert not project_gui.project_binnings_need_refresh(restored)
+
+    save_project(restored, copied, asset_source=original)
+    with zipfile.ZipFile(copied) as archive:
+        assert archive.getinfo(member).CRC == original_crc
+
+    restored_dataset = next(restored.data_groups[0].iter_datasets())
+    restored_group = restored.data_groups[0]
+    restored_config = project_gui.dataset_rebin_config(restored_dataset)
+    restored_signature = project_gui._viewer_view_signature(
+        restored_dataset,
+        project_gui.effective_dataset_masks(restored_group, restored_dataset),
+        restored_config,
+    )
+    backing = project_gui._VIEWER_VIEW_CACHE.project_backing(
+        restored_dataset.id, restored_signature
+    )
+    assert backing is not None and backing[0] == copied
+
+    # Save As adopts the new archive, so removing the source cannot strand the
+    # lazy entry and another ordinary save still reuses the copied member.
+    original.unlink()
+    save_project(restored, copied)
+
+
+@pytest.mark.parametrize("cache_enabled", [True, False])
+def test_failed_project_save_restores_binning_manifest_metadata(
+    tmp_path, monkeypatch, cache_enabled
+):
+    previous_entries = [{"member": "assets/binnings/original/data.npz"}]
+    project = NfitProject(
+        settings={
+            project_gui.PROJECT_CACHE_BINNINGS_KEY: cache_enabled,
+            project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY: previous_entries,
+        }
+    )
+    monkeypatch.setattr(
+        project_gui,
+        "write_project_manifest",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("write failed")),
+    )
+
+    with pytest.raises(OSError, match="write failed"):
+        save_project(project, tmp_path / "failed.nfit")
+
+    assert (
+        project.settings[project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]
+        is previous_entries
+    )
+    assert not hasattr(project, "_project_path")
+
+
+def test_lazy_project_binning_is_invalidated_when_archive_changes(tmp_path):
+    from nfit.rebin_cache import RebinCache
+
+    project_path = tmp_path / "cache.nfit"
+    project_path.write_bytes(b"first archive")
+    cache = RebinCache()
+    cache.set_project_backing(
+        "key",
+        signature="signature",
+        project_path=project_path,
+        member="assets/binnings/cache/data.npz",
+        lazy=True,
+    )
+
+    assert cache.has_signature("key", "signature")
+    project_path.write_bytes(b"externally replaced archive with another size")
+
+    assert not cache.has_signature("key", "signature")
+    assert cache.project_backing("key", "signature") is None
+
+
+def test_rebin_information_panels_do_not_decode_lazy_project_cache(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    import nfit.rebin_cache as rebin_cache
+
+    source = tmp_path / "source.nxs"
+    source.write_bytes(b"source placeholder")
+    dataset = DatasetEntry(
+        "scan",
+        _tiny_mdhisto_data(4.0),
+        kind="mdhisto",
+        metadata={"source_file": str(source)},
+    )
+    dataset.replace_data(dataset.data, source_backed=True)
+    group = DataGroup("Workspace1", datasets=[dataset])
+    project_gui.dataset_rebin_config(dataset).update(
+        enabled=True, minimum_coverage=0.0
+    )
+    project_gui.data_group_composite_config(group).update(
+        enabled=True, minimum_coverage=0.0
+    )
+    project = NfitProject(
+        [group], settings={project_gui.PROJECT_CACHE_BINNINGS_KEY: True}
+    )
+    project_gui.dataset_for_slice_viewer(dataset)
+    project_gui.slice_viewer_datasets(group)
+    path = tmp_path / "lazy-panels.nfit"
+    save_project(project, path)
+
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    restored = load_project(path)
+    restored_group = restored.data_groups[0]
+    restored_dataset = next(restored_group.iter_datasets())
+    monkeypatch.setattr(project_gui, "_dataset_can_rebin", lambda _dataset: True)
+    monkeypatch.setattr(
+        rebin_cache,
+        "read_project_dataset_artifact",
+        lambda *_args, **_kwargs: pytest.fail(
+            "informational panel decoded a lazy project binning"
+        ),
+    )
+
+    explorer = NfitProjectExplorer(restored)
+    explorer._set_dataset_details(restored_dataset, restored_group)
+    assert explorer._refresh_dataset_rebin_controls(
+        restored_dataset,
+        restored_group,
+    )
+    dataset_memory = explorer.details_widget.findChild(
+        QtWidgets.QLabel, "dataset_rebin_memory_estimate"
+    )
+    assert dataset_memory is not None and "result memory" in dataset_memory.text()
+    assert (
+        project_gui._peek_cached_dataset_view(
+            restored_dataset,
+            extra_masks=project_gui.effective_dataset_masks(
+                restored_group, restored_dataset
+            ),
+            resident_only=True,
+        )
+        is None
+    )
+
+    explorer._set_dataset_collection_details(restored_group, restored_group)
+    group_memory = explorer.details_widget.findChild(
+        QtWidgets.QLabel, "group_composite_memory_estimate"
+    )
+    assert group_memory is not None and "result memory" in group_memory.text()
+    assert (
+        project_gui._peek_cached_composite_dataset_data(
+            restored_group,
+            resident_only=True,
+        )
+        is None
+    )
+    explorer.window.close()
+
+
 def test_persisted_binning_restore_primes_dependencies_before_caching(tmp_path, monkeypatch):
     source = tmp_path / "source.npz"
     source.write_bytes(b"source placeholder")
@@ -1160,12 +1366,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     coverage_edit.setText("0.8")
     coverage_edit.editingFinished.emit()
     assert dataset_rebin_config(dataset)["minimum_coverage"] == pytest.approx(0.8)
-    batch_spin = rebin_panel.findChild(QtWidgets.QSpinBox, "dataset_rebin_max_batch_mb")
-    assert batch_spin is not None
-    assert batch_spin.value() == 192
-    assert "not a cap on total rebinner memory use" in batch_spin.toolTip()
-    batch_spin.setValue(64)
-    assert dataset_rebin_config(dataset)["max_batch_mb"] == 64
+    assert rebin_panel.findChild(QtWidgets.QSpinBox, "dataset_rebin_max_batch_mb") is None
     create_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_create")
     rebin_now_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_now")
     rebin_all_button = rebin_panel.findChild(
@@ -1391,7 +1592,11 @@ def test_named_visualization_binning_is_zero_weight_and_viewer_selectable(monkey
     viewer.window.close()
 
 
-def test_materialized_composite_round_trips_as_project_owned_dataset(tmp_path):
+def test_materialized_composite_round_trips_as_project_owned_dataset(
+    tmp_path, monkeypatch
+):
+    from nfit import project_composites
+
     first = DatasetEntry(
         "first",
         _tiny_mdhisto_data(2.0),
@@ -1413,7 +1618,29 @@ def test_materialized_composite_round_trips_as_project_owned_dataset(tmp_path):
     for axis in config["axes"]:
         axis["mode"] = "discrete"
 
+    monkeypatch.setattr(
+        project_composites,
+        "dataset_artifact_bytes",
+        lambda *_args, **_kwargs: pytest.fail(
+            "materialization must not build the complete artifact in memory"
+        ),
+        raising=False,
+    )
+    artifact_files = []
+    original_writer = project_composites.write_dataset_artifact
+
+    def record_artifact_file(data, destination, **kwargs):
+        artifact_files.append(Path(destination))
+        return original_writer(data, destination, **kwargs)
+
+    monkeypatch.setattr(
+        project_composites,
+        "write_dataset_artifact",
+        record_artifact_file,
+    )
     entry = project_gui.materialize_composite_dataset(path, group)
+    assert len(artifact_files) == 1
+    assert not artifact_files[0].exists()
     save_project(project, path)
     restored = load_project(path)
     restored_entry = next(
@@ -1431,6 +1658,52 @@ def test_materialized_composite_round_trips_as_project_owned_dataset(tmp_path):
     restored_data = dataset_for_slice_viewer(restored_entry)
     assert isinstance(restored_data, MDHistoData)
     np.testing.assert_allclose(restored_data.signal[~restored_data.mask], 3.0)
+
+
+def test_materialized_composite_publication_failure_cleans_temporary_file(
+    tmp_path, monkeypatch
+):
+    from nfit import project_composites
+
+    group = DataGroup(
+        "Workspace",
+        datasets=[
+            DatasetEntry("first", _tiny_mdhisto_data(2.0), kind="mdhisto"),
+            DatasetEntry("second", _tiny_mdhisto_data(4.0), kind="mdhisto"),
+        ],
+    )
+    project_path = tmp_path / "materialized.nfit"
+    save_project(NfitProject(), project_path)
+    config = project_gui.data_group_composite_config(group)
+    config.update({"enabled": True, "mean_weighting": "uniform"})
+    for axis in config["axes"]:
+        axis["mode"] = "discrete"
+
+    artifact_files = []
+    original_writer = project_composites.write_dataset_artifact
+
+    def record_artifact_file(data, destination, **kwargs):
+        artifact_files.append(Path(destination))
+        return original_writer(data, destination, **kwargs)
+
+    monkeypatch.setattr(
+        project_composites,
+        "write_dataset_artifact",
+        record_artifact_file,
+    )
+    monkeypatch.setattr(
+        project_composites,
+        "replace_dataset_artifact",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("publication failed")),
+    )
+
+    with pytest.raises(OSError, match="publication failed"):
+        project_gui.materialize_composite_dataset(project_path, group)
+
+    assert len(artifact_files) == 1
+    assert not artifact_files[0].exists()
+    assert not group.subgroups
+    assert [dataset.name for dataset in group.datasets] == ["first", "second"]
 
 
 def test_rebin_settings_copy_and_paste_between_datasets(monkeypatch):
@@ -1970,8 +2243,10 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     batch_spin = explorer.details_widget.findChild(
         QtWidgets.QSpinBox, "group_composite_max_batch_mb"
     )
-    assert batch_spin is not None
-    assert batch_spin.value() == 192
+    assert batch_spin is None
+    assert explorer.details_widget.findChild(
+        QtWidgets.QSpinBox, "group_composite_workers"
+    ) is None
     auto_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_auto")
     assert auto_check is not None
     assert auto_check.isChecked()

@@ -265,18 +265,18 @@ fit and evaluates its model and residual channels. It does not report local
 covariance errors for this unconverged result. A completed least-squares result
 is not discarded if posterior sampling is terminated later.
 
-**Derivative workers** controls independent residual evaluations used by
-SciPy's numerical least-squares Jacobian. `1` is serial; `-1` selects a
-conservative count from the process CPU allocation and never exceeds the
-number of varied parameters. nfit divides the available BLAS threads among
-these evaluations to limit oversubscription. An analytic model Jacobian
-ignores this setting.
+Fit and model evaluation use the **CPU limit** and **RAM limit** in
+**Preferences → Performance**. nfit chooses a conservative number of independent
+residual evaluations for SciPy's numerical least-squares Jacobian, bounded by
+the CPU ceiling and number of varied parameters. It divides available BLAS
+threads among those evaluations. An analytic Jacobian does not need numerical
+derivative workers.
 
-The same `1` and `-1` conventions apply to differential evolution and emcee.
-For an expensive electronic response, use either several outer derivative
-workers with a small response-worker count, or fewer outer workers with more
-threads inside each response. See [Performance notes](performance.md) before
-increasing both.
+Posterior sampling uses the central CPU allocation. Differential evolution
+retains its immediate or deferred update algorithm; the immediate default stays
+serial. Older parallel configurations retain deferred updates with a worker
+count bounded by the central limit. Model batch sizes and response-cache capacity
+are selected automatically. See [Performance notes](performance.md).
 
 ## Results
 

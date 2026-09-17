@@ -591,13 +591,21 @@ def test_parallel_worker_auto_uses_conservative_cpu_count(monkeypatch):
     from nfit.fitting import _resolve_parallel_workers
 
     monkeypatch.setattr(
-        "nfit.fitting._parallel.detect_cpu_budget",
+        "nfit.fitting._parallel.num_threads",
         lambda: 12,
     )
 
     assert _resolve_parallel_workers(-1) == 8
     assert _resolve_parallel_workers(1) == 1
     assert _resolve_parallel_workers(4) == 4
+
+
+def test_parallel_worker_requests_obey_the_shared_cpu_ceiling(monkeypatch):
+    from nfit.fitting import _resolve_parallel_workers
+
+    monkeypatch.setattr("nfit.fitting._parallel.num_threads", lambda: 2)
+    assert _resolve_parallel_workers(-1) == 1
+    assert _resolve_parallel_workers(8) == 2
 
 
 def test_emcee_sampling_requires_variable_parameters():

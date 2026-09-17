@@ -756,6 +756,65 @@ def test_qt_slice_viewer_selects_derived_coverage_channels_without_storage():
     assert viewer.colorbar.ax.yaxis.label.get_text() == "Coverage mask"
 
 
+def test_qt_appearance_updates_reuse_slice_but_data_updates_recompute(monkeypatch):
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    calls = 0
+    original_slice_arrays = viewer.model.slice_arrays
+
+    def tracked_slice_arrays():
+        nonlocal calls
+        calls += 1
+        return original_slice_arrays()
+
+    monkeypatch.setattr(viewer.model, "slice_arrays", tracked_slice_arrays)
+
+    viewer._set_cmap("magma")
+    viewer._toggle_cmap_reverse()
+    viewer._set_color_alpha(0.5)
+    assert calls == 0
+
+    viewer.model.selections[0] = (0.25, 0.25)
+    viewer._set_cmap("viridis")
+    assert calls == 1
+
+    nfit_mask = np.zeros(data.shape, dtype=bool)
+    nfit_mask[0, 1, 2, 3] = True
+    data.metadata["nfit_mask"] = nfit_mask
+    viewer.update_plot()
+    assert calls == 2
+    assert viewer._current_slice["nfit_mask"][2, 3]
+
+
+def test_qt_reused_slice_refreshes_mutable_metadata_masks(monkeypatch):
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    nfit_mask = np.zeros(data.shape, dtype=bool)
+    data.metadata["nfit_mask"] = nfit_mask
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.channel_combo.setCurrentText("nfit_mask")
+    calls = 0
+    original_slice_arrays = viewer.model.slice_arrays
+
+    def tracked_slice_arrays():
+        nonlocal calls
+        calls += 1
+        return original_slice_arrays()
+
+    monkeypatch.setattr(viewer.model, "slice_arrays", tracked_slice_arrays)
+    nfit_mask[1, 1, 2, 3] = True
+
+    viewer._set_cmap("magma")
+
+    assert calls == 0
+    assert viewer._current_slice["nfit_mask"][2, 3]
+
+
 def test_qt_histogram_tool_recomputes_coverage_over_selected_box():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
@@ -1679,6 +1738,36 @@ def test_qt_tiled_cursor_readout_uses_each_panels_values_and_coordinate():
     assert all(axis.format_coord(1.0, 2.0) == "" for axis in viewer._tile_axes)
 
 
+def test_qt_tiled_mask_channel_invalidates_after_inplace_metadata_edit(monkeypatch):
+    pytest.importorskip("PySide6")
+    import nfit.qt_slice_viewer as slice_viewer_module
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    data.metadata["nfit_mask"] = np.zeros(data.shape, dtype=bool)
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2, channel="nfit_mask")
+    viewer.view_mode_combo.setCurrentText("Tiled slices")
+    calls = 0
+    original_prepare = slice_viewer_module.prepare_mdhisto_tiled_slices
+
+    def tracked_prepare(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(
+        slice_viewer_module,
+        "prepare_mdhisto_tiled_slices",
+        tracked_prepare,
+    )
+    data.metadata["nfit_mask"][0, 1, 2, 3] = True
+
+    viewer._set_cmap("magma")
+
+    assert calls == 1
+    assert any(np.any(panel.values) for panel in viewer._current_tiled_slices)
+
+
 def test_qt_waterfall_half_max_stays_enabled_when_initial_range_shrinks():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
@@ -1726,6 +1815,97 @@ def test_qt_waterfall_mode_groups_compatible_1d_datasets():
         "0.5 meV",
         "1.4 meV",
     ]
+
+
+def test_qt_grouped_waterfall_rejects_cache_when_sibling_signal_is_mutable(
+    monkeypatch,
+):
+    pytest.importorskip("PySide6")
+    import nfit.qt_slice_viewer as slice_viewer_module
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    first = _tiny_1d_mdhisto_data()
+    second = _tiny_1d_mdhisto_data().mutable_copy()
+    viewer = QtMDHistoSliceViewer([first, second])
+    viewer.view_mode_combo.setCurrentIndex(1)
+    calls = 0
+    original_prepare = slice_viewer_module.prepare_mdhisto_waterfall
+
+    def tracked_prepare(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(
+        slice_viewer_module,
+        "prepare_mdhisto_waterfall",
+        tracked_prepare,
+    )
+
+    second.signal.reshape(-1)[0] += 10.0
+    viewer._set_waterfall_cmap("plasma")
+
+    assert calls == 1
+
+
+def test_qt_grouped_waterfall_reuses_traces_for_appearance_change(monkeypatch):
+    pytest.importorskip("PySide6")
+    import nfit.qt_slice_viewer as slice_viewer_module
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(
+        [_tiny_1d_mdhisto_data(), _tiny_1d_mdhisto_data()]
+    )
+    viewer.view_mode_combo.setCurrentIndex(1)
+    calls = 0
+    original_prepare = slice_viewer_module.prepare_mdhisto_waterfall
+
+    def tracked_prepare(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(
+        slice_viewer_module,
+        "prepare_mdhisto_waterfall",
+        tracked_prepare,
+    )
+
+    viewer._set_waterfall_cmap("plasma")
+
+    assert calls == 0
+
+
+def test_qt_grouped_waterfall_invalidates_mutated_sibling_metadata_mask(monkeypatch):
+    pytest.importorskip("PySide6")
+    import nfit.qt_slice_viewer as slice_viewer_module
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    datasets = []
+    for _index in range(2):
+        data = _tiny_1d_mdhisto_data()
+        data.metadata["nfit_mask"] = np.zeros(data.shape, dtype=bool)
+        datasets.append(data)
+    viewer = QtMDHistoSliceViewer(datasets, channel="nfit_mask")
+    viewer.view_mode_combo.setCurrentIndex(1)
+    calls = 0
+    original_prepare = slice_viewer_module.prepare_mdhisto_waterfall
+
+    def tracked_prepare(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(
+        slice_viewer_module,
+        "prepare_mdhisto_waterfall",
+        tracked_prepare,
+    )
+
+    datasets[1].metadata["nfit_mask"].reshape(-1)[0] = True
+    viewer._set_waterfall_cmap("plasma")
+
+    assert calls == 1
 
 
 def test_qt_waterfall_groups_1d_datasets_by_project_group_key():

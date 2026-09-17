@@ -836,7 +836,9 @@ class NDRebin:
                 self._merge_sparse_partial(partial, bd_sum, err_sum, norm_sum, ns_sum)
 
     def _parallel_plan(self, output_size: int) -> tuple[int, str]:
-        requested = _parallel.num_threads() if self.workers is None else int(self.workers)
+        # Keep the saved recipe intact, but never let its explicit worker
+        # request exceed the process allocation or global Preferences ceiling.
+        requested = _parallel.bounded_worker_count(self.workers)
         requested = max(1, min(requested, self.Nvals or 1))
         if requested == 1 or self.parallel_strategy == "serial":
             return 1, "serial"

@@ -7,7 +7,11 @@ import nfit.project_data as project_data
 from nfit.performance import (
     initialize_rebin_performance,
     load_performance_settings,
+    load_resource_limits,
+    operation_worker_count,
     save_performance_settings,
+    save_resource_limits,
+    scientific_memory_limit_bytes,
     transient_rebin_memory_limit_bytes,
 )
 from nfit.performance_benchmark import (
@@ -54,9 +58,9 @@ def test_performance_defaults_are_snapshots(monkeypatch):
         save_performance_settings(transient_memory_percent=81)
 
 
-def test_project_batch_memory_is_capped_by_machine_preference(monkeypatch):
+def test_project_batch_memory_uses_the_central_policy(monkeypatch):
     monkeypatch.setattr(
-        "nfit.performance.transient_rebin_memory_limit_bytes",
+        "nfit.performance.operation_batch_bytes",
         lambda: 1024,
     )
     assert project_data._rebin_max_batch_bytes({"max_batch_mb": 64}) == 1024
@@ -72,6 +76,58 @@ def test_scoped_workers_are_restored():
             assert num_threads() == 1
         assert num_threads() == 2
     assert num_threads() == original
+
+
+def test_resource_limits_migrate_legacy_preferences_and_bound_operations(monkeypatch):
+    from nfit import _parallel
+
+    save_performance_settings(workers=6, transient_memory_percent=40)
+    assert load_resource_limits() == {"cpu_limit": 6, "ram_limit_mb": 0}
+    assert scientific_memory_limit_bytes(1_000) == 400
+    monkeypatch.setattr(_parallel, "num_threads", lambda: 6)
+    assert operation_worker_count(
+        64 * 1024**2,
+        bytes_per_worker=20 * 1024**2,
+        min_parallel_bytes=1,
+        memory_limit_bytes=45 * 1024**2,
+    ) == 2
+
+    save_resource_limits(cpu_limit=3, ram_limit_mb=2)
+    assert load_resource_limits() == {"cpu_limit": 3, "ram_limit_mb": 2}
+    assert scientific_memory_limit_bytes(8 * 1024**2) == 2 * 1024**2
+
+
+def test_saving_auto_ram_clears_a_migrated_percentage_limit():
+    save_performance_settings(transient_memory_percent=80)
+    assert scientific_memory_limit_bytes(1_000) == 800
+
+    save_resource_limits(cpu_limit=0, ram_limit_mb=0)
+
+    assert load_performance_settings()["transient_memory_percent"] == 0
+    assert scientific_memory_limit_bytes(1_000) == 250
+
+
+def test_global_cpu_limit_caps_scoped_and_environment_workers(monkeypatch):
+    from nfit import _parallel
+
+    save_resource_limits(cpu_limit=2)
+    monkeypatch.setenv("NFIT_NUM_THREADS", "8")
+    monkeypatch.setattr(_parallel, "detect_cpu_budget", lambda: 4)
+    assert _parallel.num_threads() == 2
+    with _parallel.thread_budget(6):
+        assert _parallel.num_threads() == 2
+
+
+def test_malformed_preferences_fall_back_to_automatic_limits(tmp_path, monkeypatch):
+    path = tmp_path / "preferences.json"
+    path.write_text('{"workers": "many", "ram_limit_mb": "too much"}')
+    monkeypatch.setenv("NFIT_PERFORMANCE_FILE", str(path))
+    assert load_performance_settings() == {
+        "max_batch_mb": 0,
+        "workers": 0,
+        "transient_memory_percent": 0,
+    }
+    assert load_resource_limits() == {"cpu_limit": 0, "ram_limit_mb": 0}
 
 
 def test_recommendation_prefers_resources_within_tolerance():
@@ -149,13 +205,17 @@ def _project():
     return NfitProject([DataGroup("test group", datasets=[entry])]), entry
 
 
-def test_dataset_benchmark_is_isolated_and_reports_memory():
+def test_dataset_benchmark_is_isolated_and_reports_memory(monkeypatch, tmp_path):
+    from nfit.performance import save_resource_limits
+
+    monkeypatch.setenv("NFIT_PERFORMANCE_FILE", str(tmp_path / "performance.json"))
+    save_resource_limits(cpu_limit=1, ram_limit_mb=1)
     project, entry = _project()
     before = copy.deepcopy(entry.parameters)
     rows = []
     result = benchmark_rebin(project, dataset_id=entry.id,
-                             candidates=[dict(max_batch_mb=4, workers=1)], progress=rows.append)
-    assert result["recommendation"] == {"max_batch_mb": 4, "workers": 1}
+                             candidates=[dict(max_batch_mb=4, workers=8)], progress=rows.append)
+    assert result["recommendation"] == {"max_batch_mb": 1, "workers": 1}
     assert rows[0]["seconds"] > 0
     assert rows[0]["peak_mib"] > 0
     assert entry.parameters == before
@@ -221,7 +281,7 @@ def test_saved_benchmark_script_roundtrip(tmp_path, monkeypatch):
     assert json.loads(json.dumps(saved))["workers"] == 2
 
 
-def test_composite_and_dataset_use_their_worker_ceilings(monkeypatch):
+def test_composite_and_dataset_use_the_central_worker_allocation(monkeypatch):
     from nfit import _parallel, project_gui
 
     project, entry = _project()
@@ -230,5 +290,6 @@ def test_composite_and_dataset_use_their_worker_ceilings(monkeypatch):
     project_gui.data_group_composite_config(group)["workers"] = 3
     monkeypatch.setattr(project_data, "_rebinned_dataset_data", lambda *a, **k: _parallel.num_threads())
     monkeypatch.setattr(project_data, "_composite_dataset_data", lambda *a, **k: _parallel.num_threads())
-    assert project_gui.rebinned_dataset_data(entry) == 2
-    assert project_gui.composite_dataset_data(group) == 3
+    monkeypatch.setattr(_parallel, "num_threads", lambda: 4)
+    assert project_gui.rebinned_dataset_data(entry) == 4
+    assert project_gui.composite_dataset_data(group) == 4

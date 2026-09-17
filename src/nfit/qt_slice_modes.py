@@ -297,6 +297,8 @@ class TiledSliceController(_ViewerController):
         previous_ylim,
         previous_dims,
         current_dims,
+        *,
+        reuse_prepared: bool = False,
     ) -> None:
         """Draw coarse third-axis bins as linked 2D panels."""
 
@@ -309,7 +311,17 @@ class TiledSliceController(_ViewerController):
                 self.tile_range,
             )
         self._sync_tile_step_slider()
-        slices = self._helper("prepare_mdhisto_tiled_slices")(
+        can_reuse = (
+            reuse_prepared
+            and bool(self._current_tiled_slices)
+            and self._current_slice_source_key == self._viewer._slice_source_key()
+            and self._viewer._slice_sources_are_cacheable()
+            and previous_dims == current_dims
+            and getattr(self, "_last_plot_view_mode", None) == "tiled"
+        )
+        slices = self._current_tiled_slices if can_reuse else self._helper(
+            "prepare_mdhisto_tiled_slices"
+        )(
             self.data,
             x_dim=self.model.x_dim,
             y_dim=self.model.y_dim,
@@ -332,6 +344,7 @@ class TiledSliceController(_ViewerController):
             y_step=self._current_display_step("y"),
         )
         self._current_tiled_slices = slices
+        self._current_slice_source_key = self._viewer._slice_source_key()
         self._current_slice = slices[0].view
         combined = np.concatenate([panel.values.ravel() for panel in slices])
         shared_norm = self.model._color_norm(combined)
@@ -429,12 +442,24 @@ class WaterfallController(_ViewerController):
         previous_ylim,
         previous_dims,
         current_dims,
+        *,
+        reuse_prepared: bool = False,
     ) -> None:
         """Draw offset traces for the current map or compatible 1D datasets."""
 
         self._ensure_waterfall_layout()
         grouped = self._viewer._waterfall_uses_1d_group()
-        if grouped:
+        can_reuse = (
+            reuse_prepared
+            and bool(self._current_waterfall_traces)
+            and self._current_slice_source_key == self._viewer._slice_source_key()
+            and self._viewer._slice_sources_are_cacheable()
+            and previous_dims == current_dims
+            and getattr(self, "_last_plot_view_mode", None) == "waterfall"
+        )
+        if can_reuse:
+            traces = self._current_waterfall_traces
+        elif grouped:
             indices = self._viewer._waterfall_1d_source_indices()
             datasets = [self.datasets[index] for index in indices]
             labels = [self.dataset_names[index] for index in indices]
@@ -487,6 +512,7 @@ class WaterfallController(_ViewerController):
                 unmask_model=self.unmask_model,
             )
         self._current_waterfall_traces = traces
+        self._current_slice_source_key = self._viewer._slice_source_key()
         maximum_offset = self._waterfall_offset_maximum()
         if self.waterfall_offset_auto:
             self.waterfall_offset = self._helper("default_waterfall_offset")(traces)
@@ -629,6 +655,8 @@ class FitComparisonController(_ViewerController):
         previous_ylim,
         previous_dims,
         current_dims,
+        *,
+        reuse_prepared: bool = False,
     ) -> None:
         """Draw side-by-side Data/Fit(/Residual) pcolor panels.
 
@@ -655,17 +683,36 @@ class FitComparisonController(_ViewerController):
             self.data,
             self.model.channel,
         )
-        data_view = self._smoothed_slice_view(data_model.slice_arrays())
+        can_reuse = (
+            reuse_prepared
+            and self._current_slice is not None
+            and self._current_slice_source_key == self._viewer._slice_source_key()
+            and self._viewer._slice_sources_are_cacheable()
+            and previous_dims == current_dims
+            and getattr(self, "_last_plot_view_mode", None) == "slice"
+        )
+        data_view = (
+            self._current_slice
+            if can_reuse
+            else self._smoothed_slice_view(data_model.slice_arrays())
+        )
         data_values = data_model._display_values(data_view)
         shared_norm = data_model._color_norm(data_values)
         vmin, vmax = data_model._color_limits(data_values)
 
         self._current_slice = data_view
+        self._current_slice_source_key = self._viewer._slice_source_key()
         self.image = None
         self.colorbar = None
+        unmasked_view = None
         for index, (ax, (title, channel)) in enumerate(zip(self._compare_axes, panels, strict=True)):
             model = self._viewer._comparison_panel_model(self.data, channel)
-            view = self._smoothed_slice_view(model.slice_arrays())
+            if title == "Data" or not self.unmask_model:
+                view = data_view
+            else:
+                if unmasked_view is None:
+                    unmasked_view = self._smoothed_slice_view(model.slice_arrays())
+                view = unmasked_view
             values = model._display_values(view)
             norm = model._color_norm(values) if title == "Residual" else shared_norm
             artist = ax.pcolormesh(
@@ -791,8 +838,6 @@ class FitComparisonController(_ViewerController):
                     ms=self.marker_size, mfc=self.marker_face_color or "none",
                     mec=self.line_color, color=self.line_color, label="data",
                 )
-            fit_model = self._viewer._comparison_panel_model(self.data, "fit")
-            fit_z = fit_model._display_values(self._smoothed_slice_view(fit_model.slice_arrays()))
             fit_errors = errors
             if self.unmask_model:
                 raw_data_model = self._viewer._comparison_panel_model(
@@ -802,6 +847,10 @@ class FitComparisonController(_ViewerController):
                 )
                 raw_data_view = self._smoothed_slice_view(raw_data_model.slice_arrays())
                 fit_errors = np.asarray(raw_data_view.get("errors"), dtype=float)
+                fit_z = np.asarray(raw_data_view["fit"], dtype=float)
+            else:
+                raw_data_view = data_view
+                fit_z = np.asarray(data_view["fit"], dtype=float)
             if fit_errors.shape == data_z.shape:
                 fit_cut, _ = self._helper("inverse_variance_weighted_profile")(
                     fit_z[selected], fit_errors[selected], axis=0
@@ -850,13 +899,7 @@ class FitComparisonController(_ViewerController):
                     label="fit",
                 )
             if self.ax_residual_cut is not None:
-                residual_model = self._viewer._comparison_panel_model(
-                    self.data,
-                    "residual",
-                )
-                residual_z = residual_model._display_values(
-                    self._smoothed_slice_view(residual_model.slice_arrays())
-                )
+                residual_z = np.asarray(raw_data_view["residual"], dtype=float)
                 residual_cut = np.nansum(residual_z[np.ix_(y_mask, x_mask)], axis=0)
                 residual_y_cut = np.nansum(residual_z[np.ix_(y_mask, x_mask)], axis=1)
                 self.ax_residual_cut.axhline(0.0, color="0.5", lw=1.0, zorder=1)

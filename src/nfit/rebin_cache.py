@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 import numpy as np
 
@@ -31,10 +31,29 @@ class _DiskBinning:
     path: Path
     project_member: str | None = None
     owned: bool = True
+    project_identity: tuple[int, int, int, int] | None = None
+
+    def available(self) -> bool:
+        if not self.path.exists():
+            return False
+        if self.project_member is None or self.project_identity is None:
+            return True
+        try:
+            stat = self.path.stat()
+        except OSError:
+            return False
+        return (
+            int(stat.st_dev),
+            int(stat.st_ino),
+            int(stat.st_size),
+            int(stat.st_mtime_ns),
+        ) == self.project_identity
 
     def restore(self) -> MDHistoData | PointListData:
         if self.project_member is None:
             return read_dataset_artifact(self.path)
+        if not self.available():
+            raise OSError("the project archive changed since this cache was registered")
         return read_project_dataset_artifact(self.path, self.project_member)
 
 
@@ -196,6 +215,7 @@ class RebinCache(OrderedDict):
         self._budget.register(self)
         self._compressed: OrderedDict[Any, tuple[str, CompressedBinning]] = OrderedDict()
         self._disk: OrderedDict[Any, _DiskBinning] = OrderedDict()
+        self._project_backings: dict[Any, _DiskBinning] = {}
         self._compressed_bytes = 0
         self._resident_ticks: dict[Any, int] = {}
         self._compressed_ticks: dict[Any, int] = {}
@@ -218,13 +238,27 @@ class RebinCache(OrderedDict):
     def configure_budget(self, total_bytes: int | None) -> None:
         """Set the single allowance shared by every attached result cache."""
 
-        self._budget.configure(total_bytes)
+        if self._budget is SHARED_REBIN_CACHE_BUDGET:
+            # Preferences may change while nfit is running. Do not let module
+            # import-time cache constants compete to set this shared limit.
+            from .cache_utils import scientific_cache_budget_bytes
+
+            self._budget.configure(scientific_cache_budget_bytes())
+        else:
+            self._budget.configure(total_bytes)
 
     def enforce_budget(self) -> None:
         self._budget.enforce()
 
     def __setitem__(self, key, value):
         self._drop_disk(key)
+        signature = value[0] if isinstance(value, tuple) and value else None
+        backing = self._project_backings.get(key)
+        if (
+            backing is not None
+            and (backing.signature != signature or not backing.available())
+        ):
+            self._project_backings.pop(key, None)
         old = self._compressed.pop(key, None)
         if old is not None:
             self._compressed_bytes -= old[1].nbytes
@@ -233,23 +267,46 @@ class RebinCache(OrderedDict):
         self._resident_ticks[key] = self._budget.next_tick()
 
     def get(self, key, default=None):
+        if self._budget is SHARED_REBIN_CACHE_BUDGET:
+            self.configure_budget(None)
         if super().__contains__(key):
-            return super().get(key, default)
+            result = super().get(key, default)
+            if self._budget is SHARED_REBIN_CACHE_BUDGET:
+                # A Preferences change can lower the limit below already
+                # resident data. Return the requested value while promptly
+                # reconciling cache retention with the new shared allowance.
+                self._budget.enforce()
+            return result
         stored = self._compressed.get(key)
         if stored is not None:
             self._compressed.move_to_end(key)
             self._compressed_ticks[key] = self._budget.next_tick()
             signature, artifact = stored
-            return signature, artifact.restore()
+            result = signature, artifact.restore()
+            if self._budget is SHARED_REBIN_CACHE_BUDGET:
+                self._budget.enforce()
+            return result
         disk = self._disk.get(key)
         if disk is None:
             return default
         self._disk.move_to_end(key)
         try:
-            return disk.signature, disk.restore()
-        except (KeyError, OSError, ValueError):
+            restored = disk.restore()
+        except (BadZipFile, EOFError, KeyError, OSError, ValueError, zlib.error):
             self._drop_disk(key)
+            if self._project_backings.get(key) is disk:
+                self._project_backings.pop(key, None)
             return default
+        result = (disk.signature, restored)
+        self[key] = result
+        self.move_to_end(key)
+        self._budget.enforce()
+        return result
+
+    def peek_resident(self, key: Any, default: Any = None) -> Any:
+        """Return only an already-decoded value without changing cache recency."""
+
+        return OrderedDict.get(self, key, default)
 
     def __contains__(self, key):
         return (
@@ -268,7 +325,11 @@ class RebinCache(OrderedDict):
         if stored is not None:
             return stored[0] == signature
         disk = self._disk.get(key)
-        return disk is not None and disk.signature == signature and disk.path.exists()
+        return (
+            disk is not None
+            and disk.signature == signature
+            and disk.available()
+        )
 
     def move_to_end(self, key, last=True):
         if super().__contains__(key):
@@ -295,18 +356,59 @@ class RebinCache(OrderedDict):
         signature: str,
         project_path: str | Path,
         member: str,
+        lazy: bool = False,
     ) -> None:
-        """Replace a session spill with a lazy reference to a saved project member."""
+        """Record a reusable saved artifact, optionally as the active lazy tier."""
 
-        if key not in self._disk:
-            return
-        self._drop_disk(key)
-        self._disk[key] = _DiskBinning(
+        path = Path(project_path)
+        stat = path.stat()
+        backing = _DiskBinning(
             signature=str(signature),
-            path=Path(project_path),
+            path=path,
             project_member=str(member),
             owned=False,
+            project_identity=(
+                int(stat.st_dev),
+                int(stat.st_ino),
+                int(stat.st_size),
+                int(stat.st_mtime_ns),
+            ),
         )
+        self._project_backings[key] = backing
+        if lazy:
+            if super().__contains__(key):
+                OrderedDict.__delitem__(self, key)
+                self._resident_ticks.pop(key, None)
+            old = self._compressed.pop(key, None)
+            if old is not None:
+                self._compressed_bytes -= old[1].nbytes
+                self._compressed_ticks.pop(key, None)
+            self._drop_disk(key)
+            self._disk[key] = backing
+        elif key in self._disk:
+            self._drop_disk(key)
+            self._disk[key] = backing
+        elif not super().__contains__(key) and key not in self._compressed:
+            self._disk[key] = backing
+
+    def project_backing(
+        self, key: Any, signature: str
+    ) -> tuple[Path, str] | None:
+        """Return a current saved member usable without restoring its arrays."""
+
+        backing = self._project_backings.get(key)
+        if (
+            backing is None
+            or backing.signature != signature
+            or backing.project_member is None
+            or not backing.available()
+        ):
+            if backing is not None and not backing.available():
+                self._project_backings.pop(key, None)
+                if self._disk.get(key) is backing:
+                    self._drop_disk(key)
+            return None
+        return backing.path, backing.project_member
 
     def clear_disk_cache(self) -> None:
         """Forget disk-backed entries and remove only nfit-owned session files."""
@@ -318,6 +420,9 @@ class RebinCache(OrderedDict):
         """Forget lazy members owned by one project archive without deleting it."""
 
         target = Path(project_path)
+        for key, backing in tuple(self._project_backings.items()):
+            if backing.path == target:
+                self._project_backings.pop(key, None)
         for key, disk in tuple(self._disk.items()):
             if not disk.owned and disk.path == target:
                 self._drop_disk(key)
@@ -340,6 +445,10 @@ class RebinCache(OrderedDict):
         tick = self._resident_ticks.pop(key, None)
         if tick is None:
             tick = self._budget.next_tick()
+        backing = self._project_backings.get(key)
+        if backing is not None and backing.signature == signature and backing.available():
+            self._disk[key] = backing
+            return
         if max_bytes > 0 and isinstance(data, (MDHistoData, PointListData)):
             artifact = CompressedBinning.from_data(data, max_bytes=max_bytes)
             if artifact is not None:
@@ -361,7 +470,15 @@ class RebinCache(OrderedDict):
         self._compressed_bytes -= artifact.nbytes
         self._compressed_ticks.pop(key, None)
         if destination is None:
-            self._labels.pop(key, None)
+            backing = self._project_backings.get(key)
+            if (
+                backing is not None
+                and backing.signature == signature
+                and backing.available()
+            ):
+                self._disk[key] = backing
+            else:
+                self._labels.pop(key, None)
         else:
             self._disk[key] = _DiskBinning(
                 signature=signature,
@@ -384,4 +501,5 @@ class RebinCache(OrderedDict):
         self._resident_ticks.clear()
         self._compressed_ticks.clear()
         self.clear_disk_cache()
+        self._project_backings.clear()
         self._labels.clear()

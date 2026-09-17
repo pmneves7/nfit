@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from os import PathLike
 from pathlib import Path
@@ -9,9 +10,11 @@ from typing import Any, BinaryIO
 
 import numpy as np
 
+from ..array_archive import write_array_archive
 from ..dataset import PointListData
 from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
-from ..project_archive import read_project_artifact
+from ..performance import operation_worker_count
+from ..project_archive import open_project_artifact
 from .core import DatasetOutput, TableOutput
 
 
@@ -21,14 +24,18 @@ def write_dataset_artifact(
     target = Path(destination)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = _payload(data)
-    with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".npz", delete=False) as stream:
-        temporary = Path(stream.name)
-        writer = np.savez_compressed if compressed else np.savez
-        writer(stream, **payload)
+    temporary = None
     try:
+        with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".npz", delete=False) as stream:
+            temporary = Path(stream.name)
+            if compressed:
+                write_array_archive(stream, payload)
+            else:
+                np.savez(stream, **payload)
         temporary.replace(target)
     except Exception:
-        temporary.unlink(missing_ok=True)
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
         raise
 
 
@@ -36,7 +43,7 @@ def dataset_artifact_bytes(data: MDHistoData | PointListData) -> bytes:
     """Serialize an analysis dataset for storage inside a project archive."""
 
     stream = BytesIO()
-    np.savez_compressed(stream, **_payload(data))
+    write_array_archive(stream, _payload(data))
     return stream.getvalue()
 
 
@@ -46,7 +53,8 @@ def read_project_dataset_artifact(
 ) -> MDHistoData | PointListData:
     """Read an analysis dataset stored inside an nfit project."""
 
-    return read_dataset_artifact(read_project_artifact(project_path, artifact_path))
+    with open_project_artifact(project_path, artifact_path) as stream:
+        return read_dataset_artifact(stream)
 
 
 def read_dataset_artifact(
@@ -55,7 +63,60 @@ def read_dataset_artifact(
     stream: str | PathLike[str] | BinaryIO
     stream = BytesIO(source) if isinstance(source, bytes) else source
     with np.load(stream, allow_pickle=False) as archive:
-        return dataset_artifact_from_payload(archive)
+        return dataset_artifact_from_payload(_OwnedArchiveArrays(archive))
+
+
+class _OwnedArchiveArrays:
+    """Transfer newly decoded arrays to immutable containers without copying.
+
+    Only this private reader owns its inputs. The public mapping-based decoder
+    must continue isolating writable arrays supplied by a caller.
+    """
+
+    def __init__(self, archive: Any) -> None:
+        self.archive = archive
+        self.files = set(archive.files)
+        self.loaded: dict[str, np.ndarray] = {}
+        kind = str(np.asarray(archive["container"]).item())
+        if kind == "mdhisto":
+            names = ["signal", "errors", "mask", "num_events"]
+            channels = (
+                json.loads(str(np.asarray(archive["auxiliary_names"]).item()))
+                if "auxiliary_names" in self.files else []
+            )
+            names += [
+                f"aux_{index}_{field}"
+                for index in range(len(channels))
+                for field in ("values", "errors")
+                if f"aux_{index}_{field}" in self.files
+            ]
+        else:
+            names = []
+        sizes = {name: archive.zip.getinfo(f"{name}.npy").file_size for name in names}
+        largest = max(sizes.values(), default=0)
+        workers = min(len(names), operation_worker_count(
+            sum(sizes.values()),
+            bytes_per_worker=max(16 * 1024**2, 2 * largest),
+            min_parallel_bytes=32 * 1024**2,
+        ))
+        if workers > 1:
+            # ZipFile synchronizes seeks on its underlying file while each
+            # member owns its decompressor. Inflation can run concurrently.
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                self.loaded.update(zip(names, executor.map(self._read, names), strict=True))
+
+    def _read(self, name: str) -> np.ndarray:
+        array = np.asarray(self.archive[name])
+        array.setflags(write=False)
+        return array
+
+    def __contains__(self, name: str) -> bool:
+        return name in self.files
+
+    def __getitem__(self, name: str) -> np.ndarray:
+        if name in self.loaded:
+            return self.loaded.pop(name)
+        return self._read(name)
 
 
 def dataset_artifact_from_payload(archive: Any) -> MDHistoData | PointListData:

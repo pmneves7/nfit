@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import tempfile
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -19,7 +20,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from .analysis.artifacts import dataset_artifact_bytes
+from .analysis.artifacts import write_dataset_artifact
 from .backgrounds import subtract_background
 from .cache_utils import (
     dataset_content_signature,
@@ -953,39 +954,36 @@ def composite_dataset_data(
     include_source_masks: bool = True,
     apply_spectral_channels: bool = True,
 ) -> MDHistoData | PointListData | PointData4D:
-    """Build a composite using its saved rebin configuration and worker ceiling.
+    """Build a composite using its saved recipe and central CPU allocation.
 
     ``node`` selects a nested collection. Saved plots can pass a coordinate
     recipe snapshot through ``metadata_dimensions_override``; an empty list
     explicitly requests no metadata dimensions. ``apply_spectral_channels=False``
     returns the underlying composite before its saved INS conversion.
     """
-    from ._parallel import thread_budget
-
     if node is not None:
         group = _composite_scope(group, node)
     config = config_override if config_override is not None else data_group_composite_config(group)
-    with thread_budget(config.get("workers")):
-        composite_builder = _backend_value(
-            "_composite_dataset_data", _composite_dataset_data
-        )
-        result = composite_builder(
-            group,
-            progress_callback=progress_callback,
-            config_override=config_override,
-            include_source_masks=include_source_masks,
-            metadata_dimensions_override=metadata_dimensions_override,
-        )
-        if not apply_spectral_channels:
-            return result
-        from .composite_spectral import apply_composite_spectral_channels
+    composite_builder = _backend_value(
+        "_composite_dataset_data", _composite_dataset_data
+    )
+    result = composite_builder(
+        group,
+        progress_callback=progress_callback,
+        config_override=config_override,
+        include_source_masks=include_source_masks,
+        metadata_dimensions_override=metadata_dimensions_override,
+    )
+    if not apply_spectral_channels:
+        return result
+    from .composite_spectral import apply_composite_spectral_channels
 
-        return apply_composite_spectral_channels(
-            result, config, _composite_candidates(group, include_backgrounds=bool(
-                group.metadata.get("metadata_dimensions", [])
-                if metadata_dimensions_override is None else metadata_dimensions_override
-            )),
-        )
+    return apply_composite_spectral_channels(
+        result, config, _composite_candidates(group, include_backgrounds=bool(
+            group.metadata.get("metadata_dimensions", [])
+            if metadata_dimensions_override is None else metadata_dimensions_override
+        )),
+    )
 
 
 def _composite_progress_callback(
@@ -1742,10 +1740,20 @@ def _peek_cached_composite_dataset_data(
     *,
     config_override: dict[str, Any] | None = None,
     binning_id: str | None = None,
+    resident_only: bool = False,
 ) -> MDHistoData | PointListData | PointData4D | None:
-    """Return a current cached composite without starting any computation."""
+    """Return a current cached composite without starting any computation.
 
-    cached = _COMPOSITE_DATA_CACHE.get(_composite_cache_key(group, binning_id))
+    ``resident_only`` avoids restoring compressed or project-backed arrays for
+    display-only memory and bin summaries.
+    """
+
+    key = _composite_cache_key(group, binning_id)
+    cached = (
+        _COMPOSITE_DATA_CACHE.peek_resident(key)
+        if resident_only and hasattr(_COMPOSITE_DATA_CACHE, "peek_resident")
+        else _COMPOSITE_DATA_CACHE.get(key)
+    )
     if cached is None or cached[0] != _composite_cache_signature(
         group, config_override=config_override, binning_id=binning_id
     ):
@@ -1853,7 +1861,14 @@ def materialize_composite_dataset(
             "import_status": "loaded",
         },
     )
-    artifact_path = replace_dataset_artifact(project_path, entry.id, dataset_artifact_bytes(data))
+    with tempfile.TemporaryDirectory(prefix="nfit-materialized-dataset-") as temporary:
+        temporary_artifact = Path(temporary) / "data.npz"
+        write_dataset_artifact(data, temporary_artifact)
+        artifact_path = replace_dataset_artifact(
+            project_path,
+            entry.id,
+            temporary_artifact,
+        )
     entry.metadata.update(
         {
             "source_file": artifact_path,

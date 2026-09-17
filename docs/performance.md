@@ -31,26 +31,34 @@ target machine.
 
 ## Performance preferences and benchmarks
 
-**File → Preferences → Performance** provides a default rebin batch target in
-MiB (1 MiB = 1,048,576 bytes) and a worker ceiling. **Auto** uses 192 MiB and
-the nfit CPU allocation, respectively. Choose **Save defaults** to persist
-changes. These values are copied into newly initialized dataset/composite rebin
-configurations; existing values, including independent saved-plot recipes, are
-not overwritten. These are rebin defaults, not controls for fitting or
-electronic-response parallelism. The CPU setting is a ceiling, not a promise
-that all workers will be used.
+**File → Preferences → Performance** provides one **CPU limit** and one **RAM
+limit** in MiB (1 MiB = 1,048,576 bytes). The CPU limit bounds nfit's shared
+worker allocation, including large-array archive compression and loading.
+The RAM limit bounds managed numerical caches and temporary working buffers;
+it is not an operating-system limit on the application's total resident memory.
+Small operations run serially, and large operations may use fewer workers to
+stay within the memory allowance. Batch sizes and archive thresholds are
+chosen internally. Existing scientific rebin and saved-plot recipes remain
+unchanged.
 
 Preferences are machine-local in `~/.config/nfit/performance.json`; set
 `NFIT_PERFORMANCE_FILE` to use another file. The headless equivalents are
-`load_performance_settings()` and `save_performance_settings(max_batch_mb=64,
-workers=4)` in `nfit.performance`. Zero selects Auto. Explicit saved rebin
-values remain part of project and plot configurations and workflow scripts.
+`load_resource_limits()` and `save_resource_limits(cpu_limit=4,
+ram_limit_mb=8192)` in `nfit.performance`. Zero selects Auto: CPU allocation
+follows the process configuration, and managed RAM normally uses 25% of
+currently available memory. Older percentage-based RAM preferences remain
+effective until changed. The legacy `load_performance_settings()` and
+`save_performance_settings()` APIs remain available for scripts. Legacy per-rebin batch and worker fields remain readable in projects and
+scripts, but project workflows choose their resources from the central limits.
+Direct numerical APIs still accept explicit worker ceilings. Saving Auto in
+Preferences resets any migrated RAM percentage to the normal automatic policy.
 
 Use **Calibrate this machine…** for representative 3-D hard-binning and 4-D
 fractional-binning workloads. Use **Benchmark this rebin…** in dataset or
 composite rebin controls for the full selected configuration, including axes,
 symmetry, masks, and output-grid settings. Candidate ranges scale to the CPU
-allocation and currently available memory detected for the process. Small
+allocation and currently available memory detected for the process. Trials
+respect the central limits and report the effective CPU and batch ceilings. Small
 machines retain low worker and 32, 192, and 512 MiB batch candidates. Larger
 machines add intermediate and full CPU-allocation trials and batch targets up
 to one eighth of available RAM, capped at 64 GiB. Linux cgroup memory limits
@@ -67,10 +75,10 @@ they run the full rebin rather than a sample. **Cancel** kills the active trial;
 no live dataset, viewer cache, or preference is changed by running a benchmark.
 
 The recommendation prefers fewer workers, then smaller batches, among timings
-within 5% of the fastest. **Apply recommendation** is required: calibration
-updates machine defaults, whereas a real-data benchmark updates only the
-selected rebin configuration. As with other edits, Auto rebin may then refresh
-that configuration's view.
+within 5% of the fastest. Machine calibration offers **Apply CPU
+recommendation**, which updates the central CPU ceiling while retaining the
+RAM limit. Batch sizes remain automatic. A real-data benchmark is informational
+and does not change a binning configuration.
 
 Both dialogs provide **Save benchmark script…**. Real-data exports write an
 adjacent `.nfit` project snapshot using the normal project-save rules; source
@@ -121,8 +129,8 @@ payloads and compressed bytes, with small Python-object overhead excluded.
 On Linux and remote desktops, the memory-choice dialog is attached to the
 active rebin window so it remains visible and interactive above progress.
 The prepared-table cache defaults to 128 MiB and the model-overlay cache to
-256 MiB. Viewer and composite bin results use the one combined **Total rebin
-memory ceiling** configured in **Preferences → Performance**; there are no
+256 MiB. Viewer and composite bin results use the combined **RAM limit**
+configured in **Preferences → Performance**; there are no
 per-result, per-bin, or per-stage memory quotas. The same ceiling controls
 temporary rebin batches and parallel worker accumulators. This capacity is not allocated in
 advance: small projects retain only the arrays they produce. The adaptive
@@ -138,11 +146,10 @@ detector geometry and evaluates all requested symmetry operations in the
 compiled trajectory kernel. Each trajectory is clipped to the requested HKLE
 box before internal bin boundaries are examined. These optimizations change
 neither the event histogram nor the integrated normalization denominator; the
-Python reference path is retained for numerical-equivalence testing. The saved
-per-rebin **Workers** value is a ceiling: nfit uses it on a workstation or
-cluster node but automatically lowers the normalization worker count when the
-thread-private output accumulators would exceed one quarter of currently
-available memory. Large-memory nodes can therefore use multiple CPUs for large
+Python reference path is retained for numerical-equivalence testing. nfit uses
+the central CPU ceiling and lowers the normalization worker count when the
+thread-private output accumulators would exceed the managed RAM allowance.
+Large-memory nodes can therefore use multiple CPUs for large
 four-dimensional grids, while memory-constrained machines still fall back to a
 smaller worker count. **Benchmark this rebin…** measures the
 complete saved configuration on the current machine; its exported script can
@@ -150,11 +157,11 @@ test a custom candidate list when a cluster node warrants a broader sweep. The
 default benchmark sweep includes the machine's full detected CPU allowance in
 addition to conservative smaller ceilings.
 
-**Preferences → Performance → Total rebin memory ceiling** controls that share
-of currently available memory. The automatic value is 25%, and an explicit
-value may range up to 80%. The same ceiling limits thread-private rebin
-accumulators and clamps each saved per-rebin batch target, so increasing a
-batch target cannot silently exceed the machine policy. The setting applies to
+**Preferences → Performance → RAM limit** controls the managed memory allowance.
+The automatic value is normally 25% of currently available memory; a fixed
+limit is also bounded by available memory. The same ceiling limits thread-private rebin
+accumulators and determines automatic batch sizes. There are no per-binning
+batch or CPU controls. The setting applies to
 existing projects because it describes the current machine rather than project
 state. The separate MDEvent output-grid preflight continues to warn when the
 estimated complete reduction exceeds 50% of currently available memory. Other
@@ -165,15 +172,15 @@ before starting pending large rebins. A memory estimate is advisory: source
 data, other caches, and the operating system can change the actual peak.
 The rebin-settings panel separately displays the estimated persistent result
 payload for its configured grid. An exact value is shown when the result is
-already cached. It reports the actual compressed artifact size when that
+already resident in memory; inspecting the panel does not decode a saved binning. It reports the actual compressed artifact size when that
 binning is embedded in the saved `.nfit` project, and a dash otherwise. A
 future compressed size is not estimated because sparse masks, repeated values,
 and numerical content change the compression ratio.
 
 Before a GUI operation starts one or more pending rebins, nfit also adds their
 estimated result payloads to the memory already occupied by the shared rebin
-cache. It warns when that projected total reaches 80% of the **Total rebin
-memory ceiling**. This preflight applies to explicit single and batch rebins,
+cache. It warns when that projected total reaches 80% of the **RAM limit**.
+This preflight applies to explicit single and batch rebins,
 dataset and composite materialization, data and project saves, fitting and
 posterior sampling, and opening the data viewer. The dialog defaults to
 **Cancel**, so the operation can stop before numerical work begins; **Continue
@@ -190,14 +197,43 @@ one CPU merely because the file cache has consumed most completely free pages.
 
 Process caches normally disappear when nfit exits. For projects whose raw data
 are expensive to load or rebin, enable **File → Cache binnings** before saving.
-The project then embeds current dataset and composite binnings and restores them
-on the next open. Saving does not recompute current entries; it updates only
-missing or signature-stale binnings. This project-specific option defaults off
+The project then embeds current dataset and composite binnings. On the next
+open, current cache entries are registered from their metadata and decoded only
+when requested. Unchanged saved binnings are copied as compressed archive
+members on Save and Save As; they are neither decoded nor recompressed.
+Missing or signature-stale binnings are recomputed. This project-specific option defaults off
 so ordinary project files remain small. Embedded caches carry a numerical format
 version and a signature of the source, rebin settings, masks, and backgrounds.
 nfit reuses compatible cache formats and discards a cache when its saved
 signature no longer matches the live recipe. Incompatible older formats are
 recomputed from their source data.
+
+Large changed arrays use bounded parallel DEFLATE compression, and large NPZ
+members can be decoded concurrently when the RAM allowance permits. Small
+arrays keep the ordinary NumPy writer. Both paths produce standard, lossless
+NPZ artifacts readable by existing nfit versions and NumPy. Opening a nested
+artifact reads directly from its project member instead of first allocating a
+copy of the entire compressed artifact. Decoded histogram arrays transfer to
+the immutable container without a second full-array copy.
+
+Saving still writes and atomically replaces the complete project archive. A
+large unchanged project therefore still incurs sequential file I/O, but no
+array compression work. Loading an individual requested binning still decodes
+its full arrays; the archive is not a chunk-addressable HDF5 or Zarr store.
+These distinctions matter when estimating performance on a shared filesystem.
+
+Histogram slice calculations select the requested region before sanitizing
+coverage or allocating absent masks. Ordinary slice appearance edits reuse
+the displayed slice; changes to scientific selections recompute it. These
+optimizations retain the same integration, errors, masks, and coverage rules.
+
+For an isolated comparison of artifact write/read times and numerical slice
+extraction, run `python benchmarks/benchmark_large_arrays.py --workers 1,4`
+from the source checkout. `--shape 96,80,64,24` selects the four-dimensional
+test grid. The script uses temporary files, verifies array round trips, and
+leaves project files and preferences unchanged. The CPU preference still caps
+the requested worker counts; these measurements exclude GUI rendering and
+are not estimates of shared-filesystem or remote-desktop latency.
 MDEvent powder reductions integrate detector-trajectory normalization in
 compiled parallel batches. Progress and cancellation are checked between
 batches, including while a save is refreshing several cached powder binnings.
@@ -437,8 +473,10 @@ does not submit jobs or prescribe a shared-filesystem policy.
 ## Threads
 
 nfit respects the CPUs available through affinity, cgroups, or a SLURM
-allocation. Override the detected worker count with `NFIT_NUM_THREADS` or
-`nfit.set_num_threads(n)`.
+allocation. **Preferences → Performance → CPU limit** provides the common
+ceiling. Scripts can request fewer workers with `NFIT_NUM_THREADS`,
+`nfit.set_num_threads(n)`, or a scoped thread budget; these requests cannot
+exceed the machine allocation or the preference ceiling.
 
 Batch-level eigendecomposition pins BLAS/LAPACK to one thread to avoid nested
 oversubscription. On Apple silicon, Accelerate's shared AMX unit can make a

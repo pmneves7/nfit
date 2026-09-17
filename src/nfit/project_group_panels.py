@@ -510,20 +510,6 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     mean_combo.currentIndexChanged.connect(
         lambda _index, combo=mean_combo: self._set_group_composite_mean_weighting(group, str(combo.currentData() or "uniform"))
     )
-    batch_label = QtWidgets.QLabel("Batch target")
-    batch_spin = QtWidgets.QSpinBox()
-    batch_spin.setObjectName("group_composite_max_batch_mb")
-    batch_spin.setRange(1, 1_048_576)
-    batch_spin.setSuffix(" MiB")
-    batch_spin.setValue(_rebin_max_batch_mb(config))
-    batch_tooltip = (
-        "Approximate per-batch working-memory target in MiB. Smaller batches usually use less temporary memory "
-        "but require more computational time. This is not a cap on total rebinner memory use. The optimum depends "
-        "on dataset size, output grid size, dimensionality, and available memory."
-    )
-    batch_label.setToolTip(batch_tooltip)
-    batch_spin.setToolTip(batch_tooltip)
-    batch_spin.valueChanged.connect(lambda value: self._set_group_composite_max_batch_mb(group, int(value)))
     symmetry = symmetry_spec_from_config(config.get("symmetry"))
     symmetry_check = QtWidgets.QCheckBox("Apply symmetry")
     symmetry_check.setObjectName("group_composite_symmetry_enabled")
@@ -594,8 +580,6 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     quality_row.addWidget(samples_label)
     quality_row.addWidget(samples_edit)
     quality_row.addSpacing(12)
-    quality_row.addWidget(batch_label)
-    quality_row.addWidget(batch_spin)
     self._add_rebin_performance_controls(quality_row, group=group, composite=True)
     quality_row.addStretch(1)
     controls_layout.addLayout(quality_row, footer_row + 1, 0, 1, len(headers))
@@ -611,6 +595,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         group,
         config_override=None if selected_binning["fit"] else config,
         binning_id=None if selected_binning["fit"] else selected_binning["id"],
+        resident_only=True,
     )
     memory_config = {
         **config,

@@ -7,7 +7,12 @@ import threading
 from PySide6 import QtCore, QtWidgets
 
 from .file_dialogs import get_save_file_name
-from .performance import load_performance_settings, save_performance_settings
+from .performance import (
+    load_performance_settings,
+    load_resource_limits,
+    save_performance_settings,
+    save_resource_limits,
+)
 from .performance_benchmark import (
     BenchmarkCancelled,
     benchmark_candidates,
@@ -82,8 +87,9 @@ class BenchmarkDialog(QtWidgets.QDialog):
         self.start.setToolTip("Run isolated trials without modifying data or settings.")
         self.start.clicked.connect(self._start)
         row.addWidget(self.start)
-        self.apply_button = QtWidgets.QPushButton("Apply recommendation")
-        self.apply_button.setToolTip("Apply only the recommended batch target and worker ceiling to this configuration or machine defaults.")
+        self.apply_button = QtWidgets.QPushButton("Apply CPU recommendation")
+        self.apply_button.setToolTip("Apply the measured CPU ceiling to Preferences. Batch sizes remain automatic.")
+        self.apply_button.setVisible(self.apply is not None)
         self.apply_button.setEnabled(False)
         self.apply_button.clicked.connect(self._apply)
         row.addWidget(self.apply_button)
@@ -127,7 +133,7 @@ class BenchmarkDialog(QtWidgets.QDialog):
             recommendation = result["recommendation"]
             self.status.setText(f"Recommended: {int(recommendation['max_batch_mb']):,} MiB, "
                                 f"up to {int(recommendation['workers']):,} workers. "
-                                "Prefers fewer resources within 5% of the fastest result. Not yet applied.")
+                                "Prefers fewer resources within 5% of the fastest result. Settings are unchanged.")
         else:
             self.status.setText(result)
 
@@ -135,7 +141,7 @@ class BenchmarkDialog(QtWidgets.QDialog):
         self.start.setEnabled(True)
         self.export.setEnabled(True)
         self.close_button.setText("Close")
-        self.apply_button.setEnabled(self.result is not None)
+        self.apply_button.setEnabled(self.result is not None and self.apply is not None)
         if self.worker.cancel.is_set():
             super().reject()
 
@@ -175,39 +181,42 @@ class PerformancePage(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         form = QtWidgets.QFormLayout(self)
-        description = QtWidgets.QLabel("Defaults for new rebin configurations. Existing dataset and saved-plot settings are preserved.")
+        description = QtWidgets.QLabel(
+            "Application-wide limits for nfit's scientific work. Existing project "
+            "settings are preserved, and nfit automatically chooses operation "
+            "batch sizes and smaller-array pathways."
+        )
         description.setWordWrap(True)
         form.addRow(description)
-        settings = load_performance_settings()
-        self.batch = QtWidgets.QSpinBox()
-        self.batch.setObjectName("preferences_batch_mb")
-        self.batch.setRange(0, 1_048_576)
-        self.batch.setSpecialValueText("Auto (192 MiB)")
-        self.batch.setSuffix(" MiB")
-        self.batch.setValue(settings["max_batch_mb"])
-        self.batch.setToolTip("Temporary rebin batch-memory target, not a total RAM limit. Zero uses 192 MiB.")
-        form.addRow("Default batch target", self.batch)
-        self.workers = QtWidgets.QSpinBox()
-        self.workers.setObjectName("preferences_workers")
-        self.workers.setRange(0, 4096)
-        self.workers.setSpecialValueText("Auto")
-        self.workers.setValue(settings["workers"])
-        self.workers.setToolTip("Maximum rebin workers. Auto uses the nfit CPU allocation; each rebin may use fewer workers.")
-        form.addRow("Default worker ceiling", self.workers)
-        self.transient_memory = QtWidgets.QSpinBox()
-        self.transient_memory.setObjectName("preferences_transient_memory_percent")
-        self.transient_memory.setRange(0, 80)
-        self.transient_memory.setSpecialValueText("Auto (25%)")
-        self.transient_memory.setSuffix("% available")
-        self.transient_memory.setValue(settings["transient_memory_percent"])
-        self.transient_memory.setToolTip(
-            "Maximum share of currently available RAM for all cached bin results "
-            "combined and for rebin working memory. Higher values retain more "
-            "results and can enable more CPUs, but leave less memory for other work."
+        settings = load_resource_limits()
+        self.cpu_limit = QtWidgets.QSpinBox()
+        self.cpu_limit.setObjectName("preferences_cpu_limit")
+        self.cpu_limit.setRange(0, 4096)
+        self.cpu_limit.setSpecialValueText("Auto")
+        self.cpu_limit.setValue(settings["cpu_limit"])
+        self.cpu_limit.setToolTip(
+            "Maximum CPU workers used by nfit. Auto respects the operating "
+            "system allocation; individual operations may use fewer workers."
         )
-        form.addRow("Total rebin memory ceiling", self.transient_memory)
+        form.addRow("CPU limit", self.cpu_limit)
+        self.ram_limit_mb = QtWidgets.QSpinBox()
+        self.ram_limit_mb.setObjectName("preferences_ram_limit_mb")
+        self.ram_limit_mb.setRange(0, 1_048_576)
+        self.ram_limit_mb.setSpecialValueText("Auto")
+        self.ram_limit_mb.setSuffix(" MiB")
+        self.ram_limit_mb.setValue(settings["ram_limit_mb"])
+        self.ram_limit_mb.setToolTip(
+            "Maximum RAM nfit manages for shared scientific caches and temporary "
+            "numerical work. This does not limit all memory used by the process. "
+            "Auto uses a conservative share of available RAM; it also retains a "
+            "legacy percentage-based preference until this value is saved."
+        )
+        form.addRow("RAM limit", self.ram_limit_mb)
         save = QtWidgets.QPushButton("Save defaults")
-        save.setToolTip("Persist these defaults for new rebin configurations; no existing settings are overwritten.")
+        save.setToolTip(
+            "Persist the application-wide CPU and RAM limits. Existing saved "
+            "recipes are preserved, but their execution is bounded by these limits."
+        )
         save.clicked.connect(self._save)
         form.addRow(save)
         calibrate = QtWidgets.QPushButton("Calibrate this machine…")
@@ -220,23 +229,28 @@ class PerformancePage(QtWidgets.QWidget):
 
     def _save(self):
         try:
-            save_performance_settings(
-                max_batch_mb=self.batch.value(),
-                workers=self.workers.value(),
-                transient_memory_percent=self.transient_memory.value(),
+            save_resource_limits(
+                cpu_limit=self.cpu_limit.value(),
+                ram_limit_mb=self.ram_limit_mb.value(),
             )
         except OSError as exc:
             QtWidgets.QMessageBox.warning(self, "Save preferences", str(exc))
             return
-        self.status.setText("Defaults saved. Existing rebin configurations are unchanged.")
+        self.status.setText("Resource limits saved. Existing rebin configurations are unchanged.")
 
     def _calibrate(self):
         def apply(values):
+            # Calibration changes only the central CPU ceiling. RAM remains
+            # the user's choice, and numerical batch targets stay automatic.
+            legacy = load_performance_settings()
+            limits = load_resource_limits()
             save_performance_settings(
-                **values,
-                transient_memory_percent=self.transient_memory.value(),
+                max_batch_mb=legacy["max_batch_mb"],
+                cpu_limit=values["workers"],
+                ram_limit_mb=limits["ram_limit_mb"],
+                transient_memory_percent=legacy["transient_memory_percent"],
+                workers=values["workers"],
             )
-            self.batch.setValue(values["max_batch_mb"])
-            self.workers.setValue(values["workers"])
-            self.status.setText("Calibrated defaults saved. Existing configurations are unchanged.")
+            self.cpu_limit.setValue(values["workers"])
+            self.status.setText("Calibration saved. Existing configurations are unchanged.")
         BenchmarkDialog(self, apply=apply).exec()

@@ -42,3 +42,25 @@ def test_step_grid_estimate_uses_saved_spacing():
                         "step_size": 0.1, "num_bins": 1},
                        {"mode": "bins", "num_bins": 20}]}
     assert estimated_rebin_shape(config) == (101, 20)
+
+
+def test_gui_cache_preflight_uses_changed_central_ram_limit(monkeypatch):
+    from types import SimpleNamespace
+
+    from nfit import project_cache_gui, project_data, project_gui
+
+    limit = [10_000]
+    prompts = []
+    monkeypatch.setattr(project_data, "scientific_cache_budget_bytes", lambda: limit[0])
+    monkeypatch.setattr(project_gui.SHARED_REBIN_CACHE_BUDGET, "total_bytes", lambda: 0)
+    monkeypatch.setattr(
+        project_cache_gui, "confirm_rebin_cache_preflight",
+        lambda _parent, **kwargs: prompts.append(kwargs) or False,
+    )
+    explorer = SimpleNamespace(window=None, _compressed_cache_prompt=None)
+    confirm = project_gui.NfitProjectExplorer._confirm_rebin_cache_memory
+    assert confirm(explorer, [900], operation="Preparing viewer")
+    assert prompts == []
+    limit[0] = 1000
+    assert not confirm(explorer, [900], operation="Preparing viewer")
+    assert prompts[0]["limit_bytes"] == 1000

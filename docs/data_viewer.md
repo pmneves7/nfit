@@ -19,6 +19,10 @@ measured coordinate as usual.
 The data viewer displays point lists and gridded datasets without changing
 their stored values. It supports channel selection, masks, cuts, maps,
 waterfalls, model comparisons, and volumetric rendering.
+Histogram slices process coverage only inside the selected region. Appearance
+changes in the ordinary slice view reuse the displayed numerical slice;
+changing axes, selections, masks, or coverage settings recomputes it. No
+performance settings are needed in the viewer.
 
 Every **View in data viewer** action opens a new window. When opened from a
 dataset collection, the initial selection is that collection's

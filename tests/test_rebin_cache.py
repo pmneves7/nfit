@@ -1,5 +1,7 @@
 """The compressed tier remains bounded and never writes runtime spill files."""
 
+import zipfile
+
 import numpy as np
 
 from nfit.analysis.artifacts import read_dataset_artifact
@@ -83,6 +85,28 @@ def test_evicted_binning_uses_and_cleans_session_disk_cache(tmp_path):
 
     cache.clear()
     assert not destination.exists()
+
+
+def test_unreadable_lazy_project_binning_falls_back_to_cache_miss(tmp_path):
+    member = "assets/binnings/cache/data.npz"
+    for filename, include_member in (("missing.nfit", False), ("bad.nfit", True)):
+        project = tmp_path / filename
+        with zipfile.ZipFile(project, "w") as archive:
+            archive.writestr("project.json", b"{}")
+            if include_member:
+                archive.writestr(member, b"not an npz artifact")
+        cache = RebinCache()
+        cache.set_project_backing(
+            "key",
+            signature="signature",
+            project_path=project,
+            member=member,
+            lazy=True,
+        )
+
+        sentinel = object()
+        assert cache.get("key", sentinel) is sentinel
+        assert "key" not in cache
 
 
 def test_viewer_and_composite_stages_share_one_global_budget():

@@ -2567,7 +2567,7 @@ class MDHistoSliceViewer:
         events = np.asarray(self.data.num_events[tuple(index)], dtype=float)
         mask = np.asarray(self.data.mask[tuple(index)], dtype=bool)
         coverage = np.asarray(
-            mdhisto_coverage_fraction(self.data)[tuple(index)],
+            mdhisto_coverage_fraction(self.data, tuple(index)),
             dtype=float,
         )
         if self.masked:
@@ -2753,9 +2753,15 @@ class MDHistoSliceViewer:
         return np.moveaxis(out, (y_pos, x_pos), (0, 1))
 
     def _slice_metadata_mask(self, name: str, selections: dict[int, tuple[int, int] | int]) -> np.ndarray:
-        mask = np.asarray(self.data.metadata.get(name, np.zeros(self.data.shape, dtype=bool)), dtype=bool)
-        if mask.shape != self.data.shape:
-            mask = np.zeros(self.data.shape, dtype=bool)
+        stored = self.data.metadata.get(name)
+        stored_shape = getattr(stored, "shape", None)
+        if stored is not None and stored_shape is None:
+            stored_shape = np.shape(stored)
+        if stored is None or stored_shape != self.data.shape:
+            return np.zeros(
+                (self.data.shape[self.y_dim], self.data.shape[self.x_dim]),
+                dtype=bool,
+            )
         index = []
         reduce_axes = []
         output_axis = 0
@@ -2772,13 +2778,25 @@ class MDHistoSliceViewer:
                     output_axis += 1
                 else:
                     index.append(selection)
-        out = mask[tuple(index)]
+        mask = stored if isinstance(stored, np.ndarray) else np.asarray(stored)
+        out = np.asarray(mask[tuple(index)], dtype=bool)
         for axis in sorted(reduce_axes, reverse=True):
             out = np.any(out, axis=axis)
         remaining = [dim for dim in range(self.data.signal.ndim) if dim in (self.x_dim, self.y_dim)]
         y_pos = remaining.index(self.y_dim)
         x_pos = remaining.index(self.x_dim)
         return np.moveaxis(out, (y_pos, x_pos), (0, 1))
+
+    def slice_metadata_masks(self) -> dict[str, np.ndarray]:
+        """Return the current file and nfit masks without reducing other channels."""
+
+        if getattr(self, "is_point_list", False):
+            return {}
+        selections = self._normalized_selections()
+        return {
+            name: self._slice_metadata_mask(name, selections)
+            for name in ("file_mask", "nfit_mask")
+        }
 
     def _blank_empty_bins(
         self,

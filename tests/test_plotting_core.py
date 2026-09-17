@@ -11,7 +11,12 @@ import numpy as np
 import pytest
 
 from nfit import PointData4D
-from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
+from nfit.mdhisto import (
+    MDHistoAxis,
+    MDHistoChannel,
+    MDHistoData,
+    mdhisto_coverage_fraction,
+)
 from nfit.plotting import (
     MDHistoSliceViewer,
     default_tiled_slice_step,
@@ -401,6 +406,111 @@ def test_derived_coverage_channels_have_labels_without_auxiliary_storage():
     assert coverage_mask._channel_label() == "Coverage mask"
     assert coverage.slice_arrays()["coverage_fraction"].shape == data.shape[2:]
     assert coverage_mask.slice_arrays()["coverage_mask"].shape == data.shape[2:]
+
+
+@pytest.mark.parametrize(
+    "coverage_source",
+    ("auxiliary", "metadata", "denominator", "measured", "events"),
+)
+def test_mdhisto_coverage_selection_matches_full_volume(coverage_source):
+    data = _tiny_mdhisto_data()
+    coverage = np.linspace(-0.2, 1.2, data.signal.size).reshape(data.shape)
+    metadata = dict(data.metadata)
+    channels = dict(data.auxiliary_channels)
+    if coverage_source == "auxiliary":
+        channels["coverage_fraction"] = MDHistoChannel(coverage)
+    elif coverage_source == "metadata":
+        metadata["coverage_fraction"] = coverage
+    elif coverage_source == "denominator":
+        metadata["zero_event_bins_are_measured"] = True
+        metadata["normalization_denominator"] = coverage
+    elif coverage_source == "measured":
+        metadata["zero_event_bins_are_measured"] = True
+    else:
+        events = data.num_events.copy()
+        events[1, 2, 1, 2] = 0.0
+        data = data.with_updates(num_events=events)
+    data = data.with_updates(metadata=metadata, auxiliary_channels=channels)
+    selected = (1, 2, slice(None), slice(1, 4))
+
+    np.testing.assert_allclose(
+        mdhisto_coverage_fraction(data, selected),
+        mdhisto_coverage_fraction(data)[selected],
+    )
+
+
+def test_mdhisto_coverage_fallback_allocates_only_selected_shape(monkeypatch):
+    data = _tiny_mdhisto_data().with_updates(
+        metadata={"zero_event_bins_are_measured": True}
+    )
+    allocated_shapes = []
+    original_ones = np.ones
+
+    def tracked_ones(shape, *args, **kwargs):
+        allocated_shapes.append(tuple(shape))
+        return original_ones(shape, *args, **kwargs)
+
+    monkeypatch.setattr("nfit.mdhisto.np.ones", tracked_ones)
+
+    coverage = mdhisto_coverage_fraction(
+        data,
+        (1, 2, slice(None), slice(1, 4)),
+    )
+
+    assert coverage.shape == (data.shape[2], 3)
+    assert allocated_shapes == [coverage.shape]
+
+
+def test_slice_viewer_missing_metadata_masks_allocate_only_display_shape(monkeypatch):
+    data = _tiny_mdhisto_data().with_updates(metadata={})
+    viewer = MDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    allocated_shapes = []
+    original_zeros = np.zeros
+
+    def tracked_zeros(shape, *args, **kwargs):
+        allocated_shapes.append(tuple(shape) if np.iterable(shape) else shape)
+        return original_zeros(shape, *args, **kwargs)
+
+    monkeypatch.setattr("nfit.plotting_core.np.zeros", tracked_zeros)
+
+    view = viewer.slice_arrays()
+
+    assert view["file_mask"].shape == data.shape[2:]
+    assert view["nfit_mask"].shape == data.shape[2:]
+    assert data.shape not in allocated_shapes
+
+
+def test_slice_viewer_accepts_array_like_metadata_masks():
+    data = _tiny_mdhisto_data()
+    nfit_mask = np.zeros(data.shape, dtype=bool)
+    nfit_mask[1, 1, 2, 3] = True
+    data.metadata["nfit_mask"] = nfit_mask.tolist()
+    viewer = MDHistoSliceViewer(data, x_dim=3, y_dim=2)
+
+    view = viewer.slice_arrays()
+
+    assert view["nfit_mask"][2, 3]
+
+
+def test_slice_viewer_casts_integer_metadata_mask_after_selection(monkeypatch):
+    data = _tiny_mdhisto_data()
+    nfit_mask = np.zeros(data.shape, dtype=np.uint8)
+    nfit_mask[1, 1, 2, 3] = 1
+    data.metadata["nfit_mask"] = nfit_mask
+    viewer = MDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    original_asarray = np.asarray
+
+    def tracked_asarray(value, *args, **kwargs):
+        if value is nfit_mask:
+            raise AssertionError("the full integer mask must not be cast")
+        return original_asarray(value, *args, **kwargs)
+
+    monkeypatch.setattr("nfit.plotting_core.np.asarray", tracked_asarray)
+
+    mask = viewer._slice_metadata_mask("nfit_mask", viewer._normalized_selections())
+
+    assert mask.dtype == bool
+    assert mask[2, 3]
 
 
 def test_plot_mdhisto_line_and_auto_dispatch_for_single_non_singleton_axis():

@@ -380,6 +380,23 @@ def test_rebin_dense_workers_are_amortized_against_the_output_grid(monkeypatch):
     assert binner.resolved_parallel_strategy == "serial"
 
 
+def test_explicit_rebin_workers_obey_the_shared_cpu_ceiling(monkeypatch):
+    """Saved recipes retain their request, while execution uses the global cap."""
+
+    import nfit.rebin as rebin_module
+
+    binner = rebin_module.NDRebin(
+        np.ones(1_000), np.zeros((1_000, 1)), num_bins=[10],
+        workers=8, parallel_strategy="dense",
+    )
+    binner.Nvals = 1_000
+    binner.Ndims = 1
+    monkeypatch.setattr(rebin_module._parallel, "num_threads", lambda: 2)
+
+    assert binner.workers == 8
+    assert binner._parallel_plan(10) == (2, "dense")
+
+
 def test_fused_backend_does_not_allocate_full_bin_index_array():
     pytest.importorskip("numba")
     result = rebin_nd(

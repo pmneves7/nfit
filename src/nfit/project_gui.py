@@ -139,6 +139,8 @@ from .pipeline import (
 )
 from .plot_recipes import new_plot_entry, plot_script, render_plot
 from .project_archive import (
+    ArchiveContent,
+    ArchiveMember,
     binning_artifact_member,
     project_artifact_compressed_size,
     project_artifact_exists,
@@ -3132,22 +3134,17 @@ _OPTIMIZER_KWARG_NAMES = (
     "gtol",
     "loss",
     "f_scale",
-    "finite_difference_workers",
 )
 
 
 def _optimizer_kwargs(optimizer_config: dict[str, Any] | None) -> dict[str, Any]:
     config = optimizer_config if isinstance(optimizer_config, dict) else {}
-    kwargs: dict[str, Any] = {
-        "finite_difference_workers": int(
-            config.get("finite_difference_workers", -1)
-        )
-    }
+    kwargs: dict[str, Any] = {"finite_difference_workers": -1}
     for name in _OPTIMIZER_KWARG_NAMES:
         value = config.get(name)
         if value in (None, ""):
             continue
-        if name in {"max_nfev", "finite_difference_workers"}:
+        if name == "max_nfev":
             kwargs[name] = int(value)
         elif name == "loss":
             kwargs[name] = str(value)
@@ -3155,10 +3152,27 @@ def _optimizer_kwargs(optimizer_config: dict[str, Any] | None) -> dict[str, Any]
             kwargs[name] = float(value)
     init_config = config.get("initialization")
     if isinstance(init_config, dict) and init_config.get("enabled", False):
+        legacy_workers = init_config.get("workers", 1)
         kwargs["initialization"] = {
-            key: value for key, value in init_config.items() if key != "enabled"
+            key: value
+            for key, value in init_config.items()
+            if key not in {"enabled", "workers"}
         }
         kwargs["initialization"].setdefault("method", "differential_evolution")
+        # Preserve differential evolution's deferred-update algorithm when an
+        # older project explicitly requested parallel evaluation, but resolve
+        # its worker count from the central CPU policy at execution time.
+        try:
+            legacy_parallel = int(legacy_workers or 1) != 1
+        except (TypeError, ValueError):
+            legacy_parallel = False
+        uses_deferred_updates = (
+            str(kwargs["initialization"].get("updating", "")).lower() == "deferred"
+        )
+        if legacy_parallel or uses_deferred_updates:
+            kwargs["initialization"]["workers"] = -1
+        if legacy_parallel:
+            kwargs["initialization"].setdefault("updating", "deferred")
     return kwargs
 
 
@@ -3177,6 +3191,16 @@ def _sampler_config(optimizer_config: dict[str, Any] | None) -> SamplerConfig | 
     sampler = optimizer_config.get("sampler")
     if not isinstance(sampler, dict) or not sampler.get("enabled", False):
         return None
+    sampler_kwargs = (
+        dict(sampler.get("kwargs", {}))
+        if isinstance(sampler.get("kwargs"), dict)
+        else {}
+    )
+    sampler_kwargs.pop("workers", None)
+    sampler_kwargs.pop("parallel_workers", None)
+    # GUI recipes use the central CPU ceiling.  ``-1`` is the public fitting
+    # API's automatic request; omitting it would select its serial default.
+    sampler_kwargs["workers"] = -1
     return SamplerConfig(
         method=str(sampler.get("method", "emcee")),
         n_walkers=_optional_int(sampler.get("n_walkers")),
@@ -3184,14 +3208,7 @@ def _sampler_config(optimizer_config: dict[str, Any] | None) -> SamplerConfig | 
         burn_in=int(sampler.get("burn_in", 0) or 0),
         thin=max(1, int(sampler.get("thin", 1) or 1)),
         random_seed=_optional_int(sampler.get("random_seed")),
-        kwargs={
-            **(dict(sampler.get("kwargs", {})) if isinstance(sampler.get("kwargs"), dict) else {}),
-            **(
-                {"workers": int(sampler.get("workers"))}
-                if sampler.get("workers") not in (None, "")
-                else {}
-            ),
-        },
+        kwargs=sampler_kwargs,
     )
 
 
@@ -5635,10 +5652,10 @@ def prepare_project_binning_cache(
 def _project_binning_artifacts(
     project: NfitProject,
     directory: Path,
-) -> tuple[dict[str, Path], list[dict[str, Any]]]:
+) -> tuple[dict[str, ArchiveContent], list[dict[str, Any]]]:
     """Write current signature-matching rebin caches to temporary artifacts."""
 
-    artifacts: dict[str, Path] = {}
+    artifacts: dict[str, ArchiveContent] = {}
     entries: list[dict[str, Any]] = []
     for group_index, group in enumerate(project.data_groups):
         for dataset in group.iter_datasets():
@@ -5650,28 +5667,36 @@ def _project_binning_artifacts(
                 if not config.get("enabled"):
                     continue
                 is_fit = config is fit_config
-                data = _peek_cached_dataset_view(
-                    dataset,
-                    extra_masks=effective_dataset_masks(group, dataset),
-                    rebin_config=config,
-                    cache_id=(None if is_fit else binning["id"]),
+                signature = _viewer_view_signature(
+                    dataset, effective_dataset_masks(group, dataset), config
                 )
-                if not isinstance(data, (MDHistoData, PointListData)):
-                    continue
+                key = dataset.id if is_fit else f"{dataset.id}:{binning['id']}"
                 cache_id = f"dataset-{dataset.id}-{binning['id']}"
                 member = binning_artifact_member(cache_id)
-                artifact_path = directory / f"{cache_id}.npz"
-                write_dataset_artifact(data, artifact_path)
-                artifacts[member] = artifact_path
+                backing = (
+                    _VIEWER_VIEW_CACHE.project_backing(key, signature)
+                    if hasattr(_VIEWER_VIEW_CACHE, "project_backing")
+                    else None
+                )
+                if backing is not None:
+                    artifacts[member] = ArchiveMember(*backing)
+                else:
+                    data = _peek_cached_dataset_view(
+                        dataset,
+                        extra_masks=effective_dataset_masks(group, dataset),
+                        rebin_config=config,
+                        cache_id=(None if is_fit else binning["id"]),
+                    )
+                    if not isinstance(data, (MDHistoData, PointListData)):
+                        continue
+                    artifact_path = directory / f"{cache_id}.npz"
+                    write_dataset_artifact(data, artifact_path)
+                    artifacts[member] = artifact_path
                 entries.append(
                     {
                         "type": "dataset",
                         "format_version": PROJECT_BINNING_CACHE_FORMAT_VERSION,
-                        "signature": _viewer_view_signature(
-                            dataset,
-                            effective_dataset_masks(group, dataset),
-                            config,
-                        ),
+                        "signature": signature,
                         "group_index": group_index,
                         "dataset_id": dataset.id,
                         "binning_id": binning["id"],
@@ -5693,32 +5718,44 @@ def _project_binning_artifacts(
                 if not config.get("enabled"):
                     continue
                 is_fit = config is fit_config
-                data = _peek_cached_composite_dataset_data(
-                    scope,
-                    config_override=(None if is_fit else config),
-                    binning_id=(None if is_fit else binning["id"]),
+                signature = (
+                    _composite_cache_signature(scope)
+                    if is_fit
+                    else _composite_cache_signature(
+                        scope,
+                        config_override=config,
+                        binning_id=binning["id"],
+                    )
                 )
-                if not isinstance(data, (MDHistoData, PointListData)):
-                    continue
+                key = _composite_cache_key(
+                    scope, None if is_fit else binning["id"]
+                )
                 owner = node_id if node_id is not None else f"root-{group_index}"
                 cache_id = f"composite-{owner}-{binning['id']}"
                 member = binning_artifact_member(cache_id)
-                artifact_path = directory / f"{cache_id}.npz"
-                write_dataset_artifact(data, artifact_path)
-                artifacts[member] = artifact_path
+                backing = (
+                    _COMPOSITE_DATA_CACHE.project_backing(key, signature)
+                    if hasattr(_COMPOSITE_DATA_CACHE, "project_backing")
+                    else None
+                )
+                if backing is not None:
+                    artifacts[member] = ArchiveMember(*backing)
+                else:
+                    data = _peek_cached_composite_dataset_data(
+                        scope,
+                        config_override=(None if is_fit else config),
+                        binning_id=(None if is_fit else binning["id"]),
+                    )
+                    if not isinstance(data, (MDHistoData, PointListData)):
+                        continue
+                    artifact_path = directory / f"{cache_id}.npz"
+                    write_dataset_artifact(data, artifact_path)
+                    artifacts[member] = artifact_path
                 entries.append(
                     {
                         "type": "composite",
                         "format_version": PROJECT_BINNING_CACHE_FORMAT_VERSION,
-                        "signature": (
-                            _composite_cache_signature(scope)
-                            if is_fit
-                            else _composite_cache_signature(
-                                scope,
-                                config_override=config,
-                                binning_id=binning["id"],
-                            )
-                        ),
+                        "signature": signature,
                         "group_index": group_index,
                         "node_id": node_id,
                         "binning_id": binning["id"],
@@ -5799,7 +5836,17 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
     if not isinstance(entries, list):
         return
     resolved: list[
-        tuple[str, Any, Any, str, dict[str, Any], bool, int, str | None]
+        tuple[
+            str,
+            Any,
+            Any,
+            str,
+            dict[str, Any],
+            bool,
+            int,
+            str | None,
+            str,
+        ]
     ] = []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -5812,7 +5859,14 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
             if saved_signature is not None and not isinstance(saved_signature, str):
                 continue
             group = project.data_groups[int(entry["group_index"])]
-            data = read_project_dataset_artifact(path, str(entry["member"]))
+            member = str(entry["member"])
+            if not project_artifact_exists(path, member):
+                continue
+            data = (
+                None
+                if format_version >= 6
+                else read_project_dataset_artifact(path, member)
+            )
             if entry.get("type") == "dataset":
                 dataset = next(
                     item
@@ -5831,6 +5885,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                         config is _fit_dataset_rebin_config(dataset),
                         format_version,
                         saved_signature,
+                        member,
                     )
                 )
             elif entry.get("type") == "composite":
@@ -5859,6 +5914,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                         config is _fit_data_group_composite_config(scope),
                         format_version,
                         saved_signature,
+                        member,
                     )
                 )
         except (IndexError, KeyError, OSError, StopIteration, TypeError, ValueError):
@@ -5869,7 +5925,17 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
     # dependency before capturing the signatures installed in the caches; a
     # one-pass restore can otherwise invalidate entries restored earlier in
     # archive order.
-    for kind, target, _data, binning_id, config, is_fit, _version, _saved in resolved:
+    for (
+        kind,
+        target,
+        _data,
+        binning_id,
+        config,
+        is_fit,
+        _version,
+        _saved,
+        _member,
+    ) in resolved:
         if kind == "dataset":
             group, dataset = target
             _viewer_view_signature(
@@ -5884,7 +5950,17 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                     config_override=config,
                     binning_id=binning_id,
                 )
-    for kind, target, data, binning_id, config, is_fit, version, saved in resolved:
+    for (
+        kind,
+        target,
+        data,
+        binning_id,
+        config,
+        is_fit,
+        version,
+        saved,
+        member,
+    ) in resolved:
         if kind == "dataset":
             group, dataset = target
             signature = _viewer_view_signature(
@@ -5894,13 +5970,23 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
             )
             if version >= 6 and saved != signature:
                 continue
-            _lru_store(
-                _VIEWER_VIEW_CACHE,
-                dataset.id if is_fit else f"{dataset.id}:{binning_id}",
-                (signature, data),
-                _VIEWER_VIEW_CACHE_LIMIT,
-                _VIEWER_VIEW_CACHE_MAX_BYTES,
-            )
+            key = dataset.id if is_fit else f"{dataset.id}:{binning_id}"
+            if version >= 6:
+                _VIEWER_VIEW_CACHE.set_project_backing(
+                    key,
+                    signature=signature,
+                    project_path=path,
+                    member=member,
+                    lazy=True,
+                )
+            else:
+                _lru_store(
+                    _VIEWER_VIEW_CACHE,
+                    key,
+                    (signature, data),
+                    _VIEWER_VIEW_CACHE_LIMIT,
+                    _VIEWER_VIEW_CACHE_MAX_BYTES,
+                )
         else:
             signature = (
                 _composite_cache_signature(target)
@@ -5913,13 +5999,23 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
             )
             if version >= 6 and saved != signature:
                 continue
-            _lru_store(
-                _COMPOSITE_DATA_CACHE,
-                _composite_cache_key(target, None if is_fit else binning_id),
-                (signature, data),
-                _COMPOSITE_DATA_CACHE_LIMIT,
-                _COMPOSITE_DATA_CACHE_MAX_BYTES,
-            )
+            key = _composite_cache_key(target, None if is_fit else binning_id)
+            if version >= 6:
+                _COMPOSITE_DATA_CACHE.set_project_backing(
+                    key,
+                    signature=signature,
+                    project_path=path,
+                    member=member,
+                    lazy=True,
+                )
+            else:
+                _lru_store(
+                    _COMPOSITE_DATA_CACHE,
+                    key,
+                    (signature, data),
+                    _COMPOSITE_DATA_CACHE_LIMIT,
+                    _COMPOSITE_DATA_CACHE_MAX_BYTES,
+                )
 
 
 def save_project(
@@ -5934,6 +6030,18 @@ def save_project(
     target = Path(path)
     if asset_source is None:
         asset_source = getattr(project, "_project_path", None)
+    missing_entries = object()
+    previous_entries = project.settings.get(
+        PROJECT_BINNING_CACHE_ENTRIES_KEY,
+        missing_entries,
+    )
+
+    def restore_previous_entries() -> None:
+        if previous_entries is missing_entries:
+            project.settings.pop(PROJECT_BINNING_CACHE_ENTRIES_KEY, None)
+        else:
+            project.settings[PROJECT_BINNING_CACHE_ENTRIES_KEY] = previous_entries
+
     if project_cache_binnings_enabled(project):
         prepare_project_binning_cache(
             project,
@@ -5942,23 +6050,31 @@ def save_project(
         with tempfile.TemporaryDirectory(prefix="nfit-binning-cache-") as temporary:
             artifacts, entries = _project_binning_artifacts(project, Path(temporary))
             project.settings[PROJECT_BINNING_CACHE_ENTRIES_KEY] = entries
+            try:
+                write_project_manifest(
+                    target,
+                    _project_to_dict(project),
+                    asset_source=asset_source,
+                    preserve_existing=asset_source is not None,
+                    binning_artifacts=artifacts,
+                )
+            except Exception:
+                restore_previous_entries()
+                raise
+        _adopt_saved_project_binning_backing(project, target, entries)
+    else:
+        project.settings.pop(PROJECT_BINNING_CACHE_ENTRIES_KEY, None)
+        try:
             write_project_manifest(
                 target,
                 _project_to_dict(project),
                 asset_source=asset_source,
                 preserve_existing=asset_source is not None,
-                binning_artifacts=artifacts,
+                binning_artifacts={},
             )
-        _adopt_saved_project_binning_backing(project, target, entries)
-    else:
-        project.settings.pop(PROJECT_BINNING_CACHE_ENTRIES_KEY, None)
-        write_project_manifest(
-            target,
-            _project_to_dict(project),
-            asset_source=asset_source,
-            preserve_existing=asset_source is not None,
-            binning_artifacts={},
-        )
+        except Exception:
+            restore_previous_entries()
+            raise
         _COMPOSITE_DATA_CACHE.clear_project_backing(target)
         _VIEWER_VIEW_CACHE.clear_project_backing(target)
     project._project_path = target
@@ -8460,7 +8576,7 @@ class NfitProjectExplorer:
         added, projected, limit, warn = assess_rebin_cache_memory(
             estimates,
             current_cache_bytes=current,
-            cache_limit_bytes=_VIEWER_VIEW_CACHE_MAX_BYTES,
+            cache_limit_bytes=_project_data.scientific_cache_budget_bytes(),
         )
         if not warn:
             return True
@@ -14487,7 +14603,7 @@ class NfitProjectExplorer:
                 burn_in=self.fit_emcee_burn_spin.value(),
                 thin=self.fit_emcee_thin_spin.value(),
                 random_seed=None if self.fit_emcee_seed_spin.value() < 0 else self.fit_emcee_seed_spin.value(),
-                workers=self.fit_emcee_workers_spin.value(),
+                workers=-1,
             )
         )
 
@@ -14506,7 +14622,7 @@ class NfitProjectExplorer:
                 burn_in=self.fit_emcee_burn_spin.value(),
                 thin=self.fit_emcee_thin_spin.value(),
                 random_seed=None if self.fit_emcee_seed_spin.value() < 0 else self.fit_emcee_seed_spin.value(),
-                workers=self.fit_emcee_workers_spin.value(),
+                workers=-1,
                 append=True,
             )
         )
@@ -16188,6 +16304,7 @@ class NfitProjectExplorer:
                             if selected_binning["fit"]
                             else selected_binning["id"]
                         ),
+                        resident_only=True,
                     ),
                     compressed_disk_bytes=compressed_disk_bytes,
                 )
@@ -16254,6 +16371,7 @@ class NfitProjectExplorer:
                                 if selected_binning["fit"]
                                 else selected_binning["id"]
                             ),
+                            resident_only=True,
                         ),
                         object_prefix="dataset_rebin",
                         compressed_disk_bytes=compressed_disk_bytes,
@@ -16544,6 +16662,17 @@ class NfitProjectExplorer:
 
     def _fit_config_from_controls(self, existing: dict[str, Any] | None = None) -> dict[str, Any]:
         config = dict(existing or {})
+        existing_initialization = config.get("initialization")
+        keep_deferred_updates = False
+        if isinstance(existing_initialization, dict):
+            keep_deferred_updates = (
+                str(existing_initialization.get("updating", "")).lower() == "deferred"
+            )
+            if not keep_deferred_updates:
+                try:
+                    keep_deferred_updates = int(existing_initialization.get("workers", 1) or 1) != 1
+                except (TypeError, ValueError):
+                    pass
         loss = str(self.fit_loss_combo.currentText() or "linear")
         if loss == "linear":
             config.pop("loss", None)
@@ -16558,21 +16687,19 @@ class NfitProjectExplorer:
             config.pop("covariance_mode", None)
         else:
             config["covariance_mode"] = covariance_mode
-        derivative_workers = int(
-            self.fit_finite_difference_workers_spin.value()
-        )
-        if derivative_workers == -1:
-            config.pop("finite_difference_workers", None)
-        else:
-            config["finite_difference_workers"] = derivative_workers
+        # Per-fit worker counts are retained when loading old recipes but are
+        # no longer authored by the GUI. The central Preferences CPU limit is
+        # authoritative for GUI execution.
+        config.pop("finite_difference_workers", None)
         if self.fit_de_check.isChecked():
             config["initialization"] = {
                 "enabled": True,
                 "method": "differential_evolution",
                 "maxiter": int(self.fit_de_maxiter_spin.value()),
                 "popsize": int(self.fit_de_popsize_spin.value()),
-                "workers": int(self.fit_de_workers_spin.value()),
             }
+            if keep_deferred_updates:
+                config["initialization"]["updating"] = "deferred"
         else:
             config.pop("initialization", None)
         if self.fit_emcee_check.isChecked():
@@ -16582,7 +16709,6 @@ class NfitProjectExplorer:
                 "n_steps": int(self.fit_emcee_steps_spin.value()),
                 "burn_in": int(self.fit_emcee_burn_spin.value()),
                 "thin": int(self.fit_emcee_thin_spin.value()),
-                "workers": int(self.fit_emcee_workers_spin.value()),
             }
             if self.fit_emcee_seed_spin.value() >= 0:
                 sampler["random_seed"] = int(self.fit_emcee_seed_spin.value())

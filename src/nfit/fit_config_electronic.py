@@ -151,19 +151,18 @@ def lindhard_factory(
         for parameter in tight_binding_parameter_names(source)
     }
     backend = str(config.get("response_backend", "auto"))
-    workers = int(config.get("response_workers", 0))
-    batch_bytes = int(
-        float(config.get("response_max_batch_mb", 256.0)) * 1024**2
-    )
-    transition_batch_bytes = int(
-        float(config.get("response_transition_max_batch_mb", 256.0))
-        * 1024**2
-    )
+    from .performance import operation_batch_bytes, scientific_memory_limit_bytes
+
+    # Project recipes retain these legacy fields for compatibility, but GUI
+    # execution uses the machine-local resource policy.
+    workers = 0
+    batch_bytes = operation_batch_bytes()
+    transition_batch_bytes = operation_batch_bytes()
     transition_backend = str(
         config.get("response_transition_backend", "auto")
     )
     response_cache = ElectronicResponseCache(
-        max_bytes=int(float(config.get("response_cache_mb", 512.0)) * 1024**2),
+        max_bytes=max(1, scientific_memory_limit_bytes() // 4),
         max_entries=int(config.get("response_cache_entries", 64)),
     )
     powder_orientations = int(config.get("powder_orientations", 50))

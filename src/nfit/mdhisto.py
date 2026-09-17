@@ -317,32 +317,41 @@ def mdhisto_measured_bins(data: MDHistoData) -> BoolArray:
     return (np.asarray(data.num_events, dtype=float) > 0.0) & ~np.asarray(data.mask, dtype=bool)
 
 
-def mdhisto_coverage_fraction(data: MDHistoData) -> FloatArray:
+def mdhisto_coverage_fraction(
+    data: MDHistoData,
+    selection: tuple[Any, ...] | None = None,
+) -> FloatArray:
     """Return each bin's measured fraction of its requested geometric support.
 
     New reductions store coverage as an auxiliary channel so it remains
     independently viewable and serializable. Older data fall back to binary
     measured-bin coverage; that fallback can distinguish covered from empty
-    bins but cannot reconstruct partial support inside a native bin.
+    bins but cannot reconstruct partial support inside a native bin. When a
+    basic NumPy ``selection`` is supplied, only that region is materialized.
     """
 
+    index = (...,) if selection is None else selection
     channel = data.auxiliary_channels.get("coverage_fraction")
     if channel is not None and channel.values.shape == data.shape:
-        values = np.asarray(channel.values, dtype=float)
+        values = np.asarray(channel.values[index], dtype=float)
         return np.clip(np.where(np.isfinite(values), values, 0.0), 0.0, 1.0)
     stored = data.metadata.get("coverage_fraction")
     if isinstance(stored, np.ndarray) and stored.shape == data.shape:
-        values = np.asarray(stored, dtype=float)
+        values = np.asarray(stored[index], dtype=float)
         return np.clip(np.where(np.isfinite(values), values, 0.0), 0.0, 1.0)
     if bool(data.metadata.get("zero_event_bins_are_measured", False)):
         denominator = data.metadata.get("normalization_denominator")
         if isinstance(denominator, np.ndarray) and denominator.shape == data.shape:
+            selected = denominator[index]
             return np.asarray(
-                np.isfinite(denominator) & (denominator > 0.0),
+                np.isfinite(selected) & (selected > 0.0),
                 dtype=float,
             )
-        return np.ones(data.shape, dtype=float)
-    return np.asarray(np.asarray(data.num_events, dtype=float) > 0.0, dtype=float)
+        return np.ones(np.shape(data.signal[index]), dtype=float)
+    return np.asarray(
+        np.asarray(data.num_events[index], dtype=float) > 0.0,
+        dtype=float,
+    )
 
 
 def load_mantid_mdhisto_nxs(

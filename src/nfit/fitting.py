@@ -56,9 +56,9 @@ def _resolve_parallel_workers(value: Any) -> int:
 
     requested = int(value or 1)
     if requested == -1:
-        available = _parallel.detect_cpu_budget()
+        available = _parallel.num_threads()
         return max(1, min(available - 1, 8))
-    return max(1, requested)
+    return _parallel.bounded_worker_count(requested)
 
 
 @dataclass(frozen=True)
@@ -2188,7 +2188,7 @@ def _run_least_squares(
                 )
                 blas_threads = max(
                     1,
-                    _parallel.detect_cpu_budget()
+                    _parallel.num_threads()
                     // finite_difference_workers,
                 )
 

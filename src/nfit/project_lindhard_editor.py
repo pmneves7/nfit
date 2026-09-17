@@ -59,8 +59,7 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
     summary_layout = QtWidgets.QVBoxLayout(summary)
     source_text = source.name if source is not None else "electronic source unresolved"
     backend = str(model.config.get("response_backend", "auto"))
-    workers = int(model.config.get("response_workers", 0))
-    worker_text = "automatic CPU allocation" if workers == 0 else f"{workers} CPU worker(s)"
+    worker_text = "CPU allocation from Preferences"
     summary_label = QtWidgets.QLabel(
         f"{source_text} · {tuple(mesh)} k mesh · η={broadening:g} meV · "
         f"{'exact Q' if accuracy == 'exact' else 'validated Q interpolation' if accuracy == 'validated' else q_policy + ' Q'} · "

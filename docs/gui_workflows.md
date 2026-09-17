@@ -23,7 +23,7 @@ the shared custom-palette folder, opens it in your file manager, and explains
 the [RGB file format](data_viewer.md#custom-colormap-files). Preferences also show the running version. Preferences are
 local to this nfit installation and are never stored in a project. Custom
 palettes are shared across projects; restart nfit after adding or editing files.
-The **Performance** page stores defaults for new rebin configurations and offers
+The **Performance** page sets the CPU and managed RAM limits and offers
 machine calibration. Dataset and composite rebin panels also offer **Benchmark
 this rebin…**; see [performance settings and benchmarks](performance.md#performance-preferences-and-benchmarks).
 
@@ -38,6 +38,8 @@ datasets and dataset-group composites when saved. Saving checks every configured
 named binning, reuses those whose signatures are current, and recomputes only missing
 or stale entries. New projects default to leaving this option off. Unlike
 application preferences, this checkbox is stored in the `.nfit` project.
+Current saved binnings load on demand. Save and Save As reuse their compressed
+artifacts, so an unrelated project edit does not recompress the numerical arrays.
 Loading an unchanged raw source on demand preserves a restored cache. Changing
 one named binning recomputes only that binning while other current binnings
 remain reusable.

@@ -356,6 +356,14 @@ def _rebuild_model_parameter_editor(self, model: ModelComponentSpec) -> None:
     config_layout.setColumnStretch(1, 1)
     definition = model_definition(model.type)
     config_definitions = {field.name: field for field in definition.config_fields}
+    resource_settings = {
+        "response_workers",
+        "response_max_batch_mb",
+        "response_transition_max_batch_mb",
+        "response_cache_mb",
+        "electronic_workers",
+        "electronic_max_batch_mb",
+    }
     if not config_definitions:
         config_layout.addWidget(QtWidgets.QLabel("No configuration settings."), 0, 0, 1, 2)
     row = 0
@@ -377,7 +385,7 @@ def _rebuild_model_parameter_editor(self, model: ModelComponentSpec) -> None:
         config_layout.addWidget(primitive, row, 0, 1, 2)
         row += 1
     for setting_name in config_definitions:
-        if setting_name == "form_factor_coefficients":
+        if setting_name == "form_factor_coefficients" or setting_name in resource_settings:
             continue
         if model.type == "lindhard" and setting_name in {
             "electronic_component",
@@ -459,8 +467,6 @@ def _rebuild_model_parameter_editor(self, model: ModelComponentSpec) -> None:
                 {
                     "periodic_axes": "Periodic axes",
                     "projection_groups": "Custom projection groups",
-                    "electronic_workers": "CPU workers",
-                    "electronic_max_batch_mb": "Batch memory (MiB)",
                 }.get(setting_name, setting_name)
             )
         if model.type == "tight_binding" and setting_name == "electronic_energy_unit":

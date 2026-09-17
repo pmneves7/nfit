@@ -1496,14 +1496,13 @@ def _with_electronic_display_unit(result: Any, component: Any) -> Any:
 
 
 def _electronic_execution_kwargs(component: Any) -> dict[str, Any]:
+    from .performance import operation_batch_bytes
+
     config = component.config if isinstance(component.config, dict) else {}
-    workers = int(config.get("electronic_workers", 0))
     return {
         "backend": str(config.get("electronic_backend", "auto")),
-        "workers": None if workers == 0 else workers,
-        "max_batch_bytes": int(
-            float(config.get("electronic_max_batch_mb", 256.0)) * 1024**2
-        ),
+        "workers": None,
+        "max_batch_bytes": operation_batch_bytes(),
     }
 
 
@@ -1847,10 +1846,6 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
         )
     )
     execution_backend = str(config.get("electronic_backend", "auto"))
-    execution_workers = int(config.get("electronic_workers", 0))
-    max_batch_bytes = int(
-        float(config.get("electronic_max_batch_mb", 256.0)) * 1024**2
-    )
     dos_symmetry = str(config.get("dos_symmetry", "auto"))
     dos_method = str(config.get("dos_method", "gaussian"))
     mesh_symmetry = (
@@ -1859,12 +1854,13 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
     lines.extend(
         [
             "from nfit import electronic_energy_to_meV",
+            "from nfit.performance import operation_batch_bytes",
             f"energy_unit = {energy_unit!r}",
             f"chemical_potential = {chemical_potential!r}",
             "chemical_potential_meV = electronic_energy_to_meV(chemical_potential, energy_unit)",
             f"electronic_backend = {execution_backend!r}",
-            f"electronic_workers = {None if execution_workers == 0 else execution_workers!r}",
-            f"max_batch_bytes = {max_batch_bytes!r}",
+            "electronic_workers = None  # use the central CPU allocation",
+            "max_batch_bytes = operation_batch_bytes()",
         ]
     )
     if plot_key == "bands":

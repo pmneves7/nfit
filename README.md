@@ -45,11 +45,10 @@ A few of its main capabilities are:
   subtraction, and reversible displayed-axis coarsening;
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
 - construct and inspect crystal, tight-binding, Lindhard, and RPA models;
-- save complete `.nfit` projects, retain bounded compressed binnings in RAM,
-  see result-memory estimates and current-cache badges, preflight the combined
-  cache cost of operations that trigger rebins, use a session disk cache for
-  overflow, embed that cache when project caching is enabled, and export
-  editable analysis scripts; and
+- save complete `.nfit` projects, load cached binnings on demand, reuse unchanged
+  compressed artifacts when saving, and manage cached results through shared
+  CPU/RAM preferences, memory estimates, and optional session disk caching;
+- export editable analysis scripts; and
 - use native desktop installers or the Python package on macOS, Windows, and Linux.
 
 See the [detailed feature overview](https://nfit.readthedocs.io/en/stable/features.html)

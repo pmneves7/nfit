@@ -633,13 +633,13 @@ current rebinned data. When a dataset or composite has multiple named binnings,
 **Rebin all now** computes every enabled binning. Both manual rebin actions
 refresh open data viewers so newly computed named binnings appear immediately.
 For composites, **Create dataset from composite** is placed at the right side of
-the action row. **Workers** sets the saved worker ceiling for this configuration;
-the rebinner can use fewer workers. **Benchmark this rebin…** compares batch
-targets and worker ceilings using isolated runs of the full current
-configuration, without updating live data. Review the timing and process
-peak-memory table before choosing **Apply recommendation**. The same controls
-are available for composites. Defaults for new configurations live in **File →
-Preferences → Performance**; see [benchmark details](performance.md#performance-preferences-and-benchmarks).
+the action row. Resource allocation comes from the single **CPU limit** and
+**RAM limit** in **File → Preferences → Performance**. Batch sizes are automatic;
+older per-binning resource settings do not override these limits.
+**Benchmark this rebin…** compares isolated runs of the full current configuration
+without updating live data or changing its settings. Review its timing and process
+peak-memory table, or export an editable benchmark script. The same action is
+available for composites; see [benchmark details](performance.md#performance-preferences-and-benchmarks).
 
 All rebin workflows use the same compact progress dialog. When a task prepares
 several datasets or dataset-group composites, it uses two levels: the upper bar
@@ -663,8 +663,8 @@ symmetry-expanded contributions rather than only source rows. Consequently a
 completed event counter does not conceal a subsequent normalization pass, and
 the status continues to advance while a large viewer is being constructed.
 
-The batch target controls temporary work, not the
-persistent output-grid allocation.
+Automatic batching bounds temporary work; it does not reduce the persistent
+output-grid allocation.
 
 **Minimum coverage** masks an output bin when the measured source support
 occupies less than the selected fraction of its requested geometric volume.
