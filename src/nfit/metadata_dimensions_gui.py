@@ -11,6 +11,10 @@ from .metadata_dimensions import (
     metadata_dimension_coordinates,
     metadata_dimension_grid,
 )
+from .qt_controls import (
+    COMPACT_SHORT_TEXT_FIELD_WIDTH,
+    constrain_input_width,
+)
 
 
 def metadata_rebin_rows(explorer, group, layout, start_row):
@@ -354,11 +358,13 @@ def metadata_dimensions_panel(explorer, group, *, embedded: bool = False):
         )
         source.setCurrentText(current.get("source", preferred))
         name = QtWidgets.QLineEdit(current.get("name", "Temperature"))
+        constrain_input_width(name, COMPACT_SHORT_TEXT_FIELD_WIDTH)
         name.setObjectName("metadata_dimension_name")
         name.setToolTip(
             "Axis label shown in plots and the data viewer; it must differ from existing axis names."
         )
         units = QtWidgets.QLineEdit(current.get("units", channels.get(source.currentText(), "")))
+        constrain_input_width(units, COMPACT_SHORT_TEXT_FIELD_WIDTH)
         units.setObjectName("metadata_dimension_units")
         units.setToolTip(
             "Physical units of this coordinate, for example K or degree. This labels values; it does not convert units."

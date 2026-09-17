@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from .project_rebin_panels import rebin_symmetry_expression_width
+from .qt_controls import (
+    COMPACT_SCALAR_FIELD_WIDTH,
+    COMPACT_SHORT_TEXT_FIELD_WIDTH,
+    constrain_input_width,
+)
+
 # The compatibility dispatcher supplies these established project_gui globals
 # at invocation time. Keeping the contract explicit avoids a reverse import.
 DATA_TYPE_DEFINITIONS: Any = None
@@ -117,6 +124,7 @@ def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup 
         )
         channels_layout.addWidget(quantity_combo, row, 2)
         unit_edit = QtWidgets.QLineEdit(str(channel.get("unit", "")))
+        constrain_input_width(unit_edit, COMPACT_SHORT_TEXT_FIELD_WIDTH)
         unit_edit.setToolTip(
             "Physical unit of the value and uncertainty columns. Unit text "
             "is normalized and checked when a model predicts this channel."
@@ -180,6 +188,7 @@ def _heat_capacity_box(self, dataset, group, config) -> Any:
         widget_label = QtWidgets.QLabel(label)
         widget_label.setToolTip(tooltip)
         editor = QtWidgets.QLineEdit(_parameter_to_text(dataset.parameters.get(key, "")))
+        constrain_input_width(editor, COMPACT_SCALAR_FIELD_WIDTH)
         editor.setObjectName(object_name)
         editor.setToolTip(tooltip)
         editor.editingFinished.connect(
@@ -232,6 +241,7 @@ def _heat_capacity_box(self, dataset, group, config) -> Any:
     atoms_edit = QtWidgets.QLineEdit(
         _parameter_to_text(dataset.parameters.get("atoms_per_formula_unit", ""))
     )
+    constrain_input_width(atoms_edit, COMPACT_SCALAR_FIELD_WIDTH)
     atoms_edit.setObjectName("heat_capacity_atoms_per_formula_unit")
     atoms_edit.setToolTip(atoms_tooltip)
     atoms_edit.editingFinished.connect(
@@ -309,6 +319,7 @@ def _magnetization_absolute_box(self, dataset, group) -> Any:
     mass_edit = QtWidgets.QLineEdit(
         _parameter_to_text(dataset.parameters.get("sample_mass_mg", ""))
     )
+    constrain_input_width(mass_edit, COMPACT_SCALAR_FIELD_WIDTH)
     mass_edit.setObjectName("magnetization_sample_mass_mg")
     mass_edit.setToolTip(mass_tooltip)
     mass_edit.editingFinished.connect(
@@ -324,6 +335,7 @@ def _magnetization_absolute_box(self, dataset, group) -> Any:
     molar_edit = QtWidgets.QLineEdit(
         _parameter_to_text(dataset.parameters.get("molar_mass_g_mol", ""))
     )
+    constrain_input_width(molar_edit, COMPACT_SCALAR_FIELD_WIDTH)
     molar_edit.setObjectName("magnetization_molar_mass_g_mol")
     molar_edit.setToolTip(molar_tooltip)
     molar_edit.editingFinished.connect(
@@ -365,6 +377,7 @@ def _point_list_scale_box(self, dataset, group, config, columns) -> Any:
     grid.addWidget(factor_spin, 1, 1)
     grid.addWidget(QtWidgets.QLabel("Units"), 2, 0)
     units_edit = QtWidgets.QLineEdit(str(scale.get("units", "")))
+    constrain_input_width(units_edit, COMPACT_SHORT_TEXT_FIELD_WIDTH)
     units_edit.setToolTip("Display and export units for the scaled signal channel.")
     units_edit.editingFinished.connect(
         lambda editor=units_edit: self._set_point_list_scale(dataset, group, "units", editor.text())
@@ -906,6 +919,10 @@ def _dataset_axes_group_box(
     )
     symmetry_expression = QtWidgets.QLineEdit(symmetry.expression)
     symmetry_expression.setObjectName("dataset_rebin_symmetry_expression")
+    constrain_input_width(
+        symmetry_expression,
+        rebin_symmetry_expression_width(displayed_symmetry_mode),
+    )
     symmetry_expression.setPlaceholderText("P -1")
     symmetry_expression.setToolTip(
         "Examples: P -1; -1; x,y,z;-x,-y,-z; rotate(order=3, axis=[1,1,1]); mirror(plane=(0,0,1))."
@@ -1329,6 +1346,7 @@ def _dataset_spectral_channels_group_box(
     normalization_label = QtWidgets.QLineEdit(
         str(config.get("normalization_label", "") or "")
     )
+    constrain_input_width(normalization_label, COMPACT_SHORT_TEXT_FIELD_WIDTH)
     normalization_label.setObjectName("ins_normalization_label")
     normalization_label.setPlaceholderText("for example V")
     normalization_label.setEnabled(
@@ -1349,6 +1367,7 @@ def _dataset_spectral_channels_group_box(
     calibration = QtWidgets.QLineEdit(
         _parameter_to_text(config.get("signal_per_mbarn", 0.0))
     )
+    constrain_input_width(calibration, COMPACT_SCALAR_FIELD_WIDTH)
     calibration.setObjectName("ins_signal_per_mbarn")
     calibration.setToolTip(
         "For an arbitrary imported cross section, the number of imported "
@@ -1408,6 +1427,7 @@ def _dataset_spectral_channels_group_box(
     polarization_scalar = QtWidgets.QLineEdit(
         _parameter_to_text(config["polarization_scalar"])
     )
+    constrain_input_width(polarization_scalar, COMPACT_SCALAR_FIELD_WIDTH)
     polarization_scalar.setObjectName("ins_polarization_scalar")
     polarization_scalar.setEnabled(config["polarization_mode"] == "custom_scalar")
     polarization_scalar.setToolTip(
@@ -1444,6 +1464,7 @@ def _dataset_spectral_channels_group_box(
     form.addRow("χ″ convention", moment)
 
     g_factor = QtWidgets.QLineEdit(_parameter_to_text(config["g_factor"]))
+    constrain_input_width(g_factor, COMPACT_SCALAR_FIELD_WIDTH)
     g_factor.setObjectName("ins_g_factor")
     g_factor.setEnabled(config["moment_unit"] == "spin_squared")
     g_factor.setToolTip(
@@ -1488,6 +1509,7 @@ def _dataset_spectral_channels_group_box(
         ),
     ):
         editor = QtWidgets.QLineEdit(_parameter_to_text(config.get(key, "")))
+        constrain_input_width(editor, COMPACT_SCALAR_FIELD_WIDTH)
         editor.setObjectName(object_name)
         editor.setToolTip(tooltip)
         editor.editingFinished.connect(

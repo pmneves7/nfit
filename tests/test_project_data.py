@@ -2348,7 +2348,7 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
         QtWidgets.QLineEdit, "group_composite_minimum_coverage"
     )
     assert coverage_edit is not None
-    assert float(coverage_edit.text()) == pytest.approx(0.9)
+    assert float(coverage_edit.text()) == pytest.approx(0.0)
     coverage_edit.setText("0.85")
     coverage_edit.editingFinished.emit()
     assert config["minimum_coverage"] == pytest.approx(0.85)
@@ -2608,6 +2608,7 @@ def test_mdhisto_rebin_applies_enabled_masks_before_binning():
     mask.enabled = False
     config = dataset_rebin_config(dataset)
     config["enabled"] = True
+    config["minimum_coverage"] = 0.9
     for axis in config["axes"]:
         axis["mode"] = "discrete"
     config["resolution_mode"] = "bins"
@@ -2662,6 +2663,7 @@ def test_mdhisto_composite_masks_output_below_geometric_coverage_cutoff():
     )
     config = project_gui.data_group_composite_config(group)
     config["enabled"] = True
+    config["minimum_coverage"] = 0.9
     config["resolution_mode"] = "bins"
     config["axes"][0].update(
         {"lower": 0.0, "upper": 2.0, "num_bins": 1, "step_size": 2.0, "mode": "bins"}
@@ -2817,6 +2819,13 @@ def test_rebin_symmetry_toggle_preserves_expression_and_notation(monkeypatch):
     assert dataset_config["symmetry"]["mode"] == "point_group"
     assert dataset_config["symmetry"]["expression"] == "m-3m"
 
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+    dataset_expression = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "dataset_rebin_symmetry_expression"
+    )
+    assert dataset_expression is not None
+    assert dataset_expression.maximumWidth() <= 220
+
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0))
     symmetry_check = explorer.details_widget.findChild(
         QtWidgets.QCheckBox, "group_composite_symmetry_enabled"
@@ -2833,6 +2842,7 @@ def test_rebin_symmetry_toggle_preserves_expression_and_notation(monkeypatch):
     )
     assert symmetry_mode.currentData() == "operations"
     assert symmetry_expression.text() == "x,y,z;-x,-y,-z"
+    assert symmetry_expression.maximumWidth() <= 640
     explorer._set_group_composite_symmetry_enabled(group, True)
     assert composite_config["symmetry"]["mode"] == "operations"
     assert composite_config["symmetry"]["expression"] == "x,y,z;-x,-y,-z"

@@ -645,7 +645,8 @@ All rebin workflows use the same compact progress dialog. When a task prepares
 several datasets or dataset-group composites, it uses two levels: the upper bar
 reports completed viewer entries and the lower bar reports progress within the
 named current entry. A one-entry task hides the redundant upper status and bar.
-Both levels show elapsed time without predicting time remaining. Large integer
+Stage descriptions use sentence capitalization. Both levels show elapsed time
+without predicting time remaining. Large integer
 counters use grouped thousands, and resource details below the lower status
 report output bins, CPUs, and estimated working memory. Symmetry-equivalent
 duplicates still count as examined work, so detailed progress reaches
@@ -672,6 +673,10 @@ The default is 0. Coverage is saved as an independent auxiliary channel, and
 the resulting coverage mask is used consistently for viewing, histogram
 exports, and fitting. Changing the cutoff does not rewrite the source file or
 nfit masks.
+
+Short scalar and symbolic entries, including space-group symbols, use compact
+editors. Paths, explicit edge lists, matrices, and symmetry-operation
+expressions retain wider fields for readable editing.
 
 **Edges (optional)** accepts a strictly increasing list for one axis, such as
 `[-2, -1, 0, 0.5, 2]`. That axis uses the listed edges while blank axes retain

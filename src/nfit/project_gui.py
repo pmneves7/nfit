@@ -225,9 +225,17 @@ from .project_model_editor import (
     model_parameter_names,
 )
 from .project_models import reconcile_model_orbit_parameters
+from .project_rebin_panels import (
+    rebin_symmetry_expression_width,  # noqa: F401 - extracted panel helper
+)
 from .project_rebinning import estimated_rebin_shape
 from .qt_branding import configure_application_icon
-from .qt_controls import configure_numeric_spin_boxes
+from .qt_controls import (
+    COMPACT_SCALAR_FIELD_WIDTH,
+    COMPACT_SHORT_TEXT_FIELD_WIDTH,
+    configure_numeric_spin_boxes,
+    constrain_input_width,
+)
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET
 from .spectral_channels import (
     SPECTRAL_CHANNEL_CONFIG_KEY,
@@ -3300,6 +3308,7 @@ class UBSetupDialog:
             row, column = divmod(index, 3)
             form.addWidget(QtWidgets.QLabel(name), row, column * 2)
             edit = QtWidgets.QLineEdit(_format_number(values[name]))
+            constrain_input_width(edit, COMPACT_SCALAR_FIELD_WIDTH)
             edit.setObjectName(f"ub_lattice_{name}")
             edit.setToolTip("Unit-cell length in angstrom." if index < 3 else "Unit-cell angle in degrees.")
             form.addWidget(edit, row, column * 2 + 1)
@@ -3310,6 +3319,7 @@ class UBSetupDialog:
                 label = f"{name}{'xyz'[component]}"
                 form.addWidget(QtWidgets.QLabel(label), vector_row, component * 2)
                 edit = QtWidgets.QLineEdit(_format_number(value))
+                constrain_input_width(edit, COMPACT_SCALAR_FIELD_WIDTH)
                 edit.setObjectName(f"ub_orientation_{name}_{component}")
                 edit.setToolTip("Reciprocal-lattice orientation vector. u points along the incident beam (+z); u and v define the horizontal plane, with +y vertical.")
                 form.addWidget(edit, vector_row, component * 2 + 1)
@@ -6364,6 +6374,13 @@ def _progress_timer_text(started_at: float) -> str:
     return f"elapsed {_format_progress_duration(elapsed)}"
 
 
+def _capitalized_progress_text(text: str) -> str:
+    """Capitalize a user-facing progress line without changing its wording."""
+
+    value = str(text)
+    return value[:1].upper() + value[1:]
+
+
 class RebinCancellationRequested(RuntimeError):
     """Raised cooperatively when the user cancels a rebin operation."""
 
@@ -6545,7 +6562,9 @@ class _RebinProgressDialog:
                     self._detail_start_key = start_key
                     self._detail_started_at = time.monotonic()
         if event.get("batch_operation") is not None:
-            self._batch_operation = str(event["batch_operation"])
+            self._batch_operation = _capitalized_progress_text(
+                str(event["batch_operation"])
+            )
             self._batch_unit = str(event.get("batch_unit") or "work item")
 
         if event.get("rebin_name") is not None:
@@ -6596,7 +6615,9 @@ class _RebinProgressDialog:
         iteration = max(int(event.get("iteration") or 0), 0)
         self._detail_total = total
         self._detail_completed = min(iteration, total) if total else 0
-        message = str(event.get("message") or self._title)
+        message = _capitalized_progress_text(
+            str(event.get("message") or self._title)
+        )
         details = []
         output_bins = int(event.get("output_bins") or 0)
         if output_bins:
@@ -6659,7 +6680,7 @@ class _RebinProgressDialog:
         self._cancel_callback = callback
 
     def finish(self, message: str, **_kwargs: Any) -> None:
-        self._detail_base_text = message
+        self._detail_base_text = _capitalized_progress_text(message)
         if self._batch_total > 1 and self._batch_completed < self._batch_total:
             self._batch_completed = self._batch_total
             self.batch_bar.setValue(self._batch_total)
@@ -12427,6 +12448,9 @@ class NfitProjectExplorer:
         self.dataset_fixed_q_label = QtWidgets.QLabel("Fixed Q (Å⁻¹)")
         self.dataset_fixed_q_edit = QtWidgets.QLineEdit()
         self.dataset_fixed_q_edit.setObjectName("dataset_fixed_q")
+        constrain_input_width(
+            self.dataset_fixed_q_edit, COMPACT_SCALAR_FIELD_WIDTH
+        )
         self.dataset_fixed_q_edit.setToolTip(
             "Fixed momentum transfer for an imported constant-Q powder cut. "
             "Editing this value updates the singleton Q axis used for plotting and fitting."
@@ -12442,6 +12466,9 @@ class NfitProjectExplorer:
         self.dataset_fixed_energy_label = QtWidgets.QLabel("Fixed E (meV)")
         self.dataset_fixed_energy_edit = QtWidgets.QLineEdit()
         self.dataset_fixed_energy_edit.setObjectName("dataset_fixed_energy")
+        constrain_input_width(
+            self.dataset_fixed_energy_edit, COMPACT_SCALAR_FIELD_WIDTH
+        )
         self.dataset_fixed_energy_edit.setToolTip(
             "Fixed energy transfer for an imported constant-E powder cut. "
             "Editing this value updates the singleton energy axis used for plotting and fitting."
@@ -12502,6 +12529,9 @@ class NfitProjectExplorer:
 
         self.dataset_field_direction_edit = QtWidgets.QLineEdit()
         self.dataset_field_direction_edit.setObjectName("dataset_field_direction")
+        constrain_input_width(
+            self.dataset_field_direction_edit, COMPACT_SHORT_TEXT_FIELD_WIDTH
+        )
         self.dataset_field_direction_edit.setToolTip(
             "Field direction as three components, e.g. '1 1 1'. Interpreted in "
             "the frame selected at left; only the orientation matters (the "
@@ -13226,6 +13256,7 @@ class NfitProjectExplorer:
         label.setToolTip(tooltip)
         editor = QtWidgets.QLineEdit(str(group.spacegroup or "P 1"))
         editor.setObjectName("group_spacegroup_editor")
+        constrain_input_width(editor, COMPACT_SHORT_TEXT_FIELD_WIDTH)
         editor.setToolTip(tooltip)
         editor.editingFinished.connect(
             lambda editor=editor: self._set_group_spacegroup(group, editor.text())
@@ -13287,6 +13318,8 @@ class NfitProjectExplorer:
             grid.addWidget(QtWidgets.QLabel(label), row, 0)
             edit = QtWidgets.QLineEdit(str(config.get(key, "")))
             edit.setObjectName(f"dataset_importing_{key}")
+            if key in {"prefix", "suffix"}:
+                constrain_input_width(edit, COMPACT_SHORT_TEXT_FIELD_WIDTH)
             edit.setToolTip(tooltip)
             edit.editingFinished.connect(
                 lambda edit=edit, key=key: self._set_dataset_importing_text(group, key, edit.text())
@@ -13686,6 +13719,7 @@ class NfitProjectExplorer:
         spacegroup_row.addWidget(QtWidgets.QLabel("Space group / centering"))
         spacegroup_edit = QtWidgets.QLineEdit(str(root.spacegroup or ""))
         spacegroup_edit.setObjectName("crystal_orientation_spacegroup")
+        constrain_input_width(spacegroup_edit, COMPACT_SHORT_TEXT_FIELD_WIDTH)
         spacegroup_edit.setPlaceholderText("P, I, F, C, or full symbol")
         spacegroup_edit.setToolTip(
             "Set the Hermann–Mauguin space group or lattice-centering letter. "
@@ -13694,7 +13728,8 @@ class NfitProjectExplorer:
         spacegroup_edit.editingFinished.connect(
             lambda: self._set_group_spacegroup(root, spacegroup_edit.text())
         )
-        spacegroup_row.addWidget(spacegroup_edit, 1)
+        spacegroup_row.addWidget(spacegroup_edit)
+        spacegroup_row.addStretch(1)
         layout.addLayout(spacegroup_row)
         if ub is None:
             matrix_text = "UB matrix: not set"
@@ -18439,6 +18474,7 @@ class NfitProjectExplorer:
         spacegroup_label.setToolTip(spacegroup_tooltip)
         spacegroup_editor = QtWidgets.QLineEdit(str(crystal.get("spacegroup", "P 1")))
         spacegroup_editor.setObjectName("model_crystal_spacegroup")
+        constrain_input_width(spacegroup_editor, COMPACT_SHORT_TEXT_FIELD_WIDTH)
         spacegroup_editor.setToolTip(spacegroup_tooltip)
         spacegroup_editor.editingFinished.connect(
             lambda editor=spacegroup_editor: self._set_model_crystal_spacegroup(editor.text())

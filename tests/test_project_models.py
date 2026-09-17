@@ -1501,6 +1501,7 @@ def test_workspace_spacegroup_editor_updates_bragg_analysis_context(monkeypatch)
     assert editor is not None
     assert editor.text() == "F d -3 m:2"
     assert editor.toolTip()
+    assert editor.maximumWidth() <= 220
     editor.setText("227")
     editor.editingFinished.emit()
     assert group.spacegroup == "227"
@@ -2142,6 +2143,8 @@ def test_sample_environment_panel_hosts_temperature_and_field(monkeypatch):
         editor = explorer.window.findChild(QtWidgets.QLineEdit, name)
         assert editor is not None
         assert editor.toolTip()
+        assert editor.maximumWidth() <= 130
+    assert explorer.dataset_field_direction_edit.maximumWidth() <= 220
 
     kinematic = explorer.window.findChild(QtWidgets.QCheckBox, "dataset_kf_ki_included")
     assert kinematic is explorer.dataset_kf_ki_included_check
@@ -2225,6 +2228,8 @@ def test_inelastic_dataset_panel_creates_typed_cross_section_and_chipp_channels(
         widget = panel.findChild(QtWidgets.QWidget, name)
         assert widget is not None
         assert widget.toolTip()
+        if isinstance(widget, QtWidgets.QLineEdit):
+            assert widget.maximumWidth() <= 220
 
     fit_combo = panel.findChild(QtWidgets.QComboBox, "ins_fit_representation")
     fit_combo.setCurrentIndex(fit_combo.findData("chi_double_prime"))

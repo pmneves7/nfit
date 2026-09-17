@@ -2546,7 +2546,7 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     )
     assert len(rebin_dialog.findChildren(QtWidgets.QProgressBar)) == 2
     assert rebin_dialog._nfit_label.text().startswith(
-        "rebinning 7 datasets (80.0%)"
+        "Rebinning 7 datasets (80.0%)"
     )
     assert "elapsed " in rebin_dialog._nfit_label.text()
     assert "remaining" not in rebin_dialog._nfit_label.text()
@@ -2568,6 +2568,9 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
             "total": 100,
             "message": "finishing the current internal stage",
         }
+    )
+    assert rebin_dialog._nfit_label.text().startswith(
+        "Finishing the current internal stage"
     )
     assert batch_bar.value() == 2
     assert detail_bar.maximum() == 100

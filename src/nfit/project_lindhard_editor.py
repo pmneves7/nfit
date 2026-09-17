@@ -8,6 +8,11 @@ import numpy as np
 
 from .pipeline import ModelComponentSpec
 from .project_model_editor import _parameter_to_text, _sampling_float_matches
+from .qt_controls import (
+    COMPACT_SCALAR_FIELD_WIDTH,
+    COMPACT_SHORT_TEXT_FIELD_WIDTH,
+    constrain_input_width,
+)
 
 
 def _lindhard_source_component(
@@ -149,6 +154,7 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
         )
         filling = QtWidgets.QLineEdit(_parameter_to_text(model.config.get("filling_per_cell", 1.0)))
         filling.setObjectName("model_config_filling_per_cell")
+        constrain_input_width(filling, COMPACT_SCALAR_FIELD_WIDTH)
         filling.setToolTip(filling_tooltip)
         filling.editingFinished.connect(
             lambda editor=filling: self._set_model_config_setting("filling_per_cell", editor.text())
@@ -221,6 +227,7 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
             )
         )
         custom.setObjectName("model_config_response_sampling_custom_rtol")
+        constrain_input_width(custom, COMPACT_SCALAR_FIELD_WIDTH)
         custom.setToolTip(custom_tooltip)
         custom.editingFinished.connect(
             lambda editor=custom: self._set_model_config_setting(
@@ -284,8 +291,12 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
         label_text: str,
         default: Any,
         tooltip: str,
+        *,
+        compact: bool = True,
     ) -> Any:
         editor = QtWidgets.QLineEdit(_parameter_to_text(model.config.get(name, default)))
+        if compact:
+            constrain_input_width(editor, COMPACT_SCALAR_FIELD_WIDTH)
         editor.setObjectName(f"model_config_{name}")
         editor.setToolTip(tooltip)
         editor.editingFinished.connect(
@@ -303,6 +314,7 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
         "Transferred wavevector used by model-owned response and convergence "
         "plots, in the linked electronic model's reciprocal basis. Project "
         "mesh certification instead derives its domain from fitted datasets.",
+        compact=False,
     )
     add_domain_editor(
         "plot_energy_min_meV",
@@ -359,6 +371,7 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
         ),
     ):
         editor = QtWidgets.QLineEdit(_parameter_to_text(model.config.get(name, default)))
+        constrain_input_width(editor, COMPACT_SCALAR_FIELD_WIDTH)
         editor.setObjectName(f"model_config_{name}")
         editor.setToolTip(tooltip)
         editor.editingFinished.connect(
@@ -413,6 +426,7 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
             "deterministic off-mesh validation points."
         )
         tolerance = QtWidgets.QLineEdit(_parameter_to_text(q_rtol))
+        constrain_input_width(tolerance, COMPACT_SCALAR_FIELD_WIDTH)
         tolerance.setObjectName("model_config_response_q_interpolation_rtol")
         tolerance.setToolTip(tolerance_tooltip)
         tolerance.editingFinished.connect(
@@ -664,6 +678,7 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
             _parameter_to_text(model.config.get("formula_units_per_cell", 1.0))
         )
         formula_value.setObjectName("model_config_formula_units_per_cell")
+        constrain_input_width(formula_value, COMPACT_SCALAR_FIELD_WIDTH)
         formula_value.setToolTip(
             "Explicit formula units represented by the electronic model "
             "cell. This converts model-cell spectral and bulk responses "
@@ -738,6 +753,7 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
             _parameter_to_text(model.config.get("magnetic_centers_per_model_cell", 1.0))
         )
         magnetic_count.setObjectName("lindhard_magnetic_centers_per_model_cell")
+        constrain_input_width(magnetic_count, COMPACT_SCALAR_FIELD_WIDTH)
         magnetic_count.setToolTip("Explicit reference magnetic centers per electronic model cell.")
         magnetic_count.editingFinished.connect(
             lambda editor=magnetic_count: self._set_lindhard_coupling_text(
@@ -750,6 +766,7 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
             str(model.config.get("magnetic_normalization_species", "") or "")
         )
         magnetic_species.setObjectName("lindhard_magnetic_normalization_species")
+        constrain_input_width(magnetic_species, COMPACT_SHORT_TEXT_FIELD_WIDTH)
         magnetic_species.setPlaceholderText("automatic when unique")
         magnetic_species.setToolTip(
             "Optional represented basis species or element, such as V4+ or V. "
@@ -807,6 +824,7 @@ def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
     )
     g_factor = QtWidgets.QLineEdit(_parameter_to_text(model.config.get("bulk_g_factor", 2.0)))
     g_factor.setObjectName("model_config_bulk_g_factor")
+    constrain_input_width(g_factor, COMPACT_SCALAR_FIELD_WIDTH)
     g_factor.setToolTip(g_tooltip)
     g_factor.editingFinished.connect(
         lambda editor=g_factor: self._set_lindhard_coupling_text("bulk_g_factor", editor.text())

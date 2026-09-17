@@ -16,6 +16,7 @@ from .project_model_editor import (
     _sharing_groups_text,
     model_crystal_config,
 )
+from .qt_controls import COMPACT_SCALAR_FIELD_WIDTH, constrain_input_width
 
 
 def _build_tight_binding_state_editor(
@@ -74,6 +75,7 @@ def _build_tight_binding_state_editor(
         )
     )
     chemical.setObjectName("model_config_chemical_potential_meV")
+    constrain_input_width(chemical, COMPACT_SCALAR_FIELD_WIDTH)
     chemical.setToolTip(chemical_tooltip)
     chemical.editingFinished.connect(
         lambda editor=chemical: self._set_tight_binding_energy_config(
@@ -278,6 +280,7 @@ def _build_tight_binding_dos_sampling_editor(
         )
     )
     broadening.setObjectName("model_config_dos_broadening_meV")
+    constrain_input_width(broadening, COMPACT_SCALAR_FIELD_WIDTH)
     broadening.setToolTip(broadening_tooltip)
     broadening.setEnabled(method == "gaussian")
     broadening.editingFinished.connect(
@@ -333,6 +336,7 @@ def _build_tight_binding_dos_sampling_editor(
             _parameter_to_text(model.config.get("dos_sampling_custom_rtol", 0.01))
         )
         custom.setObjectName("model_config_dos_sampling_custom_rtol")
+        constrain_input_width(custom, COMPACT_SCALAR_FIELD_WIDTH)
         custom.setToolTip(custom_tooltip)
         custom.editingFinished.connect(
             lambda editor=custom: self._set_model_config_setting(
@@ -375,6 +379,7 @@ def _build_tight_binding_dos_sampling_editor(
             )
         )
         editor.setObjectName(f"model_config_{field}")
+        constrain_input_width(editor, COMPACT_SCALAR_FIELD_WIDTH)
         editor.setEnabled(not automatic_range)
         editor.setToolTip(tooltip)
         editor.editingFinished.connect(
@@ -407,6 +412,7 @@ def _build_tight_binding_dos_sampling_editor(
     )
     points = QtWidgets.QLineEdit(_parameter_to_text(model.config.get("dos_energy_points", 600)))
     points.setObjectName("model_config_dos_energy_points")
+    constrain_input_width(points, COMPACT_SCALAR_FIELD_WIDTH)
     points.setToolTip(points_tooltip)
     points.editingFinished.connect(
         lambda editor=points: self._set_model_config_setting("dos_energy_points", editor.text())
@@ -1421,6 +1427,7 @@ def _build_tight_binding_hopping_editor(self, model: ModelComponentSpec) -> None
         _parameter_to_text(float(model.config.get("hopping_cutoff_angstrom", 0.0)) or 5.0)
     )
     cutoff.setObjectName("tight_binding_hopping_cutoff")
+    constrain_input_width(cutoff, COMPACT_SCALAR_FIELD_WIDTH)
     cutoff_tooltip = (
         "Maximum real-space distance used to generate symmetry-distinct "
         "bonds between every orbital-bearing site."

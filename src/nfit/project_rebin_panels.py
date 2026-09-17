@@ -29,6 +29,12 @@ PHYSICAL_REBIN_MODE_CHOICES = (
 METADATA_REBIN_MODE_CHOICES = PHYSICAL_REBIN_MODE_CHOICES
 
 
+def rebin_symmetry_expression_width(mode: str) -> int:
+    """Return a practical editor width for the selected symmetry notation."""
+
+    return 220 if str(mode) in {"space_group", "point_group", "none"} else 640
+
+
 def add_rebin_mode_items(combo: Any, *, metadata: bool = False) -> None:
     """Populate a grid-construction mode selector."""
 

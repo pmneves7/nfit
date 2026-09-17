@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from .project_rebin_panels import rebin_symmetry_expression_width
+from .qt_controls import constrain_input_width
+
 # The compatibility dispatcher supplies these established project_gui globals
 # at invocation time. Keeping the contract explicit avoids a reverse import.
 DETAIL_DATASET_PAGE_SIZE: Any = None
@@ -532,6 +535,10 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     symmetry_mode.currentIndexChanged.connect(lambda _index, combo=symmetry_mode: self._set_group_composite_symmetry_mode(group, str(combo.currentData())))
     symmetry_expression = QtWidgets.QLineEdit(symmetry.expression)
     symmetry_expression.setObjectName("group_composite_symmetry_expression")
+    constrain_input_width(
+        symmetry_expression,
+        rebin_symmetry_expression_width(displayed_symmetry_mode),
+    )
     symmetry_expression.setPlaceholderText("P -1")
     symmetry_expression.setToolTip("Examples: P -1; -1; x,y,z;-x,-y,-z; rotate(order=3, axis=[1,1,1]).")
     symmetry_expression.editingFinished.connect(lambda editor=symmetry_expression: self._set_group_composite_symmetry_expression(group, editor.text()))

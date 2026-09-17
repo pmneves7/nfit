@@ -4,6 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
+COMPACT_SCALAR_FIELD_WIDTH = 130
+COMPACT_SHORT_TEXT_FIELD_WIDTH = 220
+
+
+def constrain_input_width(widget: Any, maximum: int) -> Any:
+    """Keep a short scalar or symbolic input from consuming a whole form row."""
+
+    widget.setMaximumWidth(int(maximum))
+    return widget
+
 
 def configure_numeric_spin_boxes(app: Any) -> None:
     """Prevent accidental mouse changes in every current and future spin box."""
