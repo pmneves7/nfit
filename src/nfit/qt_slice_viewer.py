@@ -378,9 +378,9 @@ class QtMDHistoSliceViewer:
         self.fit_line_color = "#d62728"
         self.fit_line_width = 2.0
         self.residual_percent = 30
-        self.coverage_threshold = 0.9
+        self.coverage_threshold = 0.0
         self.waterfall_step = 1.0
-        self.waterfall_coverage_threshold = 0.9
+        self.waterfall_coverage_threshold = 0.0
         self.waterfall_step_auto = True
         self.waterfall_offset = 1.0
         self.waterfall_offset_auto = True

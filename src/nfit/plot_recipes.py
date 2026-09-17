@@ -82,7 +82,7 @@ def render_plot(
             integrate_checks=_integrate_checks(settings),
             waterfall_step=float(settings.get("waterfall_step", 1.0)),
             coverage_threshold=float(
-                settings.get("waterfall_coverage_threshold", 0.9)
+                settings.get("waterfall_coverage_threshold", 0.0)
             ),
             trace_offset=float(settings.get("waterfall_offset", 1.0)),
             cmap=settings.get("waterfall_cmap", "viridis"),
@@ -149,7 +149,7 @@ def render_plot(
                 and "metadata_dimension" in data.axes[_resolve_mdhisto_dim(data, settings.get("tile_dim", 1))].metadata
                 else float(settings.get("tile_step", 1.0))
             ),
-            coverage_threshold=float(settings.get("coverage_threshold", 0.9)),
+            coverage_threshold=float(settings.get("coverage_threshold", 0.0)),
             masked=bool(settings.get("apply_masks", True)),
             cmap=settings.get("cmap", "viridis"),
             color_scale=settings.get("color_scale", "linear"),
@@ -259,7 +259,7 @@ def render_plot(
             channel=settings.get("channel", "signal"),
             selections=_selections(settings),
             integrate_checks=_integrate_checks(settings),
-            coverage_threshold=float(settings.get("coverage_threshold", 0.9)),
+            coverage_threshold=float(settings.get("coverage_threshold", 0.0)),
             cmap=settings.get("cmap", "viridis"),
             color_scale=settings.get("color_scale", "linear"),
             auto_limits=settings.get("auto_limits", "min/max"),

@@ -728,6 +728,8 @@ def test_qt_control_panel_uses_compact_widgets_without_horizontal_scroll():
     assert viewer.controls_scroll.widget().width() >= viewer.controls_scroll.widget().minimumSizeHint().width()
     assert viewer.dataset_combo.width() > viewer.channel_combo.width()
     assert viewer.dataset_combo.minimumWidth() >= 260
+    assert viewer.coverage_threshold_spin.value() == pytest.approx(0.0)
+    assert viewer.waterfall_coverage_threshold_spin.value() == pytest.approx(0.0)
     assert viewer.x_min_spin.maximumWidth() <= 118
     assert viewer.vmax_spin.maximumWidth() <= 118
     assert viewer.cmap_combo.maximumWidth() <= 150

@@ -1314,7 +1314,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert [axis["mode"] for axis in config["axes"]] == ["step", "step"]
     assert config["max_batch_mb"] == 192
     assert config["auto_rebin"] is True
-    assert config["minimum_coverage"] == pytest.approx(0.9)
+    assert config["minimum_coverage"] == pytest.approx(0.0)
 
     enable_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "dataset_rebin_enabled")
     assert enable_check is not None
@@ -1361,7 +1361,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
         QtWidgets.QLineEdit, "dataset_rebin_minimum_coverage"
     )
     assert coverage_edit is not None
-    assert float(coverage_edit.text()) == pytest.approx(0.9)
+    assert float(coverage_edit.text()) == pytest.approx(0.0)
     assert coverage_edit.toolTip()
     coverage_edit.setText("0.8")
     coverage_edit.editingFinished.emit()

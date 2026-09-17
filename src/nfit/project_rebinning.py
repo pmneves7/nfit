@@ -34,7 +34,7 @@ from .rebin import _uniform_center_edges, rebin_nd, rebin_nd_symmetry
 from .symmetry import resolve_symmetry, symmetry_spec_from_config
 
 DEFAULT_REBIN_MAX_BATCH_MB = 192
-DEFAULT_MINIMUM_COVERAGE = 0.9
+DEFAULT_MINIMUM_COVERAGE = 0.0
 DEFAULT_MINIMUM_SAMPLES = 0.0
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
 REBIN_AXIS_MODES = frozenset({"discrete", "step", "bins", "edges", "tolerance"})

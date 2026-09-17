@@ -668,7 +668,7 @@ output-grid allocation.
 
 **Minimum coverage** masks an output bin when the measured source support
 occupies less than the selected fraction of its requested geometric volume.
-The default is 0.9. Coverage is saved as an independent auxiliary channel, and
+The default is 0. Coverage is saved as an independent auxiliary channel, and
 the resulting coverage mask is used consistently for viewing, histogram
 exports, and fitting. Changing the cutoff does not rewrite the source file or
 nfit masks.
