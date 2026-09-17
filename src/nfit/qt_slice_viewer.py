@@ -260,6 +260,7 @@ class QtMDHistoSliceViewer:
         self.limit_n_label = None
         self.limit_n_spin = None
         self.cursor_xy_label = None
+        self.cursor_powder_qe_label = None
         self.cursor_hkle_label = None
         self.cursor_q_label = None
         self.cursor_intensity_label = None
@@ -4034,10 +4035,21 @@ class QtMDHistoSliceViewer:
         return "magnetization" in self._dataset_type_text() or "mpms" in self._dataset_type_text()
 
     def _sync_cursor_visibility(self) -> None:
+        show_powder_qe = self._shows_powder_qe_cursor()
+        if self.cursor_powder_qe_label is not None:
+            self.cursor_powder_qe_label.setVisible(show_powder_qe)
         if self.cursor_hkle_label is not None:
-            self.cursor_hkle_label.setVisible(not (self._is_powder_dataset() or self._is_magnetization_dataset()))
+            self.cursor_hkle_label.setVisible(
+                not (self._is_powder_dataset() or self._is_magnetization_dataset())
+            )
         if self.cursor_q_label is not None:
             self.cursor_q_label.setVisible(not self._is_magnetization_dataset())
+
+    def _shows_powder_qe_cursor(self) -> bool:
+        if not isinstance(self.data, MDHistoData) or self._is_effective_1d():
+            return False
+        roles = {axis.role for axis in self.data.axes}
+        return "q_modulus" in roles and "energy_transfer" in roles
 
     def _ensure_standard_plot_layout(self) -> None:
         self._mode_controllers.layouts._ensure_standard_plot_layout()
@@ -4820,6 +4832,12 @@ class QtMDHistoSliceViewer:
             f"({_format_coord(coords['H'])}, {_format_coord(coords['K'])}, "
             f"{_format_coord(coords['L'])}, {_format_coord(coords['E'])})"
         )
+        q_modulus = self._q_modulus_inv_angstrom(coords)
+        self.cursor_powder_qe_label.setText(
+            "(|Q|, E) = "
+            f"({_format_coord(np.nan if q_modulus is None else q_modulus)}, "
+            f"{_format_coord(coords['E'])})"
+        )
         self.cursor_q_label.setText(self._format_q_modulus(coords))
         coverage = float(view["coverage_fraction"][y_idx, x_idx])
         self.cursor_intensity_label.setText(
@@ -4894,6 +4912,8 @@ class QtMDHistoSliceViewer:
         q_modulus = coords.get("q_modulus")
         if q_modulus is not None and np.isfinite(q_modulus):
             return abs(float(q_modulus))
+        if self._is_powder_dataset():
+            return None
         hkl = np.asarray([coords["H"], coords["K"], coords["L"]], dtype=float)
         if hkl.shape != (3,) or not np.all(np.isfinite(hkl)):
             return None
@@ -4933,9 +4953,11 @@ class QtMDHistoSliceViewer:
     ) -> dict[str, float]:
         hkle = np.zeros(4, dtype=float)
         has_energy = False
+        energy_transfer = None
+        q_modulus = None
         hidden = self.model._normalized_selections()
         overrides = coordinate_overrides or {}
-        for dim, _axis in enumerate(self.data.axes):
+        for dim, axis in enumerate(self.data.axes):
             if dim == self.model.x_dim:
                 value = (
                     displayed_coordinates[0]
@@ -4958,10 +4980,26 @@ class QtMDHistoSliceViewer:
                     continue
                 else:
                     value = self.data.axes[dim].centers[int(selection)]
+            if axis.role == "q_modulus" and np.isfinite(value):
+                q_modulus = abs(float(value))
+            if axis.role == "energy_transfer" and np.isfinite(value):
+                energy_transfer = float(value)
             vector = _cursor_axis_hkle_vector(self.data, dim)
             hkle += float(value) * vector
             has_energy = has_energy or bool(vector[3])
-        return {"H": hkle[0], "K": hkle[1], "L": hkle[2], "E": hkle[3] if has_energy else np.nan}
+        coords = {
+            "H": hkle[0],
+            "K": hkle[1],
+            "L": hkle[2],
+            "E": (
+                energy_transfer
+                if energy_transfer is not None
+                else hkle[3] if has_energy else np.nan
+            ),
+        }
+        if q_modulus is not None:
+            coords["q_modulus"] = q_modulus
+        return coords
 
     def _cursor_hkle_1d(
         self,

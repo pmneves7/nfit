@@ -463,7 +463,8 @@ selections, and global/local color setting.
 Hovering over any panel updates the coordinate inspector with that panel's
 horizontal and vertical bin centers, tiled-axis coordinate, intensity,
 uncertainty, and coverage. Colorbars and unused grid space do not change the
-readout.
+readout. Powder slices additionally show the physical `(|Q|, E)` pair and the
+same current `|Q|` value in inverse angstroms; both follow the hovered bin.
 
 For slice and tiled plots, editing either **vmin** or **vmax** turns off
 **Autoscale** and keeps the currently displayed value for the other bound.

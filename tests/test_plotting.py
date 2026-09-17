@@ -2458,6 +2458,41 @@ def test_qt_cursor_readout_formats_q_modulus_when_lattice_matrix_is_available():
     assert viewer.cursor_q_label.text() == "|Q| = 2.25 Å⁻¹"
 
 
+def test_qt_powder_cursor_readout_tracks_q_and_energy_axes():
+    pytest.importorskip("PySide6")
+    from types import SimpleNamespace
+
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    source = _tiny_mdhisto_data()
+    axes = list(source.axes)
+    axes[3] = MDHistoAxis(
+        "|Q|",
+        np.linspace(1.5, 2.5, 6),
+        "Å⁻¹",
+        "momentum",
+    )
+    data = source.with_updates(
+        axes=tuple(axes),
+        metadata={"nfit_data_type": "powder_inelastic"},
+    )
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=0)
+    view = viewer.slice_arrays()
+    event = SimpleNamespace(
+        inaxes=viewer.ax_image,
+        xdata=float(view["x_centers"][1]),
+        ydata=float(view["y_centers"][1]),
+    )
+
+    viewer._on_motion(event)
+
+    assert viewer.cursor_xy_label.text() == "(x, y) = (1.8, 0.75)"
+    assert not viewer.cursor_powder_qe_label.isHidden()
+    assert viewer.cursor_powder_qe_label.text() == "(|Q|, E) = (1.8, 0.75)"
+    assert viewer.cursor_hkle_label.isHidden()
+    assert viewer.cursor_q_label.text() == "|Q| = 1.8 Å⁻¹"
+
+
 def test_qt_cursor_readout_hides_crystal_coordinates_for_powder_and_magnetization():
     pytest.importorskip("PySide6")
 
@@ -2469,6 +2504,7 @@ def test_qt_cursor_readout_hides_crystal_coordinates_for_powder_and_magnetizatio
     powder_viewer = QtMDHistoSliceViewer(powder, x_dim=3, y_dim=2)
 
     assert powder_viewer.cursor_hkle_label.isHidden()
+    assert powder_viewer.cursor_powder_qe_label.isHidden()
     assert not powder_viewer.cursor_q_label.isHidden()
 
     magnetization = PointListData(
@@ -2486,6 +2522,7 @@ def test_qt_cursor_readout_hides_crystal_coordinates_for_powder_and_magnetizatio
     magnetization_viewer = QtMDHistoSliceViewer(magnetization)
 
     assert magnetization_viewer.cursor_hkle_label.isHidden()
+    assert magnetization_viewer.cursor_powder_qe_label.isHidden()
     assert magnetization_viewer.cursor_q_label.isHidden()
 
 

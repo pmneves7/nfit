@@ -191,11 +191,13 @@ def _build_plot_panel(viewer: Any) -> Any:
     cursor_layout.setContentsMargins(4, 0, 4, 0)
     cursor_layout.setSpacing(12)
     viewer.cursor_xy_label = QtWidgets.QLabel("(x, y) = (-, -)")
+    viewer.cursor_powder_qe_label = QtWidgets.QLabel("(|Q|, E) = (-, -)")
     viewer.cursor_hkle_label = QtWidgets.QLabel("(H, K, L, E) = (-, -, -, -)")
     viewer.cursor_q_label = QtWidgets.QLabel("|Q| = ? Å⁻¹")
     viewer.cursor_intensity_label = QtWidgets.QLabel("Signal = -")
     for label, width in (
         (viewer.cursor_xy_label, 230),
+        (viewer.cursor_powder_qe_label, 230),
         (viewer.cursor_hkle_label, 350),
         (viewer.cursor_q_label, 150),
         (viewer.cursor_intensity_label, 220),
@@ -203,6 +205,7 @@ def _build_plot_panel(viewer: Any) -> Any:
         label.setMinimumWidth(width)
         label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
     cursor_layout.addWidget(viewer.cursor_xy_label, 0)
+    cursor_layout.addWidget(viewer.cursor_powder_qe_label, 0)
     cursor_layout.addWidget(viewer.cursor_hkle_label, 0)
     cursor_layout.addWidget(viewer.cursor_q_label, 0)
     cursor_layout.addWidget(viewer.cursor_intensity_label, 1)
