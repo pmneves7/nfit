@@ -80,3 +80,33 @@ def test_color_parameters_roundtrip_with_local_and_manual_limits(viewer, local):
     assert not viewer.tile_local_color_scales_check.isChecked()
     assert viewer.image.norm.vmin == pytest.approx(-5.)
     assert viewer.image.norm.vmax == pytest.approx(30.)
+
+
+@pytest.mark.parametrize("mode", ["slice", "tiled_slices"])
+def test_symmetric_color_limits_roundtrip_through_saved_plots(viewer, mode):
+    viewer.apply_plot_settings(
+        {
+            "view_mode": mode,
+            "symmetric_about_zero": True,
+            "autoscale": True,
+        }
+    )
+    saved = viewer.current_plot_settings()
+    entry = new_plot_entry(
+        "symmetric",
+        "dataset",
+        saved,
+        plot_type=(
+            "mdhisto_tiled_slices" if mode == "tiled_slices" else "mdhisto_slice"
+        ),
+    )
+
+    figure = render_plot(entry, viewer.data)
+
+    norm = figure.axes[0].collections[0].norm
+    assert norm.vmin == pytest.approx(-norm.vmax)
+    assert saved["symmetric_about_zero"] is True
+    assert viewer.symmetric_about_zero_check.isChecked()
+    from matplotlib import pyplot as plt
+
+    plt.close(figure)

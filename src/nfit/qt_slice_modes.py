@@ -832,12 +832,27 @@ class FitComparisonController(_ViewerController):
                 data_y_cut = np.nansum(data_z[np.ix_(y_mask, x_mask)], axis=1)
                 data_cut = np.where(x_insufficient, np.nan, data_cut)
                 data_y_cut = np.where(y_insufficient, np.nan, data_y_cut)
+                err_cut = np.full(data_cut.shape, np.nan, dtype=float)
                 err_y_cut = None
                 self.ax_fit_cut.plot(
                     x, data_cut, marker="o", linestyle="None",
                     ms=self.marker_size, mfc=self.marker_face_color or "none",
                     mec=self.line_color, color=self.line_color, label="data",
                 )
+            self._current_x_cut = (
+                np.asarray(x, dtype=float),
+                np.asarray(data_cut, dtype=float),
+                np.asarray(err_cut, dtype=float),
+            )
+            self._current_y_cut = (
+                np.asarray(y, dtype=float),
+                np.asarray(data_y_cut, dtype=float),
+                (
+                    np.full(data_y_cut.shape, np.nan, dtype=float)
+                    if err_y_cut is None
+                    else np.asarray(err_y_cut, dtype=float)
+                ),
+            )
             fit_errors = errors
             if self.unmask_model:
                 raw_data_model = self._viewer._comparison_panel_model(
@@ -935,6 +950,7 @@ class FitComparisonController(_ViewerController):
             self.ax_residual_ycut.set_xlabel("Res. (σ)")
             self.ax_residual_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
             self.ax_residual_ycut.tick_params(labelleft=False)
+        self._sync_export_controls()
 
     def _comparison_panel_model(
         self,
@@ -967,6 +983,7 @@ class FitComparisonController(_ViewerController):
         model.integrate_checks.update(dict(self.model.integrate_checks))
         model.cmap_reversed = bool(self.model.cmap_reversed)
         model.autoscale = self.model.autoscale
+        model.symmetric_about_zero = self.model.symmetric_about_zero
         model.manual_vmin = self.model.manual_vmin
         model.manual_vmax = self.model.manual_vmax
         model.sigma_n = self.model.sigma_n

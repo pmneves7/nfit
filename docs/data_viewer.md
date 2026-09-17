@@ -103,6 +103,15 @@ the figure; fitting always excludes masked data. When an integrated auxiliary
 channel has no finite contributors, the corresponding displayed pixel remains
 blank rather than producing a numerical value.
 
+The dataset selector is wide enough to keep longer source names readable.
+Enable **Hold view settings** beside **Coverage** to carry compatible displayed
+axes, hidden-axis ranges, zoom, box selection, color settings, smoothing, and
+figure styling when selecting another dataset or named binning. Axis state is
+matched by axis name; settings without a compatible destination axis use that
+dataset's default. The option is off by default, so views otherwise retain
+their independent settings. Channel changes keep the current view in either
+mode.
+
 Each displayed axis has a **Step** control beside its minimum and maximum.
 The default is the smallest native bin spacing. Increasing it combines adjacent
 display bins in integer multiples of that spacing using inverse-variance
@@ -118,6 +127,20 @@ non-displayed-axis selections to the title. Projected labels and physical units
 are retained, for example `[K,-K,0]=[0.9,1.1] r.l.u., ΔE=[1,2] meV`. The option
 is preserved independently for each dataset view and included in saved or
 copied figure scripts.
+
+For a two-dimensional slice, **Save data** in **Figure** writes the displayed
+bin centers and values as a UTF-8 CSV table with `x,y,I,dI` columns when the
+channel has uncertainties. **Save model** writes the aligned fitted model as
+`x,y,I`, adding `dI` only when model uncertainty is available. In waterfall
+mode the same buttons write unshifted trace intensities; `y` is the physical
+waterfall-axis coordinate, or the zero-based trace index for a group of
+one-dimensional datasets. The public `save_grid_csv` and
+`save_waterfall_csv` functions provide the same export without Qt.
+
+The histogram box controls provide **Save x** and **Save y** below the panel
+size sliders. They write the current inverse-variance weighted profile as
+`x,intensity,uncertainty` or `y,intensity,uncertainty` through the public
+`save_profile_csv` function.
 
 ### Gridlines
 
@@ -270,6 +293,11 @@ with $f_0(x)=x$. Positive alpha values concentrate more of the color change at
 the high end of the range; negative values do the reverse. The scripting
 equivalent is `color_alpha=` in `plot_mdhisto_slice` and
 `plot_mdhisto_tiled_slices`.
+**Symmetric about 0** expands the active color range so its negative and
+positive limits have equal magnitude. It applies after automatic limit
+estimation. Editing either manual limit while enabled turns off autoscaling and
+updates both fields to `-abs(value)` and `abs(value)`. Saved plots and exported
+scripts retain the setting through `symmetric_about_zero=`.
 Choose installation-local defaults for newly opened continuous image plots and
 waterfall trace sequences under **File → Preferences… → Colormaps**. These
 defaults apply across projects on the current computer and are not written to

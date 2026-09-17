@@ -168,6 +168,17 @@ def test_mdhisto_slice_viewer_auto_color_limits():
     viewer.percentile_n = 10.0
     assert viewer._color_limits(values) == (1.3, 70.90000000000002)
 
+    viewer.symmetric_about_zero = True
+    assert viewer._color_limits(values) == (
+        -70.90000000000002,
+        70.90000000000002,
+    )
+
+    viewer.autoscale = False
+    viewer.manual_vmin = -2.0
+    viewer.manual_vmax = 7.0
+    assert viewer._color_limits(values) == (-7.0, 7.0)
+
 
 def test_exponential_colormap_warps_colors_but_not_normalization():
     from matplotlib import colormaps
@@ -716,6 +727,7 @@ def test_qt_control_panel_uses_compact_widgets_without_horizontal_scroll():
     assert viewer.controls_scroll.maximumWidth() >= viewer.controls_scroll.sizeHint().width()
     assert viewer.controls_scroll.widget().width() >= viewer.controls_scroll.widget().minimumSizeHint().width()
     assert viewer.dataset_combo.width() > viewer.channel_combo.width()
+    assert viewer.dataset_combo.minimumWidth() >= 260
     assert viewer.x_min_spin.maximumWidth() <= 118
     assert viewer.vmax_spin.maximumWidth() <= 118
     assert viewer.cmap_combo.maximumWidth() <= 150
@@ -1032,6 +1044,63 @@ def test_qt_dataset_dropdown_keeps_plot_configs_independent():
     assert viewer.model.cmap == "cividis"
     np.testing.assert_allclose(viewer.ax_image.get_xlim(), (-1.5, 1.5))
     assert "channel='signal'" in viewer.figure_script()
+
+
+def test_qt_hold_view_settings_carries_compatible_state_to_another_dataset():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    first = _tiny_mdhisto_data()
+    second = _tiny_mdhisto_data().with_updates(signal=first.signal + 1000.0)
+    viewer = QtMDHistoSliceViewer(
+        [first, second],
+        dataset_names=["first", "second"],
+        x_dim=3,
+        y_dim=2,
+    )
+
+    assert not viewer.hold_view_settings_check.isChecked()
+    viewer.channel_combo.setCurrentText("errors")
+    viewer.cmap_combo.setCurrentText("magma")
+    viewer.x_combo.setCurrentIndex(1)
+    viewer.ax_image.set_xlim(-0.25, 0.25)
+    viewer.ax_image.set_ylim(-0.5, 0.5)
+    viewer.font_size_spin.setValue(14.0)
+    viewer.symmetric_about_zero_check.setChecked(True)
+    viewer.hold_view_settings_check.setChecked(True)
+
+    viewer.dataset_combo.setCurrentIndex(1)
+
+    assert viewer.model.channel == "errors"
+    assert viewer.model.cmap == "magma"
+    assert viewer.model.symmetric_about_zero
+    assert viewer.font_size == pytest.approx(14.0)
+    assert viewer.x_combo.currentText() == "[H,-H,0]"
+    assert viewer.y_combo.currentText() == "[0,0,L]"
+    np.testing.assert_allclose(viewer.ax_image.get_xlim(), (-0.25, 0.25))
+    np.testing.assert_allclose(viewer.ax_image.get_ylim(), (-0.5, 0.5))
+
+
+def test_qt_symmetric_color_limits_follow_autoscale_and_manual_edits():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+
+    viewer.symmetric_about_zero_check.setChecked(True)
+
+    assert viewer.model.autoscale
+    assert viewer.vmin_spin.value() == pytest.approx(-viewer.vmax_spin.value())
+    assert viewer.image.norm.vmin == pytest.approx(-viewer.image.norm.vmax)
+
+    viewer.vmax_spin.setValue(25.0)
+
+    assert not viewer.model.autoscale
+    assert viewer.vmin_spin.value() == pytest.approx(-25.0)
+    assert viewer.model.manual_vmin == pytest.approx(-25.0)
+    assert viewer.model.manual_vmax == pytest.approx(25.0)
+    assert viewer.current_plot_settings()["symmetric_about_zero"] is True
+    assert "symmetric_about_zero=True" in viewer.figure_script()
 
 
 def test_qt_dataset_dropdown_handles_1d_line_and_2d_slice_modes():
@@ -2753,3 +2822,46 @@ def test_qt_histogram_axes_visibility_and_panel_percent_controls():
     assert viewer.ycut_percent == 25
     np.testing.assert_allclose(viewer.grid.get_height_ratios(), [1.0, 30.0 / 70.0])
     np.testing.assert_allclose(viewer.grid.get_width_ratios(), [1.0, 25.0 / 75.0, 0.045])
+
+
+def test_qt_viewer_exports_box_profiles_and_slice_data_model_csv(
+    monkeypatch,
+    tmp_path,
+):
+    pytest.importorskip("PySide6")
+    import nfit.qt_slice_viewer as viewer_module
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(
+        _with_fit_channels(_tiny_mdhisto_data()),
+        x_dim=3,
+        y_dim=2,
+    )
+    viewer.hist_axes_check.setChecked(True)
+    paths = {
+        "Save x profile": tmp_path / "x.csv",
+        "Save y profile": tmp_path / "y.csv",
+        "Save displayed data": tmp_path / "data.csv",
+        "Save displayed model": tmp_path / "model.csv",
+    }
+    monkeypatch.setattr(
+        viewer_module,
+        "get_save_file_name",
+        lambda _parent, caption, _default, _filters: (str(paths[caption]), ""),
+    )
+
+    viewer.save_x_cut_button.click()
+    viewer.save_y_cut_button.click()
+    viewer.save_data_button.click()
+    viewer.save_model_button.click()
+
+    assert paths["Save x profile"].read_text().splitlines()[0] == (
+        "x,intensity,uncertainty"
+    )
+    assert paths["Save y profile"].read_text().splitlines()[0] == (
+        "y,intensity,uncertainty"
+    )
+    assert paths["Save displayed data"].read_text().splitlines()[0] == (
+        "x,y,I,dI"
+    )
+    assert paths["Save displayed model"].read_text().splitlines()[0] == "x,y,I"

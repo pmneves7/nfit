@@ -154,6 +154,9 @@ def render_plot(
             cmap=settings.get("cmap", "viridis"),
             color_scale=settings.get("color_scale", "linear"),
             auto_limits=settings.get("auto_limits", "min/max"),
+            symmetric_about_zero=bool(
+                settings.get("symmetric_about_zero", False)
+            ),
             autoscale=bool(settings.get("autoscale", True)),
             manual_vmin=settings.get("manual_vmin"),
             manual_vmax=settings.get("manual_vmax"),
@@ -226,6 +229,9 @@ def render_plot(
             cmap=settings.get("cmap", "viridis"),
             color_scale=settings.get("color_scale", "linear"),
             auto_limits=settings.get("auto_limits", "min/max"),
+            symmetric_about_zero=bool(
+                settings.get("symmetric_about_zero", False)
+            ),
             x_step=settings.get("x_step"),
             y_step=settings.get("y_step"),
             show_brillouin_zone_boundaries=bool(
@@ -257,6 +263,9 @@ def render_plot(
             cmap=settings.get("cmap", "viridis"),
             color_scale=settings.get("color_scale", "linear"),
             auto_limits=settings.get("auto_limits", "min/max"),
+            symmetric_about_zero=bool(
+                settings.get("symmetric_about_zero", False)
+            ),
             autoscale=bool(settings.get("autoscale", True)),
             manual_vmin=settings.get("manual_vmin"),
             manual_vmax=settings.get("manual_vmax"),

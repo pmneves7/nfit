@@ -584,6 +584,12 @@ from .susceptibility import (
     coupled_scalar_susceptibility,
 )
 from .symmetry import ReciprocalSymmetryOperation, SymmetrySpec, resolve_symmetry
+from .viewer_export import (
+    save_grid_csv,
+    save_profile_csv,
+    save_viewer_columns_csv,
+    save_waterfall_csv,
+)
 from .workflow import (
     WORKFLOW_SCHEMA_VERSION,
     WorkflowNode,
@@ -1191,6 +1197,10 @@ __all__ = [
     "default_waterfall_step",
     "waterfall_colors",
     "waterfall_step_bounds",
+    "save_grid_csv",
+    "save_profile_csv",
+    "save_viewer_columns_csv",
+    "save_waterfall_csv",
     "assess_mdevent_memory",
     "estimate_mdevent_peak_memory",
     "SymmetryRebinSource",

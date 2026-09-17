@@ -219,8 +219,8 @@ def _build_controls_panel(viewer: Any) -> tuple[Any, Any]:
     viewer.controls_scroll = controls
     controls.setWidgetResizable(True)
     controls.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    controls.setMinimumWidth(430)
-    controls.setMaximumWidth(500)
+    controls.setMinimumWidth(540)
+    controls.setMaximumWidth(620)
     controls_widget = QtWidgets.QWidget()
     controls_widget.setSizePolicy(
         QtWidgets.QSizePolicy.Policy.Ignored,
@@ -242,6 +242,7 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.dataset_combo.addItems(viewer._source_dataset_options())
     viewer.dataset_combo.setToolTip("Choose which loaded dataset is displayed in the viewer.")
     _expanding_combobox(viewer.dataset_combo)
+    viewer.dataset_combo.setMinimumWidth(260)
     viewer.dataset_combo.currentIndexChanged.connect(viewer._set_dataset_selection)
     dataset_layout.addWidget(QtWidgets.QLabel("Dataset"), 0, 0)
     dataset_layout.addWidget(viewer.dataset_combo, 0, 1)
@@ -310,6 +311,15 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.coverage_threshold_spin.valueChanged.connect(viewer._set_coverage_threshold)
     dataset_layout.addWidget(coverage_label, 5, 0)
     dataset_layout.addWidget(viewer.coverage_threshold_spin, 5, 1)
+    viewer.hold_view_settings_check = QtWidgets.QCheckBox("Hold view settings")
+    viewer.hold_view_settings_check.setObjectName("viewer_hold_view_settings")
+    viewer.hold_view_settings_check.setChecked(False)
+    viewer.hold_view_settings_check.setToolTip(
+        "Carry compatible axes, ranges, zoom, color limits, smoothing, and figure styling "
+        "to another dataset or named binning. Off keeps independent settings for each view."
+    )
+    viewer.hold_view_settings_check.toggled.connect(viewer._set_hold_view_settings)
+    dataset_layout.addWidget(viewer.hold_view_settings_check, 5, 2)
     viewer.residual_split_label = QtWidgets.QLabel()
     viewer.residual_split_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
     viewer.residual_split_slider.setMinimumWidth(80)
@@ -520,6 +530,16 @@ def _build_color_controls(viewer: Any, controls_layout: Any) -> None:
         "Automatically recompute color limits when the displayed data or selection changes."
     )
     viewer.autoscale_check.toggled.connect(viewer._set_autoscale)
+    viewer.symmetric_about_zero_check = QtWidgets.QCheckBox("Symmetric about 0")
+    viewer.symmetric_about_zero_check.setObjectName("symmetric_about_zero")
+    viewer.symmetric_about_zero_check.setChecked(viewer.model.symmetric_about_zero)
+    viewer.symmetric_about_zero_check.setToolTip(
+        "Use equal-magnitude negative and positive color limits. Automatic limits are "
+        "expanded symmetrically; editing either manual limit updates both limits."
+    )
+    viewer.symmetric_about_zero_check.toggled.connect(
+        viewer._set_symmetric_about_zero
+    )
     viewer.tile_local_color_scales_check = QtWidgets.QCheckBox("Local scale per tiled plot")
     viewer.tile_local_color_scales_check.setObjectName("tile_local_color_scales")
     viewer.tile_local_color_scales_check.setChecked(viewer.tile_local_color_scales)
@@ -566,7 +586,8 @@ def _build_color_controls(viewer: Any, controls_layout: Any) -> None:
     color_layout.addWidget(viewer.limits_combo, 3, 1)
     color_layout.addWidget(viewer.limit_n_label, 3, 2)
     color_layout.addWidget(viewer.limit_n_spin, 3, 3)
-    color_layout.addWidget(viewer.autoscale_check, 4, 1, 1, 3)
+    color_layout.addWidget(viewer.autoscale_check, 4, 1)
+    color_layout.addWidget(viewer.symmetric_about_zero_check, 4, 2, 1, 2)
     color_layout.addWidget(
         viewer.tile_local_color_scales_check,
         5,
@@ -777,6 +798,18 @@ def _build_histogram_tool_controls(viewer: Any, controls_layout: Any) -> None:
     tools_layout.addWidget(viewer.xcut_percent_slider, 4, 1, 1, 3)
     tools_layout.addWidget(viewer.ycut_percent_label, 5, 0)
     tools_layout.addWidget(viewer.ycut_percent_slider, 5, 1, 1, 3)
+    viewer.save_x_cut_button = QtWidgets.QPushButton("Save x")
+    viewer.save_y_cut_button = QtWidgets.QPushButton("Save y")
+    viewer.save_x_cut_button.setToolTip(
+        "Save the current horizontal box profile as x, intensity, and uncertainty CSV columns."
+    )
+    viewer.save_y_cut_button.setToolTip(
+        "Save the current vertical box profile as y, intensity, and uncertainty CSV columns."
+    )
+    viewer.save_x_cut_button.clicked.connect(viewer.save_x_cut)
+    viewer.save_y_cut_button.clicked.connect(viewer.save_y_cut)
+    tools_layout.addWidget(viewer.save_x_cut_button, 6, 0, 1, 2)
+    tools_layout.addWidget(viewer.save_y_cut_button, 6, 2, 1, 2)
     tools_layout.setColumnStretch(1, 1)
     tools_layout.setColumnStretch(3, 1)
     viewer._sync_histogram_panel_controls()
@@ -1198,10 +1231,14 @@ def _build_figure_controls(viewer: Any, controls_layout: Any) -> None:
     label_layout.addWidget(QtWidgets.QLabel("SI prefix"), 1, 2)
     label_layout.addWidget(viewer.tile_label_si_prefix_combo, 1, 3)
     viewer.copy_figure_button = QtWidgets.QPushButton("Copy figure")
+    viewer.save_data_button = QtWidgets.QPushButton("Save data")
+    viewer.save_model_button = QtWidgets.QPushButton("Save model")
     viewer.copy_script_button = QtWidgets.QPushButton("Copy script")
     viewer.save_script_button = QtWidgets.QPushButton("Save script")
     for button in (
         viewer.copy_figure_button,
+        viewer.save_data_button,
+        viewer.save_model_button,
         viewer.copy_script_button,
         viewer.save_script_button,
     ):
@@ -1210,6 +1247,12 @@ def _build_figure_controls(viewer: Any, controls_layout: Any) -> None:
             QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed
         )
     viewer.copy_figure_button.setToolTip("Copy the current figure image to the clipboard.")
+    viewer.save_data_button.setToolTip(
+        "Save the displayed 2D slice or unshifted waterfall data as x, y, I, and dI CSV columns."
+    )
+    viewer.save_model_button.setToolTip(
+        "Save the fitted model for the displayed 2D slice or waterfall as x, y, and I CSV columns."
+    )
     viewer.copy_script_button.setToolTip(
         "Copy a Python script that recreates the current viewer plot."
     )
@@ -1217,6 +1260,8 @@ def _build_figure_controls(viewer: Any, controls_layout: Any) -> None:
         "Save a Python script that recreates the current viewer plot."
     )
     viewer.copy_figure_button.clicked.connect(viewer.copy_figure_to_clipboard)
+    viewer.save_data_button.clicked.connect(viewer.save_displayed_data)
+    viewer.save_model_button.clicked.connect(viewer.save_displayed_model)
     viewer.copy_script_button.clicked.connect(viewer.copy_script_to_clipboard)
     viewer.save_script_button.clicked.connect(viewer.save_script)
     figure_layout.addWidget(QtWidgets.QLabel("Font size"), 0, 0)
@@ -1227,9 +1272,11 @@ def _build_figure_controls(viewer: Any, controls_layout: Any) -> None:
     figure_layout.addWidget(viewer.show_tile_labels_check, 2, 0, 1, 2)
     figure_layout.addWidget(viewer.tile_label_decimals_spin, 2, 2, 1, 2)
     figure_layout.addWidget(viewer.tile_label_options, 3, 0, 1, 4)
-    figure_layout.addWidget(viewer.copy_figure_button, 4, 0, 1, 4)
-    figure_layout.addWidget(viewer.copy_script_button, 5, 0, 1, 2)
-    figure_layout.addWidget(viewer.save_script_button, 5, 2, 1, 2)
+    figure_layout.addWidget(viewer.save_data_button, 4, 0, 1, 2)
+    figure_layout.addWidget(viewer.save_model_button, 4, 2, 1, 2)
+    figure_layout.addWidget(viewer.copy_figure_button, 5, 0, 1, 4)
+    figure_layout.addWidget(viewer.copy_script_button, 6, 0, 1, 2)
+    figure_layout.addWidget(viewer.save_script_button, 6, 2, 1, 2)
     controls_layout.addWidget(figure_group)
     controls_layout.addStretch(1)
 
@@ -1241,7 +1288,7 @@ def _finish_build(viewer: Any, plot_panel: Any, controls: Any) -> None:
     splitter.setStretchFactor(0, 1)
     splitter.setStretchFactor(1, 0)
     splitter.setChildrenCollapsible(False)
-    splitter.setSizes([970, 430])
+    splitter.setSizes([860, 540])
     viewer.content_stack.addWidget(splitter)
 
     viewer._plot_layout_mode = ("standard", 1)

@@ -119,6 +119,13 @@ plots use `axis_step`, and waterfall plots use `x_step` for the trace axis.
 Exported scripts from the GUI call the matching slice, line, waterfall, or
 tiled-slice backend and include the current display settings.
 
+`save_profile_csv(path, coordinate, intensity, uncertainty,
+coordinate_name="x")` writes a one-dimensional viewer cut.
+`save_grid_csv(path, x, y, intensity, uncertainty=None)` writes a rectangular
+map in tidy `x,y,I[,dI]` form, and `save_waterfall_csv(path, traces,
+model=False)` writes prepared waterfall traces in the same form. These are the
+GUI-independent backends used by the viewer's data-export buttons.
+
 Saved workspace plots use `PlotEntry`, `render_plot`, and `render_project_plot`.
 They return Matplotlib figures and never construct Qt widgets, so generated plot
 scripts run in batch or headless environments as well as interactive Python.

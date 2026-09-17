@@ -285,6 +285,7 @@ def plot_mdhisto_slice(
     cmap: str = "viridis",
     color_scale: str = "linear",
     auto_limits: str = "min/max",
+    symmetric_about_zero: bool = False,
     autoscale: bool = True,
     manual_vmin: float | None = None,
     manual_vmax: float | None = None,
@@ -344,6 +345,7 @@ def plot_mdhisto_slice(
     if integrate_checks:
         model.integrate_checks.update({int(dim): bool(value) for dim, value in integrate_checks.items()})
     model.autoscale = bool(autoscale)
+    model.symmetric_about_zero = bool(symmetric_about_zero)
     model.manual_vmin = manual_vmin
     model.manual_vmax = manual_vmax
     model.sigma_n = float(sigma_n)
@@ -643,6 +645,7 @@ def plot_mdhisto_tiled_slices(
     cmap: str = "viridis",
     color_scale: str = "linear",
     auto_limits: str = "min/max",
+    symmetric_about_zero: bool = False,
     autoscale: bool = True,
     manual_vmin: float | None = None,
     manual_vmax: float | None = None,
@@ -718,6 +721,7 @@ def plot_mdhisto_tiled_slices(
         coverage_threshold=coverage_threshold,
     )
     model.autoscale = bool(autoscale)
+    model.symmetric_about_zero = bool(symmetric_about_zero)
     model.manual_vmin = manual_vmin
     model.manual_vmax = manual_vmax
     model.sigma_n = float(sigma_n)
@@ -1682,6 +1686,7 @@ def plot_mdhisto_fit_comparison(
     cmap: str = "viridis",
     color_scale: str = "linear",
     auto_limits: str = "min/max",
+    symmetric_about_zero: bool = False,
     x_step: float | None = None,
     y_step: float | None = None,
     show_brillouin_zone_boundaries: bool = False,
@@ -1724,6 +1729,7 @@ def plot_mdhisto_fit_comparison(
         cmap=cmap,
         color_scale=color_scale,
         auto_limits=auto_limits,
+        symmetric_about_zero=symmetric_about_zero,
         x_step=x_step,
         y_step=y_step,
         show_brillouin_zone_boundaries=show_brillouin_zone_boundaries,
@@ -1835,6 +1841,7 @@ def _plot_mdhisto_fit_slice_comparison(
     cmap: str,
     color_scale: str,
     auto_limits: str,
+    symmetric_about_zero: bool,
     x_step: float | None,
     y_step: float | None,
     show_brillouin_zone_boundaries: bool,
@@ -1872,6 +1879,7 @@ def _plot_mdhisto_fit_slice_comparison(
         cmap=cmap,
         color_scale=color_scale,
         auto_limits=auto_limits,
+        symmetric_about_zero=symmetric_about_zero,
     )
     data_view = coarsen_mdhisto_view(
         data_model.slice_arrays(),
@@ -1892,6 +1900,7 @@ def _plot_mdhisto_fit_slice_comparison(
             cmap=cmap,
             color_scale=color_scale,
             auto_limits=auto_limits,
+            symmetric_about_zero=symmetric_about_zero,
         )
         view = coarsen_mdhisto_view(
             model.slice_arrays(),
@@ -1899,7 +1908,7 @@ def _plot_mdhisto_fit_slice_comparison(
             y_step=y_step,
         )
         values = model._display_values(view)
-        norm = None if title == "Residual" else shared_norm
+        norm = model._color_norm(values) if title == "Residual" else shared_norm
         artist = ax.pcolormesh(
             view["x_edges"],
             view["y_edges"],
@@ -1947,6 +1956,7 @@ def _configured_mdhisto_model(
     cmap: str,
     color_scale: str,
     auto_limits: str,
+    symmetric_about_zero: bool,
 ) -> MDHistoSliceViewer:
     model = MDHistoSliceViewer(
         data,
@@ -1956,6 +1966,7 @@ def _configured_mdhisto_model(
         cmap=cmap,
         color_scale=color_scale,
         auto_limits=auto_limits,
+        symmetric_about_zero=symmetric_about_zero,
     )
     if selections:
         model.selections.update({int(dim): tuple(value) for dim, value in selections.items()})
@@ -2290,6 +2301,7 @@ class MDHistoSliceViewer:
         color_scale: str = "linear",
         color_alpha: float = 0.0,
         auto_limits: str = "min/max",
+        symmetric_about_zero: bool = False,
         integrate: bool = False,
         masked: bool = True,
         coverage_threshold: float = 0.9,
@@ -2346,6 +2358,7 @@ class MDHistoSliceViewer:
         self.iqr_n = 1.5
         self.percentile_n = 1.0
         self.autoscale = True
+        self.symmetric_about_zero = bool(symmetric_about_zero)
         self.manual_vmin: float | None = None
         self.manual_vmax: float | None = None
         self.integrate = integrate
@@ -3146,10 +3159,18 @@ class MDHistoSliceViewer:
         finite = values[np.isfinite(values)]
         if finite.size == 0:
             return (0.0, 1.0)
-        if not self.autoscale and self.manual_vmin is not None and self.manual_vmax is not None:
-            if self.manual_vmin != self.manual_vmax:
-                return (min(self.manual_vmin, self.manual_vmax), max(self.manual_vmin, self.manual_vmax))
-        if self.auto_limits in {"3-sigma", "N-sigma"}:
+        manual = (
+            not self.autoscale
+            and self.manual_vmin is not None
+            and self.manual_vmax is not None
+            and self.manual_vmin != self.manual_vmax
+        )
+        if manual:
+            vmin, vmax = (
+                min(self.manual_vmin, self.manual_vmax),
+                max(self.manual_vmin, self.manual_vmax),
+            )
+        elif self.auto_limits in {"3-sigma", "N-sigma"}:
             center = float(np.nanmean(finite))
             width = float(self.sigma_n * np.nanstd(finite))
             vmin, vmax = center - width, center + width
@@ -3167,6 +3188,11 @@ class MDHistoSliceViewer:
             pad = 1.0 if vmin == 0 else abs(vmin) * 0.01
             vmin -= pad
             vmax += pad
+        if self.symmetric_about_zero:
+            magnitude = max(abs(float(vmin)), abs(float(vmax)))
+            if magnitude == 0.0:
+                magnitude = 1.0
+            vmin, vmax = -magnitude, magnitude
         return vmin, vmax
 
     def _on_motion(self, event) -> None:

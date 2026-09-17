@@ -79,6 +79,7 @@ from .slice_viewer_state import (
     _point_list_two_theta_column_name,
     _point_list_wavelength,
 )
+from .viewer_export import save_grid_csv, save_profile_csv, save_waterfall_csv
 
 _MARKER_OPTIONS = {
     "none": "",
@@ -130,6 +131,7 @@ class QtMDHistoSliceViewer:
         color_scale: str = "linear",
         color_alpha: float = 0.0,
         auto_limits: str = "min/max",
+        symmetric_about_zero: bool = False,
         integrate: bool = False,
         masked: bool = True,
     ) -> None:
@@ -163,6 +165,7 @@ class QtMDHistoSliceViewer:
         self._initial_color_scale = color_scale
         self._initial_color_alpha = float(color_alpha)
         self._initial_auto_limits = auto_limits
+        self._initial_symmetric_about_zero = bool(symmetric_about_zero)
         self._initial_integrate = integrate
         self._initial_masked = masked
         initial_data = self.datasets[self.dataset_index]
@@ -176,6 +179,7 @@ class QtMDHistoSliceViewer:
             color_scale=color_scale,
             color_alpha=color_alpha,
             auto_limits=auto_limits,
+            symmetric_about_zero=symmetric_about_zero,
             integrate=integrate,
             masked=masked,
         )
@@ -229,9 +233,11 @@ class QtMDHistoSliceViewer:
         self.apply_masks_check = None
         self.coverage_threshold_label = None
         self.coverage_threshold_spin = None
+        self.hold_view_settings_check = None
         self.scale_combo = None
         self.limits_combo = None
         self.autoscale_check = None
+        self.symmetric_about_zero_check = None
         self.tile_local_color_scales_check = None
         self.vmin_spin = None
         self.vmax_spin = None
@@ -270,6 +276,8 @@ class QtMDHistoSliceViewer:
         self.roi_x_width_spin = None
         self.roi_y_center_spin = None
         self.roi_y_width_spin = None
+        self.save_x_cut_button = None
+        self.save_y_cut_button = None
         self.font_size_spin = None
         self.line_width_spin = None
         self.show_binning_title_check = None
@@ -287,6 +295,8 @@ class QtMDHistoSliceViewer:
         self.show_errorbar_caps_check = None
         self.errorbar_cap_size_spin = None
         self.copy_figure_button = None
+        self.save_data_button = None
+        self.save_model_button = None
         self.save_plot_button = None
         self.save_new_plot_button = None
         self.copy_script_button = None
@@ -416,6 +426,7 @@ class QtMDHistoSliceViewer:
         self.tile_label_si_prefix = ""
         self.show_tile_labels = True
         self.tile_local_color_scales = False
+        self.hold_view_settings = False
         self._current_tiled_slices: list[TiledSlice] = []
         self._tile_axes = []
         self._tile_colorbar_axes = []
@@ -437,6 +448,8 @@ class QtMDHistoSliceViewer:
         self._box_tool_has_auto_shown_hist_axes = False
         self._restoring_dataset_state = False
         self._roi_extents: tuple[float, float, float, float] | None = None
+        self._current_x_cut: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+        self._current_y_cut: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._view_limit_callback_ids: list[int] = []
         self.bragg_peak_overlay: dict[str, Any] | None = None
         self.display_step_factors: dict[int, int] = {}
@@ -681,6 +694,7 @@ class QtMDHistoSliceViewer:
             "cmap": self.model._effective_cmap(),
             "color_scale": self.model.color_scale,
             "auto_limits": self.model.auto_limits,
+            "symmetric_about_zero": self.model.symmetric_about_zero,
             "sigma_n": self.model.sigma_n,
             "iqr_n": self.model.iqr_n,
             "percentile_n": self.model.percentile_n,
@@ -813,6 +827,11 @@ class QtMDHistoSliceViewer:
                 setattr(self.model, name, float(settings[name]))
         self.model.manual_vmin = settings.get("manual_vmin", self.model.manual_vmin)
         self.model.manual_vmax = settings.get("manual_vmax", self.model.manual_vmax)
+        self.model.symmetric_about_zero = bool(
+            settings.get(
+                "symmetric_about_zero", self.model.symmetric_about_zero
+            )
+        )
         self.model.autoscale = bool(settings.get("autoscale", self.model.autoscale))
         self.smoothing_x = float(settings.get("smoothing_x", self.smoothing_x))
         self.smoothing_y = float(settings.get("smoothing_y", self.smoothing_y))
@@ -1204,6 +1223,106 @@ class QtMDHistoSliceViewer:
 
         self._close_callback = callback
 
+    def _csv_export_path(self, caption: str, default_name: str) -> str:
+        path, _selected_filter = get_save_file_name(
+            self.window,
+            caption,
+            default_name,
+            "CSV text files (*.csv);;All files (*)",
+        )
+        return str(path)
+
+    def save_x_cut(self) -> None:
+        """Save the current horizontal box profile as CSV."""
+
+        if self._current_x_cut is None:
+            return
+        path = self._csv_export_path("Save x profile", "x_cut.csv")
+        if path:
+            save_profile_csv(
+                path,
+                *self._current_x_cut,
+                coordinate_name="x",
+            )
+
+    def save_y_cut(self) -> None:
+        """Save the current vertical box profile as CSV."""
+
+        if self._current_y_cut is None:
+            return
+        path = self._csv_export_path("Save y profile", "y_cut.csv")
+        if path:
+            save_profile_csv(
+                path,
+                *self._current_y_cut,
+                coordinate_name="y",
+            )
+
+    def _slice_export_values(
+        self,
+        *,
+        model: bool,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
+        if self._current_slice is None:
+            raise ValueError("there is no displayed slice to export")
+        view = self._current_slice
+        if model:
+            if not self._has_fit_channel():
+                raise ValueError("the displayed dataset has no fitted model")
+            if self.unmask_model:
+                fit_model = self._comparison_panel_model(
+                    self.data,
+                    "fit",
+                    masked=False,
+                )
+                view = self._smoothed_slice_view(fit_model.slice_arrays())
+            values = np.asarray(view["fit"], dtype=float)
+            uncertainty = view.get("fit_errors")
+        else:
+            values = np.asarray(self.model._display_values(view), dtype=float)
+            key = f"{self.model.channel}_errors"
+            uncertainty = view.get(
+                key,
+                view.get("errors") if self.model.channel == "signal" else None,
+            )
+        errors = (
+            None
+            if uncertainty is None
+            else np.asarray(uncertainty, dtype=float)
+        )
+        return (
+            np.asarray(view["x_centers"], dtype=float),
+            np.asarray(view["y_centers"], dtype=float),
+            values,
+            errors,
+        )
+
+    def save_displayed_data(self) -> None:
+        """Save the active 2D slice or waterfall values as tidy CSV."""
+
+        path = self._csv_export_path("Save displayed data", "viewer_data.csv")
+        if not path:
+            return
+        if self._waterfall_mode_active():
+            save_waterfall_csv(path, self._current_waterfall_traces)
+            return
+        save_grid_csv(path, *self._slice_export_values(model=False))
+
+    def save_displayed_model(self) -> None:
+        """Save the active 2D slice or waterfall model as tidy CSV."""
+
+        path = self._csv_export_path("Save displayed model", "viewer_model.csv")
+        if not path:
+            return
+        if self._waterfall_mode_active():
+            save_waterfall_csv(
+                path,
+                self._current_waterfall_traces,
+                model=True,
+            )
+            return
+        save_grid_csv(path, *self._slice_export_values(model=True))
+
     def save_script(self) -> None:
         from pathlib import Path
 
@@ -1254,6 +1373,7 @@ class QtMDHistoSliceViewer:
                 f"    cmap={self.model._effective_cmap()!r},",
                 f"    color_scale={self.model.color_scale!r},",
                 f"    auto_limits={self.model.auto_limits!r},",
+                f"    symmetric_about_zero={self.model.symmetric_about_zero!r},",
                 f"    autoscale={self.model.autoscale!r},",
                 f"    manual_vmin={self.model.manual_vmin!r},",
                 f"    manual_vmax={self.model.manual_vmax!r},",
@@ -1321,6 +1441,7 @@ class QtMDHistoSliceViewer:
                 f"    cmap={self.model._effective_cmap()!r},",
                 f"    color_scale={self.model.color_scale!r},",
                 f"    auto_limits={self.model.auto_limits!r},",
+                f"    symmetric_about_zero={self.model.symmetric_about_zero!r},",
                 f"    autoscale={self.model.autoscale!r},",
                 f"    manual_vmin={self.model.manual_vmin!r},",
                 f"    manual_vmax={self.model.manual_vmax!r},",
@@ -1868,14 +1989,119 @@ class QtMDHistoSliceViewer:
         index = int(index)
         if index == self.dataset_index or not (0 <= index < len(self.datasets)):
             return
-        self._dataset_states[self.dataset_index] = self._capture_dataset_state()
-        state = self._dataset_states[index]
+        source_state = self._capture_dataset_state()
+        self._dataset_states[self.dataset_index] = source_state
+        if self.hold_view_settings:
+            state = self._held_view_state(source_state, index)
+            self._dataset_states[index] = state
+        else:
+            state = self._dataset_states[index]
         if state is None:
             state = self._default_dataset_state(index)
             self._dataset_states[index] = state
         self.dataset_index = index
         self._restore_dataset_state(state)
         self._sync_dataset_binning_combos()
+
+    def _set_hold_view_settings(self, enabled: bool) -> None:
+        self.hold_view_settings = bool(enabled)
+
+    def _held_view_state(
+        self,
+        source: _DatasetViewState,
+        target_index: int,
+    ) -> _DatasetViewState:
+        """Copy compatible presentation state onto another dataset or binning."""
+
+        target = self._default_dataset_state(target_index)
+        for name, value in vars(source).items():
+            if name not in {
+                "model",
+                "roi_extents",
+                "xlim",
+                "ylim",
+                "tile_dim",
+                "tile_range",
+                "tile_step",
+                "display_step_factors",
+            }:
+                setattr(target, name, value)
+
+        source_model = source.model
+        target_model = target.model
+        for name in (
+            "cmap",
+            "cmap_reversed",
+            "color_scale",
+            "color_alpha",
+            "auto_limits",
+            "power_gamma",
+            "sigma_n",
+            "iqr_n",
+            "percentile_n",
+            "autoscale",
+            "symmetric_about_zero",
+            "manual_vmin",
+            "manual_vmax",
+            "integrate",
+            "masked",
+            "coverage_threshold",
+        ):
+            setattr(target_model, name, getattr(source_model, name))
+        target_channels = (
+            target_model.point_channels
+            if getattr(target_model, "is_point_list", False)
+            else target_model.CHANNELS
+        )
+        if source_model.channel in target_channels:
+            target_model.channel = source_model.channel
+
+        source_data = source_model.data
+        target_data = target_model.data
+        compatible_xy = False
+        if isinstance(source_data, MDHistoData) and isinstance(
+            target_data, MDHistoData
+        ):
+            source_names = [axis.name for axis in source_data.axes]
+            target_names = [axis.name for axis in target_data.axes]
+            x_name = source_names[source_model.x_dim]
+            y_name = source_names[source_model.y_dim]
+            if x_name in target_names and y_name in target_names and x_name != y_name:
+                target_model.x_dim = target_names.index(x_name)
+                target_model.y_dim = target_names.index(y_name)
+                compatible_xy = True
+            for source_dim, selection in source_model.selections.items():
+                axis_name = source_names[int(source_dim)]
+                if axis_name in target_names:
+                    target_model.selections[target_names.index(axis_name)] = selection
+            target_model.integrate_checks = {
+                target_names.index(source_names[int(source_dim)]): bool(value)
+                for source_dim, value in source_model.integrate_checks.items()
+                if source_names[int(source_dim)] in target_names
+            }
+            target.display_step_factors = {
+                target_names.index(source_names[int(source_dim)]): int(value)
+                for source_dim, value in (source.display_step_factors or {}).items()
+                if source_names[int(source_dim)] in target_names
+            }
+            if source.tile_dim is not None:
+                tile_name = source_names[int(source.tile_dim)]
+                if tile_name in target_names:
+                    target.tile_dim = target_names.index(tile_name)
+                    target.tile_range = tuple(source.tile_range)
+                    target.tile_step = float(source.tile_step)
+        elif getattr(source_model, "is_point_list", False) and getattr(
+            target_model, "is_point_list", False
+        ):
+            if source_model.x_key in target_model.point_coordinates:
+                target_model.x_key = source_model.x_key
+                compatible_xy = True
+
+        if compatible_xy:
+            target.roi_extents = source.roi_extents
+            target.xlim = source.xlim
+            target.ylim = source.ylim
+        return target
 
     def _capture_dataset_state(self) -> _DatasetViewState:
         xlim = None
@@ -1948,6 +2174,7 @@ class QtMDHistoSliceViewer:
             color_scale=self._initial_color_scale,
             color_alpha=self._initial_color_alpha,
             auto_limits=self._initial_auto_limits,
+            symmetric_about_zero=self._initial_symmetric_about_zero,
             integrate=self._initial_integrate,
             masked=self._initial_masked,
             coverage_threshold=self.coverage_threshold,
@@ -2047,6 +2274,10 @@ class QtMDHistoSliceViewer:
             self._set_combo_silent(self.scale_combo, self.model.color_scale)
             self._set_combo_silent(self.limits_combo, self.model.auto_limits)
             self._set_checkbox_silent(self.autoscale_check, self.model.autoscale)
+            self._set_checkbox_silent(
+                self.symmetric_about_zero_check,
+                self.model.symmetric_about_zero,
+            )
             self._set_checkbox_silent(self.apply_masks_check, self.model.masked)
             self._set_spin_silent(
                 self.coverage_threshold_spin,
@@ -2480,6 +2711,7 @@ class QtMDHistoSliceViewer:
                 color_scale=self._initial_color_scale,
                 color_alpha=self._initial_color_alpha,
                 auto_limits=self._initial_auto_limits,
+                symmetric_about_zero=self._initial_symmetric_about_zero,
                 integrate=self._initial_integrate,
                 masked=self._initial_masked,
             )
@@ -2551,6 +2783,10 @@ class QtMDHistoSliceViewer:
         self._set_combo_silent(self.scale_combo, self.model.color_scale)
         self._set_combo_silent(self.limits_combo, self.model.auto_limits)
         self._set_checkbox_silent(self.autoscale_check, self.model.autoscale)
+        self._set_checkbox_silent(
+            self.symmetric_about_zero_check,
+            self.model.symmetric_about_zero,
+        )
         self._set_spin_silent(self.gamma_spin, self.model.power_gamma)
         self._set_spin_silent(self.alpha_spin, self.model.color_alpha)
         self._set_spin_silent(self.limit_n_spin, self._current_limit_n())
@@ -2891,13 +3127,47 @@ class QtMDHistoSliceViewer:
         self._sync_tiled_color_controls()
         self.update_plot(reuse_slice=True)
 
+    def _set_symmetric_about_zero(self, enabled: bool) -> None:
+        """Apply equal-magnitude negative and positive color limits."""
+
+        if self._syncing_limits:
+            return
+        self.model.symmetric_about_zero = bool(enabled)
+        if enabled:
+            magnitude = max(
+                abs(float(self.vmin_spin.value())),
+                abs(float(self.vmax_spin.value())),
+            )
+            if magnitude == 0.0:
+                magnitude = 1.0
+            self._set_color_limit_spins(-magnitude, magnitude)
+            if not self.model.autoscale:
+                self.model.manual_vmin = -magnitude
+                self.model.manual_vmax = magnitude
+        self.update_plot(reuse_slice=True)
+
+    def _set_color_limit_spins(self, vmin: float, vmax: float) -> None:
+        self._syncing_limits = True
+        try:
+            self.vmin_spin.setValue(float(vmin))
+            self.vmax_spin.setValue(float(vmax))
+        finally:
+            self._syncing_limits = False
+
     def _set_manual_limit(self, which: str, value: float) -> None:
         if self._syncing_limits:
             return
         if self.model.autoscale:
             self.model.manual_vmin = float(self.vmin_spin.value())
             self.model.manual_vmax = float(self.vmax_spin.value())
-        if which == "vmin":
+        if self.model.symmetric_about_zero:
+            magnitude = abs(float(value))
+            if magnitude == 0.0:
+                magnitude = 1.0
+            self.model.manual_vmin = -magnitude
+            self.model.manual_vmax = magnitude
+            self._set_color_limit_spins(-magnitude, magnitude)
+        elif which == "vmin":
             self.model.manual_vmin = float(value)
         else:
             self.model.manual_vmax = float(value)
@@ -3675,7 +3945,40 @@ class QtMDHistoSliceViewer:
             self.residual_split_slider.setVisible(
                 not is_waterfall and not is_tiled and self._residual_axes_active()
             )
+        self._sync_export_controls()
         self._sync_cursor_visibility()
+
+    def _sync_export_controls(self) -> None:
+        is_waterfall = self._waterfall_mode_active()
+        is_slice_2d = bool(
+            not is_waterfall
+            and not self._tiled_mode_active()
+            and not self._is_effective_1d()
+            and self._current_slice is not None
+        )
+        if self.save_data_button is not None:
+            self.save_data_button.setEnabled(
+                bool(
+                    is_slice_2d
+                    or (is_waterfall and self._current_waterfall_traces)
+                )
+            )
+        if self.save_model_button is not None:
+            has_model = (
+                self._has_fit_channel()
+                if is_slice_2d
+                else any(
+                    trace.model_values is not None
+                    for trace in self._current_waterfall_traces
+                )
+                if is_waterfall
+                else False
+            )
+            self.save_model_button.setEnabled(bool(has_model))
+        if self.save_x_cut_button is not None:
+            self.save_x_cut_button.setEnabled(self._current_x_cut is not None)
+        if self.save_y_cut_button is not None:
+            self.save_y_cut_button.setEnabled(self._current_y_cut is not None)
 
     def _suppress_matplotlib_coordinate_status(self) -> None:
         axes = (
@@ -4182,6 +4485,9 @@ class QtMDHistoSliceViewer:
         self._sync_histogram_panel_controls()
         if not visible:
             self._clear_roi_sum_annotation()
+            self._current_x_cut = None
+            self._current_y_cut = None
+            self._sync_export_controls()
         elif self._roi_extents is not None:
             self._update_histogram_cuts_from_extents(self._roi_extents)
         if self._fit_panels_active():
@@ -4325,6 +4631,9 @@ class QtMDHistoSliceViewer:
         return self._normalize_roi_extents((click.xdata, release.xdata, click.ydata, release.ydata))
 
     def _update_histogram_cuts_from_extents(self, extents: tuple[float, float, float, float] | None) -> None:
+        self._current_x_cut = None
+        self._current_y_cut = None
+        self._sync_export_controls()
         if self._fit_cuts_active():
             self._update_fit_compare_cuts(extents)
             self.canvas.draw_idle()
@@ -4364,6 +4673,16 @@ class QtMDHistoSliceViewer:
             x_error = np.where(x_insufficient, np.nan, x_error)
             y_cut = np.where(y_insufficient, np.nan, y_cut)
             y_error = np.where(y_insufficient, np.nan, y_error)
+            self._current_x_cut = (
+                np.asarray(view["x_centers"][x_mask], dtype=float),
+                np.asarray(x_cut, dtype=float),
+                np.asarray(x_error, dtype=float),
+            )
+            self._current_y_cut = (
+                np.asarray(view["y_centers"][y_mask], dtype=float),
+                np.asarray(y_cut, dtype=float),
+                np.asarray(y_error, dtype=float),
+            )
             self.ax_xcut.errorbar(
                 view["x_centers"][x_mask], x_cut, yerr=x_error, fmt="-", lw=1.2, capsize=0
             )
@@ -4375,6 +4694,7 @@ class QtMDHistoSliceViewer:
         self.ax_ycut.set_xlabel("Weighted mean")
         self.ax_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
         self._apply_histogram_axes_layout(draw=False)
+        self._sync_export_controls()
 
     def _clear_roi_sum_annotation(self) -> None:
         annotation = self.roi_sum_text
