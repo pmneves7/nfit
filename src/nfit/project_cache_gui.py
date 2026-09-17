@@ -29,9 +29,12 @@ class CompressedCachePrompt(QtCore.QObject):
     def __init__(self, parent: QtWidgets.QWidget) -> None:
         super().__init__(parent)
         self.parent_window = parent
+        self._choice_completed = False
         self.requested.connect(self._handle_request)
 
     def request(self, key: Any, artifact: CompressedBinning) -> None:
+        if self._choice_completed:
+            return
         item = _DiscardRequest(key, artifact)
         if QtCore.QThread.currentThread() == self.thread():
             self._handle_request(item)
@@ -42,7 +45,10 @@ class CompressedCachePrompt(QtCore.QObject):
     @QtCore.Slot(object)
     def _handle_request(self, item: _DiscardRequest) -> None:
         try:
+            if self._choice_completed:
+                return
             self._choose(item.key, item.artifact)
+            self._choice_completed = True
         finally:
             item.finished.set()
 
@@ -57,19 +63,25 @@ class CompressedCachePrompt(QtCore.QObject):
             message.setText(
                 "nfit has reached its in-memory compressed-binning limit. "
                 f"The oldest bin ({label}) needs to leave memory. "
-                "Save it as a compressed NPZ where you choose, or discard it."
+                "This bounded result-cache allowance is separate from available "
+                "system RAM and the transient-memory preference. Save this bin "
+                "as a compressed NPZ where you choose, or discard it. After this "
+                "choice, nfit will automatically discard additional old compressed "
+                "bins for the rest of this session."
             )
             save_button = message.addButton(
                 "Save compressed NPZ…", QtWidgets.QMessageBox.ButtonRole.ActionRole
             )
             discard_button = message.addButton(
-                "Discard oldest bin", QtWidgets.QMessageBox.ButtonRole.DestructiveRole
+                "Discard old bins as needed",
+                QtWidgets.QMessageBox.ButtonRole.DestructiveRole,
             )
             save_button.setToolTip(
                 "Choose a destination for the compressed binning before it leaves memory."
             )
             discard_button.setToolTip(
-                "Remove this cached result from RAM; nfit can rebin it from its source later."
+                "Remove this cached result from RAM and discard later old bins "
+                "without another prompt during this nfit session."
             )
             message.setDefaultButton(save_button)
             message.exec()

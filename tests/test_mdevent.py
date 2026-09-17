@@ -62,8 +62,11 @@ def test_full_compressed_cache_dialog_explains_save_and_discard(monkeypatch):
 
     monkeypatch.setattr(QtWidgets.QMessageBox, "exec", choose_discard)
     prompt.request("named oldest bin", artifact)
+    prompt.request("another old bin", artifact)
     assert "named oldest bin" in seen[0]
     assert "compressed NPZ" in seen[0]
+    assert "separate from available system RAM" in seen[0]
+    assert len(seen) == 1
 
 
 def _write_mdevent(path):

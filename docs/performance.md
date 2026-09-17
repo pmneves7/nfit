@@ -108,7 +108,9 @@ then a bounded, chunk-compressed RAM tier. nfit does not write automatic cache
 spill files to `/tmp` or scratch. When the compressed tier fills, the GUI asks
 whether to discard the oldest compressed binning or save it as a compressed
 `.npz` file at a path you choose. A discarded binning can be recomputed from
-its sources. Saving a compressed NPZ exports the numerical result; it does not
+its sources. That choice is requested once per nfit session; subsequent old
+compressed binnings are discarded automatically instead of opening repeated
+dialogs. Saving a compressed NPZ exports the numerical result; it does not
 add that file to the project automatically. A binning too large for the
 compressed tier is not retained there. Scripting workflows evict old results
 without a GUI prompt. The budgets count distinct NumPy array payloads and
@@ -117,6 +119,8 @@ The prepared-table cache defaults to 128 MiB and the model-overlay cache to
 256 MiB. Viewer and composite cache capacities use one sixteenth of physical
 memory, bounded between 768 MiB and 4 GiB for each cache. Three quarters of
 each allowance holds resident arrays and one quarter holds compressed results.
+This cache allowance is separate from the **Transient memory ceiling**, which
+controls temporary rebin batches and parallel worker accumulators.
 This capacity is not allocated in
 advance: small projects retain only the arrays they produce. The adaptive
 budget can retain a practical four-dimensional reduction that exceeded the old
