@@ -202,6 +202,7 @@ from .project_io import (
     NfitProject,
     _analysis_from_dict,  # noqa: F401 - compatibility re-export
     _analysis_to_dict,  # noqa: F401 - compatibility re-export
+    _binning_signatures_match,
     _encode_float_array,
     _fit_channel_array,
     _fit_channels_from_dict,  # noqa: F401 - compatibility re-export
@@ -5495,7 +5496,7 @@ def _saved_binning_compressed_size(
             continue
         saved_signature = entry.get("signature")
         if format_version >= 6:
-            if saved_signature != current_signature:
+            if not _binning_signatures_match(saved_signature, current_signature):
                 return None
         elif not _project_binning_is_current(
             kind, group, target, binning_id, config
@@ -5968,7 +5969,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                 effective_dataset_masks(group, dataset),
                 config,
             )
-            if version >= 6 and saved != signature:
+            if version >= 6 and not _binning_signatures_match(saved, signature):
                 continue
             key = dataset.id if is_fit else f"{dataset.id}:{binning_id}"
             if version >= 6:

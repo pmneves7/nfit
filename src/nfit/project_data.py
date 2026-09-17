@@ -966,8 +966,15 @@ def _viewer_view_signature(
         if bool(config.get("enabled"))
         else None
     )
+    derived_dependencies = _derived_recipe_dependency_signature(dataset)
+    identity = dataset_content_signature(dataset)
+    if dataset.kind == "derived_recipe" and dataset.data is None and derived_dependencies is not None:
+        # A live recipe has no numerical payload of its own. In particular,
+        # id(None) cannot identify it across processes. The complete recipe and
+        # source signatures below determine whether its result is still valid.
+        identity = ("derived_recipe", dataset.id)
     payload = [
-        dataset_content_signature(dataset),
+        identity,
         dataset.data_type,
         dataset.kind,
         rebin,
@@ -988,7 +995,7 @@ def _viewer_view_signature(
             ]
             for background in dataset.backgrounds
         ],
-        _derived_recipe_dependency_signature(dataset),
+        derived_dependencies,
     ]
     return json.dumps(payload, sort_keys=True, default=str)
 
