@@ -6439,6 +6439,7 @@ class _RebinProgressDialog:
         self._detail_start_key: tuple[str, int] | None = None
         self._cancel_requested = False
         self._cancel_callback = None
+        self._failed = False
 
         owner = parent.window if hasattr(parent, "window") else parent
         self.dialog = QtWidgets.QDialog(owner)
@@ -6561,6 +6562,7 @@ class _RebinProgressDialog:
         self._detail_base_text = self._title
         self._detail_start_key = None
         self._cancel_requested = False
+        self._failed = False
         self.cancel_button.setEnabled(True)
         self.cancel_button.setText("Cancel")
         self._set_batch_visible(False)
@@ -6693,6 +6695,9 @@ class _RebinProgressDialog:
         return self._cancel_requested
 
     def _request_cancel(self) -> None:
+        if self._failed:
+            self.close()
+            return
         if self._cancel_requested:
             return
         self._cancel_requested = True
@@ -6746,7 +6751,10 @@ class _RebinProgressDialog:
     def fail(self, message: str) -> None:
         self._detail_base_text = f"Rebin failed: {message}"
         self._refresh_labels()
-        self.cancel_button.setEnabled(False)
+        self._failed = True
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.setText("Close")
+        self.cancel_button.setToolTip("Close the failed rebin progress window.")
 
     def close(self) -> None:
         self._timer.stop()

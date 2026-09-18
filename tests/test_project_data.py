@@ -1172,6 +1172,27 @@ def test_rebin_progress_cancel_is_cooperative():
     application.processEvents()
 
 
+def test_failed_rebin_progress_can_be_dismissed():
+    from PySide6 import QtWidgets
+
+    application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("Workspace1")]))
+    callback = explorer._make_rebin_progress_callback("Rebinning test...")
+    controller = callback._nfit_progress_controller
+
+    controller.fail("invalid background projection")
+
+    assert controller.cancel_button.isEnabled()
+    assert controller.cancel_button.text() == "Close"
+    assert controller.cancel_button.toolTip() == (
+        "Close the failed rebin progress window."
+    )
+    controller.cancel_button.click()
+    application.processEvents()
+    assert not controller.dialog.isVisible()
+    explorer.window.close()
+
+
 def test_project_cache_persists_every_named_composite_binning(tmp_path):
     source = tmp_path / "source.nxs"
     source.write_bytes(b"source placeholder")
