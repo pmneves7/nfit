@@ -30,13 +30,18 @@ numerical arrays can be shared without duplicating large datasets in memory.
 Pasting repeatedly creates independent items rather than moving the originals.
 Paste is available only at a compatible destination.
 
+To duplicate a background or mask beside itself, select it, copy, and paste
+while it remains selected. The copy stays in the same dataset or collection
+and has independent settings and a unique name. Copied backgrounds keep their
+source references.
+
 | Copied items | Destination |
 | --- | --- |
 | Workspace | Project or another workspace, creating a sibling workspace |
 | Datasets or run pages | Workspace or dataset collection |
 | Dataset collections | Workspace or another dataset collection |
-| Masks | Dataset or dataset collection |
-| Backgrounds | Dataset or dataset collection |
+| Masks | Dataset, dataset collection, or an existing mask in either |
+| Backgrounds | Dataset, dataset collection (including the root Datasets section), or an existing background |
 | Model components | Workspace or Models |
 | Fit history entries | Workspace or Fits |
 | Analysis recipes | Workspace or Analyses |

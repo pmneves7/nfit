@@ -10775,9 +10775,9 @@ class NfitProjectExplorer:
             self._clipboard = _project_clipboard.make_payload(legacy_role, legacy_items)
         payload = self._clipboard
         target_node: Any = group
-        if role in {"dataset_group", "group_masks", "group_backgrounds"}:
+        if role in {"dataset_group", "group_masks", "group_mask", "group_backgrounds", "group_background"}:
             target_node = self._dataset_group_for_item(self._current_item())
-        elif role in {"dataset", "masks", "backgrounds", "dataset_page"} and group is not None:
+        elif role in {"dataset", "masks", "mask", "backgrounds", "background", "dataset_page"} and group is not None:
             if role == "dataset_page":
                 page = self._dataset_page_roles.get(id(self._current_item()))
                 target_node = page[0] if page is not None else group

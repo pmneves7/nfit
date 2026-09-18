@@ -428,8 +428,11 @@ def paste_capability(
         "dataset_tree": {"group", "datasets", "dataset_group"},
         "dataset": {"group", "datasets", "dataset_group", "dataset", "dataset_page"},
         "dataset_group": {"group", "datasets", "dataset_group"},
-        "mask": {"dataset", "masks", "dataset_group", "group_masks"},
-        "background": {"dataset", "backgrounds", "dataset_group", "group_backgrounds"},
+        "mask": {"dataset", "masks", "mask", "dataset_group", "group_masks", "group_mask"},
+        "background": {
+            "datasets", "dataset", "backgrounds", "background", "dataset_group",
+            "group_backgrounds", "group_background",
+        },
         "model": {"group", "models", "model"},
         "fit": {"group", "fits", "fit", "fit_timeline"},
         "analysis": {"group", "analyses", "analysis"},
@@ -643,7 +646,7 @@ def paste_payload(
         node.subgroups.extend(groups)
         return PasteResult(tuple(groups), True)
     if payload.kind == "mask":
-        owner = dataset if target_role in {"dataset", "masks"} else node
+        owner = dataset if target_role in {"dataset", "masks", "mask"} else node
         copied = copy.deepcopy(payload.items)
         used = {item.name for item in owner.masks}
         for item in copied:
@@ -652,7 +655,7 @@ def paste_payload(
         owner.masks.extend(copied)
         return PasteResult(tuple(copied), True)
     if payload.kind == "background":
-        owner = dataset if target_role in {"dataset", "backgrounds"} else node
+        owner = dataset if target_role in {"dataset", "backgrounds", "background"} else node
         copied = tuple(_clone_background(item) for item in payload.items)
         probe = type("BackgroundOwner", (), {"backgrounds": copied})()
         if not _background_references_are_valid((probe,), data_group):
