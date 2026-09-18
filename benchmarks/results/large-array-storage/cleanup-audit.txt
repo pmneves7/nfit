@@ -1,0 +1,36 @@
+Old temporary path audit: /tmp/nfit-mapped-artifacts-Cz62Ea
+
+The original cleanup command suppressed inner SSH errors with `2>/dev/null ||
+true`. It therefore did not establish that any individual analysis node was
+checked successfully.
+
+The corrective per-node audit ran through `ssh ornl` using this inner command
+for analysis-node1.sns.gov through analysis-node40.sns.gov:
+
+    ssh -o BatchMode=yes -o ConnectTimeout=3 "$node" \
+      'printf "HOST=%s PATH=" "$HOSTNAME"; if test -e /tmp/nfit-mapped-artifacts-Cz62Ea; then echo PRESENT; else echo ABSENT; fi'
+
+Results:
+
+- analysis-node1 through analysis-node17: status 255, hostname did not resolve
+- analysis-node18 and analysis-node19: status 255, permission denied
+- analysis-node20: status 255, hostname did not resolve
+- analysis-node21 through analysis-node23: status 255, permission denied
+- analysis-node24 through analysis-node40: status 255, hostname did not resolve
+
+Thus none of the 40 direct per-node checks executed the path test.
+
+A second audit made 20 independent outer connections with this command:
+
+    ssh -o ConnectTimeout=5 ornl \
+      'printf "HOST=%s PATH=" "$HOSTNAME"; if test -e /tmp/nfit-mapped-artifacts-Cz62Ea; then echo PRESENT; else echo ABSENT; fi'
+
+All 20 connections succeeded, all selected `analysis-node21.sns.gov`, and all
+reported `PATH=ABSENT`. This proves absence on analysis-node21 only. The
+creation hostname for the old path was not recorded, so absence on its original
+node could not be established. The interrupted artifact was not recovered.
+
+The final shared benchmark root
+`/SNS/users/paulneves/.cache/nfit-phase2-mapped-OqC5xL` was removed directly by
+exact path after its reports were downloaded, and a subsequent check reported
+it absent.

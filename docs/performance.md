@@ -20,11 +20,19 @@ event storage but cannot reduce the persistent output arrays.
 Large regular MDHisto rebins also generate coordinates and geometric coverage
 in chunks, avoiding full-grid coordinate meshes and filtered copies. Automatic
 coordinate limits use the extrema of the original grid, including symmetry
-images. Small histograms retain the direct NumPy path. Discrete and
+images. Histograms with fewer than 250,000 source bins retain the direct path;
+this is about 10 MB for five float64 channels plus a boolean mask. The
+threshold reflects coordinate-processing cost, so it uses bin count rather
+than a fixed file size. Discrete and
 tolerance-based axis clustering still uses the direct path because it needs
 the complete coordinate distribution. These strategies preserve float64
 signals, errors, normalization, masks, and coverage; they do not compress or
 reduce the precision of active numerical arrays.
+
+Streaming also uses fused accumulation for explicit output edges, including
+nonuniform grids and fractional coverage. Edge membership is resolved against
+the supplied edges before accumulation, preserving values exactly on a bin
+boundary. Invalid, non-finite coordinates are ignored.
 
 File-backed datasets are loaded on first use and retained by their
 `DatasetEntry`; viewers, analyses, and composites share that single loading
@@ -142,6 +150,35 @@ budget continues to account for them until they are released. Evicting a cache
 entry cannot free arrays still in use, so this live-data floor can exceed the
 configured allowance. Replacing a result invalidates its cache lookup while
 existing readers retain their original immutable data.
+
+On macOS and Linux, large saved histogram caches can instead load into read-only NumPy memory maps.
+This is automatic when an artifact's expanded size is at least 2 GiB and at
+least one quarter of the managed RAM allowance. Smaller results retain the
+in-memory loader. Compressed archive members are expanded into private files
+in the system temporary directory; the saved project remains unchanged. The
+files live as long as their arrays or views, then their storage is released.
+Their directory entries are removed immediately, so they
+also disappear after a process exit or crash. nfit requires free disk headroom
+of at least 1 GiB or 10% of current free space, whichever is larger. If temporary
+storage is unavailable or Linux identifies the temporary directory as a
+RAM-backed filesystem, loading falls back to resident arrays. Other operating
+systems retain the resident loader.
+
+Mapped arrays retain float64 precision and the ordinary NumPy interface. They
+avoid a permanent heap allocation for the expanded histogram, but initial
+decompression still takes time and a page evicted from RAM must be read from
+disk again. Their pages can appear in process RSS while hot; the operating
+system can reclaim them. The managed cache budget counts their small heap
+metadata rather than their file-backed payload. This does not impose a hard
+RSS limit. Mapping does not yet apply to newly computed results or compressed
+in-memory cache entries.
+
+Scripts can request the same reader with
+`read_dataset_artifact(path, memory_map=None)` from `nfit.analysis.artifacts`;
+`memory_map=True` requests mapping without the size/pressure threshold, while
+the default `False` keeps the existing resident behavior. Both modes return the
+same immutable data containers. No additional preference controls are needed.
+
 On Linux and remote desktops, the memory-choice dialog is attached to the
 active rebin window so it remains visible and interactive above progress.
 The prepared-table cache defaults to 128 MiB and the model-overlay cache to

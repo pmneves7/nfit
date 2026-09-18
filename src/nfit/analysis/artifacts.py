@@ -12,10 +12,16 @@ import numpy as np
 
 from ..array_archive import write_array_archive
 from ..dataset import PointListData
+from ..mapped_archive import MappedWorkspaceError, read_mapped_array_archive
 from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
-from ..performance import operation_worker_count
+from ..performance import operation_worker_count, scientific_memory_limit_bytes
 from ..project_archive import open_project_artifact
 from .core import DatasetOutput, TableOutput
+
+# Mapping is a pressure relief path for large saved histograms. Ordinary
+# artifact reads keep their existing in-memory behavior unless opted in.
+_MAPPED_ARTIFACT_MIN_BYTES = 2 * 1024**3
+_MAPPED_MEMBER_MIN_BYTES = 8 * 1024**2
 
 
 def write_dataset_artifact(
@@ -50,18 +56,51 @@ def dataset_artifact_bytes(data: MDHistoData | PointListData) -> bytes:
 def read_project_dataset_artifact(
     project_path: str | Path,
     artifact_path: str,
+    *,
+    memory_map: bool | None = False,
 ) -> MDHistoData | PointListData:
     """Read an analysis dataset stored inside an nfit project."""
 
     with open_project_artifact(project_path, artifact_path) as stream:
-        return read_dataset_artifact(stream)
+        return read_dataset_artifact(stream, memory_map=memory_map)
 
 
 def read_dataset_artifact(
     source: str | PathLike[str] | bytes | BinaryIO,
+    *,
+    memory_map: bool | None = False,
 ) -> MDHistoData | PointListData:
+    """Read immutable data; ``None`` maps large histograms under RAM pressure.
+
+    ``True`` requests mapping regardless of size, mainly for batch workflows.
+    Unavailable temporary disk storage falls back to the normal reader.
+    """
+
     stream: str | PathLike[str] | BinaryIO
     stream = BytesIO(source) if isinstance(source, bytes) else source
+    initial_position = stream.tell() if hasattr(stream, "tell") else None
+    if memory_map is not False:
+        with np.load(stream, allow_pickle=False) as archive:
+            histogram = str(np.asarray(archive["container"]).item()) == "mdhisto"
+            payload_bytes = sum(info.file_size for info in archive.zip.infolist())
+        use_mapping = histogram and (
+            memory_map is True
+            or payload_bytes >= max(
+                _MAPPED_ARTIFACT_MIN_BYTES, scientific_memory_limit_bytes() // 4
+            )
+        )
+        if initial_position is not None:
+            stream.seek(initial_position)
+        if use_mapping:
+            try:
+                payload = read_mapped_array_archive(
+                    stream, mapped_min_bytes=_MAPPED_MEMBER_MIN_BYTES
+                )
+            except MappedWorkspaceError:
+                if initial_position is not None:
+                    stream.seek(initial_position)
+            else:
+                return dataset_artifact_from_payload(payload)
     with np.load(stream, allow_pickle=False) as archive:
         return dataset_artifact_from_payload(_OwnedArchiveArrays(archive))
 

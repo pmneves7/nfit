@@ -1,0 +1,23 @@
+{
+  "archive_sha256": "e62b7af55a4e0fab933fc2bdde4cfb8622804c08dfc90db7d70da0b7d68d294b",
+  "array_hashes": {
+    "coverage_fraction": "28246f07a338faead549a4d67096d8ab546ea35a171372f2fbb9abf83e191190",
+    "errors": "a39ffe5cc9839c7b9cdd158d55aa7a5d13b0049fd1475fb94c5a306665a785a2",
+    "mask": "f7b58a92376cca159af2439bc2bedda366333b76785fcafc92b4888775367072",
+    "normalization_denominator": "9e4e6dc6e15c8b7e68ab0af3b94804f21083a9bfbea7ae7b961ae8df463cf5db",
+    "num_events": "81856768ddca32e1493428f98c7df7828b8a96dee5f51120f8a29d14401b2cf7",
+    "signal": "cb27f7736931eda6d98b4c98db9a36a2bb1c70b1593707f483388231b894a20d"
+  },
+  "artifact": "/SNS/users/paulneves/.cache/nfit-phase2-mapped-OqC5xL/artifact-1gb.npz",
+  "artifact_bytes": 84866180,
+  "construction_seconds": 0.4985886389622465,
+  "mode": "prepare",
+  "raw_bytes": 1031798784,
+  "shape": [
+    128,
+    128,
+    96,
+    16
+  ],
+  "write_seconds": 3.923831059015356
+}

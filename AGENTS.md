@@ -81,6 +81,8 @@ different Python.
   dataset summaries without retaining their array payloads.
 - `src/nfit/project_io.py`, `project_history.py`, and `project_models.py`: project
   serialization, fit-history snapshots, and model-state reconciliation.
+- `src/nfit/mapped_archive.py`: bounded temporary-disk array loading and
+  accounting for heap and mapped numerical storage.
 - `src/nfit/project_clipboard.py`: GUI-independent project clipboard validation,
   copying, and reference remapping.
 - `src/nfit/project_import_dialogs.py`, `fit_diagnostics_gui.py`, and

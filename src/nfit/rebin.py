@@ -702,6 +702,7 @@ class NDRebin:
                     positions = np.searchsorted(explicit_edges, coordinates, side="right") - 1
                     positions[coordinates == explicit_edges[-1]] = explicit_edges.size - 2
                     self.bin_inds[:, ind] = positions
+                self.bin_inds[~np.isfinite(coordinates), ind] = np.nan
                 self.bin_inds[coordinates < explicit_edges[0], ind] = np.nan
                 self.bin_inds[coordinates > explicit_edges[-1], ind] = np.nan
                 continue
@@ -1164,6 +1165,59 @@ def rebin_nd(*args: Any, **kwargs: Any) -> NDRebin:
     return rebin
 
 
+def _stream_bin_position_coordinates(
+    template: NDRebin, coordinates: FloatArray
+) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray]:
+    """Map explicit-edge coordinates to the fused kernel's unit grid.
+
+    The fused kernel normally derives bin positions with constant-width
+    arithmetic.  Explicit grids need the same ``searchsorted`` decisions as
+    the NumPy implementation, particularly for values exactly on an edge.
+    Resolve those decisions once per streamed batch and let the fused kernel
+    perform only the contribution accumulation.
+    """
+
+    assert template.Ndims is not None
+    assert template.num_bins is not None
+    assert template.bin_centers_list is not None
+    assert template._fractional_axes is not None
+    positions = np.array(coordinates, dtype=float, copy=True)
+    lower = np.asarray(template.lower, dtype=float).copy()
+    upper = np.asarray(template.upper, dtype=float).copy()
+    explicit = template._explicit_bin_edges or [None] * template.Ndims
+    for dimension, edges in enumerate(explicit):
+        if edges is None:
+            continue
+        values = coordinates[:, dimension]
+        invalid = (values < edges[0]) | (values > edges[-1]) | ~np.isfinite(values)
+        if template._fractional_axes[dimension]:
+            centers = template.bin_centers_list[dimension]
+            if centers.size == 1:
+                axis_positions = np.full(values.shape, 0.5, dtype=float)
+            else:
+                left = np.searchsorted(centers, values, side="right") - 1
+                left = np.clip(left, 0, centers.size - 2)
+                widths = centers[left + 1] - centers[left]
+                axis_positions = left + (values - centers[left]) / widths
+                axis_positions = np.clip(axis_positions, 0.0, float(centers.size - 1))
+                axis_positions += 0.5
+            lower[dimension] = 0.0
+            upper[dimension] = float(template.num_bins[dimension])
+        else:
+            axis_positions = (
+                np.searchsorted(edges, values, side="right") - 1
+            ).astype(float)
+            axis_positions[values == edges[-1]] = edges.size - 2
+            lower[dimension] = 0.0
+            upper[dimension] = float(template.num_bins[dimension] - 1)
+        axis_positions[invalid] = np.nan
+        positions[:, dimension] = axis_positions
+    step_size = np.asarray(template.step_size, dtype=float).copy()
+    explicit_mask = np.asarray([edges is not None for edges in explicit])
+    step_size[explicit_mask] = 1.0
+    return positions, lower, upper, step_size
+
+
 def rebin_nd_stream(
     source,
     *,
@@ -1193,12 +1247,11 @@ def rebin_nd_stream(
     """
 
     edge_options = None if bin_edges is None else list(bin_edges)
-    has_explicit_edges = bool(
-        edge_options is not None and any(edges is not None for edges in edge_options)
-    )
+    has_explicit_edges = bool(edge_options is not None and any(
+        edges is not None for edges in edge_options
+    ))
     use_numba = bool(
         _NUMBA_REBIN is not None
-        and not has_explicit_edges
         and (backend == "numba" or (backend == "auto" and int(source.n_points) >= _numba_min_points()))
     )
     ndim = int(source.ndim)
@@ -1235,6 +1288,9 @@ def rebin_nd_stream(
     bd_sum, err_sum, norm_sum, ns_sum = template._empty_accumulators(size)
     template.Nvals = int(source.n_points)
     if use_numba:
+        # Explicit edges make the template's ordinary in-memory resolver choose
+        # NumPy, but the stream path has already selected fused accumulation.
+        template.resolved_backend = "numba"
         template.resolved_workers, template.resolved_parallel_strategy = template._parallel_plan(size)
     if progress_callback is not None:
         progress_callback(
@@ -1290,16 +1346,22 @@ def rebin_nd_stream(
                 norm_sum += partial._normalization.reshape(-1)
                 ns_sum += partial._ns_sum
             else:
+                kernel_lower = lower_arr
+                kernel_upper = upper_arr
+                kernel_steps = np.asarray(template.step_size)
+                if has_explicit_edges:
+                    projected, kernel_lower, kernel_upper, kernel_steps = (
+                        _stream_bin_position_coordinates(template, projected)
+                    )
                 template.coords_flat = projected
                 template.data_flat = data
                 template.errors_flat = errors
                 template.weights_flat = weights
                 template.has_data_errs = batch.data_errs is not None
                 num_bins_array = np.asarray(template.num_bins, dtype=np.int64)
-                step_array = np.asarray(template.step_size)
                 if executor is None:
                     template._accumulate_numba_range(
-                        0, data.size, lower_arr, upper_arr, step_array, num_bins_array,
+                        0, data.size, kernel_lower, kernel_upper, kernel_steps, num_bins_array,
                         bd_sum, err_sum, norm_sum, ns_sum,
                     )
                 else:
@@ -1307,9 +1369,9 @@ def rebin_nd_stream(
                         executor,
                         partials,
                         _split_range(0, data.size, template.resolved_workers),
-                        lower_arr,
-                        upper_arr,
-                        step_array,
+                        kernel_lower,
+                        kernel_upper,
+                        kernel_steps,
                         num_bins_array,
                     )
             processed += progress_count

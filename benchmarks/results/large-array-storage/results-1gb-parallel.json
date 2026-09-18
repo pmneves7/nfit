@@ -1,0 +1,295 @@
+{
+  "environment": {
+    "cpu_count": 64,
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "python": "3.14.7"
+  },
+  "input": {
+    "archive_sha256": "e62b7af55a4e0fab933fc2bdde4cfb8622804c08dfc90db7d70da0b7d68d294b",
+    "artifact": "/SNS/users/paulneves/.cache/nfit-phase2-mapped-OqC5xL/artifact-1gb.npz",
+    "artifact_bytes": 84866180,
+    "raw_bytes": 1031798784,
+    "shape": [
+      128,
+      128,
+      96,
+      16
+    ]
+  },
+  "measurement": {
+    "cache_state": "OS-cache-dependent; cache is not cleared",
+    "decode_concurrency": "resident reader uses nfit's configured bounded parallel NPZ inflation; mapped reader inflates members sequentially",
+    "hash_chunk_bytes": 33554432,
+    "mapped_min_bytes": 33554432,
+    "mapped_workers": 4,
+    "process_isolation": "one fresh process per reader"
+  },
+  "purpose": "resident-versus-mapped nfit artifact crossover benchmark",
+  "results": [
+    {
+      "exact_array_hashes": {
+        "coverage_fraction": "28246f07a338faead549a4d67096d8ab546ea35a171372f2fbb9abf83e191190",
+        "errors": "a39ffe5cc9839c7b9cdd158d55aa7a5d13b0049fd1475fb94c5a306665a785a2",
+        "mask": "f7b58a92376cca159af2439bc2bedda366333b76785fcafc92b4888775367072",
+        "normalization_denominator": "9e4e6dc6e15c8b7e68ab0af3b94804f21083a9bfbea7ae7b961ae8df463cf5db",
+        "num_events": "81856768ddca32e1493428f98c7df7828b8a96dee5f51120f8a29d14401b2cf7",
+        "signal": "cb27f7736931eda6d98b4c98db9a36a2bb1c70b1593707f483388231b894a20d"
+      },
+      "exact_hash_seconds": 0.5378517879871652,
+      "hostname": "analysis-node21.sns.gov",
+      "memory_after_open": {
+        "anonymous_bytes": 1158926336,
+        "file_bytes": 52322304,
+        "peak_rss_bytes": 1199255552,
+        "pss_bytes": 1185300480,
+        "rss_bytes": 1211248640
+      },
+      "memory_before_open": {
+        "anonymous_bytes": 120213504,
+        "file_bytes": 52133888,
+        "peak_rss_bytes": 157515776,
+        "pss_bytes": 146558976,
+        "rss_bytes": 172347392
+      },
+      "nfit_num_threads": "4",
+      "open_seconds": 0.5308797410689294,
+      "operations": {
+        "bounded_roi_sum": {
+          "memory_after": {
+            "anonymous_bytes": 1158959104,
+            "file_bytes": 52326400,
+            "peak_rss_bytes": 1236553728,
+            "pss_bytes": 1185337344,
+            "rss_bytes": 1211285504
+          },
+          "memory_before": {
+            "anonymous_bytes": 1158959104,
+            "file_bytes": 52326400,
+            "peak_rss_bytes": 1199255552,
+            "pss_bytes": 1185337344,
+            "rss_bytes": 1211285504
+          },
+          "result": 582039.1841781891,
+          "seconds": 0.01824654103256762
+        },
+        "first_full_sum": {
+          "memory_after": {
+            "anonymous_bytes": 1158959104,
+            "file_bytes": 52326400,
+            "peak_rss_bytes": 1425305600,
+            "pss_bytes": 1185337344,
+            "rss_bytes": 1211285504
+          },
+          "memory_before": {
+            "anonymous_bytes": 1158959104,
+            "file_bytes": 52326400,
+            "peak_rss_bytes": 1236553728,
+            "pss_bytes": 1185337344,
+            "rss_bytes": 1211285504
+          },
+          "result": 3489556.001006135,
+          "seconds": 0.09120361495297402
+        },
+        "first_plane_sum": {
+          "memory_after": {
+            "anonymous_bytes": 1158959104,
+            "file_bytes": 52326400,
+            "peak_rss_bytes": 1199255552,
+            "pss_bytes": 1185337344,
+            "rss_bytes": 1211285504
+          },
+          "memory_before": {
+            "anonymous_bytes": 1158959104,
+            "file_bytes": 52322304,
+            "peak_rss_bytes": 1199255552,
+            "pss_bytes": 1185333248,
+            "rss_bytes": 1211281408
+          },
+          "result": 1742.202104644517,
+          "seconds": 0.00020820903591811657
+        },
+        "warm_full_sum_median": {
+          "memory_after": {
+            "anonymous_bytes": 1183854592,
+            "file_bytes": 52326400,
+            "peak_rss_bytes": 1425305600,
+            "pss_bytes": 1210234880,
+            "rss_bytes": 1236180992
+          },
+          "memory_before": {
+            "anonymous_bytes": 1158959104,
+            "file_bytes": 52326400,
+            "peak_rss_bytes": 1425305600,
+            "pss_bytes": 1185337344,
+            "rss_bytes": 1211285504
+          },
+          "repeat_seconds": [
+            0.09139777498785406,
+            0.08751267404295504,
+            0.08775247202720493
+          ],
+          "result": 3489556.001006135,
+          "seconds": 0.08775247202720493
+        },
+        "warm_plane_sum": {
+          "memory_after": {
+            "anonymous_bytes": 1158959104,
+            "file_bytes": 52326400,
+            "peak_rss_bytes": 1199255552,
+            "pss_bytes": 1185337344,
+            "rss_bytes": 1211285504
+          },
+          "memory_before": {
+            "anonymous_bytes": 1158959104,
+            "file_bytes": 52326400,
+            "peak_rss_bytes": 1199255552,
+            "pss_bytes": 1185337344,
+            "rss_bytes": 1211285504
+          },
+          "result": 1742.202104644517,
+          "seconds": 8.535000961273909e-05
+        }
+      },
+      "reader": "resident",
+      "source_stat_unchanged": true,
+      "storage_bytes": {
+        "heap": 1031801760,
+        "mapped": 0,
+        "total": 1031801760
+      }
+    },
+    {
+      "exact_array_hashes": {
+        "coverage_fraction": "28246f07a338faead549a4d67096d8ab546ea35a171372f2fbb9abf83e191190",
+        "errors": "a39ffe5cc9839c7b9cdd158d55aa7a5d13b0049fd1475fb94c5a306665a785a2",
+        "mask": "f7b58a92376cca159af2439bc2bedda366333b76785fcafc92b4888775367072",
+        "normalization_denominator": "9e4e6dc6e15c8b7e68ab0af3b94804f21083a9bfbea7ae7b961ae8df463cf5db",
+        "num_events": "81856768ddca32e1493428f98c7df7828b8a96dee5f51120f8a29d14401b2cf7",
+        "signal": "cb27f7736931eda6d98b4c98db9a36a2bb1c70b1593707f483388231b894a20d"
+      },
+      "exact_hash_seconds": 0.5989326600683853,
+      "hostname": "analysis-node21.sns.gov",
+      "memory_after_open": {
+        "anonymous_bytes": 155426816,
+        "file_bytes": 52236288,
+        "peak_rss_bytes": 262561792,
+        "pss_bytes": 181716992,
+        "rss_bytes": 207663104
+      },
+      "memory_before_open": {
+        "anonymous_bytes": 120205312,
+        "file_bytes": 52109312,
+        "peak_rss_bytes": 164175872,
+        "pss_bytes": 146495488,
+        "rss_bytes": 172314624
+      },
+      "nfit_num_threads": "4",
+      "open_seconds": 0.7623374330578372,
+      "operations": {
+        "bounded_roi_sum": {
+          "memory_after": {
+            "anonymous_bytes": 155439104,
+            "file_bytes": 103419904,
+            "peak_rss_bytes": 283099136,
+            "pss_bytes": 232912896,
+            "rss_bytes": 258859008
+          },
+          "memory_before": {
+            "anonymous_bytes": 155439104,
+            "file_bytes": 53874688,
+            "peak_rss_bytes": 262561792,
+            "pss_bytes": 183367680,
+            "rss_bytes": 209313792
+          },
+          "result": 582039.1841781891,
+          "seconds": 0.021288497024215758
+        },
+        "first_full_sum": {
+          "memory_after": {
+            "anonymous_bytes": 171810816,
+            "file_bytes": 253566976,
+            "peak_rss_bytes": 617713664,
+            "pss_bytes": 399431680,
+            "rss_bytes": 425377792
+          },
+          "memory_before": {
+            "anonymous_bytes": 155439104,
+            "file_bytes": 103419904,
+            "peak_rss_bytes": 283099136,
+            "pss_bytes": 232912896,
+            "rss_bytes": 258859008
+          },
+          "result": 3489556.001006135,
+          "seconds": 0.10088673804420978
+        },
+        "first_plane_sum": {
+          "memory_after": {
+            "anonymous_bytes": 155439104,
+            "file_bytes": 53874688,
+            "peak_rss_bytes": 262561792,
+            "pss_bytes": 183367680,
+            "rss_bytes": 209313792
+          },
+          "memory_before": {
+            "anonymous_bytes": 155439104,
+            "file_bytes": 52236288,
+            "peak_rss_bytes": 262561792,
+            "pss_bytes": 181729280,
+            "rss_bytes": 207675392
+          },
+          "result": 1742.202104644517,
+          "seconds": 0.00030439801048487425
+        },
+        "warm_full_sum_median": {
+          "memory_after": {
+            "anonymous_bytes": 171810816,
+            "file_bytes": 253566976,
+            "peak_rss_bytes": 617713664,
+            "pss_bytes": 399431680,
+            "rss_bytes": 425377792
+          },
+          "memory_before": {
+            "anonymous_bytes": 171810816,
+            "file_bytes": 253566976,
+            "peak_rss_bytes": 617713664,
+            "pss_bytes": 399431680,
+            "rss_bytes": 425377792
+          },
+          "repeat_seconds": [
+            0.08879799698479474,
+            0.08876819699071348,
+            0.08907801494933665
+          ],
+          "result": 3489556.001006135,
+          "seconds": 0.08879799698479474
+        },
+        "warm_plane_sum": {
+          "memory_after": {
+            "anonymous_bytes": 155439104,
+            "file_bytes": 53874688,
+            "peak_rss_bytes": 262561792,
+            "pss_bytes": 183367680,
+            "rss_bytes": 209313792
+          },
+          "memory_before": {
+            "anonymous_bytes": 155439104,
+            "file_bytes": 53874688,
+            "peak_rss_bytes": 262561792,
+            "pss_bytes": 183367680,
+            "rss_bytes": 209313792
+          },
+          "result": 1742.202104644517,
+          "seconds": 8.180888835340738e-05
+        }
+      },
+      "reader": "mapped",
+      "source_stat_unchanged": true,
+      "storage_bytes": {
+        "heap": 25168800,
+        "mapped": 1006632960,
+        "total": 1031801760
+      }
+    }
+  ]
+}

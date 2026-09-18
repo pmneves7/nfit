@@ -47,7 +47,11 @@ DEFAULT_MINIMUM_SAMPLES = 0.0
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
 REBIN_AXIS_MODES = frozenset({"discrete", "step", "bins", "edges", "tolerance"})
 MDHISTO_STREAM_MIN_POINTS = 250_000
-"""Source-bin threshold for bounded-memory MDHisto preprocessing."""
+"""Conservative streaming crossover; see benchmarks/results/large-array-report.md.
+
+Coordinate work scales with source bins, not the number of optional channels.
+A grid with five float64 channels and a boolean mask is about 10 MB here.
+"""
 
 _COMPATIBILITY_NAMESPACE: Mapping[str, Any] | None = None
 

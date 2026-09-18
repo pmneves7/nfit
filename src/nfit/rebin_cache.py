@@ -20,8 +20,8 @@ from .analysis.artifacts import (
     read_dataset_artifact,
     read_project_dataset_artifact,
 )
-from .cache_utils import array_payload_nbytes
 from .dataset import PointListData
+from .mapped_archive import array_storage_nbytes
 from .mdhisto import MDHistoData
 
 _CHUNK_BYTES = 8 * 1024**2
@@ -53,10 +53,12 @@ class _DiskBinning:
 
     def restore(self) -> MDHistoData | PointListData:
         if self.project_member is None:
-            return read_dataset_artifact(self.path)
+            return read_dataset_artifact(self.path, memory_map=None)
         if not self.available():
             raise OSError("the project archive changed since this cache was registered")
-        return read_project_dataset_artifact(self.path, self.project_member)
+        return read_project_dataset_artifact(
+            self.path, self.project_member, memory_map=None
+        )
 
 
 class CompressedBinning:
@@ -184,7 +186,9 @@ class RebinCacheBudget:
                 for reference in self._borrowed.values()
                 if (value := reference()) is not None
             )
-        return array_payload_nbytes((resident_values, borrowed_values)) + sum(
+        # File-backed pages can be reclaimed by the OS. Charge only owned
+        # heap allocations, deduplicating views of the same backing arrays.
+        return array_storage_nbytes((resident_values, borrowed_values)).heap + sum(
             cache._compressed_bytes for cache in self._caches
         )
 

@@ -632,13 +632,86 @@ def test_streaming_mixed_edge_grid_matches_in_memory():
         **kwargs,
     )
 
-    assert streamed.resolved_backend == "numpy"
+    assert streamed.resolved_backend == "numba"
     np.testing.assert_allclose(streamed.binned_data, expected.binned_data, equal_nan=True)
     np.testing.assert_allclose(
         streamed.binned_data_errs,
         expected.binned_data_errs,
         equal_nan=True,
     )
+    np.testing.assert_allclose(streamed.n_samples, expected.n_samples)
+
+
+@pytest.mark.parametrize("fractional_axes", [[False, False], [True, False], [True, True]])
+@pytest.mark.parametrize("mean_weighting", ["uniform", "inverse_variance"])
+def test_streaming_fused_explicit_edges_match_numpy_at_boundaries(
+    fractional_axes, mean_weighting
+):
+    pytest.importorskip("numba")
+    uniform_edges = np.linspace(-1.0, 1.0, 5)
+    nonuniform_edges = np.array([-2.0, -0.25, 0.5, 3.0])
+    first_axis = np.array([
+        np.nextafter(-1.0, -np.inf), -1.0, np.nextafter(-0.5, -np.inf),
+        -0.5, np.nextafter(-0.5, np.inf), 0.0, 0.5, 1.0,
+        np.nextafter(1.0, np.inf), 0.25,
+    ])
+    second_axis = np.array([-2.0, -0.25, 0.5, 3.0, 0.0] * 2)
+    projected = np.column_stack((first_axis, second_axis))
+    axes = np.array([[1.0, 0.35], [-0.2, 1.1]])
+    coordinates = projected @ axes
+    data = np.linspace(-3.0, 7.0, projected.shape[0])
+    errors = np.array([1.0, 2.0, 0.0, np.nan, 0.5, 3.0, 1.5, 2.5, 1.0, 1.0])
+    weights = np.array([1.0, 0.5, 1.0, 1.0, 2.0, 3.0, 0.0, 1.5, 1.0, 1.0])
+    kwargs = dict(
+        axes=axes,
+        bin_edges=[uniform_edges, nonuniform_edges],
+        fractional_axes=fractional_axes,
+        normalize=True,
+        mean_weighting=mean_weighting,
+    )
+
+    expected = rebin_nd(
+        data, coordinates, data_errs=errors, data_weights=weights,
+        backend="numpy", **kwargs,
+    )
+    streamed = rebin_nd_stream(
+        ArrayRebinSource(
+            data, coordinates, data_errs=errors, data_weights=weights, batch_size=3
+        ),
+        backend="numba", workers=1, **kwargs,
+    )
+
+    assert streamed.resolved_backend == "numba"
+    np.testing.assert_array_equal(streamed.bins_list[0], uniform_edges)
+    np.testing.assert_array_equal(streamed.bins_list[1], nonuniform_edges)
+    np.testing.assert_allclose(streamed.binned_data, expected.binned_data, equal_nan=True)
+    np.testing.assert_allclose(
+        streamed.binned_data_errs, expected.binned_data_errs, equal_nan=True
+    )
+    np.testing.assert_allclose(streamed.n_samples, expected.n_samples)
+
+
+@pytest.mark.parametrize("fractional", [False, True])
+def test_streaming_fused_single_explicit_bin_matches_numpy(fractional):
+    pytest.importorskip("numba")
+    edges = np.array([2.0, 5.0])
+    coordinates = np.array([
+        np.nextafter(2.0, -np.inf), 2.0, 3.5, 5.0,
+        np.nextafter(5.0, np.inf),
+    ])
+    data = np.arange(1.0, 6.0)
+    kwargs = dict(bin_edges=[edges], fractional=fractional, normalize=False)
+
+    expected = rebin_nd(data, coordinates, backend="numpy", **kwargs)
+    streamed = rebin_nd_stream(
+        ArrayRebinSource(data, coordinates[:, None], batch_size=2),
+        backend="numba", workers=2, parallel_strategy="dense", **kwargs,
+    )
+
+    assert streamed.resolved_backend == "numba"
+    np.testing.assert_array_equal(streamed.bins_list[0], edges)
+    np.testing.assert_allclose(streamed.binned_data, expected.binned_data, equal_nan=True)
+    np.testing.assert_allclose(streamed.binned_data_errs, expected.binned_data_errs, equal_nan=True)
     np.testing.assert_allclose(streamed.n_samples, expected.n_samples)
 
 
@@ -653,3 +726,22 @@ def test_streaming_mixed_edge_grid_matches_in_memory():
 def test_rebin_rejects_invalid_explicit_edges(edges, message):
     with pytest.raises(ValueError, match=message):
         rebin_nd(data=[1.0], coords=[0.5], bin_edges=edges)
+
+
+def test_discrete_explicit_edges_skip_nonfinite_coordinates():
+    values = np.array([1.0, 2.0, 4.0, 8.0, 16.0])
+    coordinates = np.array([0.25, np.nan, np.inf, -np.inf, 1.25])
+    expected = rebin_nd(
+        values, coordinates, bin_edges=[[0.0, 1.0, 2.0]],
+        fractional=False, backend="numpy",
+    )
+    streamed = rebin_nd_stream(
+        ArrayRebinSource(values, coordinates[:, None], batch_size=2),
+        bin_edges=[[0.0, 1.0, 2.0]], fractional=False,
+        backend="numba", workers=1,
+    )
+
+    np.testing.assert_allclose(expected.binned_data, [1.0, 16.0])
+    np.testing.assert_allclose(expected.n_samples, [1.0, 1.0])
+    np.testing.assert_allclose(streamed.binned_data, expected.binned_data)
+    np.testing.assert_allclose(streamed.n_samples, expected.n_samples)

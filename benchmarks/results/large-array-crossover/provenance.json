@@ -1,0 +1,29 @@
+{
+  "initial_ssh_handshake_hostname": "analysis-node23.sns.gov",
+  "hostname_scope": "The original main and tiny rows predate per-process hostname capture; this handshake is provenance for the launch session, not proof that every load-balanced SSH connection used that host.",
+  "source_archive_sha256": "78e0ccea6a5f93824be772fba8125ad03780fb86ddb165eb2df17a06b48c7601",
+  "source_hashes": {
+    "benchmarks/benchmark_rebin_crossover.py": "36a01d871573fa5d55364cc5914427fa470f4ab0f6e52f1827471aa00d1c097f",
+    "src/nfit/project_rebinning.py": "6c3bddf6aff0bbccf8e09bacfc56db5b233a2e4a747cb4e542071c42e0a9c5bb",
+    "src/nfit/rebin.py": "7ff26493313ee9d9462610458ce633b54d2ff8dc771d021c20a71fa6f3736605"
+  },
+  "interpreter": "/SNS/users/paulneves/miniforge3/bin/python",
+  "dependency_path": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/deps",
+  "resource_limits": {
+    "cpu_limit": 4,
+    "ram_limit_mb": 16384,
+    "thread_environment": {
+      "MKL_NUM_THREADS": 4,
+      "NFIT_NUM_THREADS": 4,
+      "NUMEXPR_NUM_THREADS": 4,
+      "OMP_NUM_THREADS": 4,
+      "OPENBLAS_NUM_THREADS": 4
+    }
+  },
+  "fixture": {
+    "seed": 32969,
+    "payload_bytes_per_source_bin": 41,
+    "sparse_valid_fraction": 0.15,
+    "dense_valid_fraction": 0.7
+  }
+}

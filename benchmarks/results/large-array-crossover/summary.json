@@ -1,0 +1,32 @@
+{
+  "recommendation": {
+    "stream_min_points": 250000,
+    "status": "keep the existing threshold",
+    "reason": "at 131072 source bins streaming lost narrowly for sparse symmetry, so it is not a consistent crossover across representative workloads"
+  },
+  "regular_sparse_medians": [
+    {"input_payload_bytes": 104960, "source_bins": 2560, "dense_seconds": 0.004788, "stream_seconds": 0.005306, "repetitions": 3},
+    {"input_payload_bytes": 1343488, "source_bins": 32768, "dense_seconds": 0.007034, "stream_seconds": 0.007637, "repetitions": 3},
+    {"input_payload_bytes": 5373952, "source_bins": 131072, "dense_seconds": 0.018097, "stream_seconds": 0.011968, "repetitions": 3},
+    {"input_payload_bytes": 10747904, "source_bins": 262144, "dense_seconds": 0.036738, "stream_seconds": 0.020168, "repetitions": 3},
+    {"input_payload_bytes": 85983232, "source_bins": 2097152, "dense_seconds": 0.246397, "stream_seconds": 0.160076, "repetitions": 3},
+    {"input_payload_bytes": 10317987840, "source_bins": 251658240, "dense_seconds": 29.03328, "stream_seconds": 18.595817, "repetitions": 1}
+  ],
+  "ten_gb": {
+    "sparse_regular": {"dense_seconds": 29.03328, "stream_seconds": 18.595817, "dense_peak_rss_bytes": 45925519360, "stream_peak_rss_bytes": 12708593664},
+    "dense_regular": {"dense_seconds": 58.965078, "stream_seconds": 33.706019, "dense_peak_rss_bytes": 58104647680, "stream_peak_rss_bytes": 12747722752},
+    "sparse_fractional": {"dense_seconds": 82.430769, "stream_seconds": 21.207692, "dense_peak_rss_bytes": 45928669184, "stream_peak_rss_bytes": 13306073088},
+    "sparse_symmetry": {"dense_seconds": 161.395534, "stream_seconds": 122.186598}
+  },
+  "confirmation_131072_bins": {
+    "hostname": "analysis-node21.sns.gov",
+    "fractional_dense_ms": {"dense": 92.985, "stream": 22.617},
+    "fractional_sparse_ms": {"dense": 31.667, "stream": 14.857},
+    "symmetry_dense_ms": {"dense": 118.385, "stream": 105.508},
+    "symmetry_sparse_ms": {"dense": 68.869, "stream": 69.217}
+  },
+  "comparisons": {
+    "ten_gb_pairs": 4,
+    "all_channels_allclose_rtol_atol_1e_12": true
+  }
+}
