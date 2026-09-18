@@ -816,9 +816,67 @@ def test_persistent_trajectory_accumulator_matches_per_batch_wrapper():
     with pytest.raises(RuntimeError, match="finalized"):
         single.accumulate(*batches[0])
 
+    eager = kernels.trajectory_normalization_accumulator(
+        *edges, shape, workers=2, eager=True
+    )
+    for args in batches:
+        eager.accumulate(*args)
+    np.testing.assert_array_equal(eager.result(), accumulator.result())
+    assert not eager.partial.flags.writeable
+    with pytest.raises(RuntimeError, match="finalized"):
+        eager.accumulate(*batches[0])
+
+    eager_single = kernels.trajectory_normalization_accumulator(
+        *edges, shape, workers=1, eager=True
+    )
+    eager_single.accumulate(*batches[0])
+    eager_single_result = eager_single.result()
+    np.testing.assert_array_equal(eager_single_result, single_result)
+    assert np.shares_memory(eager_single_result, eager_single.partial)
+    assert not eager_single_result.flags.writeable
+
+
+def test_eager_trajectory_allocation_restores_numba_threads_on_failure(monkeypatch):
+    kernels = mdevent._MDEVENT_NUMBA
+    if kernels is None:
+        pytest.skip("Numba MDEvent normalization is unavailable")
+    active = [7]
+
+    monkeypatch.setattr(kernels, "get_num_threads", lambda: active[0])
+    monkeypatch.setattr(kernels, "set_num_threads", lambda value: active.__setitem__(0, value))
+
+    def fail_allocation(*args):
+        assert active[0] == 3
+        raise MemoryError("allocation failed")
+
+    monkeypatch.setattr(kernels, "_eager_trajectory_partial", fail_allocation)
+    edges = tuple(np.linspace(-1.0, 1.0, 3) for _ in range(4))
+    with pytest.raises(MemoryError, match="allocation failed"):
+        kernels.trajectory_normalization_accumulator(
+            *edges, np.asarray([2, 2, 2, 2]), workers=3, eager=True
+        )
+    assert active[0] == 7
+
+
+def test_eager_trajectory_allocation_obeys_workspace_boundary(monkeypatch):
+    monkeypatch.setattr(
+        "nfit.performance.scientific_memory_limit_bytes", lambda: 16 * 1024**3
+    )
+    limit = 2 * 1024**3
+    assert mdevent._trajectory_eager_partial(limit // (4 * 8), 4)
+    assert not mdevent._trajectory_eager_partial(limit // (4 * 8) + 1, 4)
+
+    monkeypatch.setattr(
+        "nfit.performance.scientific_memory_limit_bytes", lambda: 128 * 1024**3
+    )
+    limit = mdevent.MDEVENT_EAGER_PARTIAL_MAX_BYTES
+    assert mdevent._trajectory_eager_partial(limit // (8 * 8), 8)
+    assert not mdevent._trajectory_eager_partial(limit // (8 * 8) + 1, 8)
+
 
 def test_persistent_trajectory_accumulator_stops_at_batch_checkpoint(monkeypatch):
     calls = []
+    allocation_modes = []
 
     class Accumulator:
         def accumulate(self, *args):
@@ -829,7 +887,8 @@ def test_persistent_trajectory_accumulator_stops_at_batch_checkpoint(monkeypatch
 
     class Kernels:
         @staticmethod
-        def trajectory_normalization_accumulator(*args, workers):
+        def trajectory_normalization_accumulator(*args, workers, eager):
+            allocation_modes.append(eager)
             return Accumulator()
 
     detector_payloads = [
@@ -847,6 +906,7 @@ def test_persistent_trajectory_accumulator_stops_at_batch_checkpoint(monkeypatch
     monkeypatch.setattr(
         mdevent, "_trajectory_worker_count", lambda output_size, **kwargs: 1
     )
+    monkeypatch.setattr(mdevent, "_trajectory_eager_partial", lambda *args: True)
     monkeypatch.setattr(mdevent, "MDEVENT_TRAJECTORY_BATCH_TASKS", 1)
 
     def cancel_after_first_batch(event):
@@ -864,6 +924,7 @@ def test_persistent_trajectory_accumulator_stops_at_batch_checkpoint(monkeypatch
             progress_callback=cancel_after_first_batch,
         )
     assert len(calls) == 1
+    assert allocation_modes == [True]
 
 
 def test_trajectory_workers_honor_cpu_ceiling_and_available_memory(monkeypatch):

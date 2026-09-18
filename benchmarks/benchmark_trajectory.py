@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import numpy as np
 
 
-def prepare(project, destination):
+def prepare(project, destination, run_count=4):
     from nfit.mdevent import _requested_edges, _trajectory_payloads
     from nfit.symmetry import resolve_symmetry, symmetry_spec_from_config
 
@@ -30,7 +30,7 @@ def prepare(project, destination):
         np.array([a['step_size'] for a in axes]),
     )
     # Spread representative runs across the complete angular scan.
-    runs = [group['datasets'][i] for i in np.linspace(0, len(group['datasets'])-1, 4, dtype=int)]
+    runs = [group['datasets'][i] for i in np.linspace(0, len(group['datasets'])-1, run_count, dtype=int)]
     detectors, transforms = _trajectory_payloads(
         SimpleNamespace(metadata=group['metadata']),
         [SimpleNamespace(metadata=r['metadata']) for r in runs],
@@ -77,6 +77,7 @@ def prepare_synthetic(destination):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--prepare')
+    parser.add_argument('--runs', type=int, default=4)
     parser.add_argument('--synthetic', action='store_true')
     parser.add_argument('--fixture', required=True)
     parser.add_argument('--mode', default='baseline')
@@ -85,24 +86,37 @@ def main():
     parser.add_argument('--batches', type=int, default=4)
     parser.add_argument('--stride', type=int, default=1)
     parser.add_argument('--digest')
+    parser.add_argument('--save-result')
+    parser.add_argument('--reference')
+    parser.add_argument('--cold', action='store_true', help='Include first-call compilation')
     args = parser.parse_args()
     if args.synthetic:
         prepare_synthetic(args.fixture)
         return
     if args.prepare:
-        prepare(args.prepare, args.fixture)
+        prepare(args.prepare, args.fixture, args.runs)
         return
     import trajectory_candidates as candidates
     functions = {'baseline': candidates.run_baseline_dense,
-                 'persistent': candidates.run_persistent_dense}
+                 'persistent': candidates.run_persistent_dense,
+                 'eager': candidates.run_persistent_eager,
+                 'production': candidates.run_production}
     if hasattr(candidates, 'run_axis0_slabs'):
         functions['slab'] = candidates.run_axis0_slabs
     fn = functions[args.mode]
     with np.load(args.fixture) as f:
-        edges = [f[f'edge{i}'][::args.stride] for i in range(4)]
+        if min(args.stride, args.batches, args.transforms, args.workers) < 1:
+            parser.error('stride, batches, transforms, and workers must be positive')
+        edges = []
+        for i in range(4):
+            original = f[f'edge{i}']
+            indices = np.unique(np.r_[np.arange(0, original.size, args.stride), original.size-1])
+            edges.append(np.ascontiguousarray(original[indices]))
         shape = np.array([e.size-1 for e in edges])
         base = (f['theta'], f['phi'], f['solid'], f['inverse'], f['ei'],
                 f['limits'], f['charge'], *edges, shape)
+    if args.batches * args.transforms > len(base[3]):
+        parser.error('fixture does not contain enough transforms for these batches')
     batches = []
     for i in range(args.batches):
         start = i*args.transforms
@@ -110,20 +124,47 @@ def main():
     # Warm matching array signatures with a tiny output; exclude compilation.
     warm_edges = [np.linspace(e[0], e[-1], 3) for e in edges]
     warm = (*base[:3], *(a[:1] for a in base[3:7]), *warm_edges, np.array([2]*4))
-    fn([warm], workers=args.workers)
+    if not args.cold:
+        fn([warm], workers=args.workers)
+    allocation = {}
+    if args.mode == 'production':
+        from numba import get_num_threads
+
+        from nfit.mdevent import _trajectory_eager_partial
+        from nfit.performance import scientific_memory_limit_bytes
+        selected = min(args.workers, get_num_threads())
+        allocation = {'eager': _trajectory_eager_partial(int(np.prod(shape)), selected),
+                      'managed_ram_bytes': scientific_memory_limit_bytes()}
     started = time.perf_counter()
     result = fn(batches, workers=args.workers)
     elapsed = time.perf_counter()-started
     # Bounded block digests enable equivalence checking without a second 3.7 GB result.
     digest = np.array([np.sum(result[i:i+100000], dtype=np.float64)
                        for i in range(0, result.size, 100000)])
+    peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == 'darwin' else 1024)
     if args.digest:
         np.save(args.digest, digest)
+    if args.save_result:
+        np.save(args.save_result, result)
+    verification = None
+    if args.reference:
+        reference = np.load(args.reference, mmap_mode='r')
+        assert reference.shape == result.shape
+        difference = 0.0
+        for start in range(0, result.size, 1_000_000):
+            expected = reference[start:start+1_000_000]
+            actual = result[start:start+1_000_000]
+            np.testing.assert_allclose(actual, expected, rtol=2e-13, atol=0)
+            difference = max(difference, float(np.max(np.abs(actual-expected))))
+        verification = {'allclose': True, 'rtol': 2e-13, 'atol': 0, 'max_abs_difference': difference}
     print(json.dumps({'host': socket.gethostname(), 'mode': args.mode,
                       'workers': args.workers, 'shape': shape.tolist(),
                       'bins': int(result.size), 'batches': args.batches,
                       'trajectories': args.batches*args.transforms*len(base[0]),
-                      'seconds': elapsed, 'peak_rss_bytes': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == 'darwin' else 1024),
+                      'seconds': elapsed, 'peak_rss_bytes': peak_rss, 'verification': verification,
+                      'transforms_per_batch': args.transforms, 'stride': args.stride,
+                      'cold': args.cold,
+                      **allocation,
                       'sum': float(np.sum(digest))}), flush=True)
 
 

@@ -34,3 +34,14 @@ The final shared benchmark root
 `/SNS/users/paulneves/.cache/nfit-phase2-mapped-OqC5xL` was removed directly by
 exact path after its reports were downloaded, and a subsequent check reported
 it absent.
+
+Follow-up verification, 2026-09-18
+---------------------------------
+The reconnected ORNL alias selected analysis-node23.sns.gov. The exact old
+path /tmp/nfit-mapped-artifacts-Cz62Ea was present and contained the matching
+artifact-1gb.npz/artifact-10gb.npz fixtures, benchmark script, copied nfit source,
+and prepare/results JSON files. The 10 GB prepare record's archive SHA-256
+was ac24880f1881fec95c33e875ef61a8ed6644236cf63537359f1d5e53f1c8c729,
+matching the recorded benchmark fixture. The directory was removed by exact
+path. A following `test ! -e` in the same SSH command succeeded and printed
+`prior-benchmark-directory-removed`. This resolves the earlier cleanup gap.

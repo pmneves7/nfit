@@ -3,12 +3,12 @@
 ## Workload and diagnosis
 
 The reported nfit 0.97.0 run on analysis-node23 was integrating detector
-trajectories for **YMn2 40 meV sample / Fd-3m symmetry**, not rebinning an
+trajectories for **YMn2 40 meV sample / Fd-3m symmetry**, rather than rebinning an
 already-gridded MDHisto. The screenshot showed 464,011,821 output bins,
 36 workers, 3,467,722,752 trajectories, 254.7 GB process memory, and
 56 minutes elapsed at 45.2% of this normalization stage. These screenshots
 cannot establish the source of every resident byte or a timing regression.
-The earlier large-array MDHisto benchmarks did not exercise this path.
+The earlier 10 GB MDHisto benchmarks did not exercise this path.
 
 The shared project metadata confirms a 161 × 161 × 221 × 81 grid and 603
 sample runs. Shared preferences specify 64 CPUs and 128,000 MiB managed RAM.
@@ -20,12 +20,9 @@ those private grids again at each 32-million-trajectory checkpoint: at least
 109 batches for the screenshot workload. The peak-memory estimate omitted
 this worker-dependent storage.
 
-SSH reached **analysis-node21**, so this investigation did not inspect the
-live node23 process or restart the user's application. Authentication expired
-during the temporary source upload, before the real geometry fixture or
-full-grid trial could run.
-
 ## Implemented changes
+
+In 0.97.4:
 
 - Allocate the HKLE normalization worker buffers once across run batches and
   detector geometries; reduce once at the end. Progress and cancellation
@@ -52,78 +49,179 @@ normalization still has one full private grid per worker. Saved-cache memory
 mapping does not automatically map newly computed bins. This patch therefore
 does not claim to solve the entire 254.7 GB footprint.
 
-## Local measurements
+## Measurements on analysis-node23
 
-The reproducible synthetic fixture uses the project's UB and coordinate basis,
-12,000 synthetic detector directions, 16 synthetic goniometer transforms,
-and a 81 × 81 × 111 × 41 grid (29,859,111 bins; 238.87 MB per float64 grid).
-Four batches contain 192,000 trajectories in total. Four workers were used.
-Compilation was warmed on a small grid before timing. Each timing/RSS trial
-ran in a separate local process using the nfit conda interpreter. Peak RSS
-includes imports and compilation. GB here means decimal gigabytes.
+Measurements were completed after SSH reconnection on September 18, 2026,
+on **analysis-node23.sns.gov**. Each trial ran in a fresh isolated process;
+matching kernels were warmed on a tiny grid before timing. Timing excludes
+compilation, fixture preparation, output saving and numerical comparisons.
+Peak RSS includes imports and compilation, but is recorded before output
+saving or comparison with a memory-mapped reference. GB means decimal
+gigabytes throughout the result tables.
 
-| Algorithm | Time (s) | Peak process memory (GB) |
-| --- | ---: | ---: |
-| Previous per-batch private grids | 0.8059 | 2.0504 |
-| Persistent private grids (implemented) | 0.3412 | 1.5253 |
-| Disjoint first-axis slabs (experimental) | 0.2183 | 0.5323 |
+Fixtures use actual detector directions, normalization weights, proton
+charges, run transformations, UB matrix, symmetry and output edges from the
+saved SEQUOIA project. They do not load neutron event payloads. Each run has
+119,808 detector directions and 48 symmetry transforms. Runs were selected
+at evenly spaced indices across the 603-run collection. This is a benchmark
+of the expensive normalization stage, **not an end-to-end 603-run rebin**.
 
-These initial single trials were taken on a laptop during development, with
-other validation work potentially active. They demonstrate the allocation
-improvement but are not a controlled remote throughput comparison or an
-estimate of the full SEQUOIA runtime. All 29,859,111 output bins were compared
-separately: both alternatives satisfy `rtol=2e-13, atol=0`; maximum absolute
-differences were 1.14e-13 (persistent) and 6.82e-13 (slabs).
+The old lifecycle is reconstructed from the unchanged production geometry
+kernel with the original fused Numba allocation and reduction. Persistent
+and slab candidates use the same geometry rules. Full output arrays were
+compared in bounded blocks with `rtol=2e-13, atol=0`; all alternatives passed.
+No reduced-precision arrays or approximate integration were introduced.
 
-The slab prototype assigns workers disjoint regions of one output array and
-clips trajectories against each region. It avoids full private grids but
-repeats geometry work. Separate small synthetic trials found slowdowns for
-geometry-heavy grids, so **production slab dispatch is disabled** pending
-real-data testing. Shared slab boundaries require half-open ownership; tests
-of stationary trajectories on these boundaries informed the prototype.
+### Full output grid, representative progress batches
 
-An isolated sorting experiment also found a 1.20× improvement for intersection
-generation/sorting using Numba's in-place sort instead of insertion sort.
-That is not a complete normalization timing; production sorting is unchanged.
+Sixteen real runs produce 92,012,544 trajectories in three batches of
+30,670,848, close to the production checkpoint of 32 million trajectories.
+The output has all **464,011,821 bins**. These are single trials on a shared
+node, so small timing differences should not be treated as precise rankings.
 
-## Reproduction and remaining work
+| Algorithm | Workers | Time (s) | Peak process RAM (GB) |
+| --- | ---: | ---: | ---: |
+| Previous per-batch grids | 36 | 78.52 | 145.12 |
+| Persistent grids | 32 | 69.93 | 32.82 |
+| Final production path, automatic allocation | 32 | 70.93 | 32.83 |
+| Disjoint first-axis slabs, experimental | 36 | 76.42 | 1.70 |
+| Disjoint slabs, experimental | 16 | 125.56 | 1.70 |
+| Disjoint slabs, experimental | 8 | 227.66 | 1.71 |
+| Persistent grids | 8 | 121.42 | 13.50 |
 
-Local fixture and per-process trials:
+The normal planner's persistent path was about **10–11% faster** and used
+**77% less peak resident memory** than the old lifecycle in this fixture.
+The largest absolute difference from the baseline was 5.32e-10; every bin
+passed the relative tolerance above, including exact agreement on zero bins.
 
-```bash
-python benchmarks/benchmark_trajectory.py --synthetic --fixture geometry.npz
-NUMBA_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 python benchmarks/benchmark_trajectory.py \
-  --fixture geometry.npz --mode baseline --workers 4
-# Repeat with --mode persistent and --mode slab.
-```
+NumPy's zero-filled allocation permits the operating system to defer physical
+pages until touched. Numba's old fused allocation eagerly initialized all
+worker grids. This accounts for much of the RSS difference beyond eliminating
+repeated allocations. More run angles touch more bins: **32.82 GB is not an
+upper bound for the full 603-run workload**. Full private-grid capacity is
+still included in memory planning. These isolated RSS measurements also
+exclude live project results and event histogram arrays.
 
-Use the repository's nfit conda interpreter locally. On ORNL, prepare a fixture
-from four actual runs spread across the angular scan:
+### Sparser sample and shorter batches
+
+Four real runs, four batches of 48 transforms, produce 23,003,136 trajectories
+on the same full grid. This emphasizes repeated-allocation costs more strongly
+than production-sized batches and covers fewer angles.
+
+| Algorithm | Workers | Time (s) | Peak process RAM (GB) |
+| --- | ---: | ---: | ---: |
+| Previous per-batch grids | 36 | 50.43 | 145.12 |
+| Persistent grids | 36 | 22.62 | 16.48 |
+| Persistent grids | 32 | 22.33 | 15.99 |
+| Disjoint slabs, experimental | 36 | 19.35 | 1.56 |
+
+Slabs win here, but lose against persistent grids in the denser sixteen-run
+fixture. Output array size alone cannot choose the faster algorithm.
+
+### Smaller grids and allocation overhead
+
+Four real runs were also tested as one batch of 192 transforms, with 32
+workers and coarser edges retaining the complete original domain. The old,
+persistent and eager-persistent timings below are medians of three trials;
+slab timings are single trials. The allocation policy is the only difference
+between the two persistent candidates.
+
+| Float64 output grid | Algorithm | Time (s) | Peak process RAM (GB) |
+| --- | --- | ---: | ---: |
+| 238.87 MB, 29,859,111 bins | Previous per-batch grids | 4.302 | 8.235 |
+| 238.87 MB | Deferred persistent grids | 4.632 | 1.828 |
+| 238.87 MB | Eager persistent grids | 4.249 | 8.213 |
+| 238.87 MB | Slabs | 9.665 | 0.395 |
+| 15.81 MB, 1,976,856 bins | Previous per-batch grids | 1.482 | 0.875 |
+| 15.81 MB | Deferred persistent grids | 1.513 | 0.475 |
+| 15.81 MB | Eager persistent grids | 1.396 | 0.851 |
+| 15.81 MB | Slabs | 5.311 | 0.309 |
+
+Small-grid old/persistent/eager results were bitwise identical. Deferred
+allocation has a repeatable roughly 0.33-second overhead on the 239 MB grid;
+the smaller 16 MB difference overlaps trial variability. Eager initialization
+recovers small-grid speed, at the cost of making the private buffers resident.
+
+## Dispatch decision
+
+For 0.97.5, small persistent worker buffers are eagerly initialized only when
+their **combined** size is at most **8 GiB and one eighth of the central
+managed RAM allowance**. Larger workspaces keep deferred NumPy allocation.
+This preserves the faster small-grid path when there is ample RAM, without
+pre-touching the enormous full-grid worker workspace. No additional preference
+is exposed. The cutoff is a conservative allocation bound, not a claim of a
+universal timing crossover; output size alone misses multiplication by the
+worker count and the available RAM budget.
+
+A final fresh-process check exercised the production accumulator and its real
+allocation policy: **4.122 s / 8.213 GB** for the 239 MB grid and
+**1.417 s / 0.853 GB** for the 16 MB grid, both selecting eager allocation.
+The full 464-million-bin grid selected deferred allocation and took
+**70.930 s / 32.830 GB**. All output bins passed comparison with the old
+baseline; the smaller results were identical. The code hashes are recorded in
+`node23/production-source.json`. The benchmark driver subsequently gained a
+cold-start option and worker-clamped allocation reporting; production code
+and the candidate helper retain those recorded hashes.
+
+Two additional fresh-process checks included first-call compilation on the
+16 MB grid: the old path took **5.67 and 5.61 s**, while production took
+**4.59 and 4.31 s**. Both production outputs were identical to the baseline.
+Thus the extra allocator dispatcher did not create a cold-start regression
+against the old lifecycle in this test. Import/startup time remains outside
+these timers. Use `--cold` to repeat this check.
+
+**Slab dispatch remains disabled.** Slabs save much more memory but were
+2–3.5 times slower on smaller grids and about 9% slower than persistent
+32-worker accumulation in the representative full-grid fixture. Reducing slab
+workers made the latter markedly slower. They may merit a future explicit
+memory-pressure strategy: 36 slabs beat an eight-worker dense calculation,
+but safely selecting that tradeoff needs more workloads, boundary coverage
+and production-quality cancellation. There is no evidence for automatically
+switching every array above a few gigabytes to slabs.
+
+## Reproduction
+
+Use the nfit conda interpreter locally. The remote environment and fixture
+array hashes are recorded in [node23/environment.json](node23/environment.json).
+Raw per-trial measurements are in the adjacent `node23/*-trials.log` files.
+Production geometry during the initial trials matched commit `1457c8a`.
+The node has 64 logical CPUs; measurements used Python 3.14.7, NumPy 2.5.3
+and Numba 0.67.0. OpenBLAS used one thread, Numba allowed up to 36. Other
+users were active on the node; these are not idle-host throughput guarantees.
 
 ```bash
 python benchmarks/benchmark_trajectory.py --prepare /path/to/YMn2_SEQ_IPTS-32969.nfit \
-  --fixture geometry.npz
+  --fixture geometry16.npz --runs 16
+NUMBA_NUM_THREADS=36 OPENBLAS_NUM_THREADS=1 python benchmarks/benchmark_trajectory.py \
+  --fixture geometry16.npz --mode baseline --workers 36 --transforms 256 --batches 3 \
+  --save-result baseline.npy
+NUMBA_NUM_THREADS=36 OPENBLAS_NUM_THREADS=1 python benchmarks/benchmark_trajectory.py \
+  --fixture geometry16.npz --mode production --workers 32 --transforms 256 --batches 3 \
+  --reference baseline.npy
 ```
 
-Then compare the full 464-million-bin grid using all 192 transforms, with both
-one large batch and multiple progress batches (`--transforms 192 --batches 1`
-and `--transforms 48 --batches 4`). Sweep CPU allocations, repeat warmed trials,
-and check complete arrays or bounded block comparisons. Include smaller grids
-and geometry-heavy workloads before selecting a slab crossover. The source
-transform in `trajectory_candidates.py` reconstructs the prior fused Numba
-allocation/reduction lifecycle from the shared, unchanged geometry kernel.
+Prepare four runs for the small-grid comparisons, then use `--transforms 192
+--batches 1 --stride 2` or `--stride 4`. Candidate modes `persistent`, `eager`
+and `slab` isolate the allocation strategies from automatic production
+selection. `--synthetic` reproduces the earlier laptop-only fixture; its
+measurements should not be mixed with these actual-geometry remote results.
 
-Remote testing and cleanup remain pending authentication. The task-owned
-shared directory is `/SNS/users/paulneves/.cache/nfit-trajectory-7RuHYl`; upload
-ended with SSH exit 255 and its contents must be verified and removed after
-results are collected. The saved user project and performance preferences
-were read only.
+## Validation and cleanup
 
-## Validation
+The 0.97.5 full local suite passed **1,862 tests**, with one optional CuPy skip.
+Ruff, byte compilation, Sphinx with warnings treated as errors, and staged
+diff checks passed. All four version declarations agree. Scientific geometry,
+sorting, project schemas and installed application files are unchanged by
+this follow-up.
 
-The full local suite passed: **1,860 passed, 1 optional CuPy test skipped**.
-The final focused run passed 60 tests; the last ownership/planning checks
-passed four additional targeted tests. Ruff, byte compilation, Sphinx with
-warnings treated as errors, and staged diff checks passed. An outdated
-Project Explorer menu assertion was updated to include the already-existing
-"Rebin stale binnings" shortcut; no menu behavior changed in this patch.
+The earlier `/tmp/nfit-mapped-artifacts-Cz62Ea` directory was found on node23,
+verified against the saved 10 GB archive hash, removed and verified absent.
+After collecting all **37 measurements**, including **33 full-array comparison
+checks**, the task-owned source/fixture/result directory
+`/SNS/users/paulneves/.cache/nfit-trajectory-7RuHYl` was removed. All seven runner
+completion markers reported success, no process had its working directory
+inside the scratch root, and both remote scratch paths were verified absent
+on node23 at **2026-09-18 15:40:38 UTC**. The local upload tarballs were also
+removed. Pre-existing dependency caches were retained. User project files and
+performance preferences were read only; no running nfit process was stopped
+or installed application updated.

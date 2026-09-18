@@ -213,6 +213,14 @@ buffers once across detector geometries and progress batches, then sums them
 once. Progress updates and cancellation checks remain between batches.
 Peak-memory estimates include these worker buffers; existing project results
 and source arrays remain additional memory.
+For speed, small worker buffers are zeroed up front when their combined size
+is at most 8 GiB and one eighth of the central RAM allowance. Larger buffers
+use zero-filled NumPy storage. On systems that defer physical
+allocation of untouched zero pages, resident memory depends on the bins
+visited by the trajectories; an initially sparse grid can grow as more runs
+are processed. The estimate therefore counts the full buffer capacity, even
+when observed resident memory is lower. Reducing the CPU limit can reduce
+private-buffer storage, but may increase integration time.
 
 MDEvent HKLE and powder finalization reuses the owned event-sum arrays for
 normalized signal and errors. The immutable result adopts those arrays, and

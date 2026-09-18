@@ -83,6 +83,13 @@ def _persistent_kernel():
 _TRAJECTORY_ACCUMULATE = _persistent_kernel()
 
 
+@njit(nogil=True, parallel=True)
+def _eager_partial(workers: int, output_size: int) -> np.ndarray:
+    """Allocate private grids through Numba's eager zeroing path."""
+
+    return np.zeros((workers, output_size), dtype=np.float64)
+
+
 def _per_batch_baseline_kernel():
     """Reconstruct the v0.97 per-call allocation from shared geometry source."""
 
@@ -194,6 +201,52 @@ def run_persistent_dense(
     finally:
         set_num_threads(previous)
     return np.sum(partial, axis=0)
+
+
+def run_persistent_eager(
+    batches: Iterable[Sequence[np.ndarray]], *, workers: int
+) -> np.ndarray:
+    """Accumulate persistently after eagerly zeroing private grids in Numba."""
+
+    batches = list(batches)
+    if not batches:
+        raise ValueError("at least one trajectory batch is required")
+    selected = max(1, min(int(workers), get_num_threads()))
+    output_size, intersections = _workspace_shape(batches[0], selected)
+    previous = get_num_threads()
+    set_num_threads(selected)
+    try:
+        partial = _eager_partial(selected, output_size)
+        scratch = np.empty((selected, intersections), dtype=np.float64)
+        for args in batches:
+            current_size, current_intersections = _workspace_shape(args, selected)
+            if (current_size, current_intersections) != (output_size, intersections):
+                raise ValueError("all batches must use the same output grid")
+            _TRAJECTORY_ACCUMULATE(partial, scratch, *args)
+    finally:
+        set_num_threads(previous)
+    return np.sum(partial, axis=0)
+
+
+def run_production(
+    batches: Iterable[Sequence[np.ndarray]], *, workers: int
+) -> np.ndarray:
+    """Exercise the actual accumulator, including its automatic allocation policy."""
+
+    batches = list(batches)
+    if not batches:
+        raise ValueError("at least one trajectory batch is required")
+    from nfit.mdevent import _trajectory_eager_partial
+
+    selected = max(1, min(int(workers), get_num_threads()))
+    output_size, _ = _workspace_shape(batches[0], selected)
+    accumulator = _mdevent_numba.trajectory_normalization_accumulator(
+        *batches[0][7:12], workers=selected,
+        eager=_trajectory_eager_partial(output_size, selected),
+    )
+    for args in batches:
+        accumulator.accumulate(*args)
+    return accumulator.result()
 
 
 def run_baseline_dense(

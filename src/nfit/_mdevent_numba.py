@@ -8,6 +8,13 @@ from numba import get_num_threads, get_thread_id, njit, prange, set_num_threads
 ENERGY_TO_K2 = 2.072124855
 
 
+@njit(nogil=True, parallel=True)
+def _eager_trajectory_partial(workers, output_size):
+    """Allocate private trajectory grids through Numba's eager zeroing path."""
+
+    return np.zeros((workers, output_size), dtype=np.float64)
+
+
 @njit(fastmath=False, nogil=True, parallel=True)
 def accumulate_trajectory_normalization(
     partial, scratch, theta, phi, solid, inverse_matrices, incident_energies,
@@ -132,7 +139,9 @@ def accumulate_trajectory_normalization(
 class TrajectoryNormalizationAccumulator:
     """Persistent worker-private storage for batched HKLE trajectories."""
 
-    def __init__(self, edge0, edge1, edge2, edge3, shape, *, workers: int):
+    def __init__(
+        self, edge0, edge1, edge2, edge3, shape, *, workers: int, eager: bool = False
+    ):
         available = get_num_threads()
         self.workers = max(1, min(int(workers), available))
         output_size = int(np.prod(np.asarray(shape, dtype=np.int64)))
@@ -143,7 +152,19 @@ class TrajectoryNormalizationAccumulator:
             + np.asarray(edge3).size
             + 2
         )
-        self.partial = np.zeros((self.workers, output_size), dtype=np.float64)
+        if eager:
+            previous = get_num_threads()
+            set_num_threads(self.workers)
+            try:
+                self.partial = _eager_trajectory_partial(
+                    self.workers, output_size
+                )
+            finally:
+                set_num_threads(previous)
+        else:
+            self.partial = np.zeros(
+                (self.workers, output_size), dtype=np.float64
+            )
         self.scratch = np.empty((self.workers, intersections), dtype=np.float64)
 
     def accumulate(self, *args):
@@ -197,12 +218,12 @@ def run_trajectory_normalization(*args, workers: int):
 
 
 def trajectory_normalization_accumulator(
-    edge0, edge1, edge2, edge3, shape, *, workers: int
+    edge0, edge1, edge2, edge3, shape, *, workers: int, eager: bool = False
 ):
     """Create persistent storage for a sequence of compatible run batches."""
 
     return TrajectoryNormalizationAccumulator(
-        edge0, edge1, edge2, edge3, shape, workers=workers
+        edge0, edge1, edge2, edge3, shape, workers=workers, eager=eager
     )
 
 

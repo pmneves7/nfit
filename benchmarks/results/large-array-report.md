@@ -149,9 +149,8 @@ Validation: a fixed source snapshot of `46daf6d` plus the memory changes passed
 packaging, and numerical-boundary tests also passed, as did Ruff,
 byte-compilation, and the Sphinx warning-as-error build.
 
-Final shared rebin and storage scratch was removed and its absence verified. One earlier
-node-local directory, `/tmp/nfit-mapped-artifacts-Cz62Ea`, was created before
-its hostname was recorded. It is absent on the currently accessible node21;
-direct access to the other analysis nodes is unavailable, so cleanup on its
-original node could not be verified. See the storage provenance and cleanup
-audit for the exact evidence.
+Final shared rebin and storage scratch was removed and its absence verified.
+The earlier node-local directory `/tmp/nfit-mapped-artifacts-Cz62Ea` was found
+on node23 after reconnection on 2026-09-18. Its matching fixture provenance was
+checked, the directory was removed, and its absence verified. See the storage
+cleanup audit for the original limitation and the follow-up evidence.

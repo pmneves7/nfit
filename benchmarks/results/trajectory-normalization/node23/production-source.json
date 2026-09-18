@@ -1,0 +1,6 @@
+{
+  "src/nfit/mdevent.py": "a7fffc6a4f4b4ca436a149fe9c508de5c279dc28212a95a1249089d7d5ce1ca5",
+  "src/nfit/_mdevent_numba.py": "1e0e1e9085ba7c489959634796cff42ac7ad04681dabcd8eb0e4d061f37f8983",
+  "benchmarks/benchmark_trajectory.py": "dc81fa13d8affb0260626d6ceafd5832264e7425d07417ebb7f306b3385d1ec2",
+  "benchmarks/trajectory_candidates.py": "f43b080bf3441ef154df5aa145d0c9eb308a1ea17b9728945a15aeba5ebf0ade"
+}

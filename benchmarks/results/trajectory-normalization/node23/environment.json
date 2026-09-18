@@ -1,0 +1,157 @@
+{
+  "host": "analysis-node23.sns.gov",
+  "python": "3.14.7 | packaged by conda-forge | (main, Sep  2 2026, 21:08:32) [GCC 15.3.0]",
+  "numpy": "2.5.3",
+  "numba": "0.67.0",
+  "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+  "logical_cpus": 64,
+  "source_commit": "1457c8a",
+  "fixture_arrays": {
+    "geometry.npz": {
+      "theta": {
+        "shape": [
+          119808
+        ],
+        "sha256": "006a397bd497dddc4d6e0eaaf87b005f3dddfec08dea3a23b9e865f8499904d3"
+      },
+      "phi": {
+        "shape": [
+          119808
+        ],
+        "sha256": "80439ef7351dc9491af30c0727d4b93e2211e2f6ef56033a6f9f7c5d4c98b34f"
+      },
+      "solid": {
+        "shape": [
+          119808
+        ],
+        "sha256": "077196faebf5946846ab4cd4fa5afb7d02d35fbff3356cdcb1a107a435e17aab"
+      },
+      "inverse": {
+        "shape": [
+          192,
+          3,
+          3
+        ],
+        "sha256": "1d002206b1da8b31147e2beeab53fc8a3ac23477d34eaf76231682a648d719d0"
+      },
+      "ei": {
+        "shape": [
+          192
+        ],
+        "sha256": "f09e8e393948355dd9a57e9131abd2e81275d9d5c64b1fad1fbccadcd1a6a425"
+      },
+      "limits": {
+        "shape": [
+          192,
+          2
+        ],
+        "sha256": "5bb5995dbbc1deeff73c59edb71d4c8a7ea98ef57b62668decf1eddf4ca71faa"
+      },
+      "charge": {
+        "shape": [
+          192
+        ],
+        "sha256": "74cfcd9857f0578af5a6c994ae977523df340b143e4e8df6cbd18f1b1b23d9b0"
+      },
+      "edge0": {
+        "shape": [
+          162
+        ],
+        "sha256": "b347afedfeebe6281d92a3aeeaabdc4fa968423ed6405b5ad356ffa02ee0b745"
+      },
+      "edge1": {
+        "shape": [
+          162
+        ],
+        "sha256": "b347afedfeebe6281d92a3aeeaabdc4fa968423ed6405b5ad356ffa02ee0b745"
+      },
+      "edge2": {
+        "shape": [
+          222
+        ],
+        "sha256": "fb51fc8f9a2d8109bb73a3bf38cc8f90f37f27029f390041cc98d5016318f27b"
+      },
+      "edge3": {
+        "shape": [
+          82
+        ],
+        "sha256": "38b09877ed50293e8c09030eae65326b24365f9d886187a58460c6aabf07198b"
+      }
+    },
+    "geometry16.npz": {
+      "theta": {
+        "shape": [
+          119808
+        ],
+        "sha256": "006a397bd497dddc4d6e0eaaf87b005f3dddfec08dea3a23b9e865f8499904d3"
+      },
+      "phi": {
+        "shape": [
+          119808
+        ],
+        "sha256": "80439ef7351dc9491af30c0727d4b93e2211e2f6ef56033a6f9f7c5d4c98b34f"
+      },
+      "solid": {
+        "shape": [
+          119808
+        ],
+        "sha256": "077196faebf5946846ab4cd4fa5afb7d02d35fbff3356cdcb1a107a435e17aab"
+      },
+      "inverse": {
+        "shape": [
+          768,
+          3,
+          3
+        ],
+        "sha256": "c32c148f6725e5f1e409444d6c1842ebb7b2dbd96e037fa8f2977240ef0de13f"
+      },
+      "ei": {
+        "shape": [
+          768
+        ],
+        "sha256": "30c811ec92287dd332a7eb9ea7fe89ddc6fb50dcf640816e20c395ee857a4ba5"
+      },
+      "limits": {
+        "shape": [
+          768,
+          2
+        ],
+        "sha256": "164d7dd7b82525df15da373fb2b2447506a2bea16550146268466d53261799f2"
+      },
+      "charge": {
+        "shape": [
+          768
+        ],
+        "sha256": "fb61a10d10782e3feeeb45ac45b01e7de94d5a700c8ec379d2ec6e6c29a4958d"
+      },
+      "edge0": {
+        "shape": [
+          162
+        ],
+        "sha256": "b347afedfeebe6281d92a3aeeaabdc4fa968423ed6405b5ad356ffa02ee0b745"
+      },
+      "edge1": {
+        "shape": [
+          162
+        ],
+        "sha256": "b347afedfeebe6281d92a3aeeaabdc4fa968423ed6405b5ad356ffa02ee0b745"
+      },
+      "edge2": {
+        "shape": [
+          222
+        ],
+        "sha256": "fb51fc8f9a2d8109bb73a3bf38cc8f90f37f27029f390041cc98d5016318f27b"
+      },
+      "edge3": {
+        "shape": [
+          82
+        ],
+        "sha256": "38b09877ed50293e8c09030eae65326b24365f9d886187a58460c6aabf07198b"
+      }
+    }
+  },
+  "source_sha256": {
+    "_mdevent_numba.py": "2bfebdc198e14070341eeef3970dcb7cb2083a68243d29ba38520ac415d6c23d",
+    "mdevent.py": "2a0d727f5aa15cdf8d1127ba927bfaeda0b28a6f4de8bc9f57dfb6c311ed2bd0"
+  }
+}

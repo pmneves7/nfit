@@ -1,0 +1,29 @@
+Cleanup verified on analysis-node23.sns.gov, 2026-09-18 15:40:38 UTC.
+
+Collected 37 JSON trial records locally, including 33 full-array comparisons.
+Every record reports analysis-node23.sns.gov; all comparison checks passed.
+Before removal, DONE, DONE16, DONESMALL, DONEREPEAT, DONEEAGER,
+DONEPRODUCTION, and DONECOLD each contained 0. No current user's process
+had a working directory inside the scratch root (checked through /proc).
+
+Removed by exact path:
+/SNS/users/paulneves/.cache/nfit-trajectory-7RuHYl
+
+Verified absent after removal:
+/SNS/users/paulneves/.cache/nfit-trajectory-7RuHYl
+/tmp/nfit-mapped-artifacts-Cz62Ea
+
+The latter directory's provenance/removal is documented separately in
+benchmarks/results/large-array-storage/cleanup-audit.txt.
+
+Removed local upload tarballs:
+/tmp/nfit-trajectory-source.tgz
+/tmp/nfit-trajectory-followup.tgz
+
+The benchmark driver used for cold checks had SHA-256:
+e9670fe323f4f8da382e392a625aa56003d363627b250a863c57afe58155e878
+(Imports were subsequently reordered locally by the lint check.)
+
+Saved projects, installed nfit files, and performance preferences were not
+modified. Pre-existing dependency caches were retained. No nfit process
+was stopped, and no benchmark was left running.

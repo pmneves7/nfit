@@ -38,6 +38,8 @@ MDEVENT_BYTES_PER_OUTPUT_BIN = 72
 MDEVENT_TRAJECTORY_BATCH_TASKS = 32_000_000
 # Event signal, variance, and count grids plus the final normalization grid.
 MDEVENT_NORMALIZATION_RESERVED_GRIDS = 4
+MDEVENT_EAGER_PARTIAL_MAX_BYTES = 8 * 1024**3
+MDEVENT_EAGER_PARTIAL_BUDGET_FRACTION = 8
 
 
 @dataclass(frozen=True)
@@ -1022,6 +1024,19 @@ def _trajectory_worker_count(output_size: int, *, reserved_bytes: int = 0) -> in
     return min(_parallel.num_threads(), memory_workers)
 
 
+def _trajectory_eager_partial(output_size: int, workers: int) -> bool:
+    """Whether private grids are small enough to zero eagerly for throughput."""
+
+    from .performance import scientific_memory_limit_bytes
+
+    private_bytes = max(int(output_size), 0) * max(int(workers), 1) * 8
+    eager_limit = min(
+        MDEVENT_EAGER_PARTIAL_MAX_BYTES,
+        scientific_memory_limit_bytes() // MDEVENT_EAGER_PARTIAL_BUDGET_FRACTION,
+    )
+    return private_bytes <= eager_limit
+
+
 def _trajectory_payloads(
     group,
     datasets,
@@ -1172,6 +1187,7 @@ def _trajectory_normalization(
             *edge_arrays,
             shape_array,
             workers=workers,
+            eager=_trajectory_eager_partial(output_size, workers),
         )
         completed = 0
         for geometry_index, payloads in enumerate(grouped_payloads):
