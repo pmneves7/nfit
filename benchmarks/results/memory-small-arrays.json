@@ -1,0 +1,158 @@
+[
+  {
+    "operation": "rebin",
+    "shape": [
+      16,
+      12,
+      10,
+      8
+    ],
+    "input": "synthetic SEQUOIA-shaped sparse float64",
+    "input_payload_bytes": 630160,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "seconds": 0.024327000021003187,
+    "output_shape": [
+      9,
+      6,
+      5,
+      5
+    ],
+    "peak_rss_bytes": 315244544,
+    "result_payload_bytes": 55582,
+    "code": "baseline",
+    "repeat": 1
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      16,
+      12,
+      10,
+      8
+    ],
+    "input": "synthetic SEQUOIA-shaped sparse float64",
+    "input_payload_bytes": 630160,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "seconds": 0.02998895791824907,
+    "output_shape": [
+      9,
+      6,
+      5,
+      5
+    ],
+    "peak_rss_bytes": 314441728,
+    "result_payload_bytes": 55582,
+    "code": "current",
+    "repeat": 1
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      16,
+      12,
+      10,
+      8
+    ],
+    "input": "synthetic SEQUOIA-shaped sparse float64",
+    "input_payload_bytes": 630160,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "seconds": 0.025203082943335176,
+    "output_shape": [
+      9,
+      6,
+      5,
+      5
+    ],
+    "peak_rss_bytes": 326172672,
+    "result_payload_bytes": 55582,
+    "code": "baseline",
+    "repeat": 2
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      16,
+      12,
+      10,
+      8
+    ],
+    "input": "synthetic SEQUOIA-shaped sparse float64",
+    "input_payload_bytes": 630160,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "seconds": 0.024154832935892045,
+    "output_shape": [
+      9,
+      6,
+      5,
+      5
+    ],
+    "peak_rss_bytes": 308772864,
+    "result_payload_bytes": 55582,
+    "code": "current",
+    "repeat": 2
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      16,
+      12,
+      10,
+      8
+    ],
+    "input": "synthetic SEQUOIA-shaped sparse float64",
+    "input_payload_bytes": 630160,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "seconds": 0.025199499912559986,
+    "output_shape": [
+      9,
+      6,
+      5,
+      5
+    ],
+    "peak_rss_bytes": 321519616,
+    "result_payload_bytes": 55582,
+    "code": "baseline",
+    "repeat": 3
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      16,
+      12,
+      10,
+      8
+    ],
+    "input": "synthetic SEQUOIA-shaped sparse float64",
+    "input_payload_bytes": 630160,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "seconds": 0.0261922919889912,
+    "output_shape": [
+      9,
+      6,
+      5,
+      5
+    ],
+    "peak_rss_bytes": 312541184,
+    "result_payload_bytes": 55582,
+    "code": "current",
+    "repeat": 3
+  }
+]

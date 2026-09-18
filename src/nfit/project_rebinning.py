@@ -11,6 +11,7 @@ import json
 import math
 import re
 from collections.abc import Mapping, Sequence
+from itertools import product
 from typing import Any
 
 import numpy as np
@@ -30,7 +31,14 @@ from .project_coordinates import (
     _mdhisto_rebin_axis_vector,
     _mdhisto_rebin_source_axis_vectors,
 )
-from .rebin import _uniform_center_edges, rebin_nd, rebin_nd_symmetry
+from .rebin import (
+    RebinBatch,
+    SymmetryRebinSource,
+    _uniform_center_edges,
+    rebin_nd,
+    rebin_nd_stream,
+    rebin_nd_symmetry,
+)
 from .symmetry import resolve_symmetry, symmetry_spec_from_config
 
 DEFAULT_REBIN_MAX_BATCH_MB = 192
@@ -38,6 +46,8 @@ DEFAULT_MINIMUM_COVERAGE = 0.0
 DEFAULT_MINIMUM_SAMPLES = 0.0
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
 REBIN_AXIS_MODES = frozenset({"discrete", "step", "bins", "edges", "tolerance"})
+MDHISTO_STREAM_MIN_POINTS = 250_000
+"""Source-bin threshold for bounded-memory MDHisto preprocessing."""
 
 _COMPATIBILITY_NAMESPACE: Mapping[str, Any] | None = None
 
@@ -1097,6 +1107,249 @@ def _output_bin_volumes(bins_list: Sequence[np.ndarray]) -> np.ndarray:
     return volume
 
 
+class _MDHistoRebinSource:
+    """Rewindable chunks of an MDHisto grid with coordinates made on demand."""
+
+    def __init__(
+        self,
+        data: MDHistoData,
+        coordinate_transform: np.ndarray,
+        *,
+        batch_size: int,
+        payload: str = "signal",
+        normalization_values: np.ndarray | None = None,
+        filter_invalid: bool = True,
+        volume_scale: float = 1.0,
+    ) -> None:
+        self.data = data
+        self.coordinate_transform = np.asarray(coordinate_transform, dtype=float)
+        self.ndim = len(data.axes)
+        if self.coordinate_transform.shape != (self.ndim, self.ndim):
+            raise ValueError("MDHisto streaming transform must be square")
+        self._identity_transform = np.array_equal(
+            self.coordinate_transform, np.eye(self.ndim)
+        )
+        self.n_points = int(data.signal.size)
+        self.batch_size = max(1, int(batch_size))
+        self.payload = payload
+        self.normalization_values = normalization_values
+        self.filter_invalid = bool(filter_invalid)
+        self.volume_scale = float(volume_scale)
+        self._centers = tuple(np.asarray(axis.centers, dtype=float) for axis in data.axes)
+        self._widths = tuple(
+            np.abs(np.diff(_mdhisto_axis_edges(axis, size)))
+            for axis, size in zip(data.axes, data.shape, strict=True)
+        )
+
+    def _selection(self, start: int, stop: int) -> tuple[np.ndarray, ...]:
+        flat = np.arange(start, stop, dtype=np.int64)
+        return tuple(np.asarray(index) for index in np.unravel_index(flat, self.data.shape))
+
+    @staticmethod
+    def _chunk(
+        values: np.ndarray,
+        start: int,
+        stop: int,
+        selection: tuple[np.ndarray, ...],
+        *,
+        dtype: Any,
+    ) -> np.ndarray:
+        array = np.asarray(values)
+        if array.flags.c_contiguous:
+            return np.asarray(array.reshape(-1)[start:stop], dtype=dtype)
+        return np.asarray(array[selection], dtype=dtype)
+
+    def iter_batches(self):
+        for start in range(0, self.n_points, self.batch_size):
+            stop = min(start + self.batch_size, self.n_points)
+            selection = self._selection(start, stop)
+            source_coordinates = np.column_stack(
+                [centers[index] for centers, index in zip(self._centers, selection, strict=True)]
+            )
+            coordinates = (
+                source_coordinates
+                if self._identity_transform
+                else source_coordinates @ self.coordinate_transform
+            )
+            signal = self._chunk(
+                self.data.signal, start, stop, selection, dtype=float
+            )
+            errors = self._chunk(
+                self.data.errors, start, stop, selection, dtype=float
+            )
+            mask = self._chunk(
+                self.data.mask, start, stop, selection, dtype=bool
+            )
+            events = self._chunk(
+                self.data.num_events, start, stop, selection, dtype=float
+            )
+            normalization = (
+                None
+                if self.normalization_values is None
+                else self._chunk(
+                    self.normalization_values,
+                    start,
+                    stop,
+                    selection,
+                    dtype=float,
+                )
+            )
+            valid = np.ones(stop - start, dtype=bool)
+            if self.filter_invalid:
+                valid &= np.isfinite(signal) & np.isfinite(errors) & ~mask
+                if self.data.num_events is not None:
+                    if bool(self.data.metadata.get("zero_event_bins_are_measured", False)):
+                        valid &= ~mask
+                    else:
+                        valid &= events > 0.0
+                if normalization is not None:
+                    valid &= np.isfinite(normalization) & (normalization > 0.0)
+            if self.payload == "coverage":
+                coverage = mdhisto_coverage_fraction(self.data, selection)
+                volume = np.ones(stop - start, dtype=float)
+                for widths, index in zip(self._widths, selection, strict=True):
+                    volume *= widths[index]
+                volume *= self.volume_scale
+                usable = (
+                    np.isfinite(signal)
+                    & np.isfinite(errors)
+                    & ~mask
+                )
+                if self.data.num_events is not None:
+                    if bool(self.data.metadata.get("zero_event_bins_are_measured", False)):
+                        usable &= ~mask
+                    else:
+                        usable &= events > 0.0
+                values = np.ones(stop - start, dtype=float)
+                weights = volume * np.where(usable, coverage, 0.0)
+                errors_out = None
+            else:
+                values = signal
+                weights = normalization
+                errors_out = errors
+            yield RebinBatch(
+                values[valid],
+                coordinates[valid],
+                None if errors_out is None else errors_out[valid],
+                None if weights is None else weights[valid],
+                progress_count=stop - start,
+            )
+
+
+def _mdhisto_stream_batch_size(data: MDHistoData, config: Mapping[str, Any]) -> int:
+    # Flat indices, one unravelled index per dimension, source and transformed
+    # coordinates, payloads, and validity masks coexist while a batch is built.
+    bytes_per_point = 8 * (3 * len(data.axes) + 10)
+    return max(1, _rebin_max_batch_bytes(dict(config)) // bytes_per_point)
+
+
+def _mdhisto_streaming_supported(
+    data: MDHistoData, config: Mapping[str, Any], axes_config: Sequence[dict[str, Any]]
+) -> bool:
+    threshold = int(_compatibility_value("MDHISTO_STREAM_MIN_POINTS", MDHISTO_STREAM_MIN_POINTS))
+    return data.signal.size >= threshold and not any(
+        _rebin_axis_mode(config, axis) in {"discrete", "tolerance"}
+        for axis in axes_config
+    )
+
+
+def _affine_mdhisto_coordinate_bounds(
+    data: MDHistoData,
+    coordinate_transform: np.ndarray,
+    *,
+    symmetry: Sequence[np.ndarray] | None = None,
+    output_axes: np.ndarray | None = None,
+) -> list[tuple[float, float]]:
+    """Exact extrema of an affine Cartesian grid from its corner coordinates."""
+
+    endpoints = [(float(axis.centers[0]), float(axis.centers[-1])) for axis in data.axes]
+    corners = np.asarray(list(product(*endpoints)), dtype=float)
+    transformed = corners @ np.asarray(coordinate_transform, dtype=float)
+    images = []
+    for operation in symmetry or (None,):
+        image = transformed.copy()
+        if operation is not None:
+            image[:, :3] = transformed[:, :3] @ np.asarray(operation, dtype=float).T
+        if output_axes is not None:
+            image = image @ np.linalg.inv(np.asarray(output_axes, dtype=float))
+        images.append(image)
+    values = np.concatenate(images, axis=0)
+    return [(float(values[:, index].min()), float(values[:, index].max())) for index in range(values.shape[1])]
+
+
+def _stream_identity_mdhisto_coverage(
+    data: MDHistoData,
+    bins_list: Sequence[np.ndarray],
+    *,
+    batch_size: int,
+    progress_callback: Any | None = None,
+) -> np.ndarray:
+    """Exact axis-aligned voxel overlap with only one source slab resident."""
+
+    covered_total = np.zeros(tuple(len(edges) - 1 for edges in bins_list), dtype=float)
+    overlaps = []
+    for axis, size, output_edges in zip(data.axes, data.shape, bins_list, strict=True):
+        source_edges = _mdhisto_axis_edges(axis, size)
+        output_edges = np.asarray(output_edges, dtype=float)
+        overlaps.append(
+            np.maximum(
+                0.0,
+                np.minimum(output_edges[1:, None], source_edges[None, 1:])
+                - np.maximum(output_edges[:-1, None], source_edges[None, :-1]),
+            )
+        )
+    tile_shape = [1] * data.signal.ndim
+    remaining = max(1, int(batch_size))
+    for dim in sorted(range(data.signal.ndim), key=lambda index: data.shape[index]):
+        tile_shape[dim] = min(data.shape[dim], remaining)
+        remaining = max(1, remaining // tile_shape[dim])
+    starts = [range(0, size, width) for size, width in zip(data.shape, tile_shape, strict=True)]
+    completed = 0
+    total_tiles = math.prod(len(values) for values in starts)
+    for tile_start in product(*starts):
+        selection = tuple(
+            slice(start, min(start + width, size))
+            for start, width, size in zip(tile_start, tile_shape, data.shape, strict=True)
+        )
+        coverage = mdhisto_coverage_fraction(data, selection)
+        usable = (
+            np.isfinite(data.signal[selection])
+            & np.isfinite(data.errors[selection])
+            & ~np.asarray(data.mask[selection], dtype=bool)
+        )
+        if not bool(data.metadata.get("zero_event_bins_are_measured", False)):
+            usable &= np.asarray(data.num_events[selection], dtype=float) > 0.0
+        covered = np.where(usable, coverage, 0.0)
+        tile_overlaps = []
+        output_indices = []
+        for overlap, selected in zip(overlaps, selection, strict=True):
+            selected_overlap = overlap[:, selected]
+            affected = np.flatnonzero(np.any(selected_overlap > 0.0, axis=1))
+            if affected.size == 0:
+                break
+            output_indices.append(affected)
+            tile_overlaps.append(selected_overlap[affected])
+        if len(tile_overlaps) == data.signal.ndim:
+            for dim, overlap in enumerate(tile_overlaps):
+                covered = np.tensordot(overlap, covered, axes=(1, dim))
+                covered = np.moveaxis(covered, 0, dim)
+            covered_total[np.ix_(*output_indices)] += covered
+        completed += 1
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "rebin_coverage",
+                    "iteration": completed,
+                    "total": total_tiles,
+                    "message": f"calculating coverage for source tile {completed:,}/{total_tiles:,}",
+                }
+            )
+    output_volume = _output_bin_volumes(bins_list)
+    result = np.zeros(output_volume.shape, dtype=float)
+    np.divide(covered_total, output_volume, out=result, where=output_volume > 0.0)
+    return np.clip(result, 0.0, 1.0)
+
+
 def _rebin_mdhisto_coverage(
     data: MDHistoData,
     coords: np.ndarray,
@@ -1239,86 +1492,137 @@ def _rebin_mdhisto_data(
         axes_config = _default_rebin_axes(data)
 
     ndim = len(data.axes)
-    source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
-    if ndim == 4:
-        transform = _mdhisto_rebin_basis_transform(data, axes_config)
-        projected = []
-        for output_index in range(ndim):
-            component = np.zeros(data.shape, dtype=float)
-            for source_grid, coefficient in zip(
-                source_grids, transform[:, output_index], strict=True
-            ):
-                if coefficient:
-                    component = component + float(coefficient) * source_grid
-            projected.append(component)
-    else:
-        projected = [
-            _mdhisto_rebin_component(data, list(source_grids), axis_config, index)
-            for index, axis_config in enumerate(axes_config)
-        ]
-    coords = np.stack(projected, axis=-1)
+    transform = (
+        _mdhisto_rebin_basis_transform(data, axes_config)
+        if ndim == 4
+        else np.column_stack(
+            [_rebin_axis_vector(axis, index, ndim) for index, axis in enumerate(axes_config)]
+        )
+    )
     symmetry = _rebin_symmetry_matrices(config, data.metadata.get("lattice_parameters"))
     output_axes = None
+    physical_transform = None
     if symmetry is not None:
         if ndim != 4:
             raise ValueError("rebin symmetry requires a four-dimensional HKLE dataset")
-        physical = _mdhisto_coordinate_grids(data)
-        if not all(name in physical for name in ("H", "K", "L", "E")):
+        source_vectors = _mdhisto_rebin_source_axis_vectors(data)
+        if any(vector is None for vector in source_vectors):
             raise ValueError(
                 "rebin symmetry requires reconstructable H, K, L, and energy coordinates"
             )
-        coords = np.stack([physical[name] for name in ("H", "K", "L", "E")], axis=-1)
+        physical_transform = np.vstack(source_vectors)
         output_axes = _validate_mdhisto_rebin_basis(axes_config, ndim)
-        data_bounds = _symmetry_projected_coordinate_bounds(coords, symmetry, output_axes)
-    else:
-        data_bounds = _finite_coordinate_bounds(coords)
-    axes_config = _resolve_auto_rebin_axes(axes_config, data_bounds)
-    valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~data.mask
+    use_stream = _mdhisto_streaming_supported(data, config, axes_config)
     normalization_channel = data.auxiliary_channels.get("normalization_denominator")
     normalization_values = None
     if normalization_channel is not None:
         normalization_values = np.asarray(normalization_channel.values, dtype=float)
-        valid &= np.isfinite(normalization_values) & (normalization_values > 0.0)
-    if data.num_events is not None:
-        valid &= mdhisto_measured_bins(data)
-    signal = data.signal[valid]
-    errors = data.errors[valid]
-    coords_valid = coords[valid]
-    if signal.size == 0:
-        raise ValueError("no valid data points remain before rebinning")
-    projected_valid = (
-        coords_valid @ np.linalg.inv(output_axes) if output_axes is not None else coords_valid
-    )
-    mode_coordinates = _axis_mode_coordinates_with_symmetry(
-        config,
-        projected_valid,
-        physical_coordinates=coords_valid if symmetry is not None else None,
-        symmetry=symmetry,
-        output_basis=output_axes,
-    )
-    axes_config = _resolve_data_driven_rebin_axes(config, axes_config, mode_coordinates)
-    lower = [axis["lower"] for axis in axes_config]
-    upper = [axis["upper"] for axis in axes_config]
-    kwargs = dict(
-        data_errs=errors,
-        data_weights=(None if normalization_values is None else normalization_values[valid]),
-        lower=lower,
-        upper=upper,
-        **_rebin_grid_kwargs(config, axes_config),
-        fractional=bool(config.get("fractional", False)),
-        fractional_axes=_rebin_fractional_axes(config, axes_config),
-        normalize=True,
-        mean_weighting=_rebin_mean_weighting(config),
-        minimum_samples=_rebin_minimum_samples(config),
-        max_batch_bytes=_rebin_max_batch_bytes(config),
-        max_parallel_bytes=_rebin_max_parallel_bytes(),
-        progress_callback=progress_callback,
-    )
-    result = (
-        rebin_nd_symmetry(signal, coords_valid, symmetry, axes=output_axes, **kwargs)
-        if symmetry is not None
-        else rebin_nd(signal, coords_valid, **kwargs)
-    )
+
+    if use_stream:
+        batch_size = _mdhisto_stream_batch_size(data, config)
+        coordinate_transform = physical_transform if symmetry is not None else transform
+        assert coordinate_transform is not None
+        data_bounds = _affine_mdhisto_coordinate_bounds(
+            data,
+            coordinate_transform,
+            symmetry=symmetry,
+            output_axes=output_axes,
+        )
+        axes_config = _resolve_auto_rebin_axes(axes_config, data_bounds)
+        source = _MDHistoRebinSource(
+            data,
+            coordinate_transform,
+            batch_size=batch_size,
+            normalization_values=normalization_values,
+        )
+        stream_source = SymmetryRebinSource(source, symmetry) if symmetry is not None else source
+        lower = [axis["lower"] for axis in axes_config]
+        upper = [axis["upper"] for axis in axes_config]
+        result = rebin_nd_stream(
+            stream_source,
+            axes=output_axes,
+            lower=lower,
+            upper=upper,
+            **_rebin_grid_kwargs(config, axes_config),
+            fractional=bool(config.get("fractional", False)),
+            fractional_axes=_rebin_fractional_axes(config, axes_config),
+            normalize=True,
+            mean_weighting=_rebin_mean_weighting(config),
+            minimum_samples=_rebin_minimum_samples(config),
+            max_parallel_bytes=_rebin_max_parallel_bytes(),
+            progress_callback=progress_callback,
+        )
+        if result.n_samples is None or not np.any(result.n_samples > 0.0):
+            raise ValueError("no valid data points remain before rebinning")
+        coords = None
+    else:
+        source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
+        if ndim == 4:
+            projected = []
+            for output_index in range(ndim):
+                component = np.zeros(data.shape, dtype=float)
+                for source_grid, coefficient in zip(
+                    source_grids, transform[:, output_index], strict=True
+                ):
+                    if coefficient:
+                        component = component + float(coefficient) * source_grid
+                projected.append(component)
+        else:
+            projected = [
+                _mdhisto_rebin_component(data, list(source_grids), axis_config, index)
+                for index, axis_config in enumerate(axes_config)
+            ]
+        coords = np.stack(projected, axis=-1)
+        if symmetry is not None:
+            physical = _mdhisto_coordinate_grids(data)
+            coords = np.stack([physical[name] for name in ("H", "K", "L", "E")], axis=-1)
+            data_bounds = _symmetry_projected_coordinate_bounds(coords, symmetry, output_axes)
+        else:
+            data_bounds = _finite_coordinate_bounds(coords)
+        axes_config = _resolve_auto_rebin_axes(axes_config, data_bounds)
+        valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~data.mask
+        if normalization_values is not None:
+            valid &= np.isfinite(normalization_values) & (normalization_values > 0.0)
+        if data.num_events is not None:
+            valid &= mdhisto_measured_bins(data)
+        signal = data.signal[valid]
+        errors = data.errors[valid]
+        coords_valid = coords[valid]
+        if signal.size == 0:
+            raise ValueError("no valid data points remain before rebinning")
+        projected_valid = (
+            coords_valid @ np.linalg.inv(output_axes) if output_axes is not None else coords_valid
+        )
+        mode_coordinates = _axis_mode_coordinates_with_symmetry(
+            config,
+            projected_valid,
+            physical_coordinates=coords_valid if symmetry is not None else None,
+            symmetry=symmetry,
+            output_basis=output_axes,
+        )
+        axes_config = _resolve_data_driven_rebin_axes(config, axes_config, mode_coordinates)
+        lower = [axis["lower"] for axis in axes_config]
+        upper = [axis["upper"] for axis in axes_config]
+        kwargs = dict(
+            data_errs=errors,
+            data_weights=(None if normalization_values is None else normalization_values[valid]),
+            lower=lower,
+            upper=upper,
+            **_rebin_grid_kwargs(config, axes_config),
+            fractional=bool(config.get("fractional", False)),
+            fractional_axes=_rebin_fractional_axes(config, axes_config),
+            normalize=True,
+            mean_weighting=_rebin_mean_weighting(config),
+            minimum_samples=_rebin_minimum_samples(config),
+            max_batch_bytes=_rebin_max_batch_bytes(config),
+            max_parallel_bytes=_rebin_max_parallel_bytes(),
+            progress_callback=progress_callback,
+        )
+        result = (
+            rebin_nd_symmetry(signal, coords_valid, symmetry, axes=output_axes, **kwargs)
+            if symmetry is not None
+            else rebin_nd(signal, coords_valid, **kwargs)
+        )
     if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None:
         raise RuntimeError("rebinning did not produce binned data")
     if result.bins_list is None:
@@ -1362,15 +1666,69 @@ def _rebin_mdhisto_data(
                 "message": "calculating geometric coverage for output bins",
             }
         )
-    coverage = _rebin_mdhisto_coverage(
-        data,
-        coords,
-        config,
-        axes_config,
-        result.bins_list,
-        symmetry=symmetry,
-        output_axes=output_axes,
-    )
+    if use_stream:
+        assert coordinate_transform is not None
+        if symmetry is None and np.allclose(coordinate_transform, np.eye(ndim)):
+            coverage = _stream_identity_mdhisto_coverage(
+                data,
+                result.bins_list,
+                batch_size=batch_size,
+                progress_callback=progress_callback,
+            )
+        else:
+            coverage_progress = None
+            if progress_callback is not None:
+                def coverage_progress(event: dict[str, Any]) -> None:
+                    progress_callback({**event, "stage": "rebin_coverage"})
+
+            coverage_source = _MDHistoRebinSource(
+                data,
+                coordinate_transform,
+                batch_size=batch_size,
+                payload="coverage",
+                filter_invalid=False,
+                volume_scale=abs(float(np.linalg.det(transform))),
+            )
+            coverage_stream = (
+                SymmetryRebinSource(coverage_source, symmetry)
+                if symmetry is not None
+                else coverage_source
+            )
+            coverage_result = rebin_nd_stream(
+                coverage_stream,
+                axes=output_axes,
+                lower=[float(np.asarray(values)[0]) for values in result.bins_list],
+                upper=[float(np.asarray(values)[-1]) for values in result.bins_list],
+                bin_edges=result.bins_list,
+                fractional=True,
+                fractional_axes=[True] * ndim,
+                normalize=False,
+                mean_weighting="uniform",
+                max_parallel_bytes=_rebin_max_parallel_bytes(),
+                progress_callback=coverage_progress,
+            )
+            if coverage_result.binned_data is None:
+                raise RuntimeError("coverage rebinning did not produce binned data")
+            output_volume = _output_bin_volumes(result.bins_list)
+            coverage = np.zeros(output_volume.shape, dtype=float)
+            np.divide(
+                coverage_result.binned_data,
+                output_volume,
+                out=coverage,
+                where=output_volume > 0.0,
+            )
+            np.clip(coverage, 0.0, 1.0, out=coverage)
+    else:
+        assert coords is not None
+        coverage = _rebin_mdhisto_coverage(
+            data,
+            coords,
+            config,
+            axes_config,
+            result.bins_list,
+            symmetry=symmetry,
+            output_axes=output_axes,
+        )
     coverage_mask = coverage < _rebin_minimum_coverage(config)
     mask |= coverage_mask
     metadata = dict(data.metadata)
@@ -1397,33 +1755,43 @@ def _rebin_mdhisto_data(
     symmetry_metadata = _rebin_symmetry_metadata(config, data.metadata.get("lattice_parameters"))
     if symmetry_metadata is not None:
         metadata["rebin"]["symmetry"] = symmetry_metadata
-    auxiliary_channels = {
-        "coverage_fraction": MDHistoChannel(
-            coverage,
-            label="Coverage",
-            unit="fraction",
-        )
-    }
+    auxiliary_channels: dict[str, MDHistoChannel] = {}
     if (
         normalization_values is not None
         and _rebin_mean_weighting(config) == "uniform"
         and result._normalization is not None
     ):
+        normalization_output = np.asarray(result._normalization, dtype=float)
+        normalization_output.setflags(write=False)
         auxiliary_channels["normalization_denominator"] = MDHistoChannel(
-            np.asarray(result._normalization, dtype=float),
+            normalization_output,
             label="Combined detector-trajectory normalization",
             unit="arbitrary normalization units",
         )
+    output_arrays = (
+        np.asarray(result.binned_data, dtype=float),
+        np.asarray(result.binned_data_errs, dtype=float),
+        np.asarray(mask, dtype=bool),
+        np.asarray(result.n_samples, dtype=float),
+        np.asarray(coverage, dtype=float),
+    )
+    for array in output_arrays:
+        array.setflags(write=False)
     return MDHistoData(
         axes=rebinned_axes,
-        signal=np.asarray(result.binned_data, dtype=float),
-        errors=np.asarray(result.binned_data_errs, dtype=float),
-        mask=np.asarray(mask, dtype=bool),
-        num_events=np.asarray(result.n_samples, dtype=float),
+        signal=output_arrays[0],
+        errors=output_arrays[1],
+        mask=output_arrays[2],
+        num_events=output_arrays[3],
         coordinate_system=data.coordinate_system,
         visual_normalization=data.visual_normalization,
         metadata=metadata,
-        auxiliary_channels=auxiliary_channels,
+        auxiliary_channels={
+            **auxiliary_channels,
+            "coverage_fraction": MDHistoChannel(
+                output_arrays[4], label="Coverage", unit="fraction"
+            ),
+        },
     )
 
 

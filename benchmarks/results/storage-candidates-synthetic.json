@@ -1,0 +1,126 @@
+{
+  "purpose": "exploratory synthetic benchmark; no production storage backend",
+  "input": {
+    "kind": "synthetic SEQUOIA-shaped 4-D float64 signal plus errors and event counts",
+    "shape": [
+      64,
+      64,
+      48,
+      24
+    ],
+    "axis_order": [
+      "H",
+      "K",
+      "L",
+      "E"
+    ],
+    "arrays": [
+      "signal",
+      "errors",
+      "num_events"
+    ],
+    "sparsity_zero_fraction": 0.7,
+    "raw_bytes": 113246208
+  },
+  "measurement": {
+    "repeats": 3,
+    "process_isolation": "one fresh process per candidate and repeat",
+    "read_cache_label": "post-write OS-cache-affected; cache was not cleared",
+    "operations": [
+      "construction/open",
+      "full materialized signal read",
+      "2-D thin signal planes (0-1, 0-3, 2-3)",
+      "central signal ROI float64 sum",
+      "exact full check of all arrays"
+    ]
+  },
+  "environment": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu_count": 16,
+    "thread_env": {
+      "OMP_NUM_THREADS": "unset",
+      "OPENBLAS_NUM_THREADS": "unset",
+      "MKL_NUM_THREADS": "unset"
+    },
+    "versions": {
+      "python": "3.14.7",
+      "numpy": "2.5.3",
+      "h5py": "3.16.0",
+      "hdf5": "1.14.6",
+      "blosc2": "4.13.1"
+    }
+  },
+  "results": [
+    {
+      "candidate": "resident_numpy",
+      "construction_seconds": 0.006956708035431802,
+      "write_seconds": 0.0,
+      "artifact_bytes": 113246208,
+      "compression_ratio_vs_raw": 1.0,
+      "peak_rss_bytes": 473907200,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.0025004170602187514,
+      "roi_reduce_seconds": 0.00037679204251617193,
+      "thin_plane_0-1_seconds": 4.491605795919895e-05,
+      "thin_plane_0-3_seconds": 3.374996595084667e-06,
+      "thin_plane_2-3_seconds": 1.500011421740055e-06
+    },
+    {
+      "candidate": "npy_memmap",
+      "construction_seconds": 0.008553542080335319,
+      "write_seconds": 0.020990708959288895,
+      "artifact_bytes": 113246592,
+      "compression_ratio_vs_raw": 0.9999966091694839,
+      "peak_rss_bytes": 472743936,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.004675333038903773,
+      "roi_reduce_seconds": 0.00033483305014669895,
+      "thin_plane_0-1_seconds": 5.012494511902332e-05,
+      "thin_plane_0-3_seconds": 7.083057425916195e-06,
+      "thin_plane_2-3_seconds": 2.9581133276224136e-06
+    },
+    {
+      "candidate": "hdf5_gzip",
+      "construction_seconds": 0.00040845805779099464,
+      "write_seconds": 1.7571968339616433,
+      "artifact_bytes": 36915325,
+      "compression_ratio_vs_raw": 3.0677288632837447,
+      "peak_rss_bytes": 437993472,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.15229454194195569,
+      "roi_reduce_seconds": 0.018940416048280895,
+      "thin_plane_0-1_seconds": 0.03692762507125735,
+      "thin_plane_0-3_seconds": 0.00904333300422877,
+      "thin_plane_2-3_seconds": 0.009319165954366326
+    },
+    {
+      "candidate": "hdf5_lzf",
+      "construction_seconds": 0.00038708397187292576,
+      "write_seconds": 0.4008669580798596,
+      "artifact_bytes": 51532029,
+      "compression_ratio_vs_raw": 2.1975887656199213,
+      "peak_rss_bytes": 418971648,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.09002275008242577,
+      "roi_reduce_seconds": 0.011320958030410111,
+      "thin_plane_0-1_seconds": 0.022211458068341017,
+      "thin_plane_0-3_seconds": 0.005203249980695546,
+      "thin_plane_2-3_seconds": 0.005202083964832127
+    },
+    {
+      "candidate": "blosc2_zstd",
+      "construction_seconds": 0.00038316589780151844,
+      "write_seconds": 0.5652368329465389,
+      "artifact_bytes": 36550123,
+      "compression_ratio_vs_raw": 3.098381036911969,
+      "peak_rss_bytes": 436387840,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.019058207981288433,
+      "roi_reduce_seconds": 0.002398999989964068,
+      "thin_plane_0-1_seconds": 0.0035302919568493962,
+      "thin_plane_0-3_seconds": 0.0008713750867173076,
+      "thin_plane_2-3_seconds": 0.000857457984238863
+    }
+  ]
+}

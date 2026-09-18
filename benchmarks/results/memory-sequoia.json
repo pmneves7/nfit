@@ -1,0 +1,398 @@
+[
+  {
+    "operation": "cache",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "lookup_seconds": [
+      3.6052542589604855,
+      3.588584208046086,
+      3.585697481990792,
+      3.581207671901211
+    ],
+    "unique_payload_bytes": 6964652672,
+    "same_container": false,
+    "accounted_bytes": 720019132,
+    "peak_rss_bytes": 9664913408,
+    "result_payload_bytes": 1741163168,
+    "code": "baseline",
+    "repeat": 1,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 42.269283056259155
+  },
+  {
+    "operation": "cache",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "lookup_seconds": [
+      3.373761744936928,
+      1.2549920938909054e-05,
+      1.9399449229240417e-06,
+      1.0300427675247192e-06
+    ],
+    "unique_payload_bytes": 1741163168,
+    "same_container": true,
+    "accounted_bytes": 2461182300,
+    "peak_rss_bytes": 2713796608,
+    "result_payload_bytes": 1741163168,
+    "code": "current",
+    "repeat": 1,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 27.967408418655396
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 8.79395661491435,
+    "output_shape": [
+      48,
+      48,
+      48,
+      24
+    ],
+    "peak_rss_bytes": 10029752320,
+    "result_payload_bytes": 108823904,
+    "code": "baseline",
+    "repeat": 1,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 15.793135166168213
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 7.475245194975287,
+    "output_shape": [
+      48,
+      48,
+      48,
+      24
+    ],
+    "peak_rss_bytes": 3221475328,
+    "result_payload_bytes": 108823904,
+    "code": "current",
+    "repeat": 1,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 14.779868125915527
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 8.793838644982316,
+    "output_shape": [
+      48,
+      48,
+      48,
+      24
+    ],
+    "peak_rss_bytes": 10032738304,
+    "result_payload_bytes": 108823904,
+    "code": "baseline",
+    "repeat": 2,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 14.02712631225586
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 7.51522681908682,
+    "output_shape": [
+      48,
+      48,
+      48,
+      24
+    ],
+    "peak_rss_bytes": 3220664320,
+    "result_payload_bytes": 108823904,
+    "code": "current",
+    "repeat": 2,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 12.750824451446533
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 8.773925855988637,
+    "output_shape": [
+      48,
+      48,
+      48,
+      24
+    ],
+    "peak_rss_bytes": 10036391936,
+    "result_payload_bytes": 108823904,
+    "code": "baseline",
+    "repeat": 3,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 13.792171478271484
+  },
+  {
+    "operation": "rebin",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 7.634902667021379,
+    "output_shape": [
+      48,
+      48,
+      48,
+      24
+    ],
+    "peak_rss_bytes": 3223281664,
+    "result_payload_bytes": 108823904,
+    "code": "current",
+    "repeat": 3,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 12.806787967681885
+  },
+  {
+    "operation": "symmetry",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 133.4824732830748,
+    "output_shape": [
+      49,
+      49,
+      49,
+      24
+    ],
+    "peak_rss_bytes": 13382529024,
+    "result_payload_bytes": 115768016,
+    "code": "baseline",
+    "repeat": 1,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 141.30494904518127
+  },
+  {
+    "operation": "symmetry",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 125.49251133494545,
+    "output_shape": [
+      49,
+      49,
+      49,
+      24
+    ],
+    "peak_rss_bytes": 3998220288,
+    "result_payload_bytes": 115768016,
+    "code": "current",
+    "repeat": 1,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 133.154123544693
+  },
+  {
+    "operation": "symmetry",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 132.470758793992,
+    "output_shape": [
+      49,
+      49,
+      49,
+      24
+    ],
+    "peak_rss_bytes": 13383458816,
+    "result_payload_bytes": 115768016,
+    "code": "baseline",
+    "repeat": 2,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 138.66615962982178
+  },
+  {
+    "operation": "symmetry",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 124.97922234993894,
+    "output_shape": [
+      49,
+      49,
+      49,
+      24
+    ],
+    "peak_rss_bytes": 4002217984,
+    "result_payload_bytes": 115768016,
+    "code": "current",
+    "repeat": 2,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 131.52419686317444
+  },
+  {
+    "operation": "symmetry",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 132.81072413700167,
+    "output_shape": [
+      49,
+      49,
+      49,
+      24
+    ],
+    "peak_rss_bytes": 13378891776,
+    "result_payload_bytes": 115768016,
+    "code": "baseline",
+    "repeat": 3,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 139.12966442108154
+  },
+  {
+    "operation": "symmetry",
+    "shape": [
+      96,
+      96,
+      96,
+      48
+    ],
+    "input": "/SNS/users/paulneves/.cache/nfit-memory-b6vgyssv/sample.npz",
+    "input_payload_bytes": 1741163168,
+    "workers": 4,
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "platform": "Linux-5.14.0-611.30.1.el9_7.x86_64-x86_64-with-glibc2.34",
+    "seconds": 124.11638208501972,
+    "output_shape": [
+      49,
+      49,
+      49,
+      24
+    ],
+    "peak_rss_bytes": 4001968128,
+    "result_payload_bytes": 115768016,
+    "code": "current",
+    "repeat": 3,
+    "host": "analysis-node21.sns.gov",
+    "wall_seconds_including_load": 133.2658395767212
+  }
+]

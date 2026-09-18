@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import weakref
 import zlib
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
@@ -107,9 +109,10 @@ class CompressedBinning:
     def restore(self) -> MDHistoData | PointListData:
         """Reconstruct the normal immutable nfit data container."""
 
-        return dataset_artifact_from_payload(
-            {name: self._array(name) for name in self.arrays}
-        )
+        arrays = {name: self._array(name) for name in self.arrays}
+        for array in arrays.values():
+            array.setflags(write=False)
+        return dataset_artifact_from_payload(arrays)
 
     def write_npz(self, destination: str | Path) -> None:
         """Write a standard compressed NPZ only to the user's chosen path."""
@@ -153,6 +156,8 @@ class RebinCacheBudget:
         self.limit_bytes: int | None = None
         self._caches: list[RebinCache] = []
         self._clock = 0
+        self._borrowed: dict[int, weakref.ReferenceType[Any]] = {}
+        self._borrowed_lock = RLock()
 
     def register(self, cache: RebinCache) -> None:
         if not any(existing is cache for existing in self._caches):
@@ -173,9 +178,32 @@ class RebinCacheBudget:
             for cache in self._caches
             for value in OrderedDict.values(cache)
         )
-        return array_payload_nbytes(resident_values) + sum(
+        with self._borrowed_lock:
+            borrowed_values = tuple(
+                value
+                for reference in self._borrowed.values()
+                if (value := reference()) is not None
+            )
+        return array_payload_nbytes((resident_values, borrowed_values)) + sum(
             cache._compressed_bytes for cache in self._caches
         )
+
+    def register_borrowed(self, value: MDHistoData | PointListData) -> None:
+        """Account for a decoded compressed result until its last user releases it."""
+
+        identity = id(value)
+
+        def released(reference: weakref.ReferenceType[Any]) -> None:
+            with self._borrowed_lock:
+                current = self._borrowed.get(identity)
+                if current is reference:
+                    self._borrowed.pop(identity, None)
+
+        reference = weakref.ref(value, released)
+        with self._borrowed_lock:
+            current = self._borrowed.get(identity)
+            if current is None or current() is not value:
+                self._borrowed[identity] = reference
 
     def enforce(self) -> None:
         if self.limit_bytes is None:
@@ -220,6 +248,10 @@ class RebinCache(OrderedDict):
         self._resident_ticks: dict[Any, int] = {}
         self._compressed_ticks: dict[Any, int] = {}
         self._labels: dict[Any, str] = {}
+        self._decode_lock = RLock()
+        self._decoded: dict[
+            Any, tuple[str, weakref.ReferenceType[MDHistoData | PointListData]]
+        ] = {}
         self.before_discard: (
             Callable[[Any, CompressedBinning], str | Path | None] | None
         ) = None
@@ -251,56 +283,92 @@ class RebinCache(OrderedDict):
         self._budget.enforce()
 
     def __setitem__(self, key, value):
-        self._drop_disk(key)
-        signature = value[0] if isinstance(value, tuple) and value else None
-        backing = self._project_backings.get(key)
-        if (
-            backing is not None
-            and (backing.signature != signature or not backing.available())
-        ):
-            self._project_backings.pop(key, None)
-        old = self._compressed.pop(key, None)
-        if old is not None:
-            self._compressed_bytes -= old[1].nbytes
-            self._compressed_ticks.pop(key, None)
-        super().__setitem__(key, value)
-        self._resident_ticks[key] = self._budget.next_tick()
+        with self._decode_lock:
+            self._decoded.pop(key, None)
+            self._drop_disk(key)
+            signature = value[0] if isinstance(value, tuple) and value else None
+            backing = self._project_backings.get(key)
+            if (
+                backing is not None
+                and (backing.signature != signature or not backing.available())
+            ):
+                self._project_backings.pop(key, None)
+            old = self._compressed.pop(key, None)
+            if old is not None:
+                self._compressed_bytes -= old[1].nbytes
+                self._compressed_ticks.pop(key, None)
+            super().__setitem__(key, value)
+            self._resident_ticks[key] = self._budget.next_tick()
+            if (
+                signature is not None
+                and len(value) > 1
+                and isinstance(value[1], (MDHistoData, PointListData))
+            ):
+                self._remember_decoded(key, signature, value[1])
+
+    def _remember_decoded(
+        self, key: Any, signature: str, value: MDHistoData | PointListData
+    ) -> None:
+        """Weakly retain one canonical decoded value without extending its life."""
+
+        cache_ref = weakref.ref(self)
+
+        def released(reference, *, cache_key=key):
+            cache = cache_ref()
+            if cache is None:
+                return
+            with cache._decode_lock:
+                current = cache._decoded.get(cache_key)
+                if current is not None and current[1] is reference:
+                    cache._decoded.pop(cache_key, None)
+
+        reference = weakref.ref(value, released)
+        self._decoded[key] = (signature, reference)
+        self._budget.register_borrowed(value)
 
     def get(self, key, default=None):
         if self._budget is SHARED_REBIN_CACHE_BUDGET:
             self.configure_budget(None)
-        if super().__contains__(key):
-            result = super().get(key, default)
-            if self._budget is SHARED_REBIN_CACHE_BUDGET:
-                # A Preferences change can lower the limit below already
-                # resident data. Return the requested value while promptly
-                # reconciling cache retention with the new shared allowance.
-                self._budget.enforce()
-            return result
-        stored = self._compressed.get(key)
-        if stored is not None:
-            self._compressed.move_to_end(key)
-            self._compressed_ticks[key] = self._budget.next_tick()
-            signature, artifact = stored
-            result = signature, artifact.restore()
-            if self._budget is SHARED_REBIN_CACHE_BUDGET:
-                self._budget.enforce()
-            return result
-        disk = self._disk.get(key)
-        if disk is None:
-            return default
-        self._disk.move_to_end(key)
-        try:
-            restored = disk.restore()
-        except (BadZipFile, EOFError, KeyError, OSError, ValueError, zlib.error):
-            self._drop_disk(key)
-            if self._project_backings.get(key) is disk:
-                self._project_backings.pop(key, None)
-            return default
-        result = (disk.signature, restored)
-        self[key] = result
-        self.move_to_end(key)
-        self._budget.enforce()
+        with self._decode_lock:
+            if super().__contains__(key):
+                result = super().get(key, default)
+            else:
+                result = None
+            decoded = self._decoded.get(key)
+            if result is None and decoded is not None:
+                value = decoded[1]()
+                if value is not None:
+                    if key in self._compressed:
+                        self._compressed.move_to_end(key)
+                        self._compressed_ticks[key] = self._budget.next_tick()
+                    result = decoded[0], value
+                else:
+                    self._decoded.pop(key, None)
+            stored = self._compressed.get(key) if result is None else None
+            if result is None and stored is not None:
+                self._compressed.move_to_end(key)
+                self._compressed_ticks[key] = self._budget.next_tick()
+                signature, artifact = stored
+                value = artifact.restore()
+                self._remember_decoded(key, signature, value)
+                result = signature, value
+            disk = self._disk.get(key) if result is None else None
+            if result is None and disk is not None:
+                self._disk.move_to_end(key)
+                try:
+                    restored = disk.restore()
+                except (BadZipFile, EOFError, KeyError, OSError, ValueError, zlib.error):
+                    self._drop_disk(key)
+                    if self._project_backings.get(key) is disk:
+                        self._project_backings.pop(key, None)
+                    return default
+                result = (disk.signature, restored)
+                self[key] = result
+                self.move_to_end(key)
+            if result is None:
+                return default
+        if self._budget is SHARED_REBIN_CACHE_BUDGET or disk is not None:
+            self._budget.enforce()
         return result
 
     def peek_resident(self, key: Any, default: Any = None) -> Any:
@@ -309,10 +377,12 @@ class RebinCache(OrderedDict):
         return OrderedDict.get(self, key, default)
 
     def __contains__(self, key):
+        decoded = self._decoded.get(key)
         return (
             super().__contains__(key)
             or key in self._compressed
             or key in self._disk
+            or (decoded is not None and decoded[1]() is not None)
         )
 
     def has_signature(self, key, signature):
@@ -324,6 +394,9 @@ class RebinCache(OrderedDict):
         stored = self._compressed.get(key)
         if stored is not None:
             return stored[0] == signature
+        decoded = self._decoded.get(key)
+        if decoded is not None and decoded[1]() is not None:
+            return decoded[0] == signature
         disk = self._disk.get(key)
         return (
             disk is not None
@@ -360,6 +433,25 @@ class RebinCache(OrderedDict):
     ) -> None:
         """Record a reusable saved artifact, optionally as the active lazy tier."""
 
+        with self._decode_lock:
+            self._set_project_backing_locked(
+                key,
+                signature=signature,
+                project_path=project_path,
+                member=member,
+                lazy=lazy,
+            )
+
+    def _set_project_backing_locked(
+        self,
+        key: Any,
+        *,
+        signature: str,
+        project_path: str | Path,
+        member: str,
+        lazy: bool,
+    ) -> None:
+
         path = Path(project_path)
         stat = path.stat()
         backing = _DiskBinning(
@@ -376,6 +468,7 @@ class RebinCache(OrderedDict):
         )
         self._project_backings[key] = backing
         if lazy:
+            self._decoded.pop(key, None)
             if super().__contains__(key):
                 OrderedDict.__delitem__(self, key)
                 self._resident_ticks.pop(key, None)
@@ -438,6 +531,10 @@ class RebinCache(OrderedDict):
         return min(candidates, default=None, key=lambda item: item[0])
 
     def _compress_resident(self, key: Any, *, max_bytes: int) -> None:
+        with self._decode_lock:
+            self._compress_resident_locked(key, max_bytes=max_bytes)
+
+    def _compress_resident_locked(self, key: Any, *, max_bytes: int) -> None:
         if not super().__contains__(key):
             return
         signature, data = OrderedDict.__getitem__(self, key)
@@ -459,31 +556,32 @@ class RebinCache(OrderedDict):
         self._labels.pop(key, None)
 
     def _discard_compressed(self, key: Any) -> None:
-        stored = self._compressed.get(key)
-        if stored is None:
-            return
-        signature, artifact = stored
-        destination = None
-        if self.before_discard is not None:
-            destination = self.before_discard(self._labels.get(key, key), artifact)
-        self._compressed.pop(key)
-        self._compressed_bytes -= artifact.nbytes
-        self._compressed_ticks.pop(key, None)
-        if destination is None:
-            backing = self._project_backings.get(key)
-            if (
-                backing is not None
-                and backing.signature == signature
-                and backing.available()
-            ):
-                self._disk[key] = backing
+        with self._decode_lock:
+            stored = self._compressed.get(key)
+            if stored is None:
+                return
+            signature, artifact = stored
+            destination = None
+            if self.before_discard is not None:
+                destination = self.before_discard(self._labels.get(key, key), artifact)
+            self._compressed.pop(key)
+            self._compressed_bytes -= artifact.nbytes
+            self._compressed_ticks.pop(key, None)
+            if destination is None:
+                backing = self._project_backings.get(key)
+                if (
+                    backing is not None
+                    and backing.signature == signature
+                    and backing.available()
+                ):
+                    self._disk[key] = backing
+                else:
+                    self._labels.pop(key, None)
             else:
-                self._labels.pop(key, None)
-        else:
-            self._disk[key] = _DiskBinning(
-                signature=signature,
-                path=Path(destination),
-            )
+                self._disk[key] = _DiskBinning(
+                    signature=signature,
+                    path=Path(destination),
+                )
 
     def popitem(self, last=True):
         key = next(reversed(self)) if last else next(iter(self))
@@ -495,11 +593,13 @@ class RebinCache(OrderedDict):
     def clear(self):
         """Clear resident, compressed, and disk-backed cache tiers."""
 
-        super().clear()
-        self._compressed.clear()
-        self._compressed_bytes = 0
-        self._resident_ticks.clear()
-        self._compressed_ticks.clear()
-        self.clear_disk_cache()
-        self._project_backings.clear()
-        self._labels.clear()
+        with self._decode_lock:
+            super().clear()
+            self._compressed.clear()
+            self._compressed_bytes = 0
+            self._resident_ticks.clear()
+            self._compressed_ticks.clear()
+            self._decoded.clear()
+            self.clear_disk_cache()
+            self._project_backings.clear()
+            self._labels.clear()

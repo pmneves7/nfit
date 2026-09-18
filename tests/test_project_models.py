@@ -1747,7 +1747,11 @@ def test_request_overlay_refresh_coalesces_without_event_loop(monkeypatch):
     explorer = NfitProjectExplorer(NfitProject([group]))
 
     refreshed = []
-    monkeypatch.setattr(explorer, "refresh_slice_viewer", lambda g: refreshed.append(g))
+    monkeypatch.setattr(
+        explorer,
+        "refresh_slice_viewer",
+        lambda g, **kwargs: refreshed.append((g, kwargs)),
+    )
     # No viewer open -> request is a no-op.
     explorer._request_overlay_refresh(group)
     assert refreshed == []
@@ -1758,20 +1762,21 @@ def test_request_overlay_refresh_coalesces_without_event_loop(monkeypatch):
     # tests observe the update immediately.
     assert explorer._interactive is False
     explorer._request_overlay_refresh(group)
-    assert refreshed == [group]
+    assert refreshed == [(group, {})]
 
     # Interactive: rapid requests coalesce into the pending set + a debounce
     # timer instead of refreshing on every call.
     refreshed.clear()
     explorer._interactive = True
     explorer._request_overlay_refresh(group)
+    explorer._request_overlay_refresh(group, force_rebin=True)
     explorer._request_overlay_refresh(group)
     assert refreshed == []
     assert id(group) in explorer._pending_overlay_groups
     assert explorer._overlay_refresh_timer is not None
     # Firing the debounced slot runs exactly one refresh and clears the queue.
     explorer._run_pending_overlay_refresh()
-    assert refreshed == [group]
+    assert refreshed == [(group, {"force_rebin": True})]
     assert not explorer._pending_overlay_groups
 
 
@@ -1898,6 +1903,9 @@ def test_viewer_view_cache_uses_lru_eviction_instead_of_clear_all(monkeypatch):
 
 
 def test_viewer_view_cache_does_not_retain_entry_over_byte_budget(monkeypatch):
+    import gc
+    import weakref
+
     project_gui._VIEWER_VIEW_CACHE.clear()
     monkeypatch.setattr("nfit.cache_utils.scientific_cache_budget_bytes", lambda: 1)
     dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
@@ -1905,7 +1913,14 @@ def test_viewer_view_cache_does_not_retain_entry_over_byte_budget(monkeypatch):
     result = project_gui._viewer_data_before_scale(dataset)
 
     assert isinstance(result, MDHistoData)
-    assert dataset.id not in project_gui._VIEWER_VIEW_CACHE
+    assert project_gui._VIEWER_VIEW_CACHE.peek_resident(dataset.id) is None
+    assert project_gui._viewer_data_before_scale(dataset) is result
+    reference = weakref.ref(result)
+    key = dataset.id
+    del result, dataset
+    gc.collect()
+    assert reference() is None
+    assert key not in project_gui._VIEWER_VIEW_CACHE
 
 
 def test_large_dataset_manual_masks_defer_passive_evaluation_and_force_for_fit(monkeypatch):

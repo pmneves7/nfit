@@ -1,0 +1,159 @@
+{
+  "purpose": "exploratory benchmark; no production storage backend",
+  "input": {
+    "kind": "provided SEQUOIA fixture: nfit-sequoia-storage-input.npz; 4-D float64 signal plus errors and event counts",
+    "shape": [
+      48,
+      48,
+      48,
+      24
+    ],
+    "axis_order": [
+      "dimension_0",
+      "dimension_1",
+      "dimension_2",
+      "dimension_3"
+    ],
+    "arrays": [
+      "signal",
+      "errors",
+      "num_events"
+    ],
+    "sparsity_zero_fraction": 0.03226499204282408,
+    "signal_nan_fraction": 0.19133692611882716,
+    "raw_bytes": 63700992
+  },
+  "measurement": {
+    "repeats": 3,
+    "process_isolation": "one fresh process per candidate and repeat",
+    "read_cache_label": "post-write OS-cache-affected; cache was not cleared",
+    "operations": [
+      "construction/open",
+      "full materialized signal read",
+      "2-D thin signal planes (0-1, 0-3, 2-3)",
+      "central signal ROI float64 sum",
+      "exact full check of all arrays"
+    ]
+  },
+  "environment": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu_count": 16,
+    "thread_env": {
+      "OMP_NUM_THREADS": "unset",
+      "OPENBLAS_NUM_THREADS": "unset",
+      "MKL_NUM_THREADS": "unset"
+    },
+    "versions": {
+      "python": "3.14.7",
+      "numpy": "2.5.3",
+      "h5py": "3.16.0",
+      "hdf5": "1.14.6",
+      "blosc2": "4.13.1"
+    }
+  },
+  "results": [
+    {
+      "candidate": "resident_numpy",
+      "construction_seconds": 0.004141791025176644,
+      "write_seconds": 0.0,
+      "artifact_bytes": 63700992,
+      "compression_ratio_vs_raw": 1.0,
+      "peak_rss_bytes": 304496640,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.001221165992319584,
+      "roi_reduce_seconds": 0.0001942089293152094,
+      "thin_plane_0-1_seconds": 2.0417035557329655e-05,
+      "thin_plane_0-3_seconds": 2.7919886633753777e-06,
+      "thin_plane_2-3_seconds": 1.458916813135147e-06
+    },
+    {
+      "candidate": "npy_memmap",
+      "construction_seconds": 0.008285499992780387,
+      "write_seconds": 0.008088874979875982,
+      "artifact_bytes": 63701376,
+      "compression_ratio_vs_raw": 0.9999939718727583,
+      "peak_rss_bytes": 306708480,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.002615917008370161,
+      "roi_reduce_seconds": 0.00021520897280424833,
+      "thin_plane_0-1_seconds": 3.1374976970255375e-05,
+      "thin_plane_0-3_seconds": 5.875015631318092e-06,
+      "thin_plane_2-3_seconds": 2.874992787837982e-06
+    },
+    {
+      "candidate": "hdf5_gzip",
+      "construction_seconds": 0.0005450838943943381,
+      "write_seconds": 0.7042581660207361,
+      "artifact_bytes": 30814694,
+      "compression_ratio_vs_raw": 2.0672277972320607,
+      "peak_rss_bytes": 289800192,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.06410745799075812,
+      "roi_reduce_seconds": 0.015936750103719532,
+      "thin_plane_0-1_seconds": 0.028309708926826715,
+      "thin_plane_0-3_seconds": 0.007975250016897917,
+      "thin_plane_2-3_seconds": 0.0033669170225039124
+    },
+    {
+      "candidate": "hdf5_lzf",
+      "construction_seconds": 0.0004437920870259404,
+      "write_seconds": 0.1264517919626087,
+      "artifact_bytes": 34537820,
+      "compression_ratio_vs_raw": 1.8443836930066808,
+      "peak_rss_bytes": 280887296,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.02077245805412531,
+      "roi_reduce_seconds": 0.004418832948431373,
+      "thin_plane_0-1_seconds": 0.010194749920628965,
+      "thin_plane_0-3_seconds": 0.002169625018723309,
+      "thin_plane_2-3_seconds": 0.0008795000612735748
+    },
+    {
+      "candidate": "blosc2_zstd",
+      "construction_seconds": 0.0003904999466612935,
+      "write_seconds": 0.1412174589931965,
+      "artifact_bytes": 30480924,
+      "compression_ratio_vs_raw": 2.0898642049040244,
+      "peak_rss_bytes": 293011456,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.00873066601343453,
+      "roi_reduce_seconds": 0.0019602919928729534,
+      "thin_plane_0-1_seconds": 0.0020075830398127437,
+      "thin_plane_0-3_seconds": 0.0004343329928815365,
+      "thin_plane_2-3_seconds": 0.00020362506620585918
+    },
+    {
+      "candidate": "blosc2_lz4_bitshuffle",
+      "construction_seconds": 0.00038695894181728363,
+      "write_seconds": 0.061069499934092164,
+      "artifact_bytes": 32857396,
+      "compression_ratio_vs_raw": 1.9387109069750994,
+      "peak_rss_bytes": 281313280,
+      "access_cache_state": "post_write_os_cache_affected (not a cold-cache measurement)",
+      "full_read_seconds": 0.008625708054751158,
+      "roi_reduce_seconds": 0.0017102500423789024,
+      "thin_plane_0-1_seconds": 0.0016246249433606863,
+      "thin_plane_0-3_seconds": 0.00038520898669958115,
+      "thin_plane_2-3_seconds": 0.00018683401867747307
+    },
+    {
+      "candidate": "blosc2_lz4_bitshuffle_memory",
+      "construction_seconds": 0.02521345904096961,
+      "write_seconds": 0.0,
+      "artifact_bytes": 0,
+      "compression_ratio_vs_raw": null,
+      "compressed_payload_bytes": 32993467,
+      "compressed_payload_ratio_vs_raw": 1.930715314034745,
+      "peak_rss_bytes": 322895872,
+      "peak_rss_interpretation": "process high-water includes input and exact-check temporaries; not retained-store incremental memory",
+      "storage_location": "memory buffer (no persisted artifact)",
+      "access_cache_state": "in-memory compressed store (not a disk-cache measurement)",
+      "full_read_seconds": 0.007366500096395612,
+      "roi_reduce_seconds": 0.001069124904461205,
+      "thin_plane_0-1_seconds": 0.001448540948331356,
+      "thin_plane_0-3_seconds": 0.0003381249262019992,
+      "thin_plane_2-3_seconds": 0.00019983400125056505
+    }
+  ]
+}

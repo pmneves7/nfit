@@ -17,6 +17,15 @@ so source files may exceed RAM. Explicit output limits permit one pass;
 automatic limits require a discovery pass. The batch target bounds temporary
 event storage but cannot reduce the persistent output arrays.
 
+Large regular MDHisto rebins also generate coordinates and geometric coverage
+in chunks, avoiding full-grid coordinate meshes and filtered copies. Automatic
+coordinate limits use the extrema of the original grid, including symmetry
+images. Small histograms retain the direct NumPy path. Discrete and
+tolerance-based axis clustering still uses the direct path because it needs
+the complete coordinate distribution. These strategies preserve float64
+signals, errors, normalization, masks, and coverage; they do not compress or
+reduce the precision of active numerical arrays.
+
 File-backed datasets are loaded on first use and retained by their
 `DatasetEntry`; viewers, analyses, and composites share that single loading
 path. nfit does not keep a second raw-array cache.
@@ -126,6 +135,13 @@ of silently discarding later old binnings for that session. A binning too large
 for the compressed tier is not retained there. Scripting workflows evict old
 results without a GUI prompt. The shared budget counts distinct NumPy array
 payloads and compressed bytes, with small Python-object overhead excluded.
+Repeated requests for an unchanged result share its live immutable arrays,
+including after the resident cache has compressed or evicted its own reference.
+An open viewer or another caller can keep those arrays alive; the shared cache
+budget continues to account for them until they are released. Evicting a cache
+entry cannot free arrays still in use, so this live-data floor can exceed the
+configured allowance. Replacing a result invalidates its cache lookup while
+existing readers retain their original immutable data.
 On Linux and remote desktops, the memory-choice dialog is attached to the
 active rebin window so it remains visible and interactive above progress.
 The prepared-table cache defaults to 128 MiB and the model-overlay cache to
@@ -140,6 +156,11 @@ derived datasets or reopening a viewer.
 Parent composites also retain child reductions on matching grids; saving the
 children later reuses those results. Changed source data, masks, backgrounds,
 or numerical bin settings invalidate the corresponding cached results.
+An unchanged numerical signature reuses its binning. Changed settings may
+temporarily require both the old viewer result and the new result, even when
+their grid dimensions are similar. Distinct named binnings retain distinct
+results. Closing an unneeded viewer releases its references, although the
+Python allocator or operating system may retain freed pages for reuse.
 
 Single-crystal MDEvent detector normalization groups runs with identical
 detector geometry and evaluates all requested symmetry operations in the
