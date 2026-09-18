@@ -959,10 +959,18 @@ def _viewer_view_signature(
     dataset: DatasetEntry,
     extra_masks: list[MaskSpec] | None,
     rebin_config: dict[str, Any] | None = None,
+    *,
+    _trail: frozenset[int] = frozenset(),
 ) -> str:
+    if id(dataset) in _trail:
+        raise ValueError("background dataset dependency cycle")
+    trail = _trail | {id(dataset)}
     config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
     rebin = (
-        json.dumps(config, sort_keys=True, default=str)
+        json.dumps(
+            {key: value for key, value in config.items() if key not in {"stale", "auto_rebin"}},
+            sort_keys=True, default=str,
+        )
         if bool(config.get("enabled"))
         else None
     )
@@ -994,7 +1002,10 @@ def _viewer_view_signature(
                 background.interpolation,
                 background.projection,
                 (
-                    dataset_content_signature(background.source_entry)
+                    [
+                        _viewer_view_signature(background.source_entry, None, _trail=trail),
+                        float(background.source_entry.scale_factor),
+                    ]
                     if background.source_entry is not None
                     else None
                 ),
@@ -1061,6 +1072,8 @@ def _viewer_data_before_scale(
         return cached[1]
     if cached is not None and deferred_masks:
         return cached[1]
+    if cached is not None and cached[0] != signature:
+        config["stale"] = True
     if cached is not None and _should_defer_rebin_config(config, force_rebin=force_rebin):
         return cached[1]
     result = _viewer_data_before_scale_uncached(

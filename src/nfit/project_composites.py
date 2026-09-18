@@ -883,6 +883,10 @@ def _composite_cache_signature(
         )
     )
     payload = [
+        "event-user-masks-and-background-windows-v1",
+        node.metadata.get("mdevent"),
+        node.metadata.get("raw_dgs"),
+        getattr(_composite_root(group), "lattice_parameters", {}),
         json.dumps(_composite_numerical_config(group, config), sort_keys=True, default=str),
         dimensions,
         # Raw CORELLI event metadata are evaluated directly from the NeXus
@@ -905,6 +909,10 @@ def _composite_cache_signature(
                 bool(dataset.enabled),
                 float(dataset.fit_weight),
                 float(dataset.scale_factor),
+                {
+                    key: dataset.metadata.get(key)
+                    for key in ("mdevent_experiment_index", "proton_charge", "incident_energy")
+                },
                 _mask_signature(getattr(dataset, "masks", None)),
                 _mask_signature(effective_dataset_masks(_composite_root(group), dataset)),
             ]
@@ -1328,9 +1336,14 @@ def _composite_dataset_data(
             raise ValueError("MDEvent composites must be imported inside a dataset group")
         lower, upper, num_bins = _composite_rebin_bounds(config)
         allow_overcommit = bool(config.pop("_allow_memory_overcommit_once", False))
+        inherited_masks = effective_dataset_masks(
+            _composite_root(group), _composite_candidates(group)[0]
+        )
         if config.get("coordinate_mode") == "powder":
             result = bin_mdevent_powder_group(
                 node,
+                inherited_masks=inherited_masks,
+                include_source_masks=include_source_masks,
                 lower=lower,
                 upper=upper,
                 num_bins=num_bins,
@@ -1344,6 +1357,8 @@ def _composite_dataset_data(
         else:
             result = bin_mdevent_group(
                 node,
+                inherited_masks=inherited_masks,
+                include_source_masks=include_source_masks,
                 lower=lower,
                 upper=upper,
                 num_bins=num_bins,
@@ -1700,9 +1715,10 @@ def _cached_composite_dataset_data(
         if config_override is None
         else data_group_composite_config(group, config_override=config_override)
     )
+    if cached is not None and cached[0] != signature:
+        config["stale"] = True
     deferred = bool(
-        config.get("stale", False)
-        and not force_rebin
+        not force_rebin
         and not config.get("auto_rebin", True)
     )
     if cached is not None and deferred:
@@ -1754,9 +1770,13 @@ def _peek_cached_composite_dataset_data(
         if resident_only and hasattr(_COMPOSITE_DATA_CACHE, "peek_resident")
         else _COMPOSITE_DATA_CACHE.get(key)
     )
-    if cached is None or cached[0] != _composite_cache_signature(
+    if cached is None:
+        return None
+    if cached[0] != _composite_cache_signature(
         group, config_override=config_override, binning_id=binning_id
     ):
+        config = data_group_composite_config(group, config_override=config_override)
+        config["stale"] = True
         return None
     return cached[1]
 

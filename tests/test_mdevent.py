@@ -20,6 +20,7 @@ from nfit import (
     save_project,
 )
 from nfit.mdhisto import MDHistoAxis, MDHistoData
+from nfit.pipeline import MaskSpec
 from nfit.plotting import _mdhisto_channel_array
 from nfit.project_gui import (
     NfitProjectExplorer,
@@ -394,6 +395,76 @@ def test_native_mdevent_powder_binning_uses_radial_trajectory_normalization(tmp_
     )
 
 
+@pytest.mark.parametrize("powder", [True, False])
+def test_mdevent_masks_exclude_run_normalization_and_honor_additive_order(tmp_path, powder):
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+    # Both runs contribute one event, with exposures 2 and 4 respectively.
+    # Removing the second must leave I=1/2, not 1/6 or 1/3.
+    group.datasets[1].masks.append(MaskSpec("exclude", "energy_q_range", {"energy": [-1, 1]}))
+    reducer = bin_mdevent_powder_group if powder else bin_mdevent_group
+    bounds = dict(lower=[0, -1], upper=[1, 1], num_bins=[1, 1]) if powder else dict(
+        lower=[-1] * 4, upper=[1] * 4, num_bins=[1] * 4
+    )
+    data = reducer(group, **bounds)
+    np.testing.assert_allclose(data.signal, 0.5)
+    np.testing.assert_allclose(data.errors, 0.5)
+    np.testing.assert_allclose(data.metadata["normalization_denominator"], 2)
+    np.testing.assert_allclose(data.num_events, 1)
+    assert not data.mask.item()
+    np.testing.assert_allclose(reducer(group, include_source_masks=False, **bounds).signal, 1 / 3)
+
+    group.datasets[1].masks[0].parameters = {"energy": [8, 9]}
+    combined = reducer(group, minimum_samples=2, **bounds)
+    assert not combined.mask.item()
+    np.testing.assert_allclose(combined.signal, 1 / 3)
+    assert combined.metadata["rebin"]["minimum_samples"] == 2
+    group.datasets[1].masks[0].parameters = {"energy": [-1, 1]}
+
+    group.masks.append(MaskSpec("all", "energy_q_range", {"energy": [-1, 1]}))
+    assert reducer(group, **bounds).mask.item()
+    group.datasets[0].masks.append(
+        MaskSpec("restore first", "energy_q_range", {"energy": [-1, 1]}, additive=True)
+    )
+    np.testing.assert_allclose(reducer(group, **bounds).signal, 0.5)
+
+
+@pytest.mark.parametrize("owner", ["ancestor", "group", "dataset"])
+def test_live_mdevent_background_applies_masks_and_keeps_target_valid(tmp_path, owner):
+    from nfit.project_composites import composite_dataset_data
+
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    background = mdevent_dataset_group(source)
+    root = DataGroup("Workspace", subgroups=[background])
+    config = data_group_composite_config(_composite_scope(root, background))
+    config.update(enabled=True, coordinate_mode="powder", minimum_coverage=0)
+    config["axes"] = [
+        dict(name="|Q|", lower=0, upper=1, num_bins=2, bin_edges=[0, 0.5, 1], mode="edges"),
+        dict(name="DeltaE", lower=-1, upper=1, num_bins=2, bin_edges=[-1, 0, 1], mode="edges"),
+    ]
+    mask = MaskSpec("exclude all", "energy_q_range", {"energy": [-2, 2]})
+    owners = {"ancestor": [root], "group": [background], "dataset": background.datasets}[owner]
+    for item in owners:
+        item.masks.append(mask)
+    masked = composite_dataset_data(root, node=background, apply_spectral_channels=False)
+    assert np.all(masked.metadata["nfit_mask"])
+    assert np.all(masked.mask)
+    target = masked.with_updates(
+        signal=np.full(masked.shape, 7.0), errors=np.ones(masked.shape),
+        mask=np.zeros(masked.shape, dtype=bool), num_events=np.ones(masked.shape), metadata={},
+    )
+    # The actual live-source resolver must preserve the mask's provenance.
+    sample = mdevent_dataset_group(source, name="sample")
+    sample.backgrounds.append(BackgroundSpec("window", source_group=background, source_group_id=background.id))
+    root.subgroups.append(sample)
+    result = _apply_composite_backgrounds(_composite_scope(root, sample), target)
+    np.testing.assert_allclose(result.signal, target.signal)
+    np.testing.assert_allclose(result.errors, target.errors)
+    assert not np.any(result.mask)
+
+
 def test_mdevent_powder_background_projects_through_sample_trajectories(
     monkeypatch, tmp_path
 ):
@@ -452,6 +523,17 @@ def test_mdevent_powder_background_projects_through_sample_trajectories(
         fallback.metadata["normalization_denominator"],
         projected.metadata["normalization_denominator"],
     )
+
+    excluded = background.with_updates(
+        mask=np.ones(background.shape, dtype=bool),
+        metadata={**background.metadata, "nfit_mask": np.ones(background.shape, dtype=bool)},
+    )
+    zero = project_powder_background_mdevent(group, excluded, target)
+    np.testing.assert_allclose(zero.signal, 0)
+    np.testing.assert_allclose(zero.errors, 0)
+    assert not zero.mask.item()
+    missing = excluded.with_updates(metadata=background.metadata)
+    assert project_powder_background_mdevent(group, missing, target).mask.item()
 
     background_entry = DatasetEntry(
         "Powder background",

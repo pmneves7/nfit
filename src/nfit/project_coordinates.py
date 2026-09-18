@@ -212,6 +212,7 @@ def _mdhisto_coordinate_grids(data: MDHistoData) -> dict[str, np.ndarray]:
     coords: dict[str, np.ndarray] = {}
     hkle = np.zeros((*shape, 4), dtype=float)
     hkle_contributions = 0
+    has_energy = False
     for index, (axis, values) in enumerate(zip(data.axes, axis_values, strict=True)):
         if "metadata_dimension" in axis.metadata:
             continue
@@ -230,9 +231,10 @@ def _mdhisto_coordinate_grids(data: MDHistoData) -> dict[str, np.ndarray]:
         if vector is not None:
             hkle += values[..., np.newaxis] * vector
             hkle_contributions += 1
+            has_energy |= bool(vector[3] != 0.0)
     if hkle_contributions:
         coords.update({"H": hkle[..., 0], "K": hkle[..., 1], "L": hkle[..., 2]})
-        if len(data.axes) >= 4 or np.any(hkle[..., 3] != 0.0):
+        if len(data.axes) >= 4 or has_energy:
             coords["E"] = hkle[..., 3]
     return coords
 

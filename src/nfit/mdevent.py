@@ -13,9 +13,11 @@ from typing import Any
 import numpy as np
 
 from . import _parallel
+from .backgrounds import background_with_user_mask_zeros
 from .dataset import PointData4D
+from .event_masks import reduce_masked_event_runs
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, mdhisto_measured_bins
-from .pipeline import DatasetEntry, DatasetGroup
+from .pipeline import DatasetEntry, DatasetGroup, MaskSpec
 
 try:
     from . import _mdevent_numba as _MDEVENT_NUMBA
@@ -300,8 +302,15 @@ def bin_mdevent_group(
     enforce_memory_limit: bool = True,
     progress_callback: Any | None = None,
     symmetry_operations: Iterable[np.ndarray] | None = None,
+    inherited_masks: Iterable[MaskSpec] | None = None,
+    include_source_masks: bool = True,
 ) -> MDHistoData:
-    """Locally bin event data and a detector-trajectory MDNorm denominator."""
+    """Locally bin event data and a detector-trajectory MDNorm denominator.
+
+    User masks apply at output-bin centers to each run's contribution.
+    ``inherited_masks`` replaces the group's mask list when a project supplies
+    its full ancestor chain. ``include_source_masks=False`` skips user masks.
+    """
 
     import h5py
 
@@ -310,6 +319,32 @@ def bin_mdevent_group(
         datasets if datasets is not None
         else (group.datasets if run_indices is None else (group.datasets[i] for i in run_indices))
     )
+    masks = list(group.masks if inherited_masks is None else inherited_masks)
+    if include_source_masks and any(
+        mask.enabled for mask in [*masks, *(mask for run in selected_runs for mask in run.masks)]
+    ):
+        # Materialize iterator arguments once for reuse across mask partitions.
+        lo, hi, bins = tuple(lower), tuple(upper), tuple(num_bins)
+        steps = None if step_size is None else tuple(step_size)
+        explicit_edges = None if bin_edges is None else tuple(
+            None if edge is None else tuple(edge) for edge in bin_edges
+        )
+        basis = None if vectors is None else tuple(tuple(row) for row in vectors)
+        names = None if axis_names is None else tuple(axis_names)
+        symmetry = None if symmetry_operations is None else tuple(symmetry_operations)
+        return reduce_masked_event_runs(
+            selected_runs, masks,
+            lambda subset: bin_mdevent_group(
+                group, lower=lo, upper=hi, num_bins=bins, step_size=steps,
+                bin_edges=explicit_edges, minimum_samples=0.0,
+                datasets=subset, vectors=basis, axis_names=names,
+                max_batch_bytes=max_batch_bytes, enforce_memory_limit=enforce_memory_limit,
+                progress_callback=progress_callback, symmetry_operations=symmetry,
+                include_source_masks=False,
+            ),
+            minimum_samples=_validated_minimum_samples(minimum_samples),
+            zero_count_upper=FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
+        )
     lower_array = np.asarray(tuple(lower), dtype=float)
     upper_array = np.asarray(tuple(upper), dtype=float)
     bins_array = np.asarray(tuple(num_bins), dtype=int)
@@ -509,12 +544,15 @@ def bin_mdevent_powder_group(
     datasets: Iterable[DatasetEntry] | None = None,
     max_batch_bytes: int = 192 * 1024 * 1024,
     progress_callback: Any | None = None,
+    inherited_masks: Iterable[MaskSpec] | None = None,
+    include_source_masks: bool = True,
 ) -> MDHistoData:
     """Reduce MDEvents directly onto a powder ``|Q|, DeltaE`` grid.
 
     The numerator is accumulated from event weights.  The denominator follows
     the same proton-charge and detector-trajectory normalization as the HKLE
     reducer, but radial momentum is independent of the sample goniometer.
+    User masks and ``inherited_masks`` follow :func:`bin_mdevent_group`.
     """
 
     import h5py
@@ -529,6 +567,26 @@ def bin_mdevent_powder_group(
             else (group.datasets[index] for index in run_indices)
         )
     )
+    masks = list(group.masks if inherited_masks is None else inherited_masks)
+    if include_source_masks and any(
+        mask.enabled for mask in [*masks, *(mask for run in selected_runs for mask in run.masks)]
+    ):
+        lo, hi, bins = tuple(lower), tuple(upper), tuple(num_bins)
+        steps = None if step_size is None else tuple(step_size)
+        explicit_edges = None if bin_edges is None else tuple(
+            None if edge is None else tuple(edge) for edge in bin_edges
+        )
+        return reduce_masked_event_runs(
+            selected_runs, masks,
+            lambda subset: bin_mdevent_powder_group(
+                group, lower=lo, upper=hi, num_bins=bins, step_size=steps,
+                bin_edges=explicit_edges, minimum_samples=0.0,
+                datasets=subset, max_batch_bytes=max_batch_bytes,
+                progress_callback=progress_callback, include_source_masks=False,
+            ),
+            minimum_samples=_validated_minimum_samples(minimum_samples),
+            zero_count_upper=FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
+        )
     lower_array = np.asarray(tuple(lower), dtype=float)
     upper_array = np.asarray(tuple(upper), dtype=float)
     bins_array = np.asarray(tuple(num_bins), dtype=int)
@@ -727,6 +785,7 @@ def project_powder_background_mdevent(
 
     if interpolation not in {"linear", "nearest"}:
         raise ValueError("background interpolation must be 'linear' or 'nearest'")
+    background = background_with_user_mask_zeros(background)
     if "mdevent" not in group.metadata:
         raise ValueError("sample-trajectory projection requires an MDEvent dataset group")
     if len(target.axes) != 4 or target.signal.ndim != 4:

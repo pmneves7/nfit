@@ -734,6 +734,13 @@ undo a file mask. Disabled masks do not participate.
 Large datasets may use manual mask application. Opening the viewer, fitting, or
 pressing **Apply masks now** always resolves pending masks first.
 
+Native MDEvent powder and single-crystal composites evaluate nfit masks at
+output-bin centers. Masks inherited from ancestor groups apply before each
+run's own masks, including **Invert**, **Additive**, and **Enabled**. Runs with
+different masks contribute counts and detector-trajectory normalization only
+where their masks allow them. Consequently, a window narrower than the bin
+spacing can retain no bins: choose bounds containing the desired bin centers.
+
 ## Backgrounds
 
 A dataset or composite can subtract one or more gridded backgrounds. Each
@@ -754,6 +761,22 @@ where $a$ is the dimensionless fixed background scale and each $\sigma$
 is a one-sigma uncertainty in the signal unit. This assumes independent
 sample/background values and does not propagate uncertainty in $a$. Values outside the background domain are
 masked rather than extrapolated.
+
+Explicit nfit masks on a background define where that background does **not**
+apply: excluded bins contribute zero signal and zero uncertainty during
+subtraction. This leaves the sample valid outside an inverted background
+window. The background's own viewer still shows the excluded bins as masked.
+Detector gaps and unmeasured bins within the allowed region remain unavailable
+and mask the affected sample bins. Linear interpolation blends the zero and
+nonzero bins at window edges; nearest interpolation gives a binwise boundary.
+
+Changing a background scale, mask, or live source recipe invalidates dependent
+composite caches. Each target's **Automatic rebinning** setting controls its
+refresh: with it off, the viewer retains the previous cached result until
+**Rebin now**; with it on, updates report numerical work in a cancellable
+progress dialog. Rebuilding a target also resolves its live background sources
+to their current settings. The green cache indicator disappears while a
+cached result is out of date.
 
 **Sample detector trajectories** is available for a background owned by an
 MDEvent dataset group. It treats the measured powder map as the intensity that

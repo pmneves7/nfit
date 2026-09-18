@@ -5424,9 +5424,12 @@ def _project_binning_is_current(
     if kind == "dataset":
         key = target.id if config is _fit_dataset_rebin_config(target) else f"{target.id}:{binning_id}"
         if hasattr(_VIEWER_VIEW_CACHE, "has_signature"):
-            return _VIEWER_VIEW_CACHE.has_signature(
+            current = _VIEWER_VIEW_CACHE.has_signature(
                 key, _viewer_view_signature(target, effective_dataset_masks(group, target), config)
             )
+            if not current:
+                config["stale"] = True
+            return current
         return (
             _peek_cached_dataset_view(
                 target,
@@ -5438,7 +5441,7 @@ def _project_binning_is_current(
         )
     fit = config is _fit_data_group_composite_config(target)
     if hasattr(_COMPOSITE_DATA_CACHE, "has_signature"):
-        return _COMPOSITE_DATA_CACHE.has_signature(
+        current = _COMPOSITE_DATA_CACHE.has_signature(
             _composite_cache_key(target, None if fit else binning_id),
             (
                 _composite_cache_signature(target)
@@ -5448,6 +5451,9 @@ def _project_binning_is_current(
                 )
             ),
         )
+        if not current:
+            config["stale"] = True
+        return current
     return _peek_cached_composite_dataset_data(
         target,
         config_override=(None if fit else config),
@@ -10584,13 +10590,34 @@ class NfitProjectExplorer:
             cache_key = (use_composite, unmask_model)
             try:
                 if cache_key not in prepared:
-                    prepared[cache_key] = slice_viewer_datasets(
-                        group,
-                        use_composite=use_composite,
-                        unmask_model=unmask_model,
-                        force_rebin=force_rebin,
-                        force_masks=False,
-                    )
+                    progress = None
+
+                    def report(event: dict[str, Any]) -> None:
+                        nonlocal progress
+                        # Only show a dialog when numerical work actually reports
+                        # progress; a cache-only redraw needs no progress window.
+                        if str(event.get("stage", "")) in {"rebin_batch", "rebin_ui", "viewer_prepare"}:
+                            return
+                        if progress is None:
+                            progress = self._make_rebin_progress_callback(
+                                "Updating data after settings changes...", aggregate=True
+                            )
+                        if progress is not None:
+                            progress(event)
+
+                    try:
+                        progress_options = {"progress_callback": report} if self._interactive else {}
+                        prepared[cache_key] = slice_viewer_datasets(
+                            group,
+                            use_composite=use_composite,
+                            unmask_model=unmask_model,
+                            force_rebin=force_rebin,
+                            force_masks=False,
+                            **progress_options,
+                        )
+                    finally:
+                        if progress is not None:
+                            self._close_rebin_progress(progress)
                 datasets, names = prepared[cache_key]
             except Exception:
                 continue
@@ -13626,10 +13653,12 @@ class NfitProjectExplorer:
         owner: DatasetEntry | DataGroup | DatasetGroup,
     ) -> None:
         if group is not None:
-            if not isinstance(owner, DatasetEntry):
+            if isinstance(owner, DatasetEntry):
+                dataset_rebin_config(owner)["stale"] = True
+            else:
                 data_group_composite_config(_composite_scope(group, owner))["stale"] = True
             self._record_data_group_state_change(group)
-            self._request_overlay_refresh(group, force_rebin=True)
+            self._request_overlay_refresh(group)
         self._refresh_cache_badges()
         self._mark_dirty()
 
@@ -16649,7 +16678,7 @@ class NfitProjectExplorer:
         if group is not None:
             self._record_data_group_state_change(group)
         self._mark_dirty()
-        if group is not None and bool(config.get("auto_rebin", True)):
+        if group is not None:
             self._request_overlay_refresh(group)
         self._refresh_cache_badges()
         if not self._refresh_dataset_rebin_controls(dataset, group):
@@ -16884,8 +16913,7 @@ class NfitProjectExplorer:
         root = _composite_root(group)
         self._record_data_group_state_change(root)
         self._mark_dirty()
-        if bool(config.get("auto_rebin", True)):
-            self._request_overlay_refresh(root)
+        self._request_overlay_refresh(root)
         self._refresh_cache_badges()
         self._sync_details()
 

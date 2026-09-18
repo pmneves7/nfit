@@ -9,6 +9,35 @@ from .analysis.coordinates import q_modulus_for_spectral
 from .mdhisto import MDHistoData, mdhisto_measured_bins
 
 
+def background_with_user_mask_zeros(background: MDHistoData) -> MDHistoData:
+    """Make explicitly excluded background bins contribute zero, not missing data.
+
+    Native detector gaps and unmeasured bins remain unavailable unless the user
+    explicitly excluded them. The source histogram itself stays immutable.
+    """
+    excluded = background.metadata.get("nfit_mask")
+    if excluded is None:
+        return background
+    excluded = np.asarray(excluded, dtype=bool)
+    if excluded.shape != background.shape:
+        raise ValueError("background user mask must match its histogram shape")
+    if not np.any(excluded):
+        return background
+    metadata = dict(background.metadata)
+    metadata.pop("nfit_mask", None)
+    metadata["background_excluded_bins"] = int(np.count_nonzero(excluded))
+    denominator = metadata.get("normalization_denominator")
+    if isinstance(denominator, np.ndarray) and denominator.shape == background.shape:
+        metadata["normalization_denominator"] = np.where(excluded, 1.0, denominator)
+    return background.with_updates(
+        signal=np.where(excluded, 0.0, background.signal),
+        errors=np.where(excluded, 0.0, background.errors),
+        mask=background.mask & ~excluded,
+        num_events=np.where(excluded, 1.0, background.num_events),
+        metadata=metadata,
+    )
+
+
 def subtract_aligned_background(
     data: MDHistoData,
     background: MDHistoData,
@@ -17,6 +46,7 @@ def subtract_aligned_background(
 ) -> MDHistoData:
     """Subtract an independently measured histogram on identical axes."""
 
+    background = background_with_user_mask_zeros(background)
     if data.shape != background.shape or len(data.axes) != len(background.axes):
         raise ValueError("aligned background subtraction requires identical shapes")
     for data_axis, background_axis in zip(data.axes, background.axes, strict=True):
@@ -112,6 +142,7 @@ def subtract_powder_background(
 
     if interpolation not in {"linear", "nearest"}:
         raise ValueError("background interpolation must be 'linear' or 'nearest'")
+    background = background_with_user_mask_zeros(background)
     q_dim, energy_dim = _powder_dimensions(background)
     q_centers = np.asarray(background.axes[q_dim].centers, dtype=float)
     energy_centers = np.asarray(background.axes[energy_dim].centers, dtype=float)

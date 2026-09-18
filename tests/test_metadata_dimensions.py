@@ -563,7 +563,7 @@ def test_same_named_composites_are_distinguished_by_collection_path():
     assert _composite_dataset_name(_composite_scope(root, b)) == "series2/MACS SPEC Composite"
 
 
-def test_reference_slice_is_visible_zero_and_background_toggle_forces_manual_viewer_refresh(monkeypatch):
+def test_reference_slice_background_toggle_honors_manual_viewer_refresh(monkeypatch):
     from PySide6 import QtWidgets
 
     from nfit.pipeline import BackgroundSpec
@@ -587,8 +587,13 @@ def test_reference_slice_is_visible_zero_and_background_toggle_forces_manual_vie
     monkeypatch.setattr(explorer, "_confirm_save_before_closing_project", lambda: True)
     viewer = explorer.open_slice_viewer(g)
     explorer._update_background(g, g, background, enabled=False)
+    np.testing.assert_allclose(viewer.data.signal.ravel(), [8, 0])
+    assert data_group_composite_config(g)["stale"]
+    assert explorer.rebin_composite_now(g)
     np.testing.assert_allclose(viewer.data.signal.ravel(), [10, 2])
     explorer._update_background(g, g, background, enabled=True)
+    np.testing.assert_allclose(viewer.data.signal.ravel(), [10, 2])
+    assert explorer.rebin_composite_now(g)
     np.testing.assert_allclose(viewer.data.signal.ravel(), [8, 0])
     assert not viewer.data.mask.any()
     viewer.window.close()
