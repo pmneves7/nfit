@@ -1120,6 +1120,43 @@ def test_cache_survives_source_load_and_refreshes_only_changed_named_binning(tmp
     assert project_gui.project_binnings_need_refresh(project)
 
 
+def test_rebin_stale_project_binnings_refreshes_only_uncached_entries(
+    monkeypatch,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Workspace1", datasets=[dataset])
+    fit = project_data.dataset_rebin_config(dataset)
+    fit.update(enabled=True, minimum_coverage=0.0, stale=True)
+    auxiliary_id = project_data.add_dataset_rebin_binning(dataset, name="Overview")
+    auxiliary = project_data.dataset_rebin_config_by_id(dataset, auxiliary_id)
+    auxiliary.update(enabled=True, minimum_coverage=0.0, stale=True)
+    auxiliary["axes"][0].update(mode="bins", num_bins=1)
+    project = NfitProject([group])
+    explorer = NfitProjectExplorer(project)
+    monkeypatch.setattr(
+        explorer, "_make_rebin_progress_callback", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(explorer, "_close_rebin_progress", lambda _progress: None)
+    refreshes = []
+    monkeypatch.setattr(
+        explorer, "refresh_open_slice_viewers", lambda: refreshes.append(True)
+    )
+
+    assert explorer.rebin_stale_project_binnings()
+    assert not project_gui.project_binnings_need_refresh(project)
+    assert refreshes == [True]
+    assert project_gui._peek_cached_dataset_view(dataset) is not None
+    assert project_gui._peek_cached_dataset_view(
+        dataset, rebin_config=auxiliary, cache_id=auxiliary_id
+    ) is not None
+
+    assert not explorer.rebin_stale_project_binnings()
+    explorer.window.close()
+
+
 def test_rebin_progress_cancel_is_cooperative():
     from PySide6 import QtWidgets
 

@@ -7075,6 +7075,7 @@ class NfitProjectExplorer:
         self.recent_projects_menu = None
         self.reload_project_action = None
         self.cache_binnings_action = None
+        self.rebin_stale_binnings_action = None
         self.tree = None
         self.title_label = None
         self.enabled_check = None
@@ -8726,6 +8727,64 @@ class NfitProjectExplorer:
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window, "Rebin all now", f"Could not rebin all dataset binnings:\n{exc}"
+            )
+            return False
+        finally:
+            self._close_rebin_progress(progress)
+            self._refresh_cache_badges()
+        on_success(completed)
+        return bool(completed)
+
+    def rebin_stale_project_binnings(self) -> bool:
+        """Recompute every enabled project binning without a current cache."""
+
+        from PySide6 import QtWidgets
+
+        if not project_binnings_need_refresh(self.project):
+            return False
+        if not self._confirm_rebin_cache_memory(
+            self._pending_project_rebin_cache_bytes(),
+            operation="Rebinning stale project binnings",
+        ):
+            return False
+
+        def task(progress_callback: Any | None) -> int:
+            return prepare_project_binning_cache(
+                self.project, progress_callback=progress_callback
+            )
+
+        def on_success(completed: int) -> None:
+            if completed:
+                self.refresh_open_slice_viewers()
+                self._refresh_cache_badges()
+                self._sync_details()
+
+        if self._interactive:
+            return self._start_background_task(
+                title="Rebinning stale project binnings...",
+                progress_window_title="Rebin progress",
+                failure_title="Rebin stale binnings",
+                task=task,
+                on_success=on_success,
+                on_settled=self._refresh_cache_badges,
+                success_message="Stale project binnings finished.",
+                finishing_progress_event={
+                    "stage": "rebin_ui",
+                    "message": "refreshing data viewers and bin information",
+                },
+            )
+        progress = self._make_rebin_progress_callback(
+            "Rebinning stale project binnings...", aggregate=True
+        )
+        try:
+            completed = task(progress)
+        except RebinCancellationRequested:
+            return False
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Rebin stale binnings",
+                f"Could not rebin stale project binnings:\n{exc}",
             )
             return False
         finally:

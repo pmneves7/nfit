@@ -119,10 +119,11 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
 
     action_callbacks = {
         "New": "new_project",
-            "Open": "open_project",
-            "Reload from Disk": "reload_project_from_disk",
-            "Cache binnings": "_set_cache_binnings_enabled",
-            "Save": "save",
+        "Open": "open_project",
+        "Reload from Disk": "reload_project_from_disk",
+        "Cache binnings": "_set_cache_binnings_enabled",
+        "Rebin stale binnings": "rebin_stale_project_binnings",
+        "Save": "save",
         "Save As": "save_as",
         "Preferences…": "show_preferences",
         "Close": "close_project",
@@ -170,6 +171,7 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
             "Open",
             "Reload from Disk",
             "Cache binnings",
+            "Rebin stale binnings",
             "Save",
             "Save As",
             "Preferences…",
@@ -192,6 +194,13 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
         ) != QtGui.QKeySequence.SequenceMatch.NoMatch
         assert actions["Save"].shortcut().matches(
             QtGui.QKeySequence.StandardKey.Save
+        ) != QtGui.QKeySequence.SequenceMatch.NoMatch
+        assert actions["Rebin stale binnings"].shortcut().matches(
+            QtGui.QKeySequence(
+                "Meta+U"
+                if project_window_builder.sys.platform == "darwin"
+                else "Ctrl+U"
+            )
         ) != QtGui.QKeySequence.SequenceMatch.NoMatch
         assert all_actions["Check for updates…"].toolTip()
         assert all_actions["Update settings…"].toolTip()

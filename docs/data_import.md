@@ -632,8 +632,12 @@ otherwise the job remains pending until **Rebin now** or an operation requires
 current rebinned data. When a dataset or composite has multiple named binnings,
 **Rebin all now** computes every enabled binning. Both manual rebin actions
 refresh open data viewers so newly computed named binnings appear immediately.
-For composites, **Create dataset from composite** is placed at the right side of
-the action row. Resource allocation comes from the single **CPU limit** and
+From anywhere in the Project Explorer, choose **File → Rebin stale binnings**
+or press **Ctrl+U** (**Command+U** on macOS) to recompute only enabled dataset
+and composite binnings whose caches no longer match their sources, masks,
+backgrounds, or numerical settings. For composites, **Create dataset from
+composite** is placed at the right side of the action row.
+Resource allocation comes from the single **CPU limit** and
 **RAM limit** in **File → Preferences → Performance**. Batch sizes are automatic;
 older per-binning resource settings do not override these limits.
 **Benchmark this rebin…** compares isolated runs of the full current configuration

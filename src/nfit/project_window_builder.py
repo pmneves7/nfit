@@ -6,6 +6,7 @@ assembles that object graph in the original construction order.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -133,6 +134,22 @@ def _build_window_shell(
         lambda: self._set_cache_binnings_enabled(
             self.cache_binnings_action.isChecked()
         )
+    )
+    self.rebin_stale_binnings_action = menu.addAction(
+        "Rebin stale binnings", self.rebin_stale_project_binnings
+    )
+    self.rebin_stale_binnings_action.setObjectName(
+        "rebin_stale_binnings_action"
+    )
+    self.rebin_stale_binnings_action.setShortcut(
+        QtGui.QKeySequence("Meta+U" if sys.platform == "darwin" else "Ctrl+U")
+    )
+    self.rebin_stale_binnings_action.setToolTip(
+        "Rebin every enabled dataset and composite binning whose cache is "
+        "missing or stale. Shortcut: Ctrl+U (Command+U on macOS)."
+    )
+    self.rebin_stale_binnings_action.setStatusTip(
+        self.rebin_stale_binnings_action.toolTip()
     )
     save_action = menu.addAction("Save", self.save)
     save_action.setShortcut(QtGui.QKeySequence.StandardKey.Save)
