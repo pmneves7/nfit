@@ -35,6 +35,9 @@ EVENT_COLUMNS = {
 }
 MDEVENT_FIXED_MEMORY_BYTES = 1_500_000_000
 MDEVENT_BYTES_PER_OUTPUT_BIN = 72
+MDEVENT_TRAJECTORY_BATCH_TASKS = 32_000_000
+# Event signal, variance, and count grids plus the final normalization grid.
+MDEVENT_NORMALIZATION_RESERVED_GRIDS = 4
 
 
 @dataclass(frozen=True)
@@ -460,14 +463,20 @@ def bin_mdevent_group(
                 "message": "normalizing MDEvent signal and uncertainties",
             }
         )
-    with np.errstate(divide="ignore", invalid="ignore"):
-        signal = data_sum / normalization
-        errors = np.sqrt(variance_sum) / normalization
-    covered_zero = (normalization > 0.0) & (event_count == 0.0)
     total_events = float(np.sum(event_count))
     event_weight_rms = (
         float(np.sqrt(np.sum(variance_sum) / total_events)) if total_events > 0.0 else 1.0
     )
+    # The accumulation arrays are no longer needed after this point.  Reuse
+    # their storage for the normalized result so a large reduction does not
+    # retain the sums while allocating equally large signal and error arrays.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        np.divide(data_sum, normalization, out=data_sum)
+        np.sqrt(variance_sum, out=variance_sum)
+        np.divide(variance_sum, normalization, out=variance_sum)
+    signal = data_sum
+    errors = variance_sum
+    covered_zero = (normalization > 0.0) & (event_count == 0.0)
     errors[covered_zero] = (
         FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER
         * event_weight_rms
@@ -482,8 +491,14 @@ def bin_mdevent_group(
                 "message": "building MDEvent masks and output channels",
             }
         )
-    mask = ~(np.isfinite(signal) & np.isfinite(errors) & (normalization > 0.0))
-    mask |= event_count < minimum_samples
+    # ``covered_zero`` has served its purpose; reuse its boolean storage for
+    # the output mask rather than retaining two full-grid boolean arrays.
+    mask = covered_zero
+    np.isfinite(signal, out=mask)
+    np.logical_and(mask, np.isfinite(errors), out=mask)
+    np.logical_and(mask, normalization > 0.0, out=mask)
+    np.logical_not(mask, out=mask)
+    np.logical_or(mask, event_count < minimum_samples, out=mask)
     axes = tuple(
         MDHistoAxis(name, edge, units, kind, frame="HKL" if index < 3 else "General Frame")
         for index, (name, edge, units, kind) in enumerate(zip(
@@ -492,6 +507,12 @@ def bin_mdevent_group(
             ("momentum", "momentum", "momentum", "energy"), strict=True,
         ))
     )
+    # These arrays are owned by this reduction.  Marking them read-only lets
+    # the immutable data containers adopt their storage instead of copying
+    # every output grid.  The metadata and auxiliary channel deliberately
+    # share the same immutable normalization denominator.
+    for output in (signal, errors, mask, event_count, normalization):
+        output.setflags(write=False)
     result = MDHistoData(
         axes=axes, signal=signal, errors=errors, mask=mask, num_events=event_count,
         metadata={
@@ -695,23 +716,30 @@ def bin_mdevent_powder_group(
         shape,
         progress_callback=progress_callback,
     )
-    with np.errstate(divide="ignore", invalid="ignore"):
-        signal = data_sum / normalization
-        errors = np.sqrt(variance_sum) / normalization
-    covered_zero = (normalization > 0.0) & (event_count == 0.0)
     total_events = float(np.sum(event_count))
     event_weight_rms = (
         float(np.sqrt(np.sum(variance_sum) / total_events))
         if total_events > 0.0
         else 1.0
     )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        np.divide(data_sum, normalization, out=data_sum)
+        np.sqrt(variance_sum, out=variance_sum)
+        np.divide(variance_sum, normalization, out=variance_sum)
+    signal = data_sum
+    errors = variance_sum
+    covered_zero = (normalization > 0.0) & (event_count == 0.0)
     errors[covered_zero] = (
         FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER
         * event_weight_rms
         / normalization[covered_zero]
     )
-    mask = ~(np.isfinite(signal) & np.isfinite(errors) & (normalization > 0.0))
-    mask |= event_count < minimum_samples
+    mask = covered_zero
+    np.isfinite(signal, out=mask)
+    np.logical_and(mask, np.isfinite(errors), out=mask)
+    np.logical_and(mask, normalization > 0.0, out=mask)
+    np.logical_not(mask, out=mask)
+    np.logical_or(mask, event_count < minimum_samples, out=mask)
     axes = (
         MDHistoAxis("|Q|", edges[0], "1/angstrom", "momentum", frame="Q modulus"),
         MDHistoAxis("DeltaE", edges[1], "meV", "energy", frame="General Frame"),
@@ -725,6 +753,8 @@ def bin_mdevent_powder_group(
                 "message": "MDEvent powder reduction complete",
             }
         )
+    for output in (signal, errors, mask, event_count, normalization):
+        output.setflags(write=False)
     return MDHistoData(
         axes=axes,
         signal=signal,
@@ -930,10 +960,25 @@ def _requested_edges(lower, upper, num_bins, step_size=None, *, bin_edges=None):
 
 
 def estimate_mdevent_peak_memory(num_bins, *, max_batch_bytes=192 * 1024 * 1024):
-    """Conservative peak-memory estimate for native event reduction."""
+    """Estimate output/finalization and native normalization workspaces.
+
+    Existing project results and source arrays are additional live storage.
+    """
 
     output_bins = math.prod(int(value) for value in num_bins)
-    return MDEVENT_FIXED_MEMORY_BYTES + output_bins * MDEVENT_BYTES_PER_OUTPUT_BIN + max(int(max_batch_bytes), 1)
+    grid_bytes = output_bins * 8
+    workers = _trajectory_worker_count(
+        output_bins, reserved_bytes=MDEVENT_NORMALIZATION_RESERVED_GRIDS * grid_bytes
+    )
+    normalization_bytes = (
+        MDEVENT_NORMALIZATION_RESERVED_GRIDS
+        + (workers if _MDEVENT_NUMBA is not None else 0)
+    ) * grid_bytes
+    return (
+        MDEVENT_FIXED_MEMORY_BYTES
+        + max(output_bins * MDEVENT_BYTES_PER_OUTPUT_BIN, normalization_bytes)
+        + max(int(max_batch_bytes), 1)
+    )
 
 
 def assess_mdevent_memory(num_bins, *, max_batch_bytes=192 * 1024 * 1024):
@@ -962,17 +1007,16 @@ def _available_memory_bytes():
     return available_memory_bytes()
 
 
-def _trajectory_worker_count(output_size: int) -> int:
-    """Resolve the saved CPU ceiling against trajectory-buffer memory."""
+def _trajectory_worker_count(output_size: int, *, reserved_bytes: int = 0) -> int:
+    """Resolve CPU allocation after reserving other live reduction arrays."""
 
     from .performance import transient_rebin_memory_limit_bytes
 
     output_bytes = max(int(output_size) * 8, 1)
     available_memory = _available_memory_bytes()
-    partial_budget = (
-        512 * 1024**2
-        if available_memory is None
-        else max(transient_rebin_memory_limit_bytes(available_memory), output_bytes)
+    partial_budget = max(
+        transient_rebin_memory_limit_bytes(available_memory) - max(int(reserved_bytes), 0),
+        output_bytes,
     )
     memory_workers = max(1, partial_budget // output_bytes)
     return min(_parallel.num_threads(), memory_workers)
@@ -1081,7 +1125,6 @@ def _trajectory_normalization(
     *,
     progress_callback=None,
 ):
-    result = np.zeros(shape)
     detector_payloads, run_payloads = _trajectory_payloads(
         group,
         datasets,
@@ -1095,7 +1138,12 @@ def _trajectory_normalization(
         and run_payloads
     ):
         output_size = int(np.prod(shape))
-        workers = _trajectory_worker_count(output_size)
+        # Reserve the three event grids and the final reduction grid rather
+        # than granting the entire managed allowance to private histograms.
+        workers = _trajectory_worker_count(
+            output_size,
+            reserved_bytes=MDEVENT_NORMALIZATION_RESERVED_GRIDS * output_size * 8,
+        )
         grouped_payloads = [
             [payload for payload in run_payloads if payload[4] == geometry_index]
             for geometry_index in range(len(detector_payloads))
@@ -1118,14 +1166,23 @@ def _trajectory_normalization(
                     "output_bins": output_size,
                 }
             )
+        edge_arrays = tuple(np.asarray(edge, dtype=float) for edge in edges)
+        shape_array = np.asarray(shape, dtype=np.int64)
+        accumulator = _MDEVENT_NUMBA.trajectory_normalization_accumulator(
+            *edge_arrays,
+            shape_array,
+            workers=workers,
+        )
         completed = 0
         for geometry_index, payloads in enumerate(grouped_payloads):
             _, theta, phi, solid = detector_payloads[geometry_index]
             detector_count = int(theta.size)
-            payload_batch = max(1, 32_000_000 // max(detector_count, 1))
+            payload_batch = max(
+                1, MDEVENT_TRAJECTORY_BATCH_TASKS // max(detector_count, 1)
+            )
             for start in range(0, len(payloads), payload_batch):
                 batch = payloads[start : start + payload_batch]
-                flat = _MDEVENT_NUMBA.run_trajectory_normalization(
+                accumulator.accumulate(
                     theta,
                     phi,
                     solid,
@@ -1133,11 +1190,9 @@ def _trajectory_normalization(
                     np.asarray([payload[1] for payload in batch]),
                     np.asarray([payload[2] for payload in batch]),
                     np.asarray([payload[3] for payload in batch]),
-                    *[np.asarray(edge, dtype=float) for edge in edges],
-                    np.asarray(shape, dtype=np.int64),
-                    workers=workers,
+                    *edge_arrays,
+                    shape_array,
                 )
-                result += np.asarray(flat, dtype=float).reshape(shape)
                 completed += len(batch) * detector_count
                 if progress_callback is not None:
                     progress_callback(
@@ -1153,7 +1208,8 @@ def _trajectory_normalization(
                             "output_bins": output_size,
                         }
                     )
-        return result
+        return np.asarray(accumulator.result(), dtype=float).reshape(shape)
+    result = np.zeros(shape)
     task_total = len(run_payloads)
     if progress_callback is not None:
         progress_callback(

@@ -207,6 +207,19 @@ neither the event histogram nor the integrated normalization denominator; the
 Python reference path is retained for numerical-equivalence testing. nfit uses
 the central CPU ceiling and lowers the normalization worker count when the
 thread-private output accumulators would exceed the managed RAM allowance.
+The HKLE reducer reserves space for its three live event grids and its final
+normalization grid before assigning private worker buffers. It allocates those
+buffers once across detector geometries and progress batches, then sums them
+once. Progress updates and cancellation checks remain between batches.
+Peak-memory estimates include these worker buffers; existing project results
+and source arrays remain additional memory.
+
+MDEvent HKLE and powder finalization reuses the owned event-sum arrays for
+normalized signal and errors. The immutable result adopts those arrays, and
+its normalization channel shares storage with the normalization metadata.
+This avoids full-grid copies without reducing precision. Already-created
+results retain their original storage until released or reloaded.
+
 Large-memory nodes can therefore use multiple CPUs for large
 four-dimensional grids, while memory-constrained machines still fall back to a
 smaller worker count. **Benchmark this rebin…** measures the

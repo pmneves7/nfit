@@ -1,5 +1,6 @@
 # ruff: noqa: F401, F403, F405
 import copy
+import sys
 
 from nfit.app_distribution import application_version
 from nfit.project_archive import read_project_manifest
@@ -268,6 +269,7 @@ def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch,
             QtGui, QtGui.QKeySequence.StandardKey.Refresh
         ),
         "Cache binnings": "",
+        "Rebin stale binnings": "Meta+U" if sys.platform == "darwin" else "Ctrl+U",
         "Save": _standard_shortcut_text(
             QtGui, QtGui.QKeySequence.StandardKey.Save
         ),

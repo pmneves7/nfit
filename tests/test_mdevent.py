@@ -599,10 +599,19 @@ def test_native_mdevent_powder_binning_stops_at_trajectory_checkpoint(tmp_path):
         )
 
 
-def test_native_mdevent_covered_zero_bins_are_finite_measured_zeros(tmp_path):
+def test_native_mdevent_covered_zero_bins_are_finite_measured_zeros(
+    monkeypatch, tmp_path
+):
     source = tmp_path / "events.nxs"
     _write_mdevent(source)
     group = mdevent_dataset_group(source)
+    container_inputs = {}
+
+    def capture_container_inputs(**kwargs):
+        container_inputs.update(kwargs)
+        return MDHistoData(**kwargs)
+
+    monkeypatch.setattr(mdevent, "MDHistoData", capture_container_inputs)
 
     result = bin_mdevent_group(
         group,
@@ -625,8 +634,30 @@ def test_native_mdevent_covered_zero_bins_are_finite_measured_zeros(tmp_path):
     )
     assert not np.any(result.mask[covered_zero])
     assert np.all(_mdhisto_channel_array(result, "signal")[covered_zero] == 0.0)
+    denominator = result.metadata["normalization_denominator"]
+    assert denominator is result.auxiliary_channels["normalization_denominator"].values
+    assert not denominator.flags.writeable
+    assert result.signal is container_inputs["signal"]
+    assert result.errors is container_inputs["errors"]
+    assert result.mask is container_inputs["mask"]
+    assert result.num_events is container_inputs["num_events"]
     fit_points = _point_data_from_mdhisto_view(result)
     assert np.count_nonzero(fit_points.valid_mask()) == 2
+
+
+def test_native_mdevent_powder_shares_immutable_normalization_storage(tmp_path):
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    result = bin_mdevent_powder_group(
+        mdevent_dataset_group(source),
+        lower=[0.0, -1.0],
+        upper=[1.0, 1.0],
+        num_bins=[1, 2],
+    )
+
+    denominator = result.metadata["normalization_denominator"]
+    assert denominator is result.auxiliary_channels["normalization_denominator"].values
+    assert not denominator.flags.writeable
 
 
 def test_native_mdevent_mask_removes_events_and_coverage(tmp_path):
@@ -727,6 +758,112 @@ def test_symmetry_trajectory_numba_matches_python_fallback(monkeypatch, tmp_path
     ]
     assert event_updates[0]["total"] == 4
     assert event_updates[-1]["iteration"] == 4
+
+
+def test_persistent_trajectory_accumulator_matches_per_batch_wrapper():
+    kernels = mdevent._MDEVENT_NUMBA
+    if kernels is None:
+        pytest.skip("Numba MDEvent normalization is unavailable")
+    edges = (
+        np.linspace(-3.0, 3.0, 5),
+        np.linspace(-3.0, 3.0, 4),
+        np.linspace(-3.0, 3.0, 4),
+        np.linspace(-2.0, 8.0, 6),
+    )
+    shape = np.asarray([edge.size - 1 for edge in edges], dtype=np.int64)
+
+    def batch(theta, phi, charge, inverse):
+        return (
+            np.asarray(theta),
+            np.asarray(phi),
+            np.ones(len(theta)),
+            np.asarray([inverse]),
+            np.asarray([12.0]),
+            np.asarray([[-2.0, 8.0]]),
+            np.asarray([charge]),
+            *edges,
+            shape,
+        )
+
+    batches = (
+        batch([0.3, 0.8], [0.1, 1.2], 1.0, np.eye(3)),
+        batch([0.4, 1.0, 1.4], [-0.2, 0.6, 2.0], 2.0, np.diag([1.0, -1.0, 1.0])),
+    )
+    expected = sum(
+        (kernels.run_trajectory_normalization(*args, workers=2) for args in batches),
+        start=np.zeros(int(np.prod(shape))),
+    )
+    accumulator = kernels.trajectory_normalization_accumulator(
+        *edges, shape, workers=2
+    )
+    for args in batches:
+        accumulator.accumulate(*args)
+    np.testing.assert_allclose(accumulator.result(), expected)
+    assert not accumulator.partial.flags.writeable
+    with pytest.raises(RuntimeError, match="finalized"):
+        accumulator.accumulate(*batches[0])
+
+    single = kernels.trajectory_normalization_accumulator(*edges, shape, workers=1)
+    single.accumulate(*batches[0])
+    single_result = single.result()
+    assert np.shares_memory(single_result, single.partial)
+    assert not single_result.flags.writeable
+    assert not single_result.base.flags.writeable
+    with pytest.raises(ValueError, match="read-only"):
+        single_result[0] = 0.0
+    with pytest.raises(ValueError, match="read-only"):
+        single_result.base[0, 0] = 0.0
+    with pytest.raises(RuntimeError, match="finalized"):
+        single.accumulate(*batches[0])
+
+
+def test_persistent_trajectory_accumulator_stops_at_batch_checkpoint(monkeypatch):
+    calls = []
+
+    class Accumulator:
+        def accumulate(self, *args):
+            calls.append(args)
+
+        def result(self):
+            raise AssertionError("cancelled accumulation must not be reduced")
+
+    class Kernels:
+        @staticmethod
+        def trajectory_normalization_accumulator(*args, workers):
+            return Accumulator()
+
+    detector_payloads = [
+        (np.asarray([1]), np.asarray([0.4]), np.asarray([0.2]), np.asarray([1.0])),
+        (np.asarray([2]), np.asarray([0.7]), np.asarray([0.5]), np.asarray([1.0])),
+    ]
+    run_payloads = [
+        (np.eye(3), 12.0, np.asarray([-2.0, 8.0]), 1.0, 0),
+        (np.eye(3), 12.0, np.asarray([-2.0, 8.0]), 1.0, 1),
+    ]
+    monkeypatch.setattr(mdevent, "_MDEVENT_NUMBA", Kernels)
+    monkeypatch.setattr(
+        mdevent, "_trajectory_payloads", lambda *args, **kwargs: (detector_payloads, run_payloads)
+    )
+    monkeypatch.setattr(
+        mdevent, "_trajectory_worker_count", lambda output_size, **kwargs: 1
+    )
+    monkeypatch.setattr(mdevent, "MDEVENT_TRAJECTORY_BATCH_TASKS", 1)
+
+    def cancel_after_first_batch(event):
+        if event["stage"] == "mdevent_normalization" and event["iteration"]:
+            raise RuntimeError("cancelled")
+
+    edges = tuple(np.linspace(-2.0, 2.0, 3) for _ in range(4))
+    with pytest.raises(RuntimeError, match="cancelled"):
+        mdevent._trajectory_normalization(
+            object(),
+            [],
+            edges,
+            (2, 2, 2, 2),
+            np.eye(4),
+            progress_callback=cancel_after_first_batch,
+        )
+    assert len(calls) == 1
 
 
 def test_trajectory_workers_honor_cpu_ceiling_and_available_memory(monkeypatch):
@@ -910,3 +1047,22 @@ def test_mdevent_rebin_warns_before_estimated_ram_overcommit(tmp_path, monkeypat
     assert explorer.rebin_composite_now(scope) is False
     assert "available RAM" in warnings[0]
     assert "_allow_memory_overcommit_once" not in data_group_composite_config(scope)
+
+
+def test_trajectory_workers_reserve_live_arrays(monkeypatch):
+    monkeypatch.setattr(mdevent._parallel, "num_threads", lambda: 64)
+    monkeypatch.setattr(mdevent, "_available_memory_bytes", lambda: 512 * 1024**3)
+    monkeypatch.setattr(
+        "nfit.performance.transient_rebin_memory_limit_bytes", lambda available: 128000 * 1024**2
+    )
+    bins = 464_011_821
+    assert mdevent._trajectory_worker_count(bins, reserved_bytes=4 * bins * 8) == 32
+    assert mdevent._trajectory_worker_count(bins, reserved_bytes=128000 * 1024**2) == 1
+
+
+def test_mdevent_peak_estimate_includes_private_normalization_grids(monkeypatch):
+    monkeypatch.setattr(mdevent, "_MDEVENT_NUMBA", object())
+    monkeypatch.setattr(mdevent, "_trajectory_worker_count", lambda *args, **kwargs: 32)
+    bins = 464_011_821
+    estimate = estimate_mdevent_peak_memory([bins], max_batch_bytes=1)
+    assert estimate == mdevent.MDEVENT_FIXED_MEMORY_BYTES + 36 * bins * 8 + 1

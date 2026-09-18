@@ -9,17 +9,12 @@ ENERGY_TO_K2 = 2.072124855
 
 
 @njit(fastmath=False, nogil=True, parallel=True)
-def trajectory_normalization(
-    theta, phi, solid, inverse_matrices, incident_energies, energy_limits,
-    proton_charges, edge0, edge1, edge2, edge3, shape,
+def accumulate_trajectory_normalization(
+    partial, scratch, theta, phi, solid, inverse_matrices, incident_energies,
+    energy_limits, proton_charges, edge0, edge1, edge2, edge3, shape,
 ):
-    workers = get_num_threads()
-    output_size = shape[0] * shape[1] * shape[2] * shape[3]
-    partial = np.zeros((workers, output_size), dtype=np.float64)
     detectors = theta.size
     total = inverse_matrices.shape[0] * detectors
-    max_intersections = edge0.size + edge1.size + edge2.size + edge3.size + 2
-    scratch = np.empty((workers, max_intersections), dtype=np.float64)
     for task in prange(total):
         run = task // detectors
         detector = task - run * detectors
@@ -132,7 +127,64 @@ def trajectory_normalization(
             if 0 <= index0 < edge0.size - 1 and 0 <= index1 < edge1.size - 1 and 0 <= index2 < edge2.size - 1 and 0 <= index3 < edge3.size - 1:
                 flat = ((index0 * shape[1] + index1) * shape[2] + index2) * shape[3] + index3
                 partial[thread, flat] += weight * ENERGY_TO_K2 * (second * second - first * first)
-    return np.sum(partial, axis=0)
+
+
+class TrajectoryNormalizationAccumulator:
+    """Persistent worker-private storage for batched HKLE trajectories."""
+
+    def __init__(self, edge0, edge1, edge2, edge3, shape, *, workers: int):
+        available = get_num_threads()
+        self.workers = max(1, min(int(workers), available))
+        output_size = int(np.prod(np.asarray(shape, dtype=np.int64)))
+        intersections = (
+            np.asarray(edge0).size
+            + np.asarray(edge1).size
+            + np.asarray(edge2).size
+            + np.asarray(edge3).size
+            + 2
+        )
+        self.partial = np.zeros((self.workers, output_size), dtype=np.float64)
+        self.scratch = np.empty((self.workers, intersections), dtype=np.float64)
+
+    def accumulate(self, *args):
+        """Add one run batch without clearing or reducing prior contributions."""
+
+        if not self.partial.flags.writeable:
+            raise RuntimeError("trajectory normalization accumulator is finalized")
+        previous = get_num_threads()
+        set_num_threads(self.workers)
+        try:
+            accumulate_trajectory_normalization(self.partial, self.scratch, *args)
+        finally:
+            set_num_threads(previous)
+
+    def result(self):
+        """Finalize and reduce worker rows; no more batches may be added."""
+
+        if self.workers == 1:
+            result = self.partial[0]
+            self.partial.setflags(write=False)
+            result.setflags(write=False)
+            return result
+        result = np.sum(self.partial, axis=0)
+        self.partial.setflags(write=False)
+        return result
+
+
+def trajectory_normalization(
+    theta, phi, solid, inverse_matrices, incident_energies, energy_limits,
+    proton_charges, edge0, edge1, edge2, edge3, shape,
+):
+    """Compatibility entry point for a single trajectory batch."""
+
+    accumulator = TrajectoryNormalizationAccumulator(
+        edge0, edge1, edge2, edge3, shape, workers=get_num_threads()
+    )
+    accumulator.accumulate(
+        theta, phi, solid, inverse_matrices, incident_energies, energy_limits,
+        proton_charges, edge0, edge1, edge2, edge3, shape,
+    )
+    return accumulator.result()
 
 
 def run_trajectory_normalization(*args, workers: int):
@@ -142,6 +194,16 @@ def run_trajectory_normalization(*args, workers: int):
         return trajectory_normalization(*args)
     finally:
         set_num_threads(previous)
+
+
+def trajectory_normalization_accumulator(
+    edge0, edge1, edge2, edge3, shape, *, workers: int
+):
+    """Create persistent storage for a sequence of compatible run batches."""
+
+    return TrajectoryNormalizationAccumulator(
+        edge0, edge1, edge2, edge3, shape, workers=workers
+    )
 
 
 @njit(fastmath=False, nogil=True)
