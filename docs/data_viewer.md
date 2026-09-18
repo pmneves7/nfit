@@ -281,6 +281,8 @@ default direction. `cubehelix` and `CMRmap` provide grayscale-friendly
 sequential choices, while `gnuplot2` provides a higher-contrast specialized
 ramp and `twilight` and `twilight_shifted` cover periodic phase or angle data.
 Each menu row includes a preview swatch of the actual map.
+Each time a palette menu opens, it starts at the first (original Matplotlib)
+entries, even when the selected palette belongs to a later family.
 The **alpha** color-shift control redistributes colors within the existing
 color range without changing that range or moving colorbar ticks. For a
 normalized color coordinate $x$ between zero and one, nfit samples the chosen

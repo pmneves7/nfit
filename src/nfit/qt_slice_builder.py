@@ -49,6 +49,15 @@ class _SliceNavigationToolbar(NavigationToolbar2QT):
         self._restored_callback()
 
 
+class _TopScrolledComboBox(QtWidgets.QComboBox):
+    """A combo box whose popup starts at its first item."""
+
+    def showPopup(self) -> None:
+        super().showPopup()
+        scroll_bar = self.view().verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.minimum())
+
+
 def build_slice_viewer(
     viewer: Any,
     *,
@@ -502,7 +511,7 @@ def _build_color_controls(viewer: Any, controls_layout: Any) -> None:
     color_layout = QtWidgets.QGridLayout(color_group)
     color_layout.setHorizontalSpacing(6)
     color_layout.setVerticalSpacing(6)
-    viewer.cmap_combo = QtWidgets.QComboBox()
+    viewer.cmap_combo = _TopScrolledComboBox()
     populate_qt_colormap_combo(viewer.cmap_combo, IMAGE_COLORMAP_GROUPS)
     viewer.cmap_combo.setToolTip("Choose the colormap used for 2D image data.")
     _compact_combobox(viewer.cmap_combo)
@@ -1013,7 +1022,7 @@ def _build_waterfall_controls(
     waterfall_layout.addWidget(viewer.waterfall_offset_auto_check, 4, 2, 1, 2)
     waterfall_layout.addWidget(viewer.waterfall_offset_slider, 5, 0, 1, 4)
 
-    viewer.waterfall_cmap_combo = QtWidgets.QComboBox()
+    viewer.waterfall_cmap_combo = _TopScrolledComboBox()
     populate_qt_colormap_combo(
         viewer.waterfall_cmap_combo,
         WATERFALL_COLORMAP_GROUPS,

@@ -667,6 +667,26 @@ def test_qt_colormap_menus_group_matplotlib_and_named_colorcet_maps():
     assert viewer.image.cmap.name == "cet_fire"
 
 
+def test_data_viewer_colormap_popups_start_at_the_first_entry():
+    pytest.importorskip("PySide6")
+
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    try:
+        for combo in (viewer.cmap_combo, viewer.waterfall_cmap_combo):
+            combo.setCurrentText("cet_fire")
+            combo.showPopup()
+            scroll_bar = combo.view().verticalScrollBar()
+
+            assert scroll_bar.maximum() > scroll_bar.minimum()
+            assert scroll_bar.value() == scroll_bar.minimum()
+
+            combo.hidePopup()
+    finally:
+        viewer.window.close()
+
+
 @pytest.mark.parametrize("selected", ["cmc.batlow", "cmo.thermal", "mycarta.Cube1", "carto.SunsetDark"])
 def test_cmcrameri_maps_preserve_tables_and_tiled_plot_settings(selected):
     from cmcrameri import cm
