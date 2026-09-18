@@ -10645,30 +10645,36 @@ class NfitProjectExplorer:
         if dialog is not None:
             dialog.close()
 
+    def _dataset_entries_for_tree_items(
+        self, items: list[Any]
+    ) -> list[tuple[DataGroup, DatasetEntry]]:
+        """Resolve run rows and lazy pages once, without populating their rows."""
+
+        entries: list[tuple[DataGroup, DatasetEntry]] = []
+        seen: set[str] = set()
+        for item in sorted(items, key=self._tree_item_sort_key):
+            group, entry, _mask, _model, role = self._objects_for_item(item)
+            if group is None:
+                continue
+            datasets = (
+                (self._dataset_page_roles.get(id(item)) or (None, (), 0))[1]
+                if role == "dataset_page" else ()
+            )
+            if role == "dataset" and entry is not None:
+                datasets = (entry,)
+            for dataset in datasets:
+                if dataset.id not in seen:
+                    entries.append((group, dataset))
+                    seen.add(dataset.id)
+        return entries
+
     def _copy_objects_for_items(self, role: str, items: list[Any]) -> list[Any]:
         """Resolve the project objects represented by an explorer selection."""
 
         current = items[-1] if items else None
         group, entry, _mask, _model, _current_role = self._objects_for_item(current)
         if role in {"dataset", "dataset_page"}:
-            # A loaded row and the lazy page that owns it both represent
-            # datasets.  Combining them here makes Copy agree with Delete and
-            # prevents a selected page/child overlap from copying a run twice.
-            objects: list[Any] = []
-            seen_ids: set[str] = set()
-            for item in items:
-                _item_group, item_entry, _item_mask, _item_model, item_role = self._objects_for_item(item)
-                datasets = (
-                    () if item_role != "dataset_page"
-                    else (self._dataset_page_roles.get(id(item)) or (None, (), 0))[1]
-                )
-                if item_role == "dataset" and item_entry is not None:
-                    datasets = (item_entry,)
-                for dataset in datasets:
-                    if dataset.id not in seen_ids:
-                        objects.append(dataset)
-                        seen_ids.add(dataset.id)
-            return objects
+            return [dataset for _owner, dataset in self._dataset_entries_for_tree_items(items)]
         objects: list[Any] = []
         for item in items:
             item_group, item_entry, item_mask, item_model, _ = self._objects_for_item(item)
@@ -10877,6 +10883,9 @@ class NfitProjectExplorer:
         if role == "dataset_group":
             node = self._dataset_group_for_item(target_item)
             return (group, node) if node is not None else (None, None)
+        if role == "dataset_page":
+            page = self._dataset_page_roles.get(id(target_item))
+            return (group, page[0]) if page is not None else (None, None)
         if role in {"dataset", "masks"} and entry is not None:
             node = _dataset_parent_node(group, entry)
             return (group, node) if node is not None else (None, None)
@@ -10942,9 +10951,10 @@ class NfitProjectExplorer:
         return tuple(reversed(path))
 
     def _selected_items_for_drag_role(self, role: str) -> list[Any]:
-        items = [item for item in self.tree.selectedItems() if self._objects_for_item(item)[4] == role]
+        roles = {"dataset", "dataset_page"} if role in {"dataset", "dataset_page"} else {role}
+        items = [item for item in self.tree.selectedItems() if self._objects_for_item(item)[4] in roles]
         current = self._current_item()
-        if current is not None and self._objects_for_item(current)[4] == role and current not in items:
+        if current is not None and self._objects_for_item(current)[4] in roles and current not in items:
             items.append(current)
         return sorted(items, key=self._tree_item_sort_key)
 
@@ -10962,6 +10972,12 @@ class NfitProjectExplorer:
         if target_group is None or target_node is None:
             return None, None, None
         _group, target_entry, _mask, _model, target_role = self._objects_for_item(target_item)
+        if target_role == "dataset_page":
+            page = self._dataset_page_roles.get(id(target_item))
+            if page is not None:
+                node, datasets, start = page
+                index = start + len(datasets) if self._is_below_drop(drop_position) else start
+                return target_group, node, index
         if target_role == "dataset" and target_entry is not None:
             parent_node = _dataset_parent_node(target_group, target_entry)
             if parent_node is not None:
@@ -10997,11 +11013,7 @@ class NfitProjectExplorer:
         target_group, target_node, insert_index = self._dataset_drop_target_with_index(target_item, drop_position)
         if target_group is None or target_node is None:
             return False
-        entries: list[tuple[DataGroup, DatasetEntry]] = []
-        for item in dataset_items:
-            source_group, source_entry, _mask, _model, role = self._objects_for_item(item)
-            if role == "dataset" and source_group is not None and source_entry is not None:
-                entries.append((source_group, source_entry))
+        entries = self._dataset_entries_for_tree_items(dataset_items)
         if not entries:
             return False
         touched_groups: set[int] = set()
@@ -11039,6 +11051,8 @@ class NfitProjectExplorer:
             elif source_group is target_group:
                 parent_node = _dataset_parent_node(source_group, source_entry)
                 if parent_node is not None:
+                    if parent_node is target_node and parent_node.datasets.index(source_entry) < index:
+                        index -= 1
                     parent_node.datasets.remove(source_entry)
                     target_node.datasets.insert(index, source_entry)
                     index += 1
@@ -11129,9 +11143,9 @@ class NfitProjectExplorer:
             return self._move_selected_groups(target_item, drop_position)
 
         # Move/copy one or more selected datasets into the drop target.
-        if source_role == "dataset":
+        if source_role in {"dataset", "dataset_page"}:
             return self._move_or_copy_datasets(
-                self._selected_items_for_drag_role("dataset"),
+                self._selected_items_for_drag_role(source_role),
                 target_item,
                 copy_item=copy_item,
                 drop_position=drop_position,
@@ -20466,23 +20480,31 @@ def _make_project_tree_class():
             if item is None:
                 return
             role = self.explorer._objects_for_item(item)[4]
-            if role not in {"group", "dataset", "mask", "dataset_group"}:
+            if role not in {"group", "dataset", "dataset_page", "mask", "dataset_group"}:
                 return
             selected_roles = {self.explorer._objects_for_item(it)[4] for it in self.selectedItems()}
             if item not in self.selectedItems():
                 selected_roles = {role}
-            if role in {"group", "dataset", "mask"} and not selected_roles.issubset({role}):
-                return
-            if role == "dataset_group" and selected_roles - {"dataset_group"}:
+            allowed_roles = {"dataset", "dataset_page"} if role in {"dataset", "dataset_page"} else {role}
+            if not selected_roles.issubset(allowed_roles):
                 return
             drag = QtGui.QDrag(self)
-            mime_data = QtCore.QMimeData()
+            # Keep Qt's row MIME alongside the domain marker so the base view
+            # can show an accurate insertion indicator. Only our drop handler
+            # performs the move; virtual run pages are never moved as objects.
+            mime_data = self.mimeData(self.selectedItems() or [item])
+            if mime_data is None:
+                mime_data = QtCore.QMimeData()
             mime_data.setData("application/x-nfit-tree-item", role.encode("utf-8"))
             drag.setMimeData(mime_data)
-            drag.exec(QtCore.Qt.DropAction.MoveAction | QtCore.Qt.DropAction.CopyAction)
+            drag.exec(
+                QtCore.Qt.DropAction.MoveAction | QtCore.Qt.DropAction.CopyAction,
+                QtCore.Qt.DropAction.MoveAction,
+            )
 
         def dragEnterEvent(self, event):
             if event.mimeData().hasFormat("application/x-nfit-tree-item"):
+                super().dragEnterEvent(event)
                 event.acceptProposedAction()
                 return
             if event.mimeData().hasUrls():
@@ -20492,6 +20514,7 @@ def _make_project_tree_class():
 
         def dragMoveEvent(self, event):
             if event.mimeData().hasFormat("application/x-nfit-tree-item"):
+                super().dragMoveEvent(event)
                 event.acceptProposedAction()
                 return
             if event.mimeData().hasUrls():

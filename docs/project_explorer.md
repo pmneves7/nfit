@@ -5,6 +5,12 @@ recipes, and saved plots into workspaces. Expand a dataset collection to inspect
 its contents. Large collections display run pages; these pages are views of the
 underlying runs, not extra dataset groups.
 
+Drag a run page to move all of its runs, or use the platform copy modifier to
+copy them. Pages can stay collapsed. Selected pages and individual runs are
+combined without duplicates. Drop onto a workspace or dataset collection to
+add the runs there, or onto another run page to insert them at that page's
+position. Dragging uses the same run selection as Copy.
+
 ## Selection and actions
 
 Use Shift-click for a range or Ctrl/Command-click to select multiple compatible
