@@ -24,6 +24,7 @@ from . import project_data as _project_data
 from . import project_data_panels as _project_data_panels
 from . import project_lindhard_editor as _project_lindhard_editor
 from . import project_model_editor as _project_model_editor
+from . import project_summary as _project_summary
 from . import project_tight_binding_editor as _project_tight_binding_editor
 from .analysis.artifacts import (
     read_project_dataset_artifact,
@@ -237,6 +238,7 @@ from .qt_controls import (
     configure_numeric_spin_boxes,
     constrain_input_width,
 )
+from .qt_widget_state import preserve_widget_state
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET
 from .spectral_channels import (
     SPECTRAL_CHANNEL_CONFIG_KEY,
@@ -563,30 +565,44 @@ def dataset_for_slice_viewer(
 ) -> MDHistoData | PointListData | PointData4D | None:
     """Prepare viewer data while preserving legacy loader injection."""
 
+    source = getattr(dataset, "_viewer_source_entry", dataset)
+    effective_rebin_config = (
+        rebin_config
+        if rebin_config is not None
+        else getattr(dataset, "_viewer_rebin_config", None)
+    )
+    effective_cache_id = (
+        cache_id
+        if cache_id is not None
+        else getattr(dataset, "_viewer_cache_id", None)
+    )
     if _peek_cached_dataset_view(
-        dataset,
+        source,
         extra_masks=extra_masks,
-        rebin_config=rebin_config,
-        cache_id=cache_id,
+        rebin_config=effective_rebin_config,
+        cache_id=effective_cache_id,
     ) is None:
         if progress_callback is None:
             # Preserve the long-standing one-argument injection seam used by
             # extensions and tests that replace the GUI loader.
-            _ensure_dataset_data_loaded(dataset)
+            _ensure_dataset_data_loaded(source)
         else:
             _ensure_dataset_data_loaded(
-                dataset,
+                source,
                 progress_callback=progress_callback,
             )
-    return _project_data.dataset_for_slice_viewer(
-        dataset,
+    prepared = _project_data.dataset_for_slice_viewer(
+        source,
         extra_masks=extra_masks,
         force_rebin=force_rebin,
         force_masks=force_masks,
         progress_callback=progress_callback,
-        rebin_config=rebin_config,
-        cache_id=cache_id,
+        rebin_config=effective_rebin_config,
+        cache_id=effective_cache_id,
     )
+    if source is not dataset and prepared is not None:
+        return _with_viewer_dataset_metadata(dataset, prepared)
+    return prepared
 
 
 QtMDHistoSliceViewer = None
@@ -2454,6 +2470,7 @@ def _entries_with_visualization_binnings(
             fit_entry._derived_owner_group = owner
         fit_entry.id = dataset.id
         fit_entry._viewer_source_dataset_id = dataset.id
+        fit_entry._viewer_source_entry = dataset
         fit_entry.enabled = _dataset_is_effectively_enabled(group, dataset)
         fit_entry.metadata = {
             **copy.deepcopy(dataset.metadata),
@@ -2494,6 +2511,10 @@ def _entries_with_visualization_binnings(
                 parameters = copy.deepcopy(dataset.parameters)
                 parameters[DATASET_REBIN_KEY] = config
                 auxiliary = dataset.copy(name=view_name, parameters=parameters)
+                if not isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
+                    auxiliary._viewer_source_entry = dataset
+                    auxiliary._viewer_rebin_config = config
+                    auxiliary._viewer_cache_id = item["id"]
                 if owner is not None:
                     auxiliary._derived_owner_group = owner
             auxiliary.id = f"{dataset.id}:{item['id']}"
@@ -7135,7 +7156,7 @@ class NfitProjectExplorer:
         self._slice_viewers: dict[int, list[Any]] = {}
         self._auxiliary_windows: dict[int, Any] = {}
         self._overlay_refresh_timer = None
-        self._pending_overlay_groups: dict[int, DataGroup] = {}
+        self._pending_overlay_groups: dict[int, tuple[DataGroup, bool]] = {}
         self._compressed_cache_prompt = None
         # True only while the Qt event loop is running (set in run()); in
         # headless/test use it stays False so overlay refreshes are synchronous.
@@ -8572,7 +8593,7 @@ class NfitProjectExplorer:
                 if view is not None:
                     self.refresh_slice_viewer(group)
                     self._refresh_cache_badges()
-                    self._set_dataset_details(entry, group)
+                    self._set_dataset_details_preserving_scroll(entry, group)
 
             return self._start_background_task(
                 title="Rebinning dataset...",
@@ -8615,7 +8636,7 @@ class NfitProjectExplorer:
             return False
         self.refresh_slice_viewer(group)
         self._refresh_cache_badges()
-        self._set_dataset_details(entry, group)
+        self._set_dataset_details_preserving_scroll(entry, group)
         return True
 
     def rebin_all_dataset_binnings_now(
@@ -8673,7 +8694,7 @@ class NfitProjectExplorer:
             if completed:
                 self.refresh_slice_viewer(group)
                 self._refresh_cache_badges()
-                self._set_dataset_details(entry, group)
+                self._set_dataset_details_preserving_scroll(entry, group)
 
         if self._interactive:
             return self._start_background_task(
@@ -10495,7 +10516,9 @@ class NfitProjectExplorer:
         self._refresh_tree(select_group=group)
         return plot
 
-    def _request_overlay_refresh(self, group: DataGroup) -> None:
+    def _request_overlay_refresh(
+        self, group: DataGroup, *, force_rebin: bool = False
+    ) -> None:
         """Debounce a slice-viewer refresh, coalescing rapid triggers.
 
         Bursts of edits (dragging a value, fast typing) or repeated tree
@@ -10508,15 +10531,25 @@ class NfitProjectExplorer:
         if id(group) not in self._slice_viewers:
             return
         if not self._interactive:
-            self.refresh_slice_viewer(group)
+            if force_rebin:
+                self.refresh_slice_viewer(group, force_rebin=True)
+            else:
+                self.refresh_slice_viewer(group)
             return
-        self._pending_overlay_groups[id(group)] = group
+        pending = self._pending_overlay_groups.get(id(group))
+        self._pending_overlay_groups[id(group)] = (
+            group,
+            bool(force_rebin or (pending is not None and pending[1])),
+        )
         timer = self._overlay_refresh_timer
         if timer is None:
             try:
                 from PySide6 import QtCore
             except Exception:
-                self.refresh_slice_viewer(group)
+                if force_rebin:
+                    self.refresh_slice_viewer(group, force_rebin=True)
+                else:
+                    self.refresh_slice_viewer(group)
                 return
             timer = QtCore.QTimer(self.window)
             timer.setSingleShot(True)
@@ -10528,8 +10561,11 @@ class NfitProjectExplorer:
     def _run_pending_overlay_refresh(self) -> None:
         pending = list(self._pending_overlay_groups.values())
         self._pending_overlay_groups.clear()
-        for group in pending:
-            self.refresh_slice_viewer(group)
+        for group, force_rebin in pending:
+            if force_rebin:
+                self.refresh_slice_viewer(group, force_rebin=True)
+            else:
+                self.refresh_slice_viewer(group)
 
     def refresh_slice_viewer(self, group: DataGroup, *, force_rebin: bool = False) -> Any | None:
         if id(group) not in self._slice_viewers:
@@ -11235,7 +11271,30 @@ class NfitProjectExplorer:
     ) -> None:
         from PySide6 import QtCore, QtWidgets
 
+        explicit_selection = any(
+            value is not None
+            for value in (
+                select_group,
+                select_dataset,
+                select_mask,
+                select_background,
+                select_model,
+                select_fit,
+                select_plot,
+                select_dataset_group,
+            )
+        )
         self._expanded_state = self._current_expanded_state()
+        selected_state, current_state = self._current_tree_selection_state()
+        tree_scrollbar = self.tree.verticalScrollBar()
+        scroll_position = int(tree_scrollbar.value())
+        anchor_item = self.tree.itemAt(0, 0)
+        anchor_state = self._tree_item_state_key(anchor_item)
+        anchor_offset = (
+            int(self.tree.visualItemRect(anchor_item).top())
+            if anchor_item is not None
+            else 0
+        )
         self._item_roles.clear()
         self._fit_item_roles.clear()
         self._background_item_roles.clear()
@@ -11345,6 +11404,11 @@ class NfitProjectExplorer:
                         self._remember_item(output_item, "analysis_output", group)
                         self._analysis_output_roles[id(output_item)] = output
                         analysis_item.addChild(output_item)
+                analysis_item.setExpanded(
+                    self._expanded_state.get(
+                        ("analysis", self._tree_state_identity(analysis)), False
+                    )
+                )
             analyses_item.setExpanded(self._expanded_state.get(("analyses", id(group)), True))
             plots_item = QtWidgets.QTreeWidgetItem(["Plots"])
             _style_tree_hierarchy_item(plots_item, bold=True)
@@ -11364,15 +11428,56 @@ class NfitProjectExplorer:
             plots_item.setExpanded(self._expanded_state.get(("plots", id(group)), True))
             if select_group is group and item_to_select is None:
                 item_to_select = group_item
-        del tree_signal_blocker
-        if item_to_select is not None:
+        preserve_viewport = not explicit_selection or (
+            item_to_select is not None
+            and current_state == self._tree_item_state_key(item_to_select)
+        )
+        if not explicit_selection:
+            rebuilt_items = self._tree_items_by_state_key()
+            restored_selected = [
+                rebuilt_items[key] for key in selected_state if key in rebuilt_items
+            ]
+            restored_current = rebuilt_items.get(current_state)
+            if restored_current is None and restored_selected:
+                restored_current = restored_selected[-1]
+            if restored_current is not None:
+                self.tree.setCurrentItem(restored_current)
+            for item in restored_selected:
+                item.setSelected(True)
+        elif item_to_select is not None:
             self.tree.setCurrentItem(item_to_select)
+        del tree_signal_blocker
+        if item_to_select is not None and explicit_selection:
             if edit_group:
                 self.tree.editItem(item_to_select, 0)
             if edit_mask:
                 self.tree.editItem(item_to_select, 0)
             if edit_model:
                 self.tree.editItem(item_to_select, 0)
+
+        if preserve_viewport:
+            rebuilt_items = self._tree_items_by_state_key()
+            anchor_replacement = rebuilt_items.get(anchor_state)
+            if anchor_replacement is not None:
+                self.tree.scrollToItem(
+                    anchor_replacement,
+                    QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop,
+                )
+                if (
+                    self.tree.verticalScrollMode()
+                    == QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel
+                ):
+                    tree_scrollbar.setValue(
+                        max(
+                            0,
+                            min(
+                                tree_scrollbar.value() - anchor_offset,
+                                tree_scrollbar.maximum(),
+                            ),
+                        )
+                    )
+            else:
+                tree_scrollbar.setValue(min(scroll_position, tree_scrollbar.maximum()))
         self._sync_details()
         if refresh_viewers:
             self.refresh_open_slice_viewers()
@@ -11726,6 +11831,10 @@ class NfitProjectExplorer:
                 state[("dataset", self._tree_state_identity(dataset))] = item.isExpanded()
             elif role in {"masks", "backgrounds"} and dataset is not None:
                 state[(role, self._tree_state_identity(dataset))] = item.isExpanded()
+            elif role == "analysis":
+                analysis = self._analysis_item_roles.get(id(item))
+                if analysis is not None:
+                    state[("analysis", self._tree_state_identity(analysis))] = item.isExpanded()
             elif role == "dataset_page":
                 payload = self._dataset_page_roles.get(id(item))
                 if payload is not None:
@@ -11742,6 +11851,73 @@ class NfitProjectExplorer:
         for index in range(self.tree.topLevelItemCount()):
             visit(self.tree.topLevelItem(index))
         return state
+
+    def _tree_item_state_key(self, item: Any) -> tuple[Any, ...] | None:
+        """Return a stable key for restoring a rebuilt tree row's selection."""
+
+        if item is None:
+            return None
+        group, dataset, mask, model, role = self._objects_for_item(item)
+        node = self._dataset_group_for_item(item)
+        if role in {"group", "datasets", "models", "fits", "analyses", "plots"}:
+            return (role, self._tree_state_identity(group)) if group is not None else None
+        if role in {"dataset_group", "group_masks", "group_backgrounds"}:
+            return (role, self._tree_state_identity(node)) if node is not None else None
+        if role in {"dataset", "masks", "backgrounds"}:
+            return (role, self._tree_state_identity(dataset)) if dataset is not None else None
+        if role in {"mask", "group_mask"}:
+            return (role, self._tree_state_identity(mask)) if mask is not None else None
+        if role == "model":
+            return (role, self._tree_state_identity(model)) if model is not None else None
+        if role in {"fit", "fit_timeline"}:
+            fit_entry = self._fit_entry_for_item(item)
+            return (role, self._tree_state_identity(fit_entry)) if fit_entry is not None else None
+        if role in {"background", "group_background"}:
+            background = self._background_for_item(item)
+            return (role, self._tree_state_identity(background)) if background is not None else None
+        if role == "analysis":
+            analysis = self._analysis_item_roles.get(id(item))
+            return (role, self._tree_state_identity(analysis)) if analysis is not None else None
+        if role == "analysis_output":
+            output = self._analysis_output_roles.get(id(item))
+            return (role, self._tree_state_identity(output)) if output is not None else None
+        if role == "plot":
+            plot = self._plot_for_item(item)
+            return (role, self._tree_state_identity(plot)) if plot is not None else None
+        if role == "dataset_page":
+            payload = self._dataset_page_roles.get(id(item))
+            if payload is not None:
+                page_node, _datasets, start = payload
+                return (role, self._tree_state_identity(page_node), start)
+        return None
+
+    def _current_tree_selection_state(
+        self,
+    ) -> tuple[list[tuple[Any, ...]], tuple[Any, ...] | None]:
+        """Capture the selected rows and current row before their Qt items are destroyed."""
+
+        selected = [
+            key
+            for item in self.tree.selectedItems()
+            if (key := self._tree_item_state_key(item)) is not None
+        ]
+        return selected, self._tree_item_state_key(self._current_item())
+
+    def _tree_items_by_state_key(self) -> dict[tuple[Any, ...], Any]:
+        """Index the newly rendered rows by their stable selection key."""
+
+        items: dict[tuple[Any, ...], Any] = {}
+
+        def visit(item: Any) -> None:
+            key = self._tree_item_state_key(item)
+            if key is not None:
+                items[key] = item
+            for child_index in range(item.childCount()):
+                visit(item.child(child_index))
+
+        for index in range(self.tree.topLevelItemCount()):
+            visit(self.tree.topLevelItem(index))
+        return items
 
     @staticmethod
     def _tree_state_identity(value: Any) -> str | int:
@@ -11936,6 +12112,17 @@ class NfitProjectExplorer:
         return None if item is None else self._plot_item_roles.get(id(item))
 
     def _sync_details(self) -> None:
+        key = self._tree_item_state_key(self._current_item())
+        same_selection = key == getattr(self, "_displayed_details_key", None)
+        with preserve_widget_state(
+            self.details_scroll.parentWidget(),
+            enabled=same_selection,
+            is_current=lambda: self._tree_item_state_key(self._current_item()) == key,
+        ):
+            self._sync_details_contents()
+        self._displayed_details_key = self._tree_item_state_key(self._current_item())
+
+    def _sync_details_contents(self) -> None:
         current_item = self._current_item()
         self._refresh_cache_badges(current_item)
         group, entry, mask, model, role = self._objects_for_item(current_item)
@@ -12382,7 +12569,7 @@ class NfitProjectExplorer:
             self._record_data_group_state_change(group)
         self._mark_dirty()
         if group is not None:
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
         self._refresh_cache_badges()
         self._sync_details()
 
@@ -12424,7 +12611,7 @@ class NfitProjectExplorer:
         )
         self._mark_dirty()
         if group is not None and branch_created:
-            self._refresh_tree(select_group=group, refresh_viewers=False)
+            self._refresh_tree(refresh_viewers=False)
             return
         self._refresh_cache_badges()
         self._sync_details()
@@ -12579,7 +12766,7 @@ class NfitProjectExplorer:
             self._refresh_tree(select_group=group, select_dataset=entry)
             return
         if group is not None:
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
         self._refresh_cache_badges()
         self._sync_details()
 
@@ -13442,7 +13629,7 @@ class NfitProjectExplorer:
             if not isinstance(owner, DatasetEntry):
                 data_group_composite_config(_composite_scope(group, owner))["stale"] = True
             self._record_data_group_state_change(group)
-            self.refresh_slice_viewer(group, force_rebin=True)
+            self._request_overlay_refresh(group, force_rebin=True)
         self._refresh_cache_badges()
         self._mark_dirty()
 
@@ -14474,7 +14661,7 @@ class NfitProjectExplorer:
         self._record_data_group_state_change(group)
         self._mark_dirty()
         if bool(config.get("auto_rebin", True)):
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
         self._refresh_cache_badges()
 
     def _set_dataset_details_preserving_scroll(
@@ -14487,29 +14674,19 @@ class NfitProjectExplorer:
     ) -> None:
         """Rebuild dataset details without jumping the right panel to the top."""
 
-        from PySide6 import QtCore, QtWidgets
-
-        scrollbar = self.details_scroll.verticalScrollBar()
-        position = int(scrollbar.value()) if scroll_position is None else int(scroll_position)
-        if focus_object_name is None:
-            focused = self.window.focusWidget()
-            if focused is not None and self.details_widget.isAncestorOf(focused):
-                focus_object_name = str(focused.objectName() or "")
-        self._set_dataset_details(dataset, group)
-
-        def restore_position() -> None:
+        def still_selected() -> bool:
             _group, current, _mask, _model, role = self._objects_for_item(self._current_item())
-            if role == "dataset" and current is dataset:
-                self.details_layout.activate()
-                if focus_object_name:
-                    replacement = self.details_widget.findChild(QtWidgets.QWidget, focus_object_name)
-                    if replacement is not None and replacement.isEnabled():
-                        replacement.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
-                scrollbar.setValue(min(position, scrollbar.maximum()))
+            return role == "dataset" and current is dataset
 
-        restore_position()
-        QtCore.QTimer.singleShot(0, restore_position)
-        QtCore.QTimer.singleShot(0, lambda: QtCore.QTimer.singleShot(0, restore_position))
+        if not still_selected():
+            return
+        with preserve_widget_state(
+            self.details_scroll,
+            is_current=still_selected,
+            scroll_position=scroll_position,
+            focus_object_name=focus_object_name,
+        ):
+            self._set_dataset_details(dataset, group)
 
     def _set_fit_details(self, fit_entry: FitTimelineEntry) -> None:
         from PySide6 import QtCore, QtWidgets
@@ -15192,9 +15369,9 @@ class NfitProjectExplorer:
             self._record_data_group_state_change(group)
         self._mark_dirty()
         if group is not None:
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
         self._refresh_cache_badges()
-        self._set_dataset_details(dataset, group)
+        self._set_dataset_details_preserving_scroll(dataset, group)
 
     def _dataset_type_group_box(
         self,
@@ -15224,9 +15401,9 @@ class NfitProjectExplorer:
             self._record_data_group_state_change(group)
         self._mark_dirty()
         if group is not None:
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
         self._refresh_cache_badges()
-        self._set_dataset_details(dataset, group)
+        self._set_dataset_details_preserving_scroll(dataset, group)
 
     def _dataset_axes_group_box(
         self,
@@ -15406,7 +15583,7 @@ class NfitProjectExplorer:
         )
         if group is not None:
             self._record_data_group_state_change(group)
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
         self._mark_dirty()
         self._set_dataset_details_preserving_scroll(dataset, group)
 
@@ -15577,8 +15754,7 @@ class NfitProjectExplorer:
         group = self._group_for_dataset(dataset)
         if group is not None:
             self._record_data_group_state_change(group)
-            self.refresh_slice_viewer(group, force_rebin=True)
-            self._request_overlay_refresh(group)
+            self._request_overlay_refresh(group, force_rebin=True)
         self._refresh_cache_badges()
         self._set_dataset_details_preserving_scroll(dataset, group)
 
@@ -15644,8 +15820,7 @@ class NfitProjectExplorer:
         root = _composite_root(group)
         self._record_data_group_state_change(root)
         self._mark_dirty()
-        self.refresh_slice_viewer(root, force_rebin=True)
-        self._request_overlay_refresh(root)
+        self._request_overlay_refresh(root, force_rebin=True)
         self._refresh_cache_badges()
         self._sync_details()
 
@@ -16052,8 +16227,9 @@ class NfitProjectExplorer:
         config["stale"] = True
         self._record_data_group_state_change(_composite_root(group))
         self._mark_dirty()
-        self._refresh_tree(select_group=_composite_root(group))
-        self._sync_details()
+        self._refresh_tree(refresh_viewers=False)
+        if bool(config.get("auto_rebin", True)):
+            self._request_overlay_refresh(_composite_root(group))
 
     def _set_group_composite_axis_value(self, group: DataGroup | _CompositeScope, index: int, key: str, text: str) -> None:
         config = data_group_composite_config(group)
@@ -16074,12 +16250,18 @@ class NfitProjectExplorer:
             return
         try:
             if key == "num_bins":
-                axis[key] = max(int(float(text)), 1)
+                value = max(int(float(text)), 1)
+                if axis.get(key) == value:
+                    return
+                axis[key] = value
                 axis["step_size"] = _step_size_from_bounds(
                     axis.get("lower", 0.0), axis.get("upper", 0.0), axis["num_bins"]
                 )
             else:
-                axis[key] = float(text)
+                value = float(text)
+                if axis.get(key) == value and not bool(axis.get(f"auto_{key}", False)):
+                    return
+                axis[key] = value
                 if key == "step_size":
                     axis["auto_step_size"] = False
                 if key in {"lower", "upper"}:
@@ -16249,6 +16431,8 @@ class NfitProjectExplorer:
                 value = float(text)
                 if key == "step_size":
                     if value <= 0.0 or not np.isfinite(value):
+                        return
+                    if axis.get("step_size") == value and not bool(axis.get("auto_step_size", False)):
                         return
                     axis["step_size"] = value
                     axis["auto_step_size"] = False
@@ -16466,7 +16650,7 @@ class NfitProjectExplorer:
             self._record_data_group_state_change(group)
         self._mark_dirty()
         if group is not None and bool(config.get("auto_rebin", True)):
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
         self._refresh_cache_badges()
         if not self._refresh_dataset_rebin_controls(dataset, group):
             self._set_dataset_details_preserving_scroll(
@@ -16559,7 +16743,7 @@ class NfitProjectExplorer:
             }
             for object_name, text in values.items():
                 editor = self.details_widget.findChild(QtWidgets.QLineEdit, object_name)
-                if editor is None:
+                if editor is None or editor.text() == text:
                     continue
                 editor.blockSignals(True)
                 try:
@@ -16701,7 +16885,6 @@ class NfitProjectExplorer:
         self._record_data_group_state_change(root)
         self._mark_dirty()
         if bool(config.get("auto_rebin", True)):
-            self.refresh_slice_viewer(root)
             self._request_overlay_refresh(root)
         self._refresh_cache_badges()
         self._sync_details()
@@ -20693,13 +20876,7 @@ def _mdhisto_fit_bin_count(view: MDHistoData) -> int:
     report a count.
     """
 
-    keep = ~np.asarray(view.mask, dtype=bool)
-    keep &= mdhisto_measured_bins(view)
-    keep &= np.isfinite(np.asarray(view.signal, dtype=float))
-    errors = np.asarray(view.errors, dtype=float)
-    keep &= np.isfinite(errors)
-    keep &= errors > 0.0
-    return int(np.count_nonzero(keep))
+    return _project_summary.mdhisto_fit_bin_count(view)
 
 
 def _dataset_fit_summary_lines(
@@ -20707,26 +20884,23 @@ def _dataset_fit_summary_lines(
     *,
     group: DataGroup | None = None,
 ) -> list[str]:
-    """Return fit-eligible bin/point counts using the same masks as fitting."""
+    """Return fit counts from an already-resident prepared view.
 
-    if dataset.data is None:
-        return []
+    Dataset details are populated as part of tree selection, so this summary
+    must not load a source file, evaluate a live derived recipe, apply masks,
+    or start a rebin.  Viewer and fit operations populate the same cache; once
+    that has happened the details panel can report its exact prepared count.
+    """
+
     extra_masks = effective_dataset_masks(group, dataset) if group is not None else []
     try:
-        if dataset.scale_factor_vary:
-            view = _viewer_data_before_scale(
-                dataset,
-                extra_masks=extra_masks,
-                force_rebin=False,
-                force_masks=False,
-            )
-        else:
-            view = dataset_for_slice_viewer(
-                dataset,
-                extra_masks=extra_masks,
-                force_rebin=False,
-                force_masks=False,
-            )
+        view = _peek_cached_dataset_view(
+            dataset,
+            extra_masks=extra_masks,
+            resident_only=True,
+        )
+        if view is None:
+            return []
         if isinstance(view, MDHistoData):
             fit_bins = _mdhisto_fit_bin_count(view)
             total_bins = int(np.prod(view.shape))
@@ -20797,8 +20971,7 @@ def _mdhisto_summary_lines(data: MDHistoData) -> list[str]:
             lines.append(f"   kind: {axis.kind}")
         if axis.frame:
             lines.append(f"   frame: {axis.frame}")
-    valid = int(np.count_nonzero(~data.mask))
-    masked = int(np.count_nonzero(data.mask))
+    valid, masked = _project_summary.mdhisto_mask_counts(data)
     lines.extend(
         [
             "",

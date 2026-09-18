@@ -65,9 +65,28 @@ invariants still apply: the required initial state cannot be removed.
 Deleting an analysis also removes the datasets explicitly derived from it.
 
 Tree updates preserve the expanded and collapsed state of surviving collections
-and pages. Removing datasets or groups does not remove the Models, Fits,
+and pages, the current row, multiple selections, and the tree's scroll position.
+Explicit navigation to a newly created or pasted item selects that item.
+Removing datasets or groups does not remove the Models, Fits,
 Analyses, or Plots sections. Missing inputs invalidate dependent recipes; they
 do not prevent the rest of the project tree from being displayed.
+
+Editing the selected item's settings preserves the details panel's tabs,
+scroll position, and focused field when those controls still exist. Pending
+layout updates do not return focus to an earlier field after you move elsewhere.
+
+Selecting a dataset displays metadata and resident cached summaries; it does
+not load source files, evaluate derived recipes, or rebin data to fill in a
+summary. Exact fit-bin counts become available after the corresponding data
+have been prepared. Use Load, Rebin now, a viewer, or a fit to prepare data.
+Histogram counts are reused while their input data remain unchanged, and their
+first calculation uses bounded working memory.
+Rapid changes to settings share a queued refresh of open viewers. Manual
+rebinning settings continue to defer computation until explicitly requested.
+Point-list scale and wavelength fields apply when you press Enter or leave the
+field, so intermediate numeric edits do not rebuild the controls.
+Leaving a rebin axis field without changing its value does not invalidate the
+data or rebuild the editor.
 
 ## Scripting
 

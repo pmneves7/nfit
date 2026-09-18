@@ -61,6 +61,8 @@ different Python.
 - `src/nfit/project_window_builder.py`, `project_model_editor.py`,
   `project_lindhard_editor.py`, and `project_tight_binding_editor.py`: project
   window construction and focused model-editor presentation helpers.
+- `src/nfit/qt_widget_state.py`: shared Qt editor focus, tab, and scroll
+  preservation during panel rebuilds.
 - `src/nfit/project_imports.py`: GUI-independent import, source, and reload orchestration.
 - `src/nfit/project_data.py`: GUI-independent dataset preparation facade,
   derived-data coordination, and viewer-ready orchestration.
@@ -75,6 +77,8 @@ different Python.
   composite rebin settings, metadata dimensions, and bin summaries.
 - `src/nfit/project_view_data.py`: immutable scale, kinematic, spectral-channel,
   and metadata transformations for viewer-ready datasets.
+- `src/nfit/project_summary.py`: bounded, reusable numerical counts for
+  dataset summaries without retaining their array payloads.
 - `src/nfit/project_io.py`, `project_history.py`, and `project_models.py`: project
   serialization, fit-history snapshots, and model-state reconciliation.
 - `src/nfit/project_clipboard.py`: GUI-independent project clipboard validation,

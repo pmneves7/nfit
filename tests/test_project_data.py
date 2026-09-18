@@ -128,6 +128,23 @@ def test_live_derived_dataset_keeps_owner_in_viewer_binning_aliases():
     assert len(datasets) == 2
 
 
+def test_named_derived_alias_keeps_its_own_rebin_recipe():
+    source = DatasetEntry("source", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Workspace1", datasets=[source])
+    analysis = AnalysisEntry("comparison", "dataset_clone", [source.id], {})
+    derived = project_gui.create_derived_analysis_dataset(group, analysis)
+    binning_id = project_data.add_dataset_rebin_binning(derived, name="Overview")
+    project_data.dataset_rebin_config_by_id(derived, binning_id)["enabled"] = True
+
+    aliases = project_gui._entries_with_visualization_binnings(
+        group, [derived], force_rebin=True
+    )
+
+    assert len(aliases) == 2
+    assert aliases[0]._viewer_source_entry is derived
+    assert not hasattr(aliases[1], "_viewer_source_entry")
+
+
 def test_composite_preserves_nonidentity_histogram_coordinates():
     basis = [[1, 1, 0, 0], [0, 0, 1, 0], [1, -1, 0, 0], [0, 0, 0, 1]]
     axes = tuple(
@@ -1287,15 +1304,38 @@ def test_dataset_details_fit_bins_include_file_dataset_and_group_masks():
         ],
     )
 
+    viewed = dataset_for_slice_viewer(
+        dataset, extra_masks=project_gui.effective_dataset_masks(group, dataset)
+    )
     text = dataset_details_text(dataset, group=group)
 
     assert "Total bins: 4" in text
     assert "Unmasked bins: 3" in text
     assert "Fit bins: 1 of 4" in text
-    viewed = dataset_for_slice_viewer(
-        dataset, extra_masks=project_gui.effective_dataset_masks(group, dataset)
-    )
     assert int(np.count_nonzero(~viewed.mask)) == 1
+
+
+def test_dataset_fit_summary_is_metadata_only_without_resident_view(monkeypatch):
+    dataset = DatasetEntry(
+        "lazy scan",
+        None,
+        kind="mdhisto",
+        metadata={"source_file": "/not/read/while/selecting.nxs"},
+    )
+    group = DataGroup("Datagroup1", datasets=[dataset])
+
+    monkeypatch.setattr(
+        project_gui,
+        "dataset_for_slice_viewer",
+        lambda *_args, **_kwargs: pytest.fail("dataset selection prepared viewer data"),
+    )
+    monkeypatch.setattr(
+        project_gui,
+        "_viewer_data_before_scale",
+        lambda *_args, **_kwargs: pytest.fail("dataset selection loaded source data"),
+    )
+
+    assert project_gui._dataset_fit_summary_lines(dataset, group=group) == []
 
 
 def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkeypatch, tmp_path):
@@ -1968,6 +2008,147 @@ def test_large_dataset_rebin_defaults_manual_and_defers_refresh(monkeypatch):
     assert bin_summary is not None
     assert "Resolved cached grid" in bin_summary.text()
     assert str(forced.shape) in bin_summary.text()
+
+
+def test_force_rebin_bypasses_deferred_stale_cache_but_reuses_current_cache(monkeypatch):
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    config = dataset_rebin_config(dataset)
+    config.update(enabled=True, auto_rebin=False, stale=True, minimum_coverage=0.0)
+    config["axes"][0].update(mode="bins", num_bins=1)
+
+    deferred = project_gui._viewer_data_before_scale(dataset, force_rebin=False)
+    assert deferred.shape == dataset.data.shape
+    assert config["stale"] is True
+
+    rebinned = project_gui._viewer_data_before_scale(dataset, force_rebin=True)
+    assert rebinned.shape != deferred.shape
+    assert config["stale"] is False
+
+    monkeypatch.setattr(
+        project_data,
+        "_rebinned_dataset_data",
+        lambda *_args, **_kwargs: pytest.fail("current forced rebin ignored its cache"),
+    )
+    assert project_gui._viewer_data_before_scale(dataset, force_rebin=True) is rebinned
+
+
+def test_fit_binning_alias_reuses_canonical_cache_without_loading_source(monkeypatch):
+    cached = _tiny_mdhisto_data(2.0)
+    dataset = DatasetEntry(
+        "scan",
+        None,
+        kind="nxs",
+        metadata={"source_file": "/raw/large-scan.nxs", "import_status": "pending"},
+    )
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    dataset_rebin_config(dataset)
+    overview_id = project_data.add_dataset_rebin_binning(dataset, name="Overview")
+    project_data.dataset_rebin_config_by_id(dataset, overview_id)["enabled"] = True
+    aliases = project_gui._entries_with_visualization_binnings(
+        group, [dataset], force_rebin=True
+    )
+
+    monkeypatch.setattr(
+        project_gui,
+        "_peek_cached_dataset_view",
+        lambda target, **_kwargs: cached if target is dataset else None,
+    )
+    monkeypatch.setattr(
+        project_gui,
+        "_ensure_dataset_data_loaded",
+        lambda *_args, **_kwargs: pytest.fail("cache hit loaded the raw source"),
+    )
+    monkeypatch.setattr(
+        project_gui._project_data,
+        "dataset_for_slice_viewer",
+        lambda target, **_kwargs: cached if target is dataset else None,
+    )
+
+    prepared = [project_gui.dataset_for_slice_viewer(alias) for alias in aliases]
+    assert all(item is not None for item in prepared)
+    assert [item.metadata["source_dataset_name"] for item in prepared] == ["scan", "scan"]
+    assert [item.metadata["binning_name"] for item in prepared] == ["Default", "Overview"]
+    assert dataset.data is None
+
+
+def test_mdhisto_summary_counts_are_memoized_without_retaining_data(monkeypatch):
+    import gc
+    import weakref
+
+    from nfit import project_summary
+
+    baseline = project_summary._summary_cache_size()
+    data = _grid_mdhisto_data()
+    expected_mask_counts = project_summary.mdhisto_mask_counts(data)
+    expected_fit_count = project_summary.mdhisto_fit_bin_count(data)
+    assert expected_mask_counts == (4, 0)
+    assert expected_fit_count >= 0
+
+    monkeypatch.setattr(
+        project_summary.np,
+        "count_nonzero",
+        lambda *_args, **_kwargs: pytest.fail("immutable summary was rescanned"),
+    )
+    assert project_summary.mdhisto_mask_counts(data) == expected_mask_counts
+    assert project_summary.mdhisto_fit_bin_count(data) == expected_fit_count
+
+    reference = weakref.ref(data)
+    del data
+    gc.collect()
+    assert reference() is None
+    assert project_summary._summary_cache_size() == baseline
+
+
+def test_mdhisto_fit_summary_tracks_mutable_metadata_and_strided_arrays():
+    from nfit import project_summary
+
+    axis = MDHistoAxis("H", np.arange(5.0), "rlu", "momentum")
+    base = np.arange(8.0)
+    base.setflags(write=False)
+    mask_base = np.zeros(8, dtype=bool)
+    mask_base.setflags(write=False)
+    events_base = np.array([0.0, 9.0] * 4)
+    events_base.setflags(write=False)
+    data = MDHistoData(
+        axes=(axis,),
+        signal=base[::2],
+        errors=np.ones(8)[::2],
+        mask=mask_base[::2],
+        num_events=events_base[::2],
+    )
+    assert not data.signal.flags.c_contiguous
+    assert project_summary.mdhisto_fit_bin_count(data) == 0
+
+    data.metadata["zero_event_bins_are_measured"] = True
+    assert project_summary.mdhisto_fit_bin_count(data) == 4
+
+    coverage = np.zeros(data.shape)
+    data.metadata["normalization_denominator"] = coverage
+    assert project_summary.mdhisto_fit_bin_count(data) == 0
+    coverage[:] = 1.0
+    assert project_summary.mdhisto_fit_bin_count(data) == 4
+
+    # Replacing/removing immutable coverage must not reuse an old count or
+    # keep the old potentially large coverage array alive.
+    import gc
+    import weakref
+
+    coverage[:] = 0.0
+    coverage.setflags(write=False)
+    assert project_summary.mdhisto_fit_bin_count(data) == 0
+    reference = weakref.ref(coverage)
+    del data.metadata["normalization_denominator"]
+    del coverage
+    gc.collect()
+    assert reference() is None
+    assert project_summary.mdhisto_fit_bin_count(data) == 4
+
+    mutable = data.mutable_copy()
+    assert project_summary.mdhisto_mask_counts(mutable) == (4, 0)
+    mutable.mask[:] = True
+    assert project_summary.mdhisto_mask_counts(mutable) == (0, 4)
+    assert project_summary.mdhisto_fit_bin_count(mutable) == 0
 
 
 def test_dataset_rebin_axis_mode_switches_between_step_bins_and_tolerance(monkeypatch):
@@ -3325,7 +3506,7 @@ def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tm
             "_apply_dataset_scale",
             lambda *_args, **_kwargs: pytest.fail("fit summary reapplied dataset scale"),
         )
-        assert project_gui._dataset_fit_summary_lines(dataset, group=group)
+        assert project_gui._dataset_fit_summary_lines(dataset, group=group) == []
 
     refresh_tree_calls = []
     monkeypatch.setattr(explorer, "_record_data_group_state_change", lambda _group: True)

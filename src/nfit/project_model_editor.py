@@ -796,58 +796,10 @@ def _rebuild_model_parameter_editor_preserving_scroll(
 ) -> None:
     """Rebuild model controls without losing scroll position or focus."""
 
-    from PySide6 import QtCore, QtWidgets
+    from .qt_widget_state import preserve_widget_state
 
-    scrollbar = self.model_parameter_scroll.verticalScrollBar()
-    position = int(scrollbar.value())
-    focused = self.window.focusWidget()
-    focus_object_name = (
-        str(focused.objectName() or "")
-        if focused is not None and self.model_parameter_widget.isAncestorOf(focused)
-        else ""
-    )
-    selected_tabs = {
-        name: widget.currentIndex()
-        for name in (
-            "tight_binding_builder_tabs",
-            "tight_binding_hamiltonian_tabs",
-            "lindhard_builder_tabs",
-            "heisenberg_builder_tabs",
-        )
-        if (
-            widget := self.model_parameter_widget.findChild(
-                QtWidgets.QTabWidget,
-                name,
-            )
-        )
-        is not None
-    }
-    self._rebuild_model_parameter_editor(model)
-
-    def restore() -> None:
-        _group, current = self._selected_model_and_group()
-        if current is not model:
-            return
-        self.model_parameter_layout.activate()
-        if focus_object_name:
-            replacement = self.model_parameter_widget.findChild(
-                QtWidgets.QWidget,
-                focus_object_name,
-            )
-            if replacement is not None and replacement.isEnabled():
-                replacement.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
-        for name, index in selected_tabs.items():
-            replacement_tabs = self.model_parameter_widget.findChild(
-                QtWidgets.QTabWidget,
-                name,
-            )
-            if replacement_tabs is not None:
-                replacement_tabs.setCurrentIndex(min(index, replacement_tabs.count() - 1))
-        scrollbar.setValue(min(position, scrollbar.maximum()))
-
-    restore()
-    QtCore.QTimer.singleShot(0, restore)
-    QtCore.QTimer.singleShot(
-        0,
-        lambda: QtCore.QTimer.singleShot(0, restore),
-    )
+    with preserve_widget_state(
+        self.model_parameter_scroll,
+        is_current=lambda: self._selected_model_and_group()[1] is model,
+    ):
+        self._rebuild_model_parameter_editor(model)

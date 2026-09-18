@@ -1051,7 +1051,10 @@ def _viewer_data_before_scale(
     signature = _viewer_view_signature(dataset, extra_masks, config)
     deferred_masks = _should_defer_dataset_masks(dataset, force_masks=force_masks)
     cached = _VIEWER_VIEW_CACHE.get(key)
-    if cached is not None and cached[0] == signature:
+    forced_stale_rebin = bool(
+        force_rebin and config.get("enabled") and config.get("stale", False)
+    )
+    if cached is not None and cached[0] == signature and not forced_stale_rebin:
         _VIEWER_VIEW_CACHE.move_to_end(key)
         if force_masks:
             dataset_mask_application_config(dataset)["stale"] = False

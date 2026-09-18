@@ -309,12 +309,37 @@ def _as_array(value: Any, *, dtype: Any, mutable: bool) -> np.ndarray:
 def mdhisto_measured_bins(data: MDHistoData) -> BoolArray:
     """Return bins measured by the instrument, including covered zero counts."""
 
-    if bool(data.metadata.get("zero_event_bins_are_measured", False)):
-        coverage = data.metadata.get("normalization_denominator")
-        if isinstance(coverage, np.ndarray) and coverage.shape == data.shape:
-            return np.isfinite(coverage) & (coverage > 0.0) & ~np.asarray(data.mask, dtype=bool)
-        return ~np.asarray(data.mask, dtype=bool)
-    return (np.asarray(data.num_events, dtype=float) > 0.0) & ~np.asarray(data.mask, dtype=bool)
+    coverage = data.metadata.get("normalization_denominator")
+    return mdhisto_measured_bins_from_arrays(
+        data.mask,
+        data.num_events,
+        zero_event_bins_are_measured=bool(
+            data.metadata.get("zero_event_bins_are_measured", False)
+        ),
+        normalization_denominator=(
+            coverage
+            if isinstance(coverage, np.ndarray) and coverage.shape == data.shape
+            else None
+        ),
+    )
+
+
+def mdhisto_measured_bins_from_arrays(
+    mask: BoolArray,
+    num_events: FloatArray,
+    *,
+    zero_event_bins_are_measured: bool,
+    normalization_denominator: FloatArray | None = None,
+) -> BoolArray:
+    """Return measured bins for complete arrays or matching bounded chunks."""
+
+    unmasked = ~np.asarray(mask, dtype=bool)
+    if zero_event_bins_are_measured:
+        if normalization_denominator is not None:
+            coverage = np.asarray(normalization_denominator, dtype=float)
+            return np.isfinite(coverage) & (coverage > 0.0) & unmasked
+        return unmasked
+    return (np.asarray(num_events, dtype=float) > 0.0) & unmasked
 
 
 def mdhisto_coverage_fraction(

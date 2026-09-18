@@ -370,9 +370,14 @@ def _point_list_scale_box(self, dataset, group, config, columns) -> Any:
     factor_spin.setRange(-1.0e12, 1.0e12)
     factor_spin.setValue(float(scale.get("factor", 1.0)))
     factor_spin.setObjectName("point_list_scale_factor")
-    factor_spin.setToolTip("Multiplicative factor applied to the selected signal channel.")
-    factor_spin.valueChanged.connect(
-        lambda value: self._set_point_list_scale(dataset, group, "factor", value)
+    factor_spin.setToolTip(
+        "Multiplicative factor applied to the selected signal channel. "
+        "Press Enter or leave the field to apply."
+    )
+    factor_spin.editingFinished.connect(
+        lambda editor=factor_spin: self._set_point_list_scale(
+            dataset, group, "factor", editor.value()
+        )
     )
     grid.addWidget(factor_spin, 1, 1)
     grid.addWidget(QtWidgets.QLabel("Units"), 2, 0)
@@ -500,9 +505,14 @@ def _point_list_wavelength_box(self, dataset, group, config) -> Any:
     wavelength_spin.setDecimals(5)
     wavelength_spin.setRange(0.0, 100.0)
     wavelength_spin.setValue(float(wavelength.get("value", 0.0)))
-    wavelength_spin.setToolTip("Neutron wavelength in Angstroms used with 2theta to compute |Q|.")
-    wavelength_spin.valueChanged.connect(
-        lambda value: self._set_point_list_wavelength(dataset, group, "value", value)
+    wavelength_spin.setToolTip(
+        "Neutron wavelength in Angstroms used with 2theta to compute |Q|. "
+        "Press Enter or leave the field to apply."
+    )
+    wavelength_spin.editingFinished.connect(
+        lambda editor=wavelength_spin: self._set_point_list_wavelength(
+            dataset, group, "value", editor.value()
+        )
     )
     grid.addWidget(wavelength_spin, 1, 1)
     return box

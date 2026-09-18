@@ -23,11 +23,13 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "project_imports.py",
     PACKAGE_ROOT / "project_io.py",
     PACKAGE_ROOT / "project_models.py",
+    PACKAGE_ROOT / "project_summary.py",
     PACKAGE_ROOT / "workflow.py",
     PACKAGE_ROOT / "kpath.py",
     PACKAGE_ROOT / "analysis" / "runner.py",
 )
 PROJECT_GUI_CLIENT_MODULES = (
+    PACKAGE_ROOT / "qt_widget_state.py",
     PACKAGE_ROOT / "project_composite_physics.py",
     PACKAGE_ROOT / "analysis_gui.py",
     PACKAGE_ROOT / "metadata_dimensions_gui.py",
