@@ -1348,7 +1348,13 @@ def _trajectory_normalization(
 
 
 def _trajectory_normalization_from_payloads(
-    detector_payloads, run_payloads, edges, shape, *, progress_callback=None,
+    detector_payloads,
+    run_payloads,
+    edges,
+    shape,
+    *,
+    progress_callback=None,
+    max_batch_tasks=None,
 ):
     """Integrate prepared trajectories using the shared bounded reducer."""
     if (
@@ -1397,9 +1403,12 @@ def _trajectory_normalization_from_payloads(
         for geometry_index, payloads in enumerate(grouped_payloads):
             _, theta, phi, solid = detector_payloads[geometry_index]
             detector_count = int(theta.size)
-            payload_batch = max(
-                1, MDEVENT_TRAJECTORY_BATCH_TASKS // max(detector_count, 1)
+            batch_tasks = (
+                MDEVENT_TRAJECTORY_BATCH_TASKS
+                if max_batch_tasks is None
+                else max(1, int(max_batch_tasks))
             )
+            payload_batch = max(1, batch_tasks // max(detector_count, 1))
             for start in range(0, len(payloads), payload_batch):
                 batch = payloads[start : start + payload_batch]
                 accumulator.accumulate(

@@ -586,6 +586,16 @@ Viewer aliases for named binnings preserve live analysis ownership, so
 source-linked clone and histogram-arithmetic datasets remain evaluable after a
 project is reopened.
 
+Live histogram arithmetic resolves automatic limits jointly across its inputs
+before reducing them. Both inputs use the resulting shared grid, covering the
+union of their coordinate ranges; bins without valid support in either input
+remain masked in the arithmetic result. Explicit limits are retained. The saved
+recipe stays automatic, so later source changes can update the shared limits.
+Step grids use the usual zero-centered alignment.
+For automatic Discrete or Tolerance grids, supply shared candidate centers or
+choose a Step, Bins, or Edges grid; bounds alone cannot establish matching
+data-driven centers. nfit reports this before starting the reductions.
+
 Every physical axis has two independent selectors. **Grid** constructs the bin
 coordinates with Discrete, Step, Bins, Edges, or Tolerance. **Mode** controls
 whether a point contributes fractionally to neighboring bins or wholly to one
@@ -859,6 +869,15 @@ but replaying many angles costs more than voxel-center interpolation. Repeated
 copies of an event landing in the same voxel are combined before propagating
 variance, so they do not manufacture independent counting statistics. Covariance
 between different output voxels is not stored.
+
+Detector-trajectory normalization batches angles with identical output-mask
+acceptance into shared accumulators, avoiding a separate full-grid allocation
+and reduction for every angle. Its progress reports cumulative work and angle
+counts rather than restarting at each angle. This normalization uses the same
+compiled, CPU-limited trajectory integration as sample binning. Event replay
+still processes every selected angle: its work scales with background event
+count times angle count, so it is not guaranteed to finish as quickly as the
+sample reduction.
 
 Direct HKLE binning requires QSample coordinates. A QLab background must use
 powder reduction or measured-event replay; it is not treated as if it were

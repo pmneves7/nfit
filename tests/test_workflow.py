@@ -338,6 +338,48 @@ def test_live_histogram_arithmetic_reduces_both_sources_to_output_grid():
     np.testing.assert_allclose(result.signal, [0.5, 2.0])
 
 
+def test_live_histogram_arithmetic_resolves_one_grid_from_all_auto_bounds():
+    def histogram(edges, values):
+        axis = MDHistoAxis("H", np.asarray(edges, dtype=float), "rlu", "momentum")
+        values = np.asarray(values, dtype=float)
+        return MDHistoData(
+            (axis,), values, np.ones_like(values), np.zeros_like(values, dtype=bool),
+            np.ones_like(values),
+        )
+
+    left = DatasetEntry("left", histogram([-1.25, -0.75, -0.25, 0.25], [1, 2, 3]), kind="mdhisto")
+    right = DatasetEntry("right", histogram([-0.25, 0.25, 0.75, 1.25], [4, 5, 6]), kind="mdhisto")
+    group = DataGroup("Experiment", datasets=[left, right])
+    config = project_gui.dataset_rebin_config(left)
+    config.update(enabled=True, minimum_coverage=0.0)
+    axis = config["axes"][0]
+    axis.update(
+        lower=-1.0, upper=0.0, step_size=0.5, num_bins=3, mode="step",
+        auto_lower=True, auto_lower_value=-1.0,
+        auto_upper=True, auto_upper_value=0.0,
+        auto_step_size=False,
+    )
+    analysis = AnalysisEntry(
+        "shared auto grid", "histogram_arithmetic", [left.id, right.id],
+        {"operation": "subtract", "right_scale": 1.0},
+    )
+    derived = create_derived_analysis_dataset(group, analysis, rebin_config=config)
+
+    result = derived_analysis_dataset_data(derived)
+
+    assert result.shape == (7,)
+    np.testing.assert_allclose(
+        result.axes[0].centers, [-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5]
+    )
+    assert np.any(result.mask)
+    assert np.any(~result.mask)
+    assert not result.mask[3]
+    assert result.signal[3] == pytest.approx(-1.0)
+    assert result.errors[3] == pytest.approx(np.sqrt(2.0))
+    saved_axis = project_gui.dataset_rebin_config(derived)["axes"][0]
+    assert saved_axis["auto_lower"] and saved_axis["auto_upper"]
+
+
 def test_workflow_plan_round_trips_and_orders_dependencies():
     source = WorkflowNode(
         id="source:a",

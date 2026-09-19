@@ -488,7 +488,7 @@ def angle_energy_background(
 
 def _validate_matching_histograms(first: MDHistoData, second: MDHistoData) -> None:
     if first.shape != second.shape or len(first.axes) != len(second.axes):
-        raise ValueError("Bose separation requires identically binned datasets")
+        raise ValueError("histogram operation requires identically binned datasets")
     for first_axis, second_axis in zip(first.axes, second.axes, strict=True):
         if (
             first_axis.name != second_axis.name
@@ -496,7 +496,7 @@ def _validate_matching_histograms(first: MDHistoData, second: MDHistoData) -> No
             or first_axis.values.shape != second_axis.values.shape
             or not np.allclose(first_axis.values, second_axis.values, rtol=1.0e-10, atol=1.0e-12)
         ):
-            raise ValueError("Bose separation requires identical axis names, units, and bins")
+            raise ValueError("histogram operation requires identical axis names, units, and bins")
 
 
 def _energy_dimension(data: MDHistoData) -> int:

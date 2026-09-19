@@ -1085,7 +1085,8 @@ def test_persistent_trajectory_accumulator_stops_at_batch_checkpoint(monkeypatch
     ]
     run_payloads = [
         (np.eye(3), 12.0, np.asarray([-2.0, 8.0]), 1.0, 0),
-        (np.eye(3), 12.0, np.asarray([-2.0, 8.0]), 1.0, 1),
+        (np.eye(3), 12.0, np.asarray([-2.0, 8.0]), 1.0, 0),
+        (np.eye(3), 12.0, np.asarray([-2.0, 8.0]), 1.0, 0),
     ]
     monkeypatch.setattr(mdevent, "_MDEVENT_NUMBA", Kernels)
     monkeypatch.setattr(
@@ -1095,23 +1096,26 @@ def test_persistent_trajectory_accumulator_stops_at_batch_checkpoint(monkeypatch
         mdevent, "_trajectory_worker_count", lambda output_size, **kwargs: 1
     )
     monkeypatch.setattr(mdevent, "_trajectory_eager_partial", lambda *args: True)
-    monkeypatch.setattr(mdevent, "MDEVENT_TRAJECTORY_BATCH_TASKS", 1)
+    completed = []
 
-    def cancel_after_first_batch(event):
+    def cancel_after_second_batch(event):
         if event["stage"] == "mdevent_normalization" and event["iteration"]:
-            raise RuntimeError("cancelled")
+            completed.append(event["iteration"])
+            if len(completed) == 2:
+                raise RuntimeError("cancelled")
 
     edges = tuple(np.linspace(-2.0, 2.0, 3) for _ in range(4))
     with pytest.raises(RuntimeError, match="cancelled"):
-        mdevent._trajectory_normalization(
-            object(),
-            [],
+        mdevent._trajectory_normalization_from_payloads(
+            detector_payloads,
+            run_payloads,
             edges,
             (2, 2, 2, 2),
-            np.eye(4),
-            progress_callback=cancel_after_first_batch,
+            progress_callback=cancel_after_second_batch,
+            max_batch_tasks=1,
         )
-    assert len(calls) == 1
+    assert completed == [1, 2]
+    assert len(calls) == 2
     assert allocation_modes == [True]
 
 

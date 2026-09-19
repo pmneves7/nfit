@@ -78,6 +78,126 @@ def test_replay_same_geometry_matches_native_and_preserves_source_statistics(tmp
     np.testing.assert_allclose(small_batches.errors, result.errors)
 
 
+def test_replay_batches_angle_normalization_and_reports_cumulative_progress(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "events.nxs"
+    _write_mdevent(path)
+    sample = mdevent_dataset_group(path)
+    background = mdevent_dataset_group(path)
+    sample.datasets = [replace(sample.datasets[0]) for _ in range(3)]
+    target = _one_voxel(sample)
+    progress = []
+    calls = []
+    normalize = mdevent_background.mdevent._trajectory_normalization_from_payloads
+
+    def record_normalization(
+        detectors, payloads, edges, shape, *, progress_callback=None, **kwargs
+    ):
+        calls.append((len(detectors), len(payloads)))
+        return normalize(
+            detectors,
+            payloads,
+            edges,
+            shape,
+            progress_callback=progress_callback,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        mdevent_background.mdevent,
+        "_trajectory_normalization_from_payloads",
+        record_normalization,
+    )
+    project_measured_background_mdevent(
+        sample, background, target, progress_callback=progress.append
+    )
+
+    setup = [
+        event
+        for event in progress
+        if event["stage"] == "mdevent_background_normalization_setup"
+    ]
+    assert setup
+    assert [event["iteration"] for event in setup] == sorted(
+        event["iteration"] for event in setup
+    )
+    assert setup[0]["iteration"] == 0
+    assert setup[-1]["iteration"] == setup[-1]["total"]
+    assert "sample angle 3/3" in setup[-1]["message"]
+
+    # All unmasked sample angles share one persistent trajectory accumulator.
+    assert len(calls) == len(background.datasets)
+    assert all(detectors == 1 and payloads == 3 for detectors, payloads in calls)
+    normalization = [
+        event
+        for event in progress
+        if event["stage"] == "mdevent_background_normalization"
+    ]
+    assert normalization
+    assert [event["iteration"] for event in normalization] == sorted(
+        event["iteration"] for event in normalization
+    )
+    assert normalization[0]["iteration"] == 0
+    assert normalization[-1]["iteration"] == normalization[-1]["total"]
+    assert normalization[-1]["sample_angle"] == 3
+    assert normalization[-1]["sample_angles_total"] == 3
+    source_total = len(background.datasets)
+    assert f"background run {source_total}/{source_total}" in normalization[-1]["message"]
+    assert "sample angle 3/3" in normalization[-1]["message"]
+
+
+def test_replay_does_not_mutate_read_only_normalization_when_masked(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "events.nxs"
+    _write_mdevent(path)
+    sample = mdevent_dataset_group(path)
+    background = mdevent_dataset_group(path)
+    sample.masks = [
+        MaskSpec("masked edge", "energy_q_range", {"energy": [0.5, 1.0]})
+    ]
+    target = bin_mdevent_group(
+        sample,
+        lower=[-1, -1, -1, -1],
+        upper=[1, 1, 1, 1],
+        num_bins=[1, 1, 1, 2],
+    )
+    normalize = mdevent_background.mdevent._trajectory_normalization_from_payloads
+
+    def readonly_normalization(*args, **kwargs):
+        result = normalize(*args, **kwargs)
+        result.setflags(write=False)
+        return result
+
+    monkeypatch.setattr(
+        mdevent_background.mdevent,
+        "_trajectory_normalization_from_payloads",
+        readonly_normalization,
+    )
+    result = project_measured_background_mdevent(sample, background, target)
+    assert result.shape == target.shape
+
+
+def test_replay_cancellation_propagates_from_cumulative_setup(tmp_path):
+    path = tmp_path / "events.nxs"
+    _write_mdevent(path)
+    sample = mdevent_dataset_group(path)
+    background = mdevent_dataset_group(path)
+    target = _one_voxel(sample)
+
+    def cancel(event):
+        if event["stage"] == "mdevent_background_normalization_setup":
+            assert event["sample_angle"] == 1
+            assert event["sample_angles_total"] == len(sample.datasets)
+            raise RuntimeError("cancelled during cumulative setup")
+
+    with pytest.raises(RuntimeError, match="cancelled during cumulative setup"):
+        project_measured_background_mdevent(
+            sample, background, target, progress_callback=cancel
+        )
+
+
 def test_replay_scales_weights_and_masks(tmp_path):
     path = tmp_path / "events.nxs"
     _write_mdevent(path)

@@ -25,6 +25,10 @@ except ImportError:
 
 # Bound work as well as memory, so cancellation is checked between short calls.
 MAX_REPLAY_TRANSFORM_TASKS = 1_000_000
+_NORMALIZATION_PROGRESS_UNITS_PER_ANGLE = 1_000
+# Keep compiled trajectory calls short enough for responsive progress/cancellation
+# while retaining one persistent output accumulator across compatible angles.
+MAX_REPLAY_NORMALIZATION_BATCH_TASKS = 250_000
 
 
 def project_measured_background_mdevent(
@@ -100,13 +104,36 @@ def project_measured_background_mdevent(
         raise ValueError("sample exposures must be finite and positive for measured-event replay")
     exposure /= exposure.sum()
     prepared = []
-    for run, fraction in zip(runs, exposure, strict=True):
+    setup_total = len(runs) * _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
+    for angle_index, (run, fraction) in enumerate(zip(runs, exposure, strict=True)):
+
+        def report_setup(event, *, angle_index=angle_index):
+            if progress_callback is None:
+                return
+            local_total = max(int(event.get("total", 0)), 1)
+            local_iteration = min(max(int(event.get("iteration", 0)), 0), local_total)
+            global_progress = (
+                angle_index + local_iteration / local_total
+            ) * _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
+            progress_callback({
+                **event,
+                "stage": "mdevent_background_normalization_setup",
+                "iteration": int(round(global_progress)),
+                "total": setup_total,
+                "sample_angle": angle_index + 1,
+                "sample_angles_total": len(runs),
+                "message": (
+                    f"preparing detector trajectories for sample angle "
+                    f"{angle_index + 1}/{len(runs)}"
+                ),
+            })
+
         detectors, payloads = mdevent._trajectory_payloads(
             sample,
             [run],
             inverse_basis,
             symmetry,
-            progress_callback=progress_callback,
+            progress_callback=report_setup,
         )
         masks = [mask for mask in [*sample_masks, *run.masks] if mask.enabled]
         excluded = None
@@ -156,6 +183,12 @@ def _replay_runs(background, sources, target, prepared, *, max_batch_bytes, prog
     size = int(np.prod(shape))
     numerator, variance, events, denominator = (np.zeros(size) for _ in range(4))
     config = background.metadata["mdevent"]
+    normalization_angles = len(prepared)
+    normalization_total = (
+        len(sources)
+        * normalization_angles
+        * _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
+    )
     for run_index, source in enumerate(sources):
         source_detectors, source_payloads = mdevent._trajectory_payloads(
             background,
@@ -168,7 +201,10 @@ def _replay_runs(background, sources, target, prepared, *, max_batch_bytes, prog
             raise ValueError("background proton charge must be finite and positive")
         ids, theta, phi, solid = source_detectors[geometry]
         transforms, fractions, accepted_ids, excluded_bins = [], [], [], []
-        for sample_detectors, payloads, fraction, excluded in prepared:
+        normalization_groups = {}
+        for angle_index, (sample_detectors, payloads, fraction, excluded) in enumerate(
+            prepared
+        ):
             replay_payloads = []
             replay_detectors = []
             for inverse, sample_ei, sample_bounds, _, index in payloads:
@@ -197,16 +233,90 @@ def _replay_runs(background, sources, target, prepared, *, max_batch_bytes, prog
                 fractions.append(fraction)
                 accepted_ids.append(ids[valid_solid > 0])
                 excluded_bins.append(excluded)
+            # A trajectory accumulator can consume every angle sharing an
+            # output mask. Grouping here avoids allocating and reducing a full
+            # private output grid once per angle, which dominates large replays.
+            mask_key = None if excluded is None else np.asarray(excluded, dtype=bool).tobytes()
+            group = normalization_groups.setdefault(
+                mask_key, {"excluded": excluded, "angles": [], "detectors": [], "payloads": []}
+            )
+            geometry_indices = []
+            for detector in replay_detectors:
+                geometry_index = next(
+                    (
+                        index
+                        for index, existing in enumerate(group["detectors"])
+                        if all(
+                            first.shape == second.shape
+                            and np.array_equal(first, second)
+                            for first, second in zip(existing, detector, strict=True)
+                        )
+                    ),
+                    None,
+                )
+                if geometry_index is None:
+                    geometry_index = len(group["detectors"])
+                    group["detectors"].append(detector)
+                geometry_indices.append(geometry_index)
+            group["payloads"].extend(
+                (*payload[:4], geometry_indices[payload[4]]) for payload in replay_payloads
+            )
+            group["angles"].append(angle_index)
+
+        completed_angles = 0
+        for group in normalization_groups.values():
+            group_angle_count = len(group["angles"])
+
+            def report_normalization(
+                event, *, completed_angles=completed_angles,
+                group_angle_count=group_angle_count, run_index=run_index,
+            ):
+                if progress_callback is None:
+                    return
+                local_total = max(int(event.get("total", 0)), 1)
+                local_iteration = min(max(int(event.get("iteration", 0)), 0), local_total)
+                local_fraction = local_iteration / local_total
+                angle_progress = completed_angles + local_fraction * group_angle_count
+                global_progress = (
+                    run_index * normalization_angles + angle_progress
+                ) * _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
+                display_angle = min(
+                    normalization_angles,
+                    max(1, int(np.ceil(angle_progress))),
+                )
+                progress_callback({
+                    **event,
+                    "stage": "mdevent_background_normalization",
+                    "iteration": int(round(global_progress)),
+                    "total": normalization_total,
+                    "background_run": run_index + 1,
+                    "background_runs_total": len(sources),
+                    "sample_angle": display_angle,
+                    "sample_angles_total": normalization_angles,
+                    "message": (
+                        f"normalizing background run {run_index + 1}/{len(sources)}; "
+                        f"sample angle {display_angle}/{normalization_angles}: "
+                        f"{event.get('message', 'integrating detector trajectories')}"
+                    ),
+                })
+
             norm = mdevent._trajectory_normalization_from_payloads(
-                replay_detectors,
-                replay_payloads,
+                group["detectors"],
+                group["payloads"],
                 edges,
                 shape,
-                progress_callback=progress_callback,
+                progress_callback=report_normalization,
+                max_batch_tasks=MAX_REPLAY_NORMALIZATION_BATCH_TASKS,
             ).ravel()
-            if excluded is not None:
-                norm[excluded] = 0
-            denominator += norm
+            excluded = group["excluded"]
+            if excluded is None:
+                denominator += norm
+            else:
+                # Single-worker accumulators may expose a read-only result.
+                # Apply the output mask to the destination instead of mutating it.
+                included = ~excluded
+                denominator[included] += norm[included]
+            completed_angles += group_angle_count
         transform_count = len(transforms)
         accelerated = _REPLAY_NUMBA is not None
         backend = "numba" if accelerated else "numpy"

@@ -73,6 +73,8 @@ different Python.
   masks, and coordinate projection services.
 - `src/nfit/project_rebinning.py`: numerical grid configuration, symmetry-aware
   rebinning, and histogram construction.
+- `src/nfit/project_derived_grid.py`: shared output-grid planning for live
+  derived dataset arithmetic.
 - `src/nfit/project_rebin_panels.py`: shared Qt controls for dataset and
   composite rebin settings, metadata dimensions, and bin summaries.
 - `src/nfit/project_binning_policy.py`: read-only rebin ownership and background

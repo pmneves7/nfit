@@ -19,6 +19,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "project_composites.py",
     PACKAGE_ROOT / "project_clipboard.py",
     PACKAGE_ROOT / "project_data.py",
+    PACKAGE_ROOT / "project_derived_grid.py",
     PACKAGE_ROOT / "project_history.py",
     PACKAGE_ROOT / "project_imports.py",
     PACKAGE_ROOT / "project_io.py",
@@ -75,9 +76,10 @@ def test_project_clipboard_service_does_not_import_qt() -> None:
     assert not any(module.startswith(("PySide", "PyQt")) for module in modules)
 
 
-def test_composite_service_does_not_import_project_data_facade() -> None:
+@pytest.mark.parametrize("module", ["project_composites", "project_derived_grid"])
+def test_composite_service_does_not_import_project_data_facade(module) -> None:
     tree = ast.parse(
-        (PACKAGE_ROOT / "project_composites.py").read_text(encoding="utf-8")
+        (PACKAGE_ROOT / f"{module}.py").read_text(encoding="utf-8")
     )
     imported_modules = {
         node.module or ""
@@ -92,6 +94,7 @@ def test_composite_service_does_not_import_project_data_facade() -> None:
     )
     assert "project_data" not in imported_modules
     assert "nfit.project_data" not in imported_modules
+    assert not any(module.startswith(("PySide", "PyQt")) for module in imported_modules)
 
 
 @pytest.mark.parametrize("path", PROJECT_GUI_CLIENT_MODULES, ids=lambda path: path.stem)

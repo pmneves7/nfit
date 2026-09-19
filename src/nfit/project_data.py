@@ -35,7 +35,11 @@ from .cache_utils import (
 )
 from .dataset import PointData4D, PointListData
 from .importers import IMPORTERS
-from .mdevent import bin_mdevent_group, bin_mdevent_powder_group  # noqa: F401
+from .mdevent import (  # noqa: F401
+    bin_mdevent_group,
+    bin_mdevent_powder_group,
+    mdevent_coordinate_bounds,
+)
 from .mdhisto import (  # noqa: F401
     MDHistoAxis,
     MDHistoChannel,
@@ -129,6 +133,7 @@ from .project_dataset_io import (
     _save_point_list_file as _save_point_list_file,
 )
 from .project_dataset_io import save_dataset_file as save_dataset_file
+from .project_derived_grid import plan_shared_derived_grid
 from .project_imports import (
     DATA_TYPE_DEFINITIONS as DATA_TYPE_DEFINITIONS,
 )
@@ -829,6 +834,87 @@ def _derived_source_data(
     return _apply_dataset_scale(source, result)
 
 
+def _derived_shared_grid_config(
+    group: DataGroup,
+    source_ids: list[str],
+    config: Mapping[str, Any],
+    *,
+    progress_callback: Any | None = None,
+) -> dict[str, Any]:
+    def composite_components(scope: Any) -> list[Mapping[str, Any]]:
+        children = _hierarchical_composite_scopes(scope)
+        if children:
+            return [item for child in children for item in composite_components(child)]
+        return [
+            {
+                "node": scope.node if isinstance(scope, _CompositeScope) else scope,
+                "datasets": _composite_candidates(scope),
+            }
+        ]
+
+    def resolve_source(source_id: str) -> Mapping[str, Any]:
+        scope = _derived_source_scope(group, source_id)
+        if scope is not None:
+            return {"components": composite_components(scope)}
+        source = next(
+            (candidate for candidate in group.iter_datasets() if candidate.id == source_id),
+            None,
+        )
+        if source is None:
+            raise KeyError(f"derived dataset refers to missing dataset ID {source_id}")
+        if source.kind == "mdevent":
+            def owning_node(node: Any) -> Any | None:
+                if any(item is source for item in getattr(node, "datasets", ())):
+                    return node
+                return next(
+                    (
+                        found
+                        for child in getattr(node, "subgroups", ())
+                        if (found := owning_node(child)) is not None
+                    ),
+                    None,
+                )
+
+            node = owning_node(group)
+            if node is not None and isinstance(node.metadata.get("mdevent"), Mapping):
+                return {"components": [{"node": node, "datasets": [source]}]}
+        return {"dataset": source}
+
+    def event_bounds(node: Any, datasets: Any, axes: list[dict[str, Any]]) -> Any:
+        powder = str(config.get("coordinate_mode", "hkle")) == "powder"
+        basis = None if powder else _validate_mdhisto_rebin_basis(axes, 4)
+        symmetry = _rebin_symmetry_matrices(config, group.lattice_parameters)
+        return mdevent_coordinate_bounds(
+            node,
+            datasets=datasets,
+            basis=basis,
+            symmetry_operations=symmetry,
+            max_batch_bytes=_rebin_max_batch_bytes(dict(config)),
+            powder=powder,
+            progress_callback=progress_callback,
+        )
+
+    def symmetry_bounds(bounds: Any, axes: list[dict[str, Any]]) -> Any:
+        symmetry = _rebin_symmetry_matrices(config, group.lattice_parameters)
+        if symmetry is None or len(axes) != 4:
+            return bounds
+        basis = _validate_mdhisto_rebin_basis(axes, 4)
+        corners = np.stack(
+            np.meshgrid(*([lower, upper] for lower, upper in bounds), indexing="ij"),
+            axis=-1,
+        ).reshape(-1, 4)
+        return _symmetry_projected_coordinate_bounds(corners @ basis, symmetry, basis)
+
+    return plan_shared_derived_grid(
+        config,
+        source_ids,
+        resolve_source=resolve_source,
+        load_dataset=_ensure_dataset_data_loaded,
+        event_bounds=event_bounds,
+        symmetry_bounds=symmetry_bounds,
+    )
+
+
 def derived_analysis_dataset_data(
     dataset: DatasetEntry,
     *,
@@ -842,6 +928,13 @@ def derived_analysis_dataset_data(
     group, analysis = resolved
     config = copy.deepcopy(dataset_rebin_config(dataset))
     config["enabled"] = True
+    if analysis.type == "histogram_arithmetic" and len(analysis.input_dataset_ids) > 1:
+        config = _derived_shared_grid_config(
+            group,
+            list(analysis.input_dataset_ids),
+            config,
+            progress_callback=progress_callback,
+        )
     sources = []
     source_total = len(analysis.input_dataset_ids)
     for source_index, source_id in enumerate(analysis.input_dataset_ids, start=1):
