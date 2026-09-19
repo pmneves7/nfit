@@ -175,6 +175,24 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     selection = group.node if isinstance(group, _CompositeScope) else group
     policy = rebin_presentation_policy(root, selection)
     source_notes = background_source_explanations(root, selection)
+    if policy.linked:
+        box = QtWidgets.QGroupBox("Binning ownership")
+        box.setObjectName("group_composite_ownership")
+        box.setToolTip("An enabled parent owns the output grid for all contributing descendants.")
+        layout = QtWidgets.QVBoxLayout(box)
+        message = QtWidgets.QLabel(policy.message)
+        message.setObjectName("group_composite_ownership_message")
+        message.setWordWrap(True)
+        message.setToolTip(box.toolTip())
+        layout.addWidget(message)
+        navigate = QtWidgets.QPushButton(f"Go to {policy.owner.name} binning")
+        navigate.setObjectName("group_rebin_navigate_owner")
+        navigate.setToolTip("Select the parent collection that controls this output grid.")
+        navigate.clicked.connect(
+            lambda _checked=False: self._navigate_to_binning_owner(root, policy.owner)
+        )
+        layout.addWidget(navigate)
+        return box
     selection_key = getattr(selection, "id", f"root:{id(selection)}")
     expanded_ids = getattr(self, "_expanded_inactive_composite_ids", set())
     show_inactive_editor = selection_key in expanded_ids

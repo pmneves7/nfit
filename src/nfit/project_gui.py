@@ -5374,9 +5374,13 @@ def _project_binning_targets(
 ) -> list[tuple[str, str, DataGroup, Any, str, dict[str, Any]]]:
     """Return configured dataset and composite binnings in project order."""
 
+    from .project_binning_policy import controlling_composite
+
     targets = []
     for group in project.data_groups:
         for dataset in group.iter_datasets():
+            if controlling_composite(group, dataset) is not None:
+                continue
             if not isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict):
                 continue
             for binning in dataset_rebin_binnings(dataset):
@@ -5392,6 +5396,9 @@ def _project_binning_targets(
                         )
                     )
         for scope in _composite_scopes(group):
+            node = scope.node if isinstance(scope, _CompositeScope) else scope
+            if controlling_composite(group, node) is not None:
+                continue
             if (
                 not data_group_composite_enabled(scope)
                 and not isinstance(
@@ -5548,6 +5555,13 @@ def _saved_binning_compressed_size(
 def _dataset_cached_binnings_current(group: DataGroup, dataset: DatasetEntry) -> bool:
     """Return whether every enabled configured binning has a current cache."""
 
+    from .project_binning_policy import controlling_composite
+
+    owner = controlling_composite(group, dataset)
+    if owner is not None:
+        # Dormant grids have no independent cache badge. Rechecking a large
+        # parent's signature for every event leaf would also be quadratic.
+        return False
     try:
         if not isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict):
             return False
@@ -5572,6 +5586,11 @@ def _dataset_cached_binnings_current(group: DataGroup, dataset: DatasetEntry) ->
 def _composite_cached_binnings_current(group: DataGroup, node: DataGroup | DatasetGroup) -> bool:
     """Return whether every enabled composite binning has a current cache."""
 
+    from .project_binning_policy import controlling_composite
+
+    owner = controlling_composite(group, node)
+    if owner is not None:
+        return False
     try:
         scope = _composite_scope(group, node)
         if not data_group_composite_enabled(scope):
@@ -5697,10 +5716,14 @@ def _project_binning_artifacts(
 ) -> tuple[dict[str, ArchiveContent], list[dict[str, Any]]]:
     """Write current signature-matching rebin caches to temporary artifacts."""
 
+    from .project_binning_policy import controlling_composite
+
     artifacts: dict[str, ArchiveContent] = {}
     entries: list[dict[str, Any]] = []
     for group_index, group in enumerate(project.data_groups):
         for dataset in group.iter_datasets():
+            if controlling_composite(group, dataset) is not None:
+                continue
             if not isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict):
                 continue
             fit_config = _fit_dataset_rebin_config(dataset)
@@ -5746,6 +5769,9 @@ def _project_binning_artifacts(
                     }
                 )
         for scope in _composite_scopes(group):
+            node = scope.node if isinstance(scope, _CompositeScope) else scope
+            if controlling_composite(group, node) is not None:
+                continue
             if (
                 not data_group_composite_enabled(scope)
                 and not isinstance(
@@ -8594,6 +8620,13 @@ class NfitProjectExplorer:
 
         from PySide6 import QtWidgets
 
+        from .project_binning_policy import controlling_composite
+
+        if group is not None:
+            owner = controlling_composite(group, entry)
+            if owner is not None:
+                return self.rebin_composite_now(_composite_scope(group, owner))
+
         if group is None or not _dataset_can_rebin(entry):
             return False
         selected = self._selected_dataset_binning(entry)
@@ -9078,8 +9111,15 @@ class NfitProjectExplorer:
     def rebin_composite_now(self, group: DataGroup | _CompositeScope) -> bool:
         from PySide6 import QtWidgets
 
+        from .project_binning_policy import controlling_composite
+
         if group is None:
             return False
+        root = _composite_root(group)
+        node = group.node if isinstance(group, _CompositeScope) else group
+        owner = controlling_composite(root, node)
+        if owner is not None:
+            group = _composite_scope(root, owner)
         selected = self._selected_composite_binning(group)
         config = selected["config"]
         if not bool(config.get("enabled", False)):
@@ -10170,6 +10210,8 @@ class NfitProjectExplorer:
         return viewer
 
     def open_slice_viewer_for_selection(self) -> Any | None:
+        from .project_binning_policy import controlling_composite
+
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
         if role == "analysis_output" and group is not None:
             output = self._analysis_output_roles.get(id(self._current_item()))
@@ -10191,6 +10233,15 @@ class NfitProjectExplorer:
         }
         if role not in allowed or group is None:
             return None
+        selection = entry or self._dataset_group_for_item(self._current_item())
+        if isinstance(selection, (DatasetEntry, DatasetGroup, DataGroup)):
+            owner = controlling_composite(group, selection)
+            if owner is not None:
+                return self.open_slice_viewer(
+                    group,
+                    selected_dataset_name=_composite_dataset_name(_composite_scope(group, owner)),
+                    use_composite=True,
+                )
         # For a mask or the Masks node, entry is the owning dataset.
         selected_name = entry.name if role in {"dataset", "masks", "mask", "backgrounds", "background"} and entry is not None else None
         use_composite = selected_name is None

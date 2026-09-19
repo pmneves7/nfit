@@ -556,7 +556,7 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
         [group],
         settings={project_gui.PROJECT_CACHE_BINNINGS_KEY: True},
     )
-    cached_dataset = project_gui.dataset_for_slice_viewer(dataset)
+    project_gui.dataset_for_slice_viewer(dataset)
     cached, _names = project_gui.slice_viewer_datasets(group)
     path = tmp_path / "cached.nfit"
 
@@ -588,7 +588,8 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
                 project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY
             ]
         }
-    assert dataset_disk_size == saved_sizes["dataset"]
+    assert dataset_disk_size is None
+    assert "dataset" not in saved_sizes
     assert composite_disk_size == saved_sizes["composite"]
 
     explorer = NfitProjectExplorer(project)
@@ -598,10 +599,7 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
         QtWidgets.QLabel,
         "dataset_rebin_memory_estimate",
     )
-    assert (
-        f"Compressed disk size: {format_rebin_bytes(dataset_disk_size)}"
-        in dataset_size_label.text()
-    )
+    assert dataset_size_label is None
     explorer._set_dataset_collection_details(group, group)
     composite_size_label = explorer.details_widget.findChild(
         QtWidgets.QLabel,
@@ -635,7 +633,7 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
 
     manifest = read_project_manifest(path)
     entries = manifest["settings"][project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]
-    assert len(entries) == 2
+    assert len(entries) == 1
     assert {
         entry["format_version"] for entry in entries
     } == {project_gui.PROJECT_BINNING_CACHE_FORMAT_VERSION}
@@ -657,12 +655,6 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
         project_gui,
         "_ensure_dataset_data_loaded",
         ensure_without_raw_source,
-    )
-    restored_dataset_view = project_gui.dataset_for_slice_viewer(restored_dataset)
-    np.testing.assert_allclose(
-        restored_dataset_view.signal,
-        cached_dataset.signal,
-        equal_nan=True,
     )
     views, names = project_gui.slice_viewer_datasets(restored_group)
     assert names == ["Workspace1 Composite"]
@@ -896,14 +888,14 @@ def test_rebin_information_panels_do_not_decode_lazy_project_cache(
     explorer = NfitProjectExplorer(restored)
     explorer._expanded_independent_rebin_ids = {restored_dataset.id}
     explorer._set_dataset_details(restored_dataset, restored_group)
-    assert explorer._refresh_dataset_rebin_controls(
+    assert not explorer._refresh_dataset_rebin_controls(
         restored_dataset,
         restored_group,
     )
     dataset_memory = explorer.details_widget.findChild(
         QtWidgets.QLabel, "dataset_rebin_memory_estimate"
     )
-    assert dataset_memory is not None and "result memory" in dataset_memory.text()
+    assert dataset_memory is None
     assert (
         project_gui._peek_cached_dataset_view(
             restored_dataset,
@@ -995,7 +987,8 @@ def test_persisted_binning_restore_primes_dependencies_before_caching(tmp_path, 
     project_gui._VIEWER_VIEW_CACHE.clear()
     project_gui._COMPOSITE_DATA_CACHE.clear()
     project_gui._restore_project_binning_cache(changed, path)
-    assert project_gui.project_binnings_need_refresh(changed)
+    # Private member recipes are dormant and do not invalidate the parent.
+    assert not project_gui.project_binnings_need_refresh(changed)
 
 
 def test_project_cache_persists_every_named_dataset_binning(tmp_path):
@@ -2811,11 +2804,9 @@ def test_composite_controls_live_on_dataset_collections_not_workspace(monkeypatc
     explorer.tree.setCurrentItem(subgroup_item)
     flush_deletes()
     nested_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_enabled")
-    assert nested_check is not None
-    assert not nested_check.isChecked()
-    nested_check.setChecked(True)
-    nested_scope = project_gui._composite_scope(group, subgroup)
-    assert project_gui.data_group_composite_config(nested_scope)["enabled"] is True
+    assert nested_check is None
+    message = explorer.details_widget.findChild(QtWidgets.QLabel, "group_composite_ownership_message")
+    assert "Binning controlled by parent" in message.text()
 
 
 def test_nested_composite_replaces_only_its_dataset_group_descendants():
@@ -3064,6 +3055,7 @@ def test_rebin_symmetry_toggle_preserves_expression_and_notation(monkeypatch):
     assert dataset_config["symmetry"]["expression"] == "m-3m"
 
     explorer._expanded_independent_rebin_ids = {dataset.id}
+    composite_config["enabled"] = False
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
     dataset_expression = explorer.details_widget.findChild(
         QtWidgets.QLineEdit, "dataset_rebin_symmetry_expression"
@@ -3071,6 +3063,7 @@ def test_rebin_symmetry_toggle_preserves_expression_and_notation(monkeypatch):
     assert dataset_expression is not None
     assert dataset_expression.maximumWidth() <= 220
 
+    composite_config["enabled"] = True
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0))
     symmetry_check = explorer.details_widget.findChild(
         QtWidgets.QCheckBox, "group_composite_symmetry_enabled"

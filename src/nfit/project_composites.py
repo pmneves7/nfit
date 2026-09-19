@@ -798,7 +798,9 @@ def _composite_reference_data(group: DataGroup) -> Any | None:
     child_scopes = _hierarchical_composite_scopes(group)
     if child_scopes:
         try:
-            return _cached_composite_dataset_data(child_scopes[0], force_rebin=True)
+            # Discover axes from underlying data, not a child's private grid.
+            # The parent recipe is the only output grid for this hierarchy.
+            return _composite_reference_data(child_scopes[0])
         except Exception:
             return None
     dataset = _composite_candidates(
@@ -903,7 +905,10 @@ def _composite_cache_signature(
         else metadata_dimension_preview(group)
         if dimensions
         else [],
-        [[child.name, _composite_cache_signature(child, trail)] for child in child_scopes],
+        [
+            [child.name, _composite_cache_signature(child, trail, config_override=config)]
+            for child in child_scopes
+        ],
         [
             [
                 dataset.name,

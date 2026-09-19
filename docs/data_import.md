@@ -537,16 +537,19 @@ implementation without Qt widgets.
 
 Rebin settings are presented at the output they control:
 
-- An enabled composite collection owns its output grid. Its member datasets
-  show a link to that collection's binning settings.
+- The outermost enabled composite collection owns its output grid. Contributing
+  child collections and datasets show **Binning controlled by parent**, with a
+  link to the owner. Their private fit and named visualization grids are inactive
+  for project viewing, rebin commands, and cached-project saving.
 - Native event runs use their collection's grid rather than a separate run-level
   rebin editor.
 - An organizational collection shows **Combine as rebinned output** instead of
   a full recipe editor. Enable it to create a composite output. Existing enabled
   named visualization binnings remain accessible even when fit combining is off.
-- Independent datasets have their own editor. For ordinary datasets inside a
-  composite, **Edit separate dataset binning** opens the private dataset recipe;
-  it does not change the containing composite's grid. Saved recipes are retained.
+- Independent datasets have their own editor. Child recipes are retained, not
+  deleted; disabling the parent composite makes them available again. Disabled
+  branches are not contributors to the parent and retain their own output grids,
+  including when used as referenced background sources.
 
 Background sources and background links explain which recipe subtraction uses.
 Collection-based powder projection uses the source collection's composite
@@ -577,7 +580,8 @@ to designate a different configuration as the sole fit rebin. The remaining
 enabled configurations have zero fit weight: they are not prepared during
 optimizer or sampler iterations, but nfit evaluates the fitted model on them
 once afterward for plotting. A dataset and a collection each have their own
-independent list of named configurations.
+saved list of named configurations, but descendant configurations remain dormant
+while an ancestor owns the output grid.
 When combining histograms, nfit reconstructs physical coordinates from each
 source's saved axis vectors before projecting into the output basis. This
 preserves peak positions and coverage when combining already rebinned HHL
@@ -760,9 +764,11 @@ separately.
 
 A parent collection with no direct datasets can combine the live composites of
 its enabled child collections. This is useful for keeping separate angle ranges
-such as `34` and `70` independently configurable while exposing their corrected
-combination as one dataset. Child masks, rebin settings, backgrounds, and scales
-remain visible in the project tree; changing one invalidates the parent result.
+such as `34` and `70` separately calibrated while exposing their corrected
+combination as one dataset. Child masks, backgrounds, and scales remain active.
+Each child is reduced on the parent's requested grid before the compatible
+results are combined; its private grid is not evaluated first. Editing dormant
+child grid settings does not invalidate the parent output.
 
 ## Masks
 

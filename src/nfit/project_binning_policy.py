@@ -92,45 +92,64 @@ def _native_event_collection(
     return ancestors[-1] if ancestors else None
 
 
+def controlling_composite(
+    root: DataGroup, selection: RebinOwner,
+) -> DataGroup | DatasetGroup | None:
+    """Return the outermost enabled ancestor whose output consumes selection.
+
+    Disabled branches are separate outputs (often referenced backgrounds), not
+    contributors to an ancestor's composite. Recipes are never mutated here.
+    """
+    groups, datasets = _paths(root)
+    paths = datasets if isinstance(selection, DatasetEntry) else groups
+    if id(selection) not in paths:
+        raise ValueError("selection is not contained by the root data group")
+    if isinstance(selection, DatasetGroup) and not selection.enabled:
+        return None
+    ancestors = paths[id(selection)]
+    for index, node in enumerate(ancestors):
+        if isinstance(node, DatasetGroup) and not node.enabled:
+            ancestors = paths[id(selection)][index:]
+    return next((node for node in ancestors if _composite_enabled(node)), None)
+
+
 def rebin_presentation_policy(
     root: DataGroup,
     selection: RebinOwner,
 ) -> RebinPresentationPolicy:
     """Return the effective rebin owner and UI state for ``selection``.
 
-    The nearest enabled composite wins for nested collections.  A native event
-    leaf is always controlled by its histogram-producing collection.  Ordinary
-    member datasets keep their private recipes available as a secondary action;
-    the policy never mutates or removes those recipes.
+    The outermost enabled composite owns all contributing descendants. Their
+    private recipes are dormant until that ancestor is disabled. Native event
+    leaves without an enabled ancestor belong to their import collection.
     """
 
     group_paths, dataset_paths = _paths(root)
+    parent = controlling_composite(root, selection)
+    if parent is not None:
+        return RebinPresentationPolicy(
+            selection=selection, owner=parent, owner_kind="composite",
+            show_editor=False, show_binning_selector=False, linked=True,
+            allow_independent_recipe=False,
+            message=f"Binning controlled by parent: {parent.name}. "
+            "Private binnings are inactive while this parent composite is enabled.",
+        )
     if isinstance(selection, DatasetEntry):
         ancestors = dataset_paths.get(id(selection))
         if ancestors is None:
             raise ValueError("selected dataset is not contained by the root data group")
         native_owner = _native_event_collection(selection, ancestors)
-        enabled_owner = next(
-            (owner for owner in reversed(ancestors) if _composite_enabled(owner)),
-            None,
-        )
-        owner = native_owner or enabled_owner
+        owner = native_owner
         if owner is not None:
-            native = native_owner is not None
-            reason = (
-                "This native event source is histogrammed on its collection's grid."
-                if native
-                else "This dataset is a member of an enabled composite and uses that collection's grid."
-            )
             return RebinPresentationPolicy(
                 selection=selection,
                 owner=owner,
                 owner_kind="composite",
                 show_editor=False,
-                show_binning_selector=_has_enabled_named_binning(selection),
+                show_binning_selector=False,
                 linked=True,
-                allow_independent_recipe=not native,
-                message=reason,
+                allow_independent_recipe=False,
+                message="This native event source is histogrammed on its collection's grid.",
             )
         return RebinPresentationPolicy(
             selection=selection,

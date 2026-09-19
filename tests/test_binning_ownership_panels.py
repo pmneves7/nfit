@@ -9,7 +9,7 @@ from nfit.project_gui import NfitProject, NfitProjectExplorer
 from tests.project_gui_test_support import _tiny_mdhisto_data
 
 
-def test_linked_dataset_defaults_to_owner_notice_and_keeps_private_editor(monkeypatch):
+def test_linked_dataset_has_owner_notice_and_no_private_editor(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
@@ -41,15 +41,9 @@ def test_linked_dataset_defaults_to_owner_notice_and_keeps_private_editor(monkey
         QtWidgets.QPushButton, "dataset_rebin_edit_independent"
     )
     assert notice is not None and notice.toolTip()
-    assert "enabled composite" in message.text()
+    assert "Binning controlled by parent" in message.text()
     assert editor is None
-    assert edit_separately.toolTip()
-
-    edit_separately.click()
-    editor = explorer.details_widget.findChild(
-        QtWidgets.QGroupBox, "dataset_rebin_editor"
-    )
-    assert editor is not None
+    assert edit_separately is None
 
     navigate = explorer.details_widget.findChild(
         QtWidgets.QPushButton, "dataset_rebin_navigate_owner"
@@ -91,6 +85,34 @@ def test_native_lazy_event_member_shows_owner_without_private_editor(monkeypatch
     assert explorer.details_widget.findChild(
         QtWidgets.QGroupBox, "dataset_rebin_editor"
     ) is None
+
+
+def test_nested_collection_panel_and_actions_use_parent(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    dataset = DatasetEntry("run", _tiny_mdhisto_data(1.), kind="mdhisto")
+    child = DatasetGroup("child", datasets=[dataset])
+    parent = DatasetGroup("parent", subgroups=[child])
+    root = DataGroup("workspace", subgroups=[parent])
+    for node in (child, parent):
+        project_gui.data_group_composite_config(project_gui._composite_scope(root, node))["enabled"] = True
+    explorer = NfitProjectExplorer(NfitProject([root]))
+    # A previously expanded child editor must not bypass parent ownership.
+    explorer._expanded_inactive_composite_ids = {child.id}
+    explorer._set_dataset_collection_details(root, child)
+    notice = explorer.details_widget.findChild(QtWidgets.QLabel, "group_composite_ownership_message")
+    assert "Binning controlled by parent: parent" in notice.text()
+    assert explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_enabled") is None
+    navigate = explorer.details_widget.findChild(QtWidgets.QPushButton, "group_rebin_navigate_owner")
+    assert navigate.toolTip()
+    navigate.click()
+    assert explorer._dataset_group_for_item(explorer.tree.currentItem()) is parent
+    requested = []
+    monkeypatch.setattr(explorer, "rebin_composite_now", lambda scope: requested.append(scope.node) or True)
+    assert explorer.rebin_dataset_now(dataset, root)
+    assert requested == [parent]
+    explorer.has_unsaved_changes = False
+    explorer.window.close()
 
 
 def test_organizational_collection_offers_explicit_combined_output(monkeypatch):

@@ -34,7 +34,7 @@ def test_standalone_dataset_owns_editable_recipe_without_mutation() -> None:
     assert dataset.parameters["rebin"] == before
 
 
-def test_nearest_enabled_nested_composite_owns_member_grid() -> None:
+def test_outermost_enabled_nested_composite_owns_member_grid() -> None:
     dataset = DatasetEntry("scan", None)
     child = _enabled("child", datasets=[dataset])
     parent = _enabled("parent", subgroups=[child])
@@ -42,9 +42,77 @@ def test_nearest_enabled_nested_composite_owns_member_grid() -> None:
 
     policy = rebin_presentation_policy(root, dataset)
 
-    assert policy.owner is child
+    assert policy.owner is parent
     assert policy.linked and not policy.show_editor
-    assert policy.allow_independent_recipe
+    assert not policy.allow_independent_recipe
+    child_policy = rebin_presentation_policy(root, child)
+    assert child_policy.owner is parent
+    assert not child_policy.show_editor
+    parent.metadata[GROUP_COMPOSITE_KEY]["enabled"] = False
+    assert rebin_presentation_policy(root, dataset).owner is child
+    assert rebin_presentation_policy(root, child).show_editor
+
+
+def test_disabled_background_branch_keeps_its_own_grid() -> None:
+    source = DatasetEntry("background run", None)
+    background = _enabled("background", datasets=[source], enabled=False)
+    parent = _enabled("sample", subgroups=[background])
+    root = DataGroup("root", subgroups=[parent])
+    assert rebin_presentation_policy(root, background).owner is background
+    assert rebin_presentation_policy(root, background).show_editor
+    assert rebin_presentation_policy(root, source).owner is background
+
+
+def test_parent_grid_suppresses_child_rebins_and_save_targets(tmp_path, monkeypatch):
+    import numpy as np
+
+    from nfit import MDHistoAxis, MDHistoData, NfitProject
+    from nfit import project_composites as composites
+    from nfit import project_gui as gui
+
+    data = MDHistoData(
+        (MDHistoAxis("H", np.array([-.5, .5, 1.5]), "rlu", "momentum"),),
+        np.ones(2), np.ones(2), np.zeros(2, dtype=bool), np.ones(2),
+    )
+    children = [DatasetGroup(f"child{i}", datasets=[DatasetEntry(f"run{i}", data, kind="mdhisto")]) for i in range(2)]
+    for index, child in enumerate(children):
+        entry = child.datasets[0]
+        source = tmp_path / f"run{index}.npz"
+        gui.save_dataset_file(entry, source, use_view=False)
+        entry.metadata["source_file"] = str(source)
+        entry.replace_data(data, source_backed=True)
+    parent = DatasetGroup("parent", subgroups=children)
+    root = DataGroup("root", subgroups=[parent])
+    project = NfitProject([root])
+    project.settings["cache_binnings"] = True
+    for node, step in [(child, 1.) for child in children] + [(parent, .5)]:
+        config = gui.data_group_composite_config(gui._composite_scope(root, node))
+        config.update(enabled=True, minimum_coverage=0.)
+        config["axes"][0].update(lower=0., upper=1., step_size=step, mode="step", auto_lower=False, auto_upper=False, auto_step_size=False)
+    reduce = composites.composite_dataset_data
+    calls = []
+
+    def record(scope, **kwargs):
+        config = kwargs.get("config_override")
+        if config is not None:
+            calls.append((scope.name, config["axes"][0]["step_size"]))
+        return reduce(scope, **kwargs)
+
+    monkeypatch.setattr(composites, "composite_dataset_data", record)
+    scope = gui._composite_scope(root, parent)
+    gui._cached_composite_dataset_data(scope)
+    assert calls and all(step == .5 for _, step in calls)
+    assert {name for name, _ in calls} == {"parent", "child0", "child1"}
+    assert [target[1] for target in gui._project_binning_targets(project)] == ["parent · Default"]
+    assert not gui.project_binnings_need_refresh(project)
+    children[0].metadata[GROUP_COMPOSITE_KEY]["axes"][0]["step_size"] = 99.
+    assert not gui.project_binnings_need_refresh(project)
+    count = len(calls)
+    gui.save_project(project, tmp_path / "parent.nfit")
+    assert len(calls) == count
+    assert {entry.get("node_id") for entry in project.settings[gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]} == {parent.id}
+    parent.metadata[GROUP_COMPOSITE_KEY]["enabled"] = False
+    assert {target[1] for target in gui._project_binning_targets(project)} == {"child0 · Default", "child1 · Default"}
 
 
 def test_disabled_organizational_collection_has_no_recipe_editor() -> None:
