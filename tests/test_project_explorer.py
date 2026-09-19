@@ -2642,6 +2642,57 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     assert not diagnostics.window.isVisible()
 
 
+def test_rebin_progress_dialog_grows_for_wrapped_aggregate_status(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("Workspace1")]))
+    progress = explorer._make_rebin_progress_callback(
+        "Preparing data viewer...", aggregate=True
+    )
+    dialog = progress._nfit_progress_dialog
+    progress(
+        {
+            "batch_total": 25,
+            "batch_completed": 7,
+            "batch_name": "Low temperature (1.5–1.8 K) Composite · HHH",
+            "batch_kind": "named composite binning",
+            "rebin_total": 3,
+            "rebin_completed": 1,
+            "rebin_name": "HHH",
+            "iteration": 847_195_960_328,
+            "total": 6_660_000_000_000,
+            "message": (
+                "replaying background run 1/1 at 222 sample angles "
+                "(computed parallel replay, 16 CPUs)"
+            ),
+            "output_bins": 847_195_960_328,
+            "workers": 16,
+        }
+    )
+    QtWidgets.QApplication.processEvents()
+
+    layout = dialog.layout()
+    assert dialog.height() >= layout.sizeHint().height()
+    for label in (
+        dialog._nfit_batch_label,
+        dialog._nfit_current_label,
+        dialog._nfit_label,
+    ):
+        assert label.height() >= label.heightForWidth(label.width())
+    assert (
+        dialog._nfit_label.geometry().bottom()
+        < dialog._nfit_detail_progress.geometry().top()
+    )
+    assert (
+        dialog._nfit_detail_progress.geometry().bottom()
+        < progress._nfit_progress_controller.cancel_button.geometry().top()
+    )
+
+    explorer._close_rebin_progress(progress)
+    explorer.window.close()
+
+
 def test_unloaded_mdevent_viewer_uses_visible_progress_dialog(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtCore = pytest.importorskip("PySide6.QtCore")

@@ -679,6 +679,8 @@ All rebin workflows use the same compact progress dialog. When a task prepares
 several datasets or dataset-group composites, it uses two levels: the upper bar
 reports completed viewer entries and the lower bar reports progress within the
 named current entry. A one-entry task hides the redundant upper status and bar.
+The dialog grows vertically when a current-item or resource message wraps, so
+the progress bars and cancellation control remain visible.
 Stage descriptions use sentence capitalization. Both levels show elapsed time
 without predicting time remaining. Large integer
 counters use grouped thousands, and resource details below the lower status

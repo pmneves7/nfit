@@ -6518,12 +6518,21 @@ class _RebinProgressDialog:
         self.current_label.setVisible(visible)
         self.batch_bar.setVisible(visible)
 
+    def _resize_to_contents(self) -> None:
+        """Fit wrapped progress text without changing the fixed dialog width."""
+
+        layout = self.dialog.layout()
+        if layout is not None:
+            layout.activate()
+        self.dialog.adjustSize()
+
     def _refresh_labels(self) -> None:
         if self._batch_total > 1:
             timer = _progress_timer_text(self._batch_started_at)
             self.batch_label.setText(f"{self._batch_base_text} · {timer}")
         detail_timer = _progress_timer_text(self._detail_started_at)
         self.detail_label.setText(f"{self._detail_base_text} · {detail_timer}")
+        self._resize_to_contents()
 
     def _refresh_current_label(self) -> None:
         parts = []
@@ -6573,6 +6582,7 @@ class _RebinProgressDialog:
     def show(self) -> None:
         from PySide6 import QtWidgets
 
+        self._resize_to_contents()
         self.dialog.show()
         self.dialog.raise_()
         self.dialog.activateWindow()
