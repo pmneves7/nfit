@@ -6065,7 +6065,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                     binning_id=binning_id,
                 )
             )
-            if version >= 6 and saved != signature:
+            if version >= 6 and not _binning_signatures_match(saved, signature):
                 continue
             key = _composite_cache_key(target, None if is_fit else binning_id)
             if version >= 6:

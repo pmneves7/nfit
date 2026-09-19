@@ -22,6 +22,7 @@ from .pipeline import (
     ModelComponentSpec,
 )
 from .plot_recipes import plot_entry_from_dict, plot_entry_to_dict
+from .project_cache_compat import composite_cache_signatures_match
 from .project_history import (
     _applies_to_from_payload,
     _background_from_dict,
@@ -40,7 +41,11 @@ FIT_CHANNEL_NAMES = ("fit", "residual")
 
 
 def _binning_signatures_match(saved: str | None, current: str) -> bool:
-    """Compare saved cache identities, including legacy live-recipe tokens.
+    """Compare saved identities using explicitly supported compatibility rules.
+
+    Composite algorithm migrations are checked by the GUI-independent cache
+    compatibility service; numerical changes outside its safe subset remain
+    stale.
 
     Older live derived binnings stored a process-local id(None) in the first
     field. Accept that token only for a resolved, payload-free derived recipe
@@ -49,6 +54,8 @@ def _binning_signatures_match(saved: str | None, current: str) -> bool:
     """
 
     if saved == current:
+        return True
+    if composite_cache_signatures_match(saved, current):
         return True
     if not isinstance(saved, str):
         return False

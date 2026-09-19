@@ -707,6 +707,14 @@ named binning for that item is cached and matches its current source, masks,
 backgrounds, and numerical settings. The dot disappears as soon as an edit
 makes any enabled cache stale and returns after the required rebins complete.
 
+Reopening a project validates saved binnings against their source identities and
+numerical settings. Older MDEvent caches from before the event-scale correction
+can be reused when all contributing event scales and fit weights are one, grid
+limits are explicit, and their background dependencies are also compatible.
+Changed sources, masks, grids, or numerically affected older results still require
+rebinning. Accepted caches are registered under the current signature without
+recomputing them; the next save records that signature.
+
 Native MDEvent reductions report event accumulation, detector-trajectory setup,
 detector-normalization integration, output finalization, derived-data
 evaluation, and viewer preparation as separate stages. Event counters include

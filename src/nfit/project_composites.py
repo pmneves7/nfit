@@ -46,6 +46,7 @@ from .mdhisto import (
 from .performance import initialize_rebin_performance
 from .pipeline import BackgroundSpec, DataGroup, DatasetEntry, DatasetGroup, MaskSpec
 from .project_archive import replace_dataset_artifact
+from .project_cache_compat import COMPOSITE_CACHE_SIGNATURE_TAG
 from .project_coordinates import _identity_vector, _mdhisto_rebin_source_axis_vectors
 from .project_history import _dataset_group_paths
 from .project_imports import (
@@ -889,7 +890,7 @@ def _composite_cache_signature(
         )
     )
     payload = [
-        "event-scales-and-measured-background-replay-v2",
+        COMPOSITE_CACHE_SIGNATURE_TAG,
         node.metadata.get("mdevent"),
         node.metadata.get("raw_dgs"),
         getattr(_composite_root(group), "lattice_parameters", {}),
