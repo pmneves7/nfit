@@ -563,6 +563,19 @@ def test_same_named_composites_are_distinguished_by_collection_path():
     assert _composite_dataset_name(_composite_scope(root, b)) == "series2/MACS SPEC Composite"
 
 
+def test_calibrated_reference_slice_retains_correlated_self_subtraction():
+    from nfit.project_gui import _cached_composite_dataset_data
+
+    reference = points(50, [2], name="reference")
+    reference.scale_factor = 3
+    workspace = group([points(5, [10]), reference])
+    nfit.set_metadata_dimensions(workspace, [temperature()])
+    workspace.backgrounds.append(nfit.BackgroundSpec("reference", reference.id, source_entry=reference))
+    result = _cached_composite_dataset_data(workspace, force_rebin=True)
+    np.testing.assert_allclose(result.signal.ravel(), [4, 0])
+    np.testing.assert_allclose(result.errors.ravel(), [np.sqrt(10), 0])
+
+
 def test_reference_slice_background_toggle_honors_manual_viewer_refresh(monkeypatch):
     from PySide6 import QtWidgets
 

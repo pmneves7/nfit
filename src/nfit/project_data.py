@@ -1001,6 +1001,7 @@ def _viewer_view_signature(
                 float(background.scale),
                 background.interpolation,
                 background.projection,
+                "source-calibration-before-link-scale-v2",
                 (
                     [
                         _viewer_view_signature(background.source_entry, None, _trail=trail),
@@ -1141,9 +1142,9 @@ def _apply_dataset_backgrounds(
     for background in dataset.backgrounds:
         if not background.enabled:
             continue
-        if background.projection == "sample_trajectories":
+        if background.projection != "center":
             raise ValueError(
-                "sample-trajectory powder projection must be attached to an "
+                "background replay/projection must be attached to an "
                 "MDEvent dataset group, not an individual dataset"
             )
         source = background.source_entry
@@ -1156,6 +1157,7 @@ def _apply_dataset_backgrounds(
         )
         if not isinstance(source_data, MDHistoData):
             raise TypeError(f"background {background.name!r} must refer to gridded histogram data")
+        source_data = _apply_dataset_scale(source, source_data)
         result = subtract_background(
             result,
             source_data,

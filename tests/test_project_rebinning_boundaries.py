@@ -10,6 +10,18 @@ import nfit.project_rebinning as project_rebinning
 
 PACKAGE_ROOT = Path(project_data.__file__).parent
 
+
+def test_memory_estimate_identifies_unresolved_automatic_limits():
+    from nfit.project_rebin_panels import rebin_memory_estimate_text
+
+    config = {"axes": [{"lower": -100, "upper": 100, "step_size": 0.1,
+                        "num_bins": 2001, "mode": "step", "auto_lower": True,
+                        "auto_lower_value": -100}]}
+    assert "Auto limits unresolved" in rebin_memory_estimate_text(config, data=None)
+    config["axes"][0]["auto_lower"] = False
+    assert "Auto limits unresolved" not in rebin_memory_estimate_text(config, data=None)
+
+
 REBIN_SERVICE_EXPORTS = (
     "_axis_bounds",
     "_axis_mode_coordinates_with_symmetry",
@@ -116,6 +128,25 @@ def test_mixed_axis_grid_configuration_matches_facade_contract() -> None:
         "bin_edges": [None, [0.0, 0.5, 2.0], [5.0, 15.0, 25.0]],
     }
     assert project_data._rebin_fractional_axes(config, axes) == [True, True, False]
+
+
+def test_estimated_shape_keeps_explicit_step_limits() -> None:
+    config = {
+        "resolution_mode": "step",
+        "axes": [
+            {
+                "mode": "step",
+                "lower": -1.0,
+                "upper": 1.0,
+                "step_size": 0.5,
+                "num_bins": 2,
+                "auto_lower": False,
+                "auto_upper": False,
+            }
+        ],
+    }
+
+    assert project_rebinning.estimated_rebin_shape(config) == (5,)
 
 
 def test_grid_mode_and_assignment_are_independent_and_legacy_flags_migrate() -> None:

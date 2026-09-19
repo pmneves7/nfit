@@ -606,6 +606,14 @@ notation mode. Point-cloud preview resolution adapts to the complete composite
 range, so combining nominally discrete energy scans does not turn small
 within-run energy jitter into an impractically large output volume.
 
+For MDEvent sources, automatic limits are resolved from the selected events in
+bounded, cancellable chunks when binning starts, including the requested basis
+and symmetry. They do not use the file header's bounding cube as the final
+limits. Before this scan, the memory estimate may use broader source extents;
+clearing a limit can therefore increase the estimate without implying that the
+final grid will be that large. Explicit limits are unchanged. A cached result
+reports its actual allocated grid size.
+
 An imported MDEvent collection can reduce directly either to a projected
 single-crystal HKLE histogram or to a powder $|\mathbf Q|,E$ histogram. Both
 paths accumulate event weights and use proton charge plus detector-trajectory
@@ -751,7 +759,7 @@ A dataset or composite can subtract one or more gridded backgrounds. Each
 background has an enabled state and scale. Powder backgrounds also select
 linear or nearest interpolation and a projection mode.
 
-**Voxel center (legacy)** evaluates the powder field once at each target-bin
+**Voxel center** evaluates the powder field once at each target-bin
 center, $B(|Q_{\rm center}|,E_{\rm center})$. This is fast and remains the
 default for existing projects. For a single-crystal target, nfit propagates
 independent uncertainties through this interpolation:
@@ -782,7 +790,7 @@ progress dialog. Rebuilding a target also resolves its live background sources
 to their current settings. The green cache indicator disappears while a
 cached result is out of date.
 
-**Sample detector trajectories** is available for a background owned by an
+**Powder through sample trajectories** is available for a background owned by an
 MDEvent dataset group. It treats the measured powder map as the intensity that
 would have been observed at every sample goniometer angle. nfit evaluates that
 map along each selected sample run's detector trajectories, accumulates a
@@ -799,6 +807,40 @@ one-sigma uncertainty through the sample trajectories. This is a conservative
 upper bound when distinct powder bins are statistically independent. A target
 bin is masked if any of its trajectory acceptance falls outside measured powder
 coverage rather than extrapolating the background.
+
+**Measured background at sample angles** preserves directional background
+structure, including variation perpendicular to the scattering plane. Choose a
+matching **live MDEvent background group** as the source. nfit transforms its
+measured $\mathbf Q$ (in Å⁻¹) back into the laboratory frame, then reconstructs
+the background at every selected sample goniometer angle on the sample's HKLE
+grid. This uses the same basis, symmetry operations and detector-trajectory
+integration as the sample, without first making a spherical powder average.
+The relative exposure at each sample angle is its proton charge times its fit
+weight. Background run scales calibrate signal and uncertainty; background fit
+weights weight counts and exposure; the background link scale is applied last.
+
+This mode requires matching incident energy and detector geometry (for example,
+the same HYSPEC bank setting), QSample or QLab MDEvents with one goniometer matrix per
+experiment, and an unsubtracted source group. QLab coordinates are already in
+the laboratory frame and are not rotated back. Small calibration differences
+are accepted (detector directions within 0.1°, incident energy within 0.1%);
+the replay retains the measured background geometry. The source's private powder
+binning and the interpolation selector are not used. Source user masks still
+apply at reconstructed output-bin centers; sample masks and both detector masks
+restrict the replay acceptance. Work is chunked with progress and cancellation,
+but replaying many angles costs more than voxel-center interpolation. Repeated
+copies of an event landing in the same voxel are combined before propagating
+variance, so they do not manufacture independent counting statistics. Covariance
+between different output voxels is not stored.
+
+Direct HKLE binning requires QSample coordinates. A QLab background must use
+powder reduction or measured-event replay; it is not treated as if it were
+already in the rotating sample frame.
+
+The same operation is available without Qt as
+`project_measured_background_mdevent(sample_group, background_group, target)`;
+project background recipes use `BackgroundSpec(projection="measured_events", ...)`
+and retain that mode in saved projects and exported workflow scripts.
 
 For a group background referencing raw neutron point data, nfit bins the
 reference onto the sample's resolved momentum/energy grid automatically,
@@ -838,6 +880,10 @@ recipes remain separately visible and editable without materializing an
 intermediate snapshot.
 
 A dataset background is applied before that dataset's scale. A group background
-is subtracted once after the group composite is formed. Use **Spherical
+is subtracted once after the group composite is formed. In both cases the
+background source's dataset calibration scale is applied first; the background
+link scale is an additional subtraction coefficient. Dataset fit weight changes
+how a source contributes to a live composite but never acts as a signal scale.
+Use **Spherical
 average** in the [Analysis Window](data_playground.md) to create a powder
 background from single-crystal data.

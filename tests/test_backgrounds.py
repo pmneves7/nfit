@@ -314,6 +314,47 @@ def test_composite_background_is_excluded_from_inputs_and_subtracted_once():
     assert result.metadata["background_subtractions"][0]["scale"] == 0.5
 
 
+def test_direct_background_source_calibration_multiplies_link_scale():
+    source = DatasetEntry(
+        "Background", _powder(np.full((2, 2), 2.0), np.ones((2, 2))),
+        kind="mdhisto", data_type="powder_inelastic", scale_factor=3.0,
+    )
+    target = DatasetEntry(
+        "Sample", _powder(np.full((2, 2), 10.0), np.ones((2, 2))),
+        kind="mdhisto", data_type="powder_inelastic",
+    )
+    target.backgrounds.append(
+        BackgroundSpec("Background", source.id, scale=0.5, source_entry=source)
+    )
+
+    from nfit.project_data import _apply_dataset_backgrounds
+
+    result = _apply_dataset_backgrounds(target, target.data)
+    np.testing.assert_allclose(result.signal, 7.0)
+    np.testing.assert_allclose(result.errors, np.sqrt(3.25))
+
+
+def test_group_background_direct_source_calibration_multiplies_link_scale():
+    source = DatasetEntry(
+        "Background", _powder(np.full((2, 2), 2.0), np.ones((2, 2))),
+        kind="mdhisto", data_type="powder_inelastic", scale_factor=3.0,
+    )
+    target = DatasetEntry(
+        "Sample", _powder(np.full((2, 2), 10.0), np.ones((2, 2))),
+        kind="mdhisto", data_type="powder_inelastic",
+    )
+    group = DataGroup("Workspace", [target, source])
+    group.backgrounds.append(
+        BackgroundSpec("Background", source.id, scale=0.5, source_entry=source)
+    )
+    from nfit import project_gui
+
+    project_gui.data_group_composite_config(group).update(enabled=True, fractional=False)
+    result = project_gui.composite_dataset_data(group)
+    np.testing.assert_allclose(result.signal, 7.0)
+    np.testing.assert_allclose(result.errors, np.sqrt(3.25))
+
+
 def test_mdhisto_composite_automatically_uses_saved_normalization_denominator():
     first_data = _powder(np.full((2, 2), 2.0), np.ones((2, 2)))
     second_data = _powder(np.full((2, 2), 4.0), np.ones((2, 2)))
@@ -462,3 +503,10 @@ def test_project_tree_exposes_group_background_controls_with_tooltips(monkeypatc
     assert projection is not None and projection.toolTip()
     projection.setCurrentIndex(projection.findData("sample_trajectories"))
     assert background.projection == "sample_trajectories"
+    assert projection.itemText(projection.findData("center")) == "Voxel center"
+    projection.setCurrentIndex(projection.findData("measured_events"))
+    assert background.projection == "measured_events"
+    interpolation = explorer.details_widget.findChild(QtWidgets.QComboBox, "background_interpolation")
+    assert interpolation is not None and not interpolation.isEnabled()
+    projection.setCurrentIndex(projection.findData("center"))
+    assert interpolation.isEnabled()

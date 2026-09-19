@@ -33,6 +33,7 @@ from .dataset import PointData4D, PointListData
 from .mdevent import (
     bin_mdevent_group,
     bin_mdevent_powder_group,
+    mdevent_coordinate_bounds,
     project_powder_background_mdevent,
 )
 from .mdhisto import (
@@ -55,6 +56,7 @@ from .project_imports import (
 )
 from .project_masks import _mdhisto_with_nfit_masks, _point_data_with_nfit_masks
 from .project_point_lists import prepared_point_list_data
+from .project_rebinning import _rebin_axis_bound_is_auto
 from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group
 from .rebin import rebin_nd
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET, RebinCache
@@ -107,6 +109,7 @@ _BACKEND_NAMES = (
     "REBIN_AUTO_MAX_OUTPUT_BINS",
     "REBIN_RESOLUTION_MODE_KEY",
     "_apply_dataset_backgrounds",
+    "_apply_dataset_scale",
     "_composite_rebin_bin_edges",
     "_composite_rebin_step_sizes",
     "_dataset_data_point_count",
@@ -141,6 +144,7 @@ _BACKEND_NAMES = (
 )
 
 _apply_dataset_backgrounds = _backend_function("_apply_dataset_backgrounds")
+_apply_dataset_scale = _backend_function("_apply_dataset_scale")
 _composite_rebin_bin_edges = _backend_function("_composite_rebin_bin_edges")
 _composite_rebin_step_sizes = _backend_function("_composite_rebin_step_sizes")
 _dataset_data_point_count = _backend_function("_dataset_data_point_count")
@@ -883,7 +887,7 @@ def _composite_cache_signature(
         )
     )
     payload = [
-        "event-user-masks-and-background-windows-v1",
+        "event-scales-and-measured-background-replay-v2",
         node.metadata.get("mdevent"),
         node.metadata.get("raw_dgs"),
         getattr(_composite_root(group), "lattice_parameters", {}),
@@ -1312,19 +1316,40 @@ def _composite_dataset_data(
     if kind in {"mdevent", "raw_dgs_nexus"}:
         config = copy.deepcopy(config)
         event_axes = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
-        event_bounds = [(float(axis["lower"]), float(axis["upper"])) for axis in event_axes]
+        is_powder = config.get("coordinate_mode") == "powder"
         event_symmetry = _rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters)
-        if event_symmetry is not None and len(event_axes) == 4:
-            event_basis = _validate_mdhisto_rebin_basis(event_axes, 4)
-            corner_grids = np.meshgrid(
-                *([lower, upper] for lower, upper in event_bounds), indexing="ij"
+        event_basis = (
+            _validate_mdhisto_rebin_basis(event_axes, 4)
+            if not is_powder and len(event_axes) == 4 else None
+        )
+        node = group.node if isinstance(group, _CompositeScope) else group
+        needs_auto_bounds = any(
+            _rebin_axis_bound_is_auto(axis, key)
+            for axis in event_axes
+            for key in ("lower", "upper")
+        )
+        if kind == "mdevent" and isinstance(node, DatasetGroup) and needs_auto_bounds:
+            # Read event coordinates in bounded chunks so automatic limits
+            # follow the selected data rather than the source header cube.
+            event_bounds = mdevent_coordinate_bounds(
+                node,
+                datasets=_composite_candidates(group),
+                basis=event_basis,
+                symmetry_operations=event_symmetry,
+                max_batch_bytes=_rebin_max_batch_bytes(config),
+                powder=is_powder,
+                progress_callback=progress_callback,
             )
-            output_corners = np.stack(corner_grids, axis=-1).reshape(-1, 4)
-            event_bounds = _symmetry_projected_coordinate_bounds(
-                output_corners @ event_basis,
-                event_symmetry,
-                event_basis,
-            )
+        else:
+            event_bounds = [(float(axis["lower"]), float(axis["upper"])) for axis in event_axes]
+            if event_symmetry is not None and event_basis is not None:
+                corner_grids = np.meshgrid(
+                    *([lower, upper] for lower, upper in event_bounds), indexing="ij"
+                )
+                output_corners = np.stack(corner_grids, axis=-1).reshape(-1, 4)
+                event_bounds = _symmetry_projected_coordinate_bounds(
+                    output_corners @ event_basis, event_symmetry, event_basis,
+                )
         config["axes"] = _resolve_auto_rebin_axes(
             event_axes,
             event_bounds,
@@ -1564,6 +1589,31 @@ def _apply_composite_backgrounds(
         source_group = background.source_group
         if source is None and source_group is None:
             raise ValueError(f"background {background.name!r} refers to a missing dataset or group")
+        if background.projection == "measured_events":
+            from .mdevent_background import project_measured_background_mdevent
+
+            node = group.node if isinstance(group, _CompositeScope) else group
+            if not isinstance(node, DatasetGroup) or source_group is None:
+                raise ValueError("measured-event replay requires sample and referenced background dataset groups")
+
+            def with_inherited_masks(scope):
+                return [
+                    replace(run, masks=[*effective_dataset_masks(root, run), *run.masks])
+                    for run in _composite_candidates(scope)
+                ]
+
+            projected = project_measured_background_mdevent(
+                node, source_group, result,
+                datasets=with_inherited_masks(group),
+                background_datasets=with_inherited_masks(_CompositeScope(root, source_group)),
+                inherited_masks=[], background_inherited_masks=[],
+                max_batch_bytes=_rebin_max_batch_bytes(
+                    data_group_composite_config(group) if config is None else config
+                ),
+                progress_callback=progress_callback,
+            )
+            result = subtract_background(result, projected, scale=background.scale)
+            continue
         if source_group is not None:
             source_data = _cached_composite_dataset_data(
                 _CompositeScope(root, source_group),
@@ -1611,6 +1661,10 @@ def _apply_composite_backgrounds(
                 )
                 if source.backgrounds:
                     source_data = _apply_dataset_backgrounds(source, source_data)
+            # A direct background reference retains its own calibration just
+            # like the same dataset does when viewed or composited. The link
+            # scale below is an additional subtraction coefficient.
+            source_data = _apply_dataset_scale(source, source_data)
         if not isinstance(source_data, MDHistoData):
             raise TypeError(f"background {background.name!r} must refer to gridded histogram data")
         if background.projection not in {"center", "sample_trajectories"}:
@@ -1639,7 +1693,7 @@ def _apply_composite_backgrounds(
             reference_entry is not None
             and source is not None
             and reference_entry.id == source.id
-            and reference_entry.scale_factor == background.scale
+            and reference_entry.scale_factor == source.scale_factor * background.scale
             and result.shape == source_data.shape
             and np.allclose(
                 result.signal,
@@ -1664,7 +1718,7 @@ def _apply_composite_backgrounds(
             )
         elif (
             source is not None
-            and source.scale_factor == background.scale
+            and background.scale == 1.0
             and (selection := _metadata_reference_slice(result, source)) is not None
         ):
             measured = ~np.asarray(result.mask[selection], dtype=bool)

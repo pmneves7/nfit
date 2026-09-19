@@ -373,6 +373,7 @@ from .mdevent import (
     mdevent_dataset_group,
     project_powder_background_mdevent,
 )
+from .mdevent_background import project_measured_background_mdevent
 from .mdhisto import (
     MDHistoAxis,
     MDHistoData,
@@ -1232,6 +1233,7 @@ __all__ = [
     "bin_mdevent_group",
     "bin_mdevent_powder_group",
     "project_powder_background_mdevent",
+    "project_measured_background_mdevent",
     "append_mdevent_file",
     "CorelliRunInfo",
     "bin_corelli_group",

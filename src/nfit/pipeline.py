@@ -38,7 +38,9 @@ class BackgroundSpec:
     reference. Runtime links are restored after loading and deliberately
     omitted from project serialization. ``projection`` is ``"center"`` for
     direct powder interpolation or ``"sample_trajectories"`` for MDEvent
-    powder backgrounds forward-projected through the sample acceptance.
+    powder backgrounds forward-projected through the sample acceptance, or
+    ``"measured_events"`` to replay measured lab-frame background events at
+    the sample angles while retaining detector-direction dependence.
     """
 
     name: str

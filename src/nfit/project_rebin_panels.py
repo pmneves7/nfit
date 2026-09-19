@@ -12,6 +12,7 @@ from .performance import estimate_rebin_result_bytes
 from .project_rebinning import (
     _cluster_coordinate_centers,
     _coordinate_center_edges,
+    _rebin_axis_bound_is_auto,
     _rebin_axis_fractional,
     _rebin_axis_mode,
     _sanitize_rebin_axis_config,
@@ -178,7 +179,9 @@ def rebin_memory_estimate_label(
     label.setToolTip(
         "This estimates the numerical output arrays from the configured grid, or reports "
         "the exact cached payload. Peak rebin memory can be higher because source and worker "
-        "arrays also exist. Compressed disk size is shown only when the current binning is "
+        "arrays also exist. With automatic limits, unresolved source extents can be broader "
+        "than the selected events; MDEvent limits are resolved during the rebin scan. Worker "
+        "arrays are not included here. Compressed disk size is shown only when the current binning is "
         "embedded in the saved nfit project."
     )
     return label
@@ -193,10 +196,17 @@ def rebin_memory_estimate_text(
     """Return the concise memory and disk-size description for a rebin."""
 
     exact, _shape, _total_bins, payload_bytes = rebin_memory_estimate(config, data)
+    auto_note = (
+        " · Auto limits unresolved"
+        if not exact and any(
+            _rebin_axis_bound_is_auto(axis, "lower") or _rebin_axis_bound_is_auto(axis, "upper")
+            for axis in config.get("axes", [])
+        ) else ""
+    )
     return (
         f"{'Cached result memory' if exact else 'Estimated result memory'}: "
         f"{'exactly ' if exact else 'about '}{_format_bytes(payload_bytes)} · "
-        f"{_compressed_disk_size_text(compressed_disk_bytes)}"
+        f"{_compressed_disk_size_text(compressed_disk_bytes)}{auto_note}"
     )
 
 

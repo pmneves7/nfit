@@ -352,6 +352,194 @@ def test_native_mdevent_binning_uses_proton_charge_and_vanadium_coverage(tmp_pat
     assert result.metadata["signal_semantics_source"] == "nfit_mdevent_reduction"
 
 
+@pytest.mark.parametrize("powder", [False, True])
+def test_native_mdevent_applies_run_calibration_scales_and_fit_weights(tmp_path, powder):
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+    group.datasets[0].scale_factor = 2.0
+    group.datasets[0].fit_weight = 2.0
+    reducer = bin_mdevent_powder_group if powder else bin_mdevent_group
+    bounds = (
+        dict(lower=[0.0, -1.0], upper=[1.0, 1.0], num_bins=[1, 1])
+        if powder
+        else dict(lower=[-1.0] * 4, upper=[1.0] * 4, num_bins=[1] * 4)
+    )
+
+    result = reducer(group, **bounds)
+
+    denominator = 8.0
+    np.testing.assert_allclose(result.signal, 5.0 / denominator)
+    np.testing.assert_allclose(result.errors, np.sqrt(17.0) / denominator)
+
+
+def test_mdevent_coordinate_bounds_use_physical_q_for_powder_and_ub_for_hkl(tmp_path):
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(source, "r+") as handle:
+        events = handle["MDEventWorkspace/event_data/event_data"]
+        values = np.asarray(events)
+        values[:, 5] = [2.0, 4.0]
+        events[...] = values
+    group = mdevent_dataset_group(source)
+
+    powder = mdevent.mdevent_coordinate_bounds(group, powder=True)
+    np.testing.assert_allclose(powder, [(2.0, 4.0), (0.0, 0.0)])
+    hkl = mdevent.mdevent_coordinate_bounds(group)
+    np.testing.assert_allclose(hkl[0], (2.0, 4.0))
+
+    # Changing UB must invalidate the cached HKL result, while powder remains
+    # in physical inverse-angstrom coordinates.
+    group.metadata["mdevent"]["ub_matrix"] = (
+        2.0 * np.asarray(group.metadata["mdevent"]["ub_matrix"])
+    ).tolist()
+    changed = mdevent.mdevent_coordinate_bounds(group)
+    np.testing.assert_allclose(changed[0], (1.0, 2.0))
+    np.testing.assert_allclose(
+        mdevent.mdevent_coordinate_bounds(group, powder=True), powder
+    )
+
+
+def test_lab_frame_mdevents_reject_hkle_paths_but_allow_powder(tmp_path):
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+    for dimension in group.metadata["mdevent"]["dimensions"][:3]:
+        dimension["frame"] = "QLab"
+        dimension["name"] = dimension["name"].replace("sample", "lab")
+
+    message = "requires QSample momentum dimensions"
+    with pytest.raises(ValueError, match=message):
+        bin_mdevent_group(
+            group, lower=[-1.0] * 4, upper=[1.0] * 4, num_bins=[1] * 4
+        )
+    with pytest.raises(ValueError, match=message):
+        mdevent.mdevent_coordinate_bounds(group)
+    assert mdevent.mdevent_coordinate_bounds(group, powder=True) == [
+        (0.0, 0.0),
+        (0.0, 0.0),
+    ]
+
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(source, "r+") as handle:
+        workspace = handle["MDEventWorkspace"]
+        for index in range(3):
+            workspace.attrs[f"dimension{index}"] = str(
+                workspace.attrs[f"dimension{index}"]
+            ).replace("QSample", "QLab").replace("Q_sample", "Q_lab")
+    with pytest.raises(ValueError, match=message):
+        load_mdevent_run_points(group.datasets[0])
+
+
+def test_mdevent_coordinate_bounds_honor_detector_mask_and_report_empty_batches(tmp_path):
+    source = tmp_path / "events.nxs"
+    mask_path = tmp_path / "mask.nxs"
+    _write_mdevent(source)
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(source, "r+") as handle:
+        events = handle["MDEventWorkspace/event_data/event_data"]
+        values = np.asarray(events)
+        values[:, 4] = [10, 11]
+        values[:, 5] = [1.0, 5.0]
+        events[...] = values
+    with h5py.File(mask_path, "w") as handle:
+        entry = handle.create_group("mantid_workspace_1")
+        detector = entry.create_group("instrument/detector")
+        detector.create_dataset("detector_list", data=[10, 11])
+        workspace = entry.create_group("workspace")
+        workspace.create_dataset("values", data=[[1.0], [0.0]])
+        workspace.create_dataset("errors", data=[[0.0], [0.0]])
+    group = mdevent_dataset_group(source, mask_path=mask_path)
+    bounds = mdevent.mdevent_coordinate_bounds(group, powder=True)
+    np.testing.assert_allclose(bounds[0], (1.0, 1.0))
+
+    with h5py.File(source, "r+") as handle:
+        events = handle["MDEventWorkspace/event_data/event_data"]
+        values = np.asarray(events)
+        values[:, 2] = 99
+        events[...] = values
+    progress = []
+    with pytest.raises(ValueError, match="no finite coordinates"):
+        mdevent.mdevent_coordinate_bounds(
+            group, max_batch_bytes=216, progress_callback=progress.append
+        )
+    assert [item["iteration"] for item in progress] == [1, 2]
+    assert all(item["total"] == 2 for item in progress)
+
+
+def test_mdevent_composite_resolves_auto_bounds_but_skips_scan_for_explicit_limits(
+    monkeypatch, tmp_path
+):
+    import nfit.project_composites as composites
+
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    subgroup = mdevent_dataset_group(source)
+    root = DataGroup("Workspace", subgroups=[subgroup])
+    config = data_group_composite_config(_composite_scope(root, subgroup))
+    config.update(enabled=True, minimum_coverage=0)
+    names = ("H", "K", "L", "DeltaE")
+    config["axes"] = [
+        {
+            "name": name,
+            "vector": np.eye(4)[index].tolist(),
+            "mode": "step",
+            "lower": 0.0,
+            "upper": 0.0,
+            "step_size": 0.5,
+            "num_bins": 2,
+            "auto_lower": True,
+            "auto_upper": True,
+            "auto_lower_value": 0.0,
+            "auto_upper_value": 0.0,
+        }
+        for index, name in enumerate(names)
+    ]
+    calls = []
+    monkeypatch.setattr(
+        composites,
+        "mdevent_coordinate_bounds",
+        lambda *_args, **_kwargs: calls.append("scan") or [(0.2, 0.7)] * 4,
+    )
+    reduced = []
+
+    def fake_reduce(_group, *, lower, upper, num_bins, **_kwargs):
+        reduced.append((tuple(lower), tuple(upper)))
+        shape = tuple(num_bins)
+        axes = tuple(
+            MDHistoAxis(
+                name,
+                np.linspace(lo, hi, count + 1),
+                "meV" if name == "DeltaE" else "r.l.u.",
+                "energy" if name == "DeltaE" else "momentum",
+            )
+            for name, lo, hi, count in zip(
+                names, lower, upper, num_bins, strict=True
+            )
+        )
+        return MDHistoData(
+            axes, np.ones(shape), np.ones(shape), np.zeros(shape, dtype=bool),
+            np.ones(shape), metadata={"signal_semantics": "density"},
+        )
+
+    monkeypatch.setattr(composites, "bin_mdevent_group", fake_reduce)
+    composites.composite_dataset_data(root, node=subgroup, apply_spectral_channels=False)
+    assert calls == ["scan"]
+    np.testing.assert_allclose(reduced[-1][0], [0.0] * 4)
+    np.testing.assert_allclose(reduced[-1][1], [0.5] * 4)
+
+    for axis in config["axes"]:
+        axis.update(
+            lower=-2.0, upper=2.0, auto_lower=False, auto_upper=False
+        )
+    calls.clear()
+    composites.composite_dataset_data(root, node=subgroup, apply_spectral_channels=False)
+    assert calls == []
+    np.testing.assert_allclose(reduced[-1][0], [-2.0] * 4)
+    np.testing.assert_allclose(reduced[-1][1], [2.0] * 4)
+
+
 def test_native_mdevent_supports_one_nonuniform_axis_and_minimum_samples(tmp_path):
     source = tmp_path / "events.nxs"
     _write_mdevent(source)

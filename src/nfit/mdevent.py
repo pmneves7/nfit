@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -40,6 +41,8 @@ MDEVENT_TRAJECTORY_BATCH_TASKS = 32_000_000
 MDEVENT_NORMALIZATION_RESERVED_GRIDS = 4
 MDEVENT_EAGER_PARTIAL_MAX_BYTES = 8 * 1024**3
 MDEVENT_EAGER_PARTIAL_BUDGET_FRACTION = 8
+_EVENT_BOUNDS_CACHE: dict[tuple[Any, ...], tuple[tuple[float, float], ...]] = {}
+_EVENT_BOUNDS_CACHE_MAX = 8
 
 
 @dataclass(frozen=True)
@@ -246,6 +249,10 @@ def load_mdevent_run_points(
     source = Path(dataset.metadata["source_file"])
     experiment_index = int(dataset.metadata["mdevent_experiment_index"])
     info = inspect_mdevent_workspace(source)
+    _require_qsample_momentum_dimensions(
+        info.dimensions,
+        operation="loading MDEvent HKLE points",
+    )
     ub = np.asarray(info.ub_matrix, dtype=float)
     transform = np.linalg.inv(2.0 * np.pi * ub)
     pieces: list[np.ndarray] = []
@@ -292,6 +299,49 @@ def load_mdevent_run_points(
     )
 
 
+def _event_run_signal_factors(
+    runs_by_experiment: dict[int, DatasetEntry], experiment_indices: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return per-event calibration-times-weight without Python per-event work."""
+
+    unique, inverse = np.unique(experiment_indices, return_inverse=True)
+    factors = np.empty(unique.size, dtype=float)
+    active = np.empty(unique.size, dtype=bool)
+    for position, index in enumerate(unique):
+        dataset = runs_by_experiment[int(index)]
+        scale = float(dataset.scale_factor)
+        weight = float(dataset.fit_weight)
+        if not np.isfinite(scale):
+            raise ValueError("MDEvent dataset calibration scales must be finite")
+        if not np.isfinite(weight) or weight < 0.0:
+            raise ValueError("MDEvent dataset fit weights must be finite and nonnegative")
+        factors[position] = scale * weight
+        active[position] = weight > 0.0
+    return factors[inverse], active[inverse]
+
+
+def _require_qsample_momentum_dimensions(dimensions, *, operation: str) -> None:
+    """Reject explicitly incompatible lab-frame coordinates in HKLE paths."""
+
+    momentum = list(dimensions or ())[:3]
+    frames = []
+    for dimension in momentum:
+        frame = (
+            dimension.get("frame")
+            if isinstance(dimension, dict)
+            else getattr(dimension, "frame", None)
+        )
+        if frame not in (None, ""):
+            frames.append(str(frame).casefold())
+    if frames and any(frame != "qsample" for frame in frames):
+        raise ValueError(
+            f"{operation} requires QSample momentum dimensions; this source is "
+            "explicitly stored in another frame (for example QLab). Use powder "
+            "reduction for |Q| data or measured-event background replay for a "
+            "lab-frame background."
+        )
+
+
 def bin_mdevent_group(
     group: DatasetGroup,
     *,
@@ -320,6 +370,9 @@ def bin_mdevent_group(
     import h5py
 
     config = group.metadata["mdevent"]
+    _require_qsample_momentum_dimensions(
+        config.get("dimensions"), operation="native MDEvent HKLE binning"
+    )
     selected_runs = list(
         datasets if datasets is not None
         else (group.datasets if run_indices is None else (group.datasets[i] for i in run_indices))
@@ -423,14 +476,25 @@ def bin_mdevent_group(
                         detector_values = mask_norm.value_for_ids(chosen[:, 4].astype(np.int64))
                         chosen = chosen[detector_values > 0.0]
                     if chosen.size:
+                        signal_factors, active_runs = _event_run_signal_factors(
+                            wanted, chosen[:, 2].astype(np.int64)
+                        )
                         hkl = chosen[:, 5:8] @ transform.T
                         for operation in symmetry:
                             transformed_hkl = hkl @ operation.T
                             coords = np.column_stack((transformed_hkl, chosen[:, 8])) @ basis_inverse
                             flat = _flat_bin_indices(coords, edges, shape)
-                            valid = flat >= 0
-                            np.add.at(data_sum_flat, flat[valid], chosen[valid, 0])
-                            np.add.at(variance_sum_flat, flat[valid], chosen[valid, 1])
+                            valid = (flat >= 0) & active_runs
+                            np.add.at(
+                                data_sum_flat,
+                                flat[valid],
+                                chosen[valid, 0] * signal_factors[valid],
+                            )
+                            np.add.at(
+                                variance_sum_flat,
+                                flat[valid],
+                                chosen[valid, 1] * np.square(signal_factors[valid]),
+                            )
                             np.add.at(event_count_flat, flat[valid], 1.0)
                 processed += (stop - start) * len(symmetry)
                 if progress_callback is not None:
@@ -554,6 +618,121 @@ def bin_mdevent_group(
     return result
 
 
+def mdevent_coordinate_bounds(
+    group: DatasetGroup,
+    *,
+    datasets: Iterable[DatasetEntry] | None = None,
+    basis: np.ndarray | None = None,
+    symmetry_operations: Iterable[np.ndarray] | None = None,
+    max_batch_bytes: int = 192 * 1024 * 1024,
+    powder: bool = False,
+    progress_callback: Any | None = None,
+) -> list[tuple[float, float]]:
+    """Return finite bounds of the selected events in output coordinates.
+
+    The source is scanned in bounded chunks and the result is cached by source
+    stat, selected run indices, basis, and symmetry.  This is intentionally
+    separate from the reduction so automatic limits use event extents rather
+    than Mantid's header cube without retaining the event table in memory.
+    """
+    import h5py
+
+    config = group.metadata["mdevent"]
+    if not powder:
+        _require_qsample_momentum_dimensions(
+            config.get("dimensions"), operation="MDEvent HKLE coordinate bounds"
+        )
+    selected = list(datasets if datasets is not None else group.datasets)
+    basis_array = np.eye(4) if basis is None else np.asarray(basis, dtype=float)
+    if basis_array.shape != (4, 4) or not np.all(np.isfinite(basis_array)):
+        raise ValueError("MDEvent bounds require a finite 4D output basis")
+    operations = _symmetry_matrices(symmetry_operations)
+    source_names = sorted({str(item.metadata["source_file"]) for item in selected})
+    run_key = tuple(sorted((str(item.metadata["source_file"]), int(item.metadata["mdevent_experiment_index"])) for item in selected))
+    stat_key = tuple((name, os.stat(name).st_mtime_ns, os.stat(name).st_size) for name in source_names)
+    ub_matrix = np.asarray(config["ub_matrix"], dtype=float)
+    mask_name = str(config.get("mask_file") or "")
+    mask_key = (
+        (mask_name, os.stat(mask_name).st_mtime_ns, os.stat(mask_name).st_size)
+        if mask_name
+        else None
+    )
+    key = (
+        stat_key,
+        run_key,
+        tuple(basis_array.ravel()),
+        tuple(tuple(op.ravel()) for op in operations),
+        tuple(ub_matrix.ravel()),
+        mask_key,
+        str(config["workspace_path"]),
+        bool(powder),
+    )
+    cached = _EVENT_BOUNDS_CACHE.get(key)
+    if cached is not None:
+        return [tuple(bound) for bound in cached]
+    inverse_basis = np.linalg.inv(basis_array)
+    transform = np.linalg.inv(2.0 * np.pi * ub_matrix)
+    detector_mask = load_detector_normalization(mask_name) if mask_name else None
+    lower = np.full(2 if powder else 4, np.inf)
+    upper = np.full(2 if powder else 4, -np.inf)
+    batch_rows = max(1, min(1_000_000, int(max_batch_bytes) // (9 * 8 * 3)))
+    source_sizes: dict[str, int] = {}
+    for source_name in source_names:
+        with h5py.File(source_name, "r") as handle:
+            source_sizes[source_name] = int(
+                handle[f"{config['workspace_path'].strip('/')}/event_data/event_data"].shape[0]
+            )
+    total_rows = sum(source_sizes.values())
+    completed_rows = 0
+    for source_name in source_names:
+        wanted = {
+            int(item.metadata["mdevent_experiment_index"])
+            for item in selected
+            if str(item.metadata["source_file"]) == source_name
+        }
+        with h5py.File(source_name, "r") as handle:
+            values = handle[f"{config['workspace_path'].strip('/')}/event_data/event_data"]
+            for start in range(0, values.shape[0], batch_rows):
+                stop = min(start + batch_rows, values.shape[0])
+                block = np.asarray(values[start:stop], dtype=float)
+                block = block[np.isin(block[:, 2].astype(np.int64), list(wanted))]
+                if block.size and detector_mask is not None:
+                    block = block[
+                        detector_mask.value_for_ids(block[:, 4].astype(np.int64)) > 0.0
+                    ]
+                if block.size:
+                    if powder:
+                        # Stored QSample event coordinates are physical
+                        # inverse-angstrom values, not reciprocal-lattice HKL.
+                        coordinates = np.column_stack(
+                            (np.linalg.norm(block[:, 5:8], axis=1), block[:, 8])
+                        )
+                        coordinate_sets = (coordinates,)
+                    else:
+                        hkl = block[:, 5:8] @ transform.T
+                        coordinate_sets = (
+                            np.column_stack((hkl @ operation.T, block[:, 8]))
+                            @ inverse_basis
+                            for operation in operations
+                        )
+                    for coordinates in coordinate_sets:
+                        finite = np.all(np.isfinite(coordinates), axis=1)
+                        if np.any(finite):
+                            coordinates = coordinates[finite]
+                            lower = np.minimum(lower, np.min(coordinates, axis=0))
+                            upper = np.maximum(upper, np.max(coordinates, axis=0))
+                completed_rows += stop - start
+                if progress_callback is not None:
+                    progress_callback({"stage": "mdevent_bounds", "iteration": completed_rows, "total": total_rows, "message": "scanning event bounds"})
+    if not np.all(np.isfinite(np.r_[lower, upper])):
+        raise ValueError("selected MDEvent sources contain no finite coordinates")
+    result = tuple(zip(lower.tolist(), upper.tolist(), strict=True))
+    if len(_EVENT_BOUNDS_CACHE) >= _EVENT_BOUNDS_CACHE_MAX:
+        _EVENT_BOUNDS_CACHE.pop(next(iter(_EVENT_BOUNDS_CACHE)))
+    _EVENT_BOUNDS_CACHE[key] = result
+    return [tuple(bound) for bound in result]
+
+
 def bin_mdevent_powder_group(
     group: DatasetGroup,
     *,
@@ -675,18 +854,30 @@ def bin_mdevent_powder_group(
                         )
                         chosen = chosen[detector_values > 0.0]
                     if chosen.size:
+                        signal_factors, active_runs = _event_run_signal_factors(
+                            wanted,
+                            chosen[:, EVENT_COLUMNS["experiment_index"]].astype(
+                                np.int64
+                            ),
+                        )
                         q_modulus = np.linalg.norm(chosen[:, 5:8], axis=1)
                         coordinates = np.column_stack((q_modulus, chosen[:, 8]))
                         flat = _flat_bin_indices(coordinates, edges, shape)
-                        valid = flat >= 0
+                        valid = (flat >= 0) & active_runs
                         data_sum.ravel()[:] += np.bincount(
                             flat[valid],
-                            weights=chosen[valid, EVENT_COLUMNS["signal"]],
+                            weights=(
+                                chosen[valid, EVENT_COLUMNS["signal"]]
+                                * signal_factors[valid]
+                            ),
                             minlength=data_sum.size,
                         )
                         variance_sum.ravel()[:] += np.bincount(
                             flat[valid],
-                            weights=chosen[valid, EVENT_COLUMNS["error_squared"]],
+                            weights=(
+                                chosen[valid, EVENT_COLUMNS["error_squared"]]
+                                * np.square(signal_factors[valid])
+                            ),
                             minlength=data_sum.size,
                         )
                         event_count.ravel()[:] += np.bincount(
@@ -1081,7 +1272,10 @@ def _trajectory_payloads(
                 solid = np.ones(detector_ids.size) if detector_norm is None else detector_norm.value_for_ids(detector_ids)
                 if detector_mask is not None:
                     solid[detector_mask.value_for_ids(detector_ids) <= 0.0] = 0.0
-                charge = float(dataset.metadata["proton_charge"])
+                charge = (
+                    float(dataset.metadata["proton_charge"])
+                    * float(dataset.fit_weight)
+                )
                 ei = config.get("incident_energy_override") or float(dataset.metadata["incident_energy"])
                 original_bounds = np.asarray(experiment["logs/processed_histogram_bins/value"][()], dtype=float)
                 gonio = _read_goniometer_matrix(experiment)
@@ -1147,6 +1341,16 @@ def _trajectory_normalization(
         symmetry_operations,
         progress_callback=progress_callback,
     )
+    return _trajectory_normalization_from_payloads(
+        detector_payloads, run_payloads, edges, shape,
+        progress_callback=progress_callback,
+    )
+
+
+def _trajectory_normalization_from_payloads(
+    detector_payloads, run_payloads, edges, shape, *, progress_callback=None,
+):
+    """Integrate prepared trajectories using the shared bounded reducer."""
     if (
         _MDEVENT_NUMBA is not None
         and detector_payloads
@@ -1488,7 +1692,10 @@ def _powder_trajectory_normalization(
                 )
                 if detector_mask is not None:
                     solid[detector_mask.value_for_ids(detector_ids) <= 0.0] = 0.0
-                charge = float(dataset.metadata["proton_charge"])
+                charge = (
+                    float(dataset.metadata["proton_charge"])
+                    * float(dataset.fit_weight)
+                )
                 incident_energy = config.get("incident_energy_override") or float(
                     dataset.metadata["incident_energy"]
                 )

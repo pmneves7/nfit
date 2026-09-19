@@ -13620,17 +13620,22 @@ class NfitProjectExplorer:
         layout.addWidget(QtWidgets.QLabel("Projection"), 3, 0)
         projection = QtWidgets.QComboBox()
         projection.setObjectName("background_projection")
-        projection.addItem("Voxel center (legacy)", "center")
+        projection.addItem("Voxel center", "center")
         supports_trajectory_projection = (
             isinstance(owner, DatasetGroup) and "mdevent" in owner.metadata
         )
         if supports_trajectory_projection or background.projection == "sample_trajectories":
-            projection.addItem("Sample detector trajectories", "sample_trajectories")
+            projection.addItem("Powder through sample trajectories", "sample_trajectories")
+        if supports_trajectory_projection or background.projection == "measured_events":
+            projection.addItem("Measured background at sample angles", "measured_events")
         projection.setToolTip(
-            "Voxel center evaluates B(|Q|, E) once at each target-bin center. "
-            "Sample detector trajectories forward-projects a powder background through "
+            "Voxel center is the fast interpolation of B(|Q|, E) at each target-bin center. "
+            "Powder through sample trajectories forward-projects a spherical powder background through "
             "every MDEvent sample angle and the same detector-trajectory normalization; "
-            "it is available for backgrounds owned by MDEvent dataset groups."
+            "Measured background at sample angles instead replays the measured lab-frame events, "
+            "preserving out-of-plane dependence. It requires a referenced MDEvent group with "
+            "matching detector geometry and incident energy; its powder binning and interpolation "
+            "are not used. These replay modes require an MDEvent sample group."
         )
         projection.setCurrentIndex(max(projection.findData(background.projection), 0))
         projection.currentIndexChanged.connect(
@@ -13644,13 +13649,18 @@ class NfitProjectExplorer:
         layout.addWidget(projection, 3, 1)
         layout.addWidget(QtWidgets.QLabel("Interpolation"), 4, 0)
         interpolation = QtWidgets.QComboBox()
+        interpolation.setObjectName("background_interpolation")
         interpolation.addItem("Linear", "linear")
         interpolation.addItem("Nearest", "nearest")
         interpolation.setToolTip(
-            "Interpolation used for powder data. Identically binned single-crystal subtraction does not interpolate."
+            "Interpolation used for powder data. Measured-event replay and identically binned single-crystal subtraction do not interpolate."
         )
         interpolation.setCurrentIndex(
             max(interpolation.findData(background.interpolation), 0)
+        )
+        interpolation.setEnabled(background.projection != "measured_events")
+        projection.currentIndexChanged.connect(
+            lambda _index: interpolation.setEnabled(projection.currentData() != "measured_events")
         )
         interpolation.currentIndexChanged.connect(
             lambda _index: self._update_background(
