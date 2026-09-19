@@ -44,7 +44,7 @@ A few of its main capabilities are:
   CORELLI and WAND² single-crystal data, with conventional major-tick or
   Brillouin-zone gridline overlays, trajectory-projected powder-background
   subtraction with masked correction windows, directional measured-background
-  replay at sample angles, reversible displayed-axis
+  replay at sample angles with bounded compiled parallel acceleration, reversible displayed-axis
   coarsening, held cross-dataset viewer settings, symmetric color limits, and
   CSV export of maps and cuts;
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;

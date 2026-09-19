@@ -10,11 +10,21 @@ from collections.abc import Iterable
 
 import numpy as np
 
-from . import mdevent
+from . import _parallel, mdevent
 from .event_masks import reduce_masked_event_runs
 from .mdhisto import MDHistoChannel, MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup, MaskSpec
 from .project_masks import _mdhisto_with_nfit_masks
+
+try:
+    from . import _mdevent_background_numba as _REPLAY_NUMBA
+    if _REPLAY_NUMBA.config.DISABLE_JIT:
+        _REPLAY_NUMBA = None
+except ImportError:
+    _REPLAY_NUMBA = None
+
+# Bound work as well as memory, so cancellation is checked between short calls.
+MAX_REPLAY_TRANSFORM_TASKS = 1_000_000
 
 
 def project_measured_background_mdevent(
@@ -198,15 +208,66 @@ def _replay_runs(background, sources, target, prepared, *, max_batch_bytes, prog
                 norm[excluded] = 0
             denominator += norm
         transform_count = len(transforms)
-        # Sorting collisions uses bounded event-by-transform arrays; never
-        # construct or retain the full synthetic event collection.
-        rows = max(1, min(100_000, int(max_batch_bytes) // max(128 * transform_count, 1)))
+        accelerated = _REPLAY_NUMBA is not None
+        backend = "numba" if accelerated else "numpy"
+        workers = _REPLAY_NUMBA.effective_workers(_parallel.num_threads()) if accelerated else 1
+        weights = np.asarray(fractions) * source.fit_weight * source.scale_factor
+        if accelerated:
+            inverses = np.ascontiguousarray([inverse for inverse, _ in transforms])
+            energy_bounds = np.ascontiguousarray([common for _, common in transforms])
+            sorted_ids = np.sort(ids)
+            acceptance_cache = {}
+            acceptance = []
+            for valid_ids in accepted_ids:
+                key = valid_ids.tobytes()
+                if key not in acceptance_cache:
+                    acceptance_cache[key] = np.isin(sorted_ids, valid_ids)
+                acceptance.append(acceptance_cache[key])
+            acceptance, exclusions = _REPLAY_NUMBA.prepare_replay_flags(
+                acceptance,
+                [np.empty(0, dtype=bool) if mask is None else mask for mask in excluded_bins],
+                output_size=size,
+            )
+            bytes_per_row = 128 + _REPLAY_NUMBA.REPLAY_SCRATCH_BYTES_PER_TASK * transform_count
+        else:
+            bytes_per_row = 128 * transform_count + 128
+        # Never materialize the synthetic event collection, or allocate a full
+        # four-dimensional output grid per CPU worker.
+        rows = max(1, min(
+            100_000,
+            int(max_batch_bytes) // max(bytes_per_row, 1),
+            MAX_REPLAY_TRANSFORM_TASKS // max(transform_count, 1),
+        ))
+        workers = min(workers, rows)
         with h5py.File(source.metadata["source_file"], "r") as handle:
             workspace = handle[config["workspace_path"]]
             index = int(source.metadata["mdevent_experiment_index"])
             gonio = mdevent._read_goniometer_matrix(workspace[f"experiment{index}"])
             values = workspace["event_data/event_data"]
+            workers = min(workers, max(1, values.shape[0]))
+
+            def report(
+                completed, *, workers=workers, accelerated=accelerated,
+                total=values.shape[0], backend=backend, run_index=run_index,
+            ):
+                if progress_callback is not None:
+                    mode = f"compiled parallel replay, {workers} CPUs" if accelerated else "NumPy fallback, 1 CPU"
+                    progress_callback({
+                        "stage": "mdevent_background_replay",
+                        "iteration": completed,
+                        "total": total,
+                        "backend": backend,
+                        "workers": workers,
+                        "message": (
+                            f"replaying background run {run_index + 1}/{len(sources)} "
+                            f"at {len(prepared)} sample angles ({mode}): "
+                            f"{completed:,}/{total:,} events"
+                        ),
+                    })
+
+            report(0)
             for start in range(0, values.shape[0], rows):
+                batch_workers = workers
                 block = np.asarray(values[start : start + rows], dtype=float)
                 block = block[block[:, 2].astype(np.int64) == index]
                 if block.size:
@@ -217,38 +278,26 @@ def _replay_runs(background, sources, target, prepared, *, max_batch_bytes, prog
                     lab = block[:, 5:8]
                     if config["dimensions"][0]["frame"] == "QSample":
                         lab = lab @ gonio.T
-                    flat = np.empty((block.shape[0], transform_count), dtype=np.int64)
-                    for column, ((inverse, common), valid_ids, excluded) in enumerate(
-                        zip(transforms, accepted_ids, excluded_bins, strict=True)
-                    ):
-                        coords = np.column_stack((lab @ inverse.T, block[:, 8]))
-                        locations = mdevent._flat_bin_indices(coords, edges, shape)
-                        valid = (
-                            np.isin(block[:, 4].astype(np.int64), valid_ids)
-                            & (block[:, 8] >= common[0])
-                            & (block[:, 8] <= common[1])
+                    if accelerated:
+                        detector_ids = block[:, 4].astype(np.int64)
+                        detector_indices = np.searchsorted(sorted_ids, detector_ids)
+                        known = detector_indices < len(sorted_ids)
+                        if len(sorted_ids):
+                            known &= sorted_ids[np.minimum(detector_indices, len(sorted_ids) - 1)] == detector_ids
+                        detector_indices[~known] = -1
+                        batch_workers = _REPLAY_NUMBA.accumulate_replayed_events(
+                            np.ascontiguousarray(lab), np.ascontiguousarray(block[:, 8]),
+                            detector_indices, np.ascontiguousarray(block[:, 0]),
+                            np.ascontiguousarray(block[:, 1]), inverses, energy_bounds,
+                            weights, acceptance, exclusions, tuple(edges), np.asarray(shape, dtype=np.int64),
+                            numerator, variance, events, workers=workers,
                         )
-                        if excluded is not None:
-                            valid &= ~excluded[np.maximum(locations, 0)]
-                        flat[:, column] = np.where(valid, locations, -1)
-                    _accumulate_correlated_events(
-                        flat,
-                        np.asarray(fractions) * source.fit_weight * source.scale_factor,
-                        block[:, 0],
-                        block[:, 1],
-                        numerator,
-                        variance,
-                        events,
-                    )
-                if progress_callback is not None:
-                    progress_callback(
-                        {
-                            "stage": "mdevent_background_replay",
-                            "iteration": min(start + rows, values.shape[0]),
-                            "total": values.shape[0],
-                            "message": f"replaying background run {run_index + 1}/{len(sources)} at {len(prepared)} sample angles: {min(start + rows, values.shape[0]):,}/{values.shape[0]:,} events",
-                        }
-                    )
+                    else:
+                        _replay_numpy_block(
+                            block, lab, transforms, accepted_ids, excluded_bins,
+                            edges, shape, weights, numerator, variance, events,
+                        )
+                report(min(start + rows, values.shape[0]), workers=batch_workers)
     with np.errstate(divide="ignore", invalid="ignore"):
         signal = numerator / denominator
         errors = np.sqrt(variance) / denominator
@@ -284,6 +333,30 @@ def _replay_runs(background, sources, target, prepared, *, max_batch_bytes, prog
                 denominator.reshape(shape), label="Replayed detector-trajectory normalization"
             )
         },
+    )
+
+
+def _replay_numpy_block(
+    block, lab, transforms, accepted_ids, excluded_bins,
+    edges, shape, weights, numerator, variance, events,
+):
+    """Reference implementation used when the optional compiled backend is absent."""
+    flat = np.empty((block.shape[0], len(transforms)), dtype=np.int64)
+    for column, ((inverse, common), valid_ids, excluded) in enumerate(
+        zip(transforms, accepted_ids, excluded_bins, strict=True)
+    ):
+        coords = np.column_stack((lab @ inverse.T, block[:, 8]))
+        locations = mdevent._flat_bin_indices(coords, edges, shape)
+        valid = (
+            np.isin(block[:, 4].astype(np.int64), valid_ids)
+            & (block[:, 8] >= common[0])
+            & (block[:, 8] <= common[1])
+        )
+        if excluded is not None:
+            valid &= ~excluded[np.maximum(locations, 0)]
+        flat[:, column] = np.where(valid, locations, -1)
+    _accumulate_correlated_events(
+        flat, weights, block[:, 0], block[:, 1], numerator, variance, events,
     )
 
 

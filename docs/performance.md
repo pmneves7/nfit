@@ -46,6 +46,29 @@ disables enforcement.
 Use `benchmarks/benchmark_rebin.py` to measure representative grids on the
 target machine.
 
+### Measured-background replay
+
+Measured-event background replay uses a compiled parallel Numba kernel when
+available. Each original event is transformed at the sample angles and symmetry
+operations; copies landing in the same output bin are combined before their
+variance is accumulated. Worker-local lookup tables avoid repeatedly searching
+all earlier angle copies. A deterministic compiled scatter updates the shared
+output arrays without allocating a full four-dimensional histogram per worker.
+
+Both temporary memory and event-transform work per batch are bounded. Progress
+and cancellation are checked before replay and between batches, and the dialog
+reports the backend and CPU count. The first call may need JIT compilation;
+compiled kernels are cached for later sessions. Without Numba, or with JIT
+compilation disabled, the reference
+NumPy implementation remains available and is explicitly identified in progress.
+The work still scales with the number of source events, angles, and symmetry
+operations, and must be repeated for different output grids.
+
+Use `benchmarks/benchmark_measured_background_replay.py` to compare the warmed
+event kernel with the NumPy reference at 722 synthetic sample angles. This
+benchmark excludes file loading and detector-trajectory normalization and is
+not an end-to-end runtime prediction for a project.
+
 ## Performance preferences and benchmarks
 
 **File → Preferences → Performance** provides one **CPU limit** and one **RAM

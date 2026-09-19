@@ -849,7 +849,10 @@ are accepted (detector directions within 0.1°, incident energy within 0.1%);
 the replay retains the measured background geometry. The source's private powder
 binning and the interpolation selector are not used. Source user masks still
 apply at reconstructed output-bin centers; sample masks and both detector masks
-restrict the replay acceptance. Work is chunked with progress and cancellation,
+restrict the replay acceptance. With Numba enabled, event replay uses a compiled
+parallel kernel bounded by the central CPU limit. The progress dialog identifies
+the compiled backend and CPU count, or explicitly reports the slower NumPy
+fallback when Numba is unavailable or JIT compilation is disabled. Work is chunked with progress and cancellation,
 but replaying many angles costs more than voxel-center interpolation. Repeated
 copies of an event landing in the same voxel are combined before propagating
 variance, so they do not manufacture independent counting statistics. Covariance

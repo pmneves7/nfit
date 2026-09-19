@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import nfit.mdevent_background as mdevent_background
 from nfit import (
     BackgroundSpec,
     DataGroup,
@@ -29,6 +30,20 @@ def _one_voxel(group):
     )
 
 
+def _assert_replay_results_equal(actual, expected):
+    np.testing.assert_array_equal(actual.mask, expected.mask)
+    np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
+    np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
+    np.testing.assert_allclose(actual.num_events, expected.num_events)
+    np.testing.assert_allclose(
+        actual.metadata["normalization_denominator"],
+        expected.metadata["normalization_denominator"],
+    )
+    assert actual.metadata["event_weight_rms"] == pytest.approx(
+        expected.metadata["event_weight_rms"]
+    )
+
+
 def test_replay_same_geometry_matches_native_and_preserves_source_statistics(tmp_path):
     path = tmp_path / "events.nxs"
     _write_mdevent(path)
@@ -42,7 +57,15 @@ def test_replay_same_geometry_matches_native_and_preserves_source_statistics(tmp
     np.testing.assert_allclose(result.signal, target.signal)
     np.testing.assert_allclose(result.errors, target.errors)
     assert not result.mask.item()
-    assert any(event["stage"] == "mdevent_background_replay" for event in progress)
+    replay_progress = [
+        event for event in progress if event["stage"] == "mdevent_background_replay"
+    ]
+    assert replay_progress
+    expected_backend = "numba" if mdevent_background._REPLAY_NUMBA is not None else "numpy"
+    assert {event["backend"] for event in replay_progress} == {expected_backend}
+    assert all(event["workers"] >= 1 for event in replay_progress)
+    expected_message = "compiled parallel" if expected_backend == "numba" else "NumPy fallback"
+    assert expected_message in replay_progress[0]["message"]
     # Repeating the same angle cannot manufacture extra independent counts.
     duplicate = [replace(sample.datasets[0]) for _ in range(5)]
     repeated = project_measured_background_mdevent(sample, background, target, datasets=duplicate)
@@ -94,6 +117,72 @@ def test_correlated_event_copies_merge_before_squaring():
     np.testing.assert_allclose(numerator, [8, 4, 20])
     np.testing.assert_allclose(variance, [64, 16, 144])
     np.testing.assert_allclose(events, [1, 1, 1])
+
+
+def test_accelerated_replay_matches_numpy_for_masks_collisions_and_small_batches(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "events.nxs"
+    _write_mdevent(path)
+    sample = mdevent_dataset_group(path)
+    background = mdevent_dataset_group(path)
+    if mdevent_background._REPLAY_NUMBA is None:
+        pytest.skip("Numba replay backend is not installed")
+
+    # Repeated sample angles and duplicate symmetry transforms force correlated
+    # copies of each source event to collide in the same output bin. Signed
+    # calibration and a non-unit fit weight exercise the complete weight path.
+    sample.datasets = [
+        replace(sample.datasets[0], fit_weight=0.25),
+        replace(sample.datasets[0], fit_weight=1.75),
+    ]
+    for source in background.datasets:
+        source.scale_factor = -2.5
+        source.fit_weight = 0.4
+    sample.masks = [
+        MaskSpec("masked edge", "energy_q_range", {"energy": [0.6, 1.0]})
+    ]
+    target = bin_mdevent_group(
+        sample,
+        lower=[-1, -1, -1, -1],
+        upper=[1, 1, 1, 1],
+        num_bins=[1, 1, 1, 4],
+        symmetry_operations=[np.eye(3), np.eye(3)],
+    )
+
+    numpy_block = mdevent_background._replay_numpy_block
+
+    def forbid_numpy_fallback(*_args, **_kwargs):
+        raise AssertionError("compiled replay unexpectedly used the NumPy fallback")
+
+    monkeypatch.setattr(mdevent_background, "_replay_numpy_block", forbid_numpy_fallback)
+    accelerated = project_measured_background_mdevent(
+        sample, background, target, max_batch_bytes=128
+    )
+    monkeypatch.setattr(mdevent_background, "_replay_numpy_block", numpy_block)
+    monkeypatch.setattr(mdevent_background, "_REPLAY_NUMBA", None)
+    fallback_progress = []
+    fallback = project_measured_background_mdevent(
+        sample,
+        background,
+        target,
+        max_batch_bytes=128,
+        progress_callback=fallback_progress.append,
+    )
+
+    _assert_replay_results_equal(accelerated, fallback)
+    assert np.any((accelerated.num_events == 0) & ~accelerated.mask)
+    assert np.any(accelerated.num_events > 0)
+    assert np.any(accelerated.signal < 0)
+    replay_progress = [
+        event
+        for event in fallback_progress
+        if event["stage"] == "mdevent_background_replay"
+    ]
+    assert replay_progress
+    assert {event["backend"] for event in replay_progress} == {"numpy"}
+    assert {event["workers"] for event in replay_progress} == {1}
+    assert "NumPy fallback" in replay_progress[0]["message"]
 
 
 @pytest.mark.parametrize("source_frame", ["QSample", "QLab"])
@@ -235,6 +324,10 @@ def test_replay_rejects_mismatched_instrument_and_supports_cancellation(tmp_path
 
     def cancel(event):
         if event["stage"] == "mdevent_background_replay":
+            assert event["iteration"] == 0
+            expected = "numba" if mdevent_background._REPLAY_NUMBA is not None else "numpy"
+            assert event["backend"] == expected
+            assert event["workers"] >= 1
             raise RuntimeError("cancelled")
 
     with pytest.raises(RuntimeError, match="cancelled"):
