@@ -535,6 +535,28 @@ implementation without Qt widgets.
 
 ## Rebinning and composites
 
+Rebin settings are presented at the output they control:
+
+- An enabled composite collection owns its output grid. Its member datasets
+  show a link to that collection's binning settings.
+- Native event runs use their collection's grid rather than a separate run-level
+  rebin editor.
+- An organizational collection shows **Combine as rebinned output** instead of
+  a full recipe editor. Enable it to create a composite output. Existing enabled
+  named visualization binnings remain accessible even when fit combining is off.
+- Independent datasets have their own editor. For ordinary datasets inside a
+  composite, **Edit separate dataset binning** opens the private dataset recipe;
+  it does not change the containing composite's grid. Saved recipes are retained.
+
+Background sources and background links explain which recipe subtraction uses.
+Collection-based powder projection uses the source collection's composite
+recipe. Measured-event replay instead bins source events on the sample grid and
+ignores the background's private view recipe; source masks and background scales
+still apply. Dataset-level subtraction uses the linked dataset's enabled private
+recipe. For a collection referencing a dataset directly, raw points follow the
+collection grid, whereas histograms must already align or support powder
+projection; the private view recipe does not control that subtraction.
+
 Rebinning affects both viewing and fitting. It supports:
 
 - multiple named rebin configurations for each dataset or dataset collection;

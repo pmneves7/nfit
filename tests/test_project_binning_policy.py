@@ -1,0 +1,187 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import pytest
+
+from nfit import project_data, project_rebinning
+from nfit.pipeline import BackgroundSpec, DataGroup, DatasetEntry, DatasetGroup
+from nfit.project_binning_policy import (
+    background_rebin_explanation,
+    background_source_explanations,
+    rebin_presentation_policy,
+)
+from nfit.project_imports import GROUP_COMPOSITE_KEY
+
+
+def _enabled(name: str, **kwargs) -> DatasetGroup:
+    group = DatasetGroup(name, **kwargs)
+    group.metadata[GROUP_COMPOSITE_KEY] = {"enabled": True}
+    return group
+
+
+def test_standalone_dataset_owns_editable_recipe_without_mutation() -> None:
+    dataset = DatasetEntry("scan", None, parameters={"rebin": {"enabled": True}})
+    root = DataGroup("root", datasets=[dataset])
+    before = dict(dataset.parameters["rebin"])
+
+    policy = rebin_presentation_policy(root, dataset)
+
+    assert policy.owner is dataset
+    assert policy.owner_kind == "dataset"
+    assert policy.show_editor and not policy.linked
+    assert dataset.parameters["rebin"] == before
+
+
+def test_nearest_enabled_nested_composite_owns_member_grid() -> None:
+    dataset = DatasetEntry("scan", None)
+    child = _enabled("child", datasets=[dataset])
+    parent = _enabled("parent", subgroups=[child])
+    root = DataGroup("root", subgroups=[parent])
+
+    policy = rebin_presentation_policy(root, dataset)
+
+    assert policy.owner is child
+    assert policy.linked and not policy.show_editor
+    assert policy.allow_independent_recipe
+
+
+def test_disabled_organizational_collection_has_no_recipe_editor() -> None:
+    child = DatasetGroup("folder")
+    root = DataGroup("root", subgroups=[child])
+
+    policy = rebin_presentation_policy(root, child)
+
+    assert policy.owner is None
+    assert policy.owner_kind == "none"
+    assert not policy.show_editor
+    assert not policy.show_binning_selector
+
+
+def test_disabled_collection_still_exposes_enabled_named_output_selector() -> None:
+    child = DatasetGroup(
+        "folder",
+        metadata={
+            "composite_binnings": {
+                "items": [{"id": "view", "config": {"enabled": True}}]
+            }
+        },
+    )
+    root = DataGroup("root", subgroups=[child])
+
+    policy = rebin_presentation_policy(root, child)
+
+    assert policy.owner is child
+    assert policy.owner_kind == "composite"
+    assert not policy.show_editor
+    assert policy.show_binning_selector
+
+
+@pytest.mark.parametrize(
+    ("kind", "metadata_key"),
+    [("mdevent", "mdevent"), ("raw_dgs_nexus", "raw_dgs")],
+)
+def test_native_event_leaf_is_controlled_by_collection_before_combine_enabled(
+    kind: str, metadata_key: str
+) -> None:
+    dataset = DatasetEntry("run", None, kind=kind, parameters={"rebin": {"legacy": True}})
+    collection = DatasetGroup(
+        "events", datasets=[dataset], metadata={metadata_key: {"source": "runs"}}
+    )
+    root = DataGroup("root", subgroups=[collection])
+
+    policy = rebin_presentation_policy(root, dataset)
+
+    assert policy.owner is collection
+    assert policy.owner_kind == "composite"
+    assert policy.linked and not policy.show_editor
+    assert not policy.allow_independent_recipe
+    assert dataset.parameters["rebin"] == {"legacy": True}
+
+
+def test_policy_module_stays_gui_independent_and_avoids_data_facade() -> None:
+    source_path = Path(__file__).parents[1] / "src/nfit/project_binning_policy.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    imports = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            imports.add(node.module)
+
+    assert not any(
+        name == forbidden or name.startswith(f"{forbidden}.")
+        for name in imports
+        for forbidden in ("PySide6", "project_gui", "project_data")
+    )
+
+
+def test_dataset_binning_registry_key_is_reexported_from_authoritative_service() -> None:
+    assert project_data.DATASET_REBIN_BINNINGS_KEY is (
+        project_rebinning.DATASET_REBIN_BINNINGS_KEY
+    )
+    assert project_rebinning.DATASET_REBIN_BINNINGS_KEY == "rebin_binnings"
+
+
+def test_root_data_group_can_own_enabled_composite() -> None:
+    root = DataGroup("root", metadata={GROUP_COMPOSITE_KEY: {"enabled": True}})
+
+    policy = rebin_presentation_policy(root, root)
+
+    assert policy.owner is root
+    assert policy.show_editor
+
+
+def test_foreign_selection_is_rejected() -> None:
+    with pytest.raises(ValueError, match="not contained"):
+        rebin_presentation_policy(DataGroup("root"), DatasetEntry("foreign", None))
+
+
+def test_background_explanations_distinguish_recipe_consumption() -> None:
+    source_group = DatasetGroup("backgrounds")
+    grouped = BackgroundSpec("group", source_group=source_group)
+    direct = BackgroundSpec("direct", source_entry=DatasetEntry("background", None))
+    measured = BackgroundSpec(
+        "events", source_group=source_group, projection="measured_events"
+    )
+
+    assert "composite rebin recipe" in background_rebin_explanation(grouped)
+    assert "does not control subtraction" in background_rebin_explanation(direct)
+    assert "private view recipe is not used" in background_rebin_explanation(measured)
+
+
+def test_background_explanation_uses_stable_ids_without_runtime_links() -> None:
+    grouped = BackgroundSpec("group", source_group_id="group-id")
+    direct = BackgroundSpec("direct", source_dataset_id="dataset-id")
+    disabled = BackgroundSpec("off", source_group_id="group-id", enabled=False)
+
+    assert "composite rebin recipe" in background_rebin_explanation(grouped)
+    assert "does not control subtraction" in background_rebin_explanation(direct)
+    assert "disabled" in background_rebin_explanation(disabled)
+
+
+def test_dataset_owned_background_consumes_source_private_recipe() -> None:
+    source = DatasetEntry("source", None)
+    background = BackgroundSpec("background", source_dataset_id=source.id)
+    target = DatasetEntry("target", None, backgrounds=[background])
+    root = DataGroup("root", datasets=[source, target])
+
+    detail = background_rebin_explanation(background, owner=target)
+    uses = background_source_explanations(root, source)
+
+    assert "enabled private rebin recipe" in detail
+    assert len(uses) == 1
+    assert "target" in uses[0]
+
+
+def test_source_explanations_resolve_group_id_without_runtime_link() -> None:
+    source = DatasetGroup("source")
+    background = BackgroundSpec("background", source_group_id=source.id)
+    target = DatasetGroup("target", backgrounds=[background])
+    root = DataGroup("root", subgroups=[source, target])
+
+    uses = background_source_explanations(root, source)
+
+    assert len(uses) == 1
+    assert "composite rebin recipe" in uses[0]

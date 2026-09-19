@@ -37,6 +37,7 @@ provides double-click startup and a Dock icon using your existing environment.
 A few of its main capabilities are:
 
 - import, combine, mask, rebin, and visualize multidimensional neutron data,
+  with output-owned binning controls and explicit background recipe context,
   including raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data,
   raw CORELLI finite-energy correlation-chopper reconstruction with fractional
   momentum and discrete reconstructed-energy assignment, and reduced

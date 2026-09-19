@@ -297,6 +297,9 @@ from .project_point_lists import (
     prepared_point_list_data as prepared_point_list_data,
 )
 from .project_rebinning import (
+    DATASET_REBIN_BINNINGS_KEY as DATASET_REBIN_BINNINGS_KEY,
+)
+from .project_rebinning import (
     DEFAULT_MINIMUM_COVERAGE as DEFAULT_MINIMUM_COVERAGE,
 )
 from .project_rebinning import (
@@ -518,7 +521,6 @@ from .symmetry import (  # noqa: F401
 )
 
 DATASET_REBIN_KEY = "rebin"
-DATASET_REBIN_BINNINGS_KEY = "rebin_binnings"
 FIT_BINNING_ID = "fit"
 DATASET_MASK_APPLICATION_KEY = "mask_application"
 GROUP_COMPOSITE_NAME = "Composite"

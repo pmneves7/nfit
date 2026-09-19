@@ -72,6 +72,7 @@ def test_corelli_composite_migrates_to_fractional_momentum_and_discrete_energy()
     }
     batch = DatasetGroup("CORELLI", metadata={"raw_dgs": raw_dgs})
     batch.metadata[project_gui.GROUP_COMPOSITE_KEY] = {
+        "enabled": True,
         "auto_rebin": False,
         "stale": False,
         "axes": [
@@ -591,6 +592,7 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
     assert composite_disk_size == saved_sizes["composite"]
 
     explorer = NfitProjectExplorer(project)
+    explorer._expanded_independent_rebin_ids = {dataset.id}
     explorer._set_dataset_details(dataset, group)
     dataset_size_label = explorer.details_widget.findChild(
         QtWidgets.QLabel,
@@ -892,6 +894,7 @@ def test_rebin_information_panels_do_not_decode_lazy_project_cache(
     )
 
     explorer = NfitProjectExplorer(restored)
+    explorer._expanded_independent_rebin_ids = {restored_dataset.id}
     explorer._set_dataset_details(restored_dataset, restored_group)
     assert explorer._refresh_dataset_rebin_controls(
         restored_dataset,
@@ -2463,6 +2466,7 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     second.fit_weight = 2.0
     group = DataGroup("Datagroup1", datasets=[first, second])
     initial = project_gui.data_group_composite_config(group)
+    initial["enabled"] = True
     initial["axes"][1].update(
         lower=1.3,
         upper=1.3,
@@ -2638,17 +2642,17 @@ def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypat
 
     config = project_gui.data_group_composite_config(group)
     assert config["auto_rebin"] is False
-    auto_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_auto")
-    assert auto_check is not None
-    assert not auto_check.isChecked()
-    status_label = explorer.details_widget.findChild(QtWidgets.QLabel, "group_composite_status")
-    assert status_label is not None
-
     refresh_calls = []
     monkeypatch.setattr(explorer, "refresh_slice_viewer", lambda group: refresh_calls.append(group))
     checkbox = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_enabled")
     assert checkbox is not None
     checkbox.setChecked(True)
+
+    auto_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_auto")
+    assert auto_check is not None
+    assert not auto_check.isChecked()
+    status_label = explorer.details_widget.findChild(QtWidgets.QLabel, "group_composite_status")
+    assert status_label is not None
 
     assert refresh_calls == []
     assert config["stale"] is True
@@ -3044,6 +3048,7 @@ def test_rebin_symmetry_toggle_preserves_expression_and_notation(monkeypatch):
         {"mode": "point_group", "expression": "m-3m"}
     )
     composite_config = project_gui.data_group_composite_config(group)
+    composite_config["enabled"] = True
     composite_config["auto_rebin"] = False
     composite_config["symmetry"].update(
         {"mode": "operations", "expression": "x,y,z;-x,-y,-z"}
@@ -3058,6 +3063,7 @@ def test_rebin_symmetry_toggle_preserves_expression_and_notation(monkeypatch):
     assert dataset_config["symmetry"]["mode"] == "point_group"
     assert dataset_config["symmetry"]["expression"] == "m-3m"
 
+    explorer._expanded_independent_rebin_ids = {dataset.id}
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
     dataset_expression = explorer.details_widget.findChild(
         QtWidgets.QLineEdit, "dataset_rebin_symmetry_expression"

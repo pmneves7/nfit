@@ -12055,6 +12055,25 @@ class NfitProjectExplorer:
             return None
         return self._dataset_group_roles.get(id(item))
 
+    def _navigate_to_binning_owner(
+        self, root: DataGroup, owner: DataGroup | DatasetGroup,
+    ) -> bool:
+        """Select an existing collection row without rebuilding or loading data."""
+        role = "datasets" if owner is root else "dataset_group"
+        key = (role, self._tree_state_identity(owner))
+        item = self._tree_items_by_state_key().get(key)
+        if item is None or self._objects_for_item(item)[0] is not root:
+            return False
+        parent = item.parent()
+        while parent is not None:
+            parent.setExpanded(True)
+            parent = parent.parent()
+        self.tree.clearSelection()
+        self.tree.setCurrentItem(item)
+        item.setSelected(True)
+        self.tree.scrollToItem(item)
+        return True
+
     def _background_owner_for_item(
         self, item: Any
     ) -> DatasetEntry | DataGroup | DatasetGroup | None:
@@ -13546,6 +13565,8 @@ class NfitProjectExplorer:
     ) -> None:
         from PySide6 import QtWidgets
 
+        from .project_binning_policy import background_rebin_explanation
+
         self._clear_details_panel()
         box = QtWidgets.QGroupBox("Background subtraction")
         box.setToolTip(
@@ -13671,6 +13692,22 @@ class NfitProjectExplorer:
             )
         )
         layout.addWidget(interpolation, 4, 1)
+        binning_explanation = QtWidgets.QLabel()
+        binning_explanation.setObjectName("background_binning_explanation")
+        binning_explanation.setWordWrap(True)
+        binning_explanation.setToolTip(
+            "Identifies which binning recipe this background subtraction actually uses. "
+            "Selecting a different projection can change whether the source's viewing grid is used."
+        )
+
+        def update_binning_explanation(*_args: Any) -> None:
+            binning_explanation.setText(background_rebin_explanation(background, owner=owner))
+
+        update_binning_explanation()
+        projection.currentIndexChanged.connect(update_binning_explanation)
+        source_combo.currentIndexChanged.connect(update_binning_explanation)
+        enabled.toggled.connect(update_binning_explanation)
+        layout.addWidget(binning_explanation, 5, 0, 1, 2)
         self.details_layout.addWidget(box)
         self.details_layout.addStretch(1)
 

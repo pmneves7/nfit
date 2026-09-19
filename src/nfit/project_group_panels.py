@@ -165,7 +165,123 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     from PySide6 import QtWidgets
 
     from .metadata_dimensions_gui import metadata_dimensions_panel, metadata_rebin_rows
+    from .project_binning_policy import (
+        background_source_explanations,
+        rebin_presentation_policy,
+    )
     from .project_rebin_panels import add_rebin_assignment_items, add_rebin_mode_items
+
+    root = _composite_root(group)
+    selection = group.node if isinstance(group, _CompositeScope) else group
+    policy = rebin_presentation_policy(root, selection)
+    source_notes = background_source_explanations(root, selection)
+    selection_key = getattr(selection, "id", f"root:{id(selection)}")
+    expanded_ids = getattr(self, "_expanded_inactive_composite_ids", set())
+    show_inactive_editor = selection_key in expanded_ids
+    if not policy.show_editor and not show_inactive_editor:
+        ownership_box = QtWidgets.QGroupBox("Binning output")
+        ownership_box.setObjectName("group_composite_ownership")
+        ownership_box.setToolTip(
+            "A collection becomes a binning owner when it is explicitly combined as a rebinned output."
+        )
+        ownership_layout = QtWidgets.QVBoxLayout(ownership_box)
+        ownership_message = QtWidgets.QLabel(policy.message)
+        ownership_message.setObjectName("group_composite_ownership_message")
+        ownership_message.setWordWrap(True)
+        ownership_message.setToolTip(ownership_box.toolTip())
+        ownership_layout.addWidget(ownership_message)
+        if policy.show_binning_selector:
+            binning_row = QtWidgets.QHBoxLayout()
+            binning_row.addWidget(QtWidgets.QLabel("Visualization binning"))
+            binning_combo = QtWidgets.QComboBox()
+            binning_combo.setObjectName("group_composite_binning")
+            binnings = data_group_composite_binnings(group)
+            selected_binning = self._selected_composite_binning(group)
+            enabled_binnings = [
+                item for item in binnings if item["config"].get("enabled")
+            ]
+            if enabled_binnings and selected_binning not in enabled_binnings:
+                selected_binning = enabled_binnings[0]
+                self._selected_composite_binning_ids[selection_key] = selected_binning[
+                    "id"
+                ]
+                selection._nfit_selected_binning_id = selected_binning["id"]
+            for item in binnings:
+                if item["config"].get("enabled"):
+                    binning_combo.addItem(item["name"], item["id"])
+            binning_combo.setCurrentIndex(
+                max(binning_combo.findData(selected_binning["id"]), 0)
+            )
+            binning_combo.setToolTip(
+                "Choose an enabled visualization recipe retained for this collection."
+            )
+            binning_combo.currentIndexChanged.connect(
+                lambda _index, combo=binning_combo: self._select_composite_binning(
+                    group, str(combo.currentData())
+                )
+            )
+            binning_row.addWidget(binning_combo, 1)
+            edit_binning = QtWidgets.QPushButton("Edit selected binning")
+            edit_binning.setObjectName("group_composite_edit_visualization")
+            edit_binning.setToolTip(
+                "Open the retained visualization recipe without enabling the fit composite."
+            )
+
+            def show_visualization_editor(_checked=False):
+                ids = set(getattr(self, "_expanded_inactive_composite_ids", set()))
+                ids.add(selection_key)
+                self._expanded_inactive_composite_ids = ids
+                self._set_dataset_collection_details(root, selection)
+
+            edit_binning.clicked.connect(show_visualization_editor)
+            binning_row.addWidget(edit_binning)
+            ownership_layout.addLayout(binning_row)
+        can_combine, status_message = data_group_composite_status(group)
+        if status_message:
+            status = QtWidgets.QLabel(status_message)
+            status.setObjectName("group_composite_ownership_status")
+            status.setWordWrap(True)
+            status.setToolTip(
+                "Explains whether the datasets in this collection can form one compatible output."
+            )
+            ownership_layout.addWidget(status)
+        enable_button = QtWidgets.QCheckBox("Combine as rebinned output")
+        enable_button.setObjectName("group_composite_enabled")
+        enable_button.setEnabled(can_combine)
+        enable_button.setToolTip(
+            "Make this collection an explicit combined output and open its editable binning recipe."
+            if can_combine
+            else status_message
+        )
+
+        def enable_fit_composite(checked):
+            if not checked:
+                return
+            fit_binning = next(
+                item for item in data_group_composite_binnings(group) if item["fit"]
+            )
+            self._selected_composite_binning_ids[selection_key] = fit_binning["id"]
+            selection._nfit_selected_binning_id = fit_binning["id"]
+            self._set_group_composite_enabled(group, True)
+
+        enable_button.toggled.connect(
+            enable_fit_composite
+        )
+        ownership_layout.addWidget(enable_button)
+        if source_notes:
+            sources = QtWidgets.QGroupBox("Background consumers")
+            sources.setObjectName("group_background_source_explanations")
+            sources.setToolTip(
+                "Shows where this collection is linked as a background and whether its binning recipe is used."
+            )
+            sources_layout = QtWidgets.QVBoxLayout(sources)
+            for note in source_notes:
+                source_label = QtWidgets.QLabel(note)
+                source_label.setWordWrap(True)
+                source_label.setToolTip(sources.toolTip())
+                sources_layout.addWidget(source_label)
+            ownership_layout.addWidget(sources)
+        return ownership_box
 
     box = QtWidgets.QGroupBox("Composite dataset")
     box.setToolTip(
@@ -176,6 +292,19 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     )
     layout = QtWidgets.QVBoxLayout(box)
     layout.setContentsMargins(10, 8, 10, 8)
+    if source_notes:
+        sources = QtWidgets.QGroupBox("Background consumers")
+        sources.setObjectName("group_background_source_explanations")
+        sources.setToolTip(
+            "Shows where this collection is linked as a background and whether its binning recipe is used."
+        )
+        sources_layout = QtWidgets.QVBoxLayout(sources)
+        for note in source_notes:
+            source_label = QtWidgets.QLabel(note)
+            source_label.setWordWrap(True)
+            source_label.setToolTip(sources.toolTip())
+            sources_layout.addWidget(source_label)
+        layout.addWidget(sources)
     binnings = data_group_composite_binnings(group)
     selected_binning = self._selected_composite_binning(group)
     config = selected_binning["config"]

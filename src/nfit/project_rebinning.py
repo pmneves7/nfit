@@ -45,6 +45,7 @@ DEFAULT_REBIN_MAX_BATCH_MB = 192
 DEFAULT_MINIMUM_COVERAGE = 0.0
 DEFAULT_MINIMUM_SAMPLES = 0.0
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
+DATASET_REBIN_BINNINGS_KEY = "rebin_binnings"
 REBIN_AXIS_MODES = frozenset({"discrete", "step", "bins", "edges", "tolerance"})
 MDHISTO_STREAM_MIN_POINTS = 250_000
 """Conservative streaming crossover; see benchmarks/results/large-array-report.md.

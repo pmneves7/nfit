@@ -75,6 +75,8 @@ different Python.
   rebinning, and histogram construction.
 - `src/nfit/project_rebin_panels.py`: shared Qt controls for dataset and
   composite rebin settings, metadata dimensions, and bin summaries.
+- `src/nfit/project_binning_policy.py`: read-only rebin ownership and background
+  recipe-consumption presentation policy.
 - `src/nfit/project_view_data.py`: immutable scale, kinematic, spectral-channel,
   and metadata transformations for viewer-ready datasets.
 - `src/nfit/project_summary.py`: bounded, reusable numerical counts for

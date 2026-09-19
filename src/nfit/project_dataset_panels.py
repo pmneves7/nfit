@@ -575,10 +575,101 @@ def _dataset_axes_group_box(
     label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
     layout.addWidget(label)
 
+    policy = None
+    show_independent_editor = False
+    if group is not None:
+        from .project_binning_policy import (
+            background_source_explanations,
+            rebin_presentation_policy,
+        )
+
+        source_notes = background_source_explanations(group, dataset)
+        if source_notes:
+            source_box = QtWidgets.QGroupBox("Background consumers")
+            source_box.setObjectName("dataset_background_source_explanations")
+            source_box.setToolTip(
+                "Shows where this dataset is linked as a background and whether its binning recipe is used."
+            )
+            source_layout = QtWidgets.QVBoxLayout(source_box)
+            for note in source_notes:
+                source_label = QtWidgets.QLabel(note)
+                source_label.setWordWrap(True)
+                source_label.setToolTip(source_box.toolTip())
+                source_layout.addWidget(source_label)
+            layout.addWidget(source_box)
+
+        policy = rebin_presentation_policy(group, dataset)
+        if policy.linked:
+            ownership_box = QtWidgets.QGroupBox("Binning ownership")
+            ownership_box.setObjectName("dataset_rebin_ownership")
+            ownership_box.setToolTip(
+                "Shows which collection controls this dataset's default viewing and fitting grid."
+            )
+            ownership_layout = QtWidgets.QVBoxLayout(ownership_box)
+            ownership_message = QtWidgets.QLabel(policy.message)
+            ownership_message.setObjectName("dataset_rebin_ownership_message")
+            ownership_message.setWordWrap(True)
+            ownership_message.setToolTip(
+                "This dataset participates in its collection's binning recipe by default. "
+                "Selecting the collection lets you edit the recipe that controls combined viewing and fitting."
+            )
+            ownership_layout.addWidget(ownership_message)
+            ownership_actions = QtWidgets.QHBoxLayout()
+            navigate_button = QtWidgets.QPushButton(
+                f"Go to {getattr(policy.owner, 'name', 'collection')} binning"
+            )
+            navigate_button.setObjectName("dataset_rebin_navigate_owner")
+            navigate_button.setToolTip(
+                "Select the collection that owns the binning recipe used for this dataset."
+            )
+            navigate_button.clicked.connect(
+                lambda _checked=False, owner=policy.owner: self._navigate_to_binning_owner(
+                    group, owner
+                )
+            )
+            ownership_actions.addWidget(navigate_button)
+            independent_button = None
+            if policy.allow_independent_recipe and _dataset_can_rebin(dataset):
+                expanded_ids = getattr(self, "_expanded_independent_rebin_ids", set())
+                show_independent_editor = dataset.id in expanded_ids
+                independent_button = QtWidgets.QPushButton(
+                    "Hide separate dataset binning"
+                    if show_independent_editor
+                    else "Edit separate dataset binning"
+                )
+                independent_button.setObjectName("dataset_rebin_edit_independent")
+                independent_button.setToolTip(
+                    "Show this dataset's preserved independent binning recipe. "
+                    "Editing it does not replace the collection recipe that normally controls this member."
+                )
+                def toggle_independent_editor(
+                    _checked=False,
+                    *,
+                    dataset=dataset,
+                    group=group,
+                    expanded=show_independent_editor,
+                ):
+                    ids = set(getattr(self, "_expanded_independent_rebin_ids", set()))
+                    if expanded:
+                        ids.discard(dataset.id)
+                    else:
+                        ids.add(dataset.id)
+                    self._expanded_independent_rebin_ids = ids
+                    self._set_dataset_details_preserving_scroll(dataset, group)
+
+                independent_button.clicked.connect(toggle_independent_editor)
+                ownership_actions.addWidget(independent_button)
+            ownership_actions.addStretch(1)
+            ownership_layout.addLayout(ownership_actions)
+            layout.addWidget(ownership_box)
+
     if not _dataset_can_rebin(dataset):
+        return group_box
+    if policy is not None and policy.linked and not show_independent_editor:
         return group_box
 
     rebin_box = QtWidgets.QGroupBox("Rebin")
+    rebin_box.setObjectName("dataset_rebin_editor")
     rebin_layout = QtWidgets.QVBoxLayout(rebin_box)
     rebin_layout.setContentsMargins(10, 8, 10, 8)
 
