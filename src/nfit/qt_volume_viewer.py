@@ -1000,6 +1000,7 @@ def _make_volume_panel(
                 path, selected = get_save_file_name(
                     self, "Export 3D isosurface", "nfit_isosurface.vtp",
                     "VTK PolyData (*.vtp);;Polygon mesh (*.ply);;STL mesh (*.stl);;glTF scene (*.gltf)",
+                    require_selected_filter=True,
                 )
                 if not path:
                     return

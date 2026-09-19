@@ -124,10 +124,18 @@ def _zenity_filters(file_filter: str) -> list[str]:
     return arguments
 
 
-def _gtk_open_file_dialog(
-    caption: str, directory: str, file_filter: str, *, multiple: bool
+def _gtk_file_dialog(
+    caption: str,
+    directory: str,
+    file_filter: str,
+    *,
+    mode: str,
+    multiple: bool = False,
 ) -> tuple[list[str], str] | None:
     """Open a GTK chooser on Linux, or return ``None`` when unavailable."""
+
+    if mode not in {"open", "save", "directory"}:
+        raise ValueError(f"unsupported GTK file-dialog mode: {mode}")
 
     executable = shutil.which("zenity")
     chooser_option = "--file-selection"
@@ -144,9 +152,15 @@ def _gtk_open_file_dialog(
         f"--title={caption}",
         f"--filename={initial_value}",
         "--modal",
-        *_zenity_filters(file_filter),
     ]
-    if multiple:
+    if mode == "save":
+        command.extend(("--save", "--confirm-overwrite"))
+        command.extend(_zenity_filters(file_filter))
+    elif mode == "directory":
+        command.append("--directory")
+    else:
+        command.extend(_zenity_filters(file_filter))
+    if multiple and mode == "open":
         command.extend(("--multiple", "--separator=\n"))
     environment = os.environ.copy()
     original_library_path = environment.get("LD_LIBRARY_PATH_ORIG")
@@ -169,6 +183,20 @@ def _gtk_open_file_dialog(
     if completed.returncode != 0:
         return None
     return [path for path in completed.stdout.splitlines() if path], ""
+
+
+def _gtk_open_file_dialog(
+    caption: str, directory: str, file_filter: str, *, multiple: bool
+) -> tuple[list[str], str] | None:
+    """Compatibility wrapper for the GTK open-file chooser."""
+
+    return _gtk_file_dialog(
+        caption,
+        directory,
+        file_filter,
+        mode="open",
+        multiple=multiple,
+    )
 
 
 def _linux_open_file_dialog(
@@ -252,19 +280,36 @@ def get_open_file_names(
 
 
 def get_save_file_name(
-    parent: Any, caption: str, directory: str = "", file_filter: str = "", *, project_path=None
+    parent: Any, caption: str, directory: str = "", file_filter: str = "", *,
+    project_path=None, require_selected_filter: bool = False,
 ):
+    """Choose a save path; retain Qt when the caller needs the selected format.
+
+    GTK helpers return filenames but do not report the active name filter.
+    Do not infer it or append a suffix after their overwrite confirmation.
+    """
+
     if sys.platform.startswith("linux"):
-        selected, selected_filter = _exec_linux_file_dialog(
-            _linux_file_dialog(
-                parent,
-                caption,
-                _initial_path(directory, project_path),
-                file_filter,
-                file_mode=QtWidgets.QFileDialog.FileMode.AnyFile,
-                accept_mode=QtWidgets.QFileDialog.AcceptMode.AcceptSave,
-            )
+        initial = _initial_path(directory, project_path)
+        gtk_result = None if require_selected_filter else _gtk_file_dialog(
+            caption,
+            initial,
+            file_filter,
+            mode="save",
         )
+        if gtk_result is None:
+            selected, selected_filter = _exec_linux_file_dialog(
+                _linux_file_dialog(
+                    parent,
+                    caption,
+                    initial,
+                    file_filter,
+                    file_mode=QtWidgets.QFileDialog.FileMode.AnyFile,
+                    accept_mode=QtWidgets.QFileDialog.AcceptMode.AcceptSave,
+                )
+            )
+        else:
+            selected, selected_filter = gtk_result
         result = (selected[0] if selected else "", selected_filter)
     else:
         result = QtWidgets.QFileDialog.getSaveFileName(
@@ -290,16 +335,20 @@ def get_existing_directory(
 
     initial = _initial_path(directory, project_path)
     if sys.platform.startswith("linux"):
-        selected, _selected_filter = _exec_linux_file_dialog(
-            _linux_file_dialog(
-                parent,
-                caption,
-                initial,
-                "",
-                file_mode=QtWidgets.QFileDialog.FileMode.Directory,
-                accept_mode=QtWidgets.QFileDialog.AcceptMode.AcceptOpen,
+        gtk_result = _gtk_file_dialog(caption, initial, "", mode="directory")
+        if gtk_result is None:
+            selected, _selected_filter = _exec_linux_file_dialog(
+                _linux_file_dialog(
+                    parent,
+                    caption,
+                    initial,
+                    "",
+                    file_mode=QtWidgets.QFileDialog.FileMode.Directory,
+                    accept_mode=QtWidgets.QFileDialog.AcceptMode.AcceptOpen,
+                )
             )
-        )
+        else:
+            selected, _selected_filter = gtk_result
         result = selected[0] if selected else ""
     else:
         result = QtWidgets.QFileDialog.getExistingDirectory(

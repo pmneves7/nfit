@@ -79,11 +79,11 @@ state immediately and waits to load, rebin, and evaluate model predictions until
 the data are viewed or fitted. This keeps large HYSPEC and other NeXus imports
 responsive while preserving the complete local source path in the project.
 On Linux, nfit uses the desktop's GTK file chooser through Zenity or Yad when
-either is available. This avoids rendering failures in Qt's bundled chooser on
-remote desktops such as ThinLinc. The Qt fallback is kept above the project
-window. nfit also avoids Qt's atomic settings lock on Linux, allowing the
-remembered directory and other preferences to work when the home directory is
-on NFS.
+either is available, including when saving caches or choosing cache folders.
+This avoids rendering failures on remote desktops such as ThinLinc and waits
+on Qt's file-dialog settings lock in shared home directories. The Qt fallback
+is kept above its parent dialog. nfit stores its own remembered directory and
+other preferences separately on Linux, without Qt's atomic settings lock.
 
 Opening an individual run from a file-backed MDEvent collection scans the shared
 event file for that run. nfit displays chunk-by-chunk progress during this scan;

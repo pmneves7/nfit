@@ -243,7 +243,7 @@ class CompressedCachePrompt(QtCore.QObject):
             if message.clickedButton() is not save_button:
                 continue
             path, _selected_filter = get_save_file_name(
-                self.parent_window,
+                parent,
                 "Save compressed cached binning",
                 f"{filename}.npz",
                 "NumPy archives (*.npz);;All files (*)",

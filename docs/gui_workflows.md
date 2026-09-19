@@ -143,11 +143,13 @@ File choosers remember their last successfully selected directory for the local
 nfit installation. Before a directory has been remembered, they start beside
 the open project; an unsaved project falls back to the operating system's
 Documents directory and then the user's home directory.
-When opening files on Linux, nfit uses the desktop's GTK file chooser when
-Zenity or Yad is available. This keeps opening and cancelling responsive in
-remote desktop sessions where Qt's bundled chooser or a desktop portal does
-not render correctly. An explicitly raised Qt chooser remains available as a
-fallback.
+On Linux, opening files, saving files, and choosing cache folders use the
+desktop's GTK file chooser when Zenity or Yad is available. This avoids Qt
+chooser rendering failures and waits on Qt's own dialog-settings lock in
+shared home directories, including after confirming a save location. Save
+dialogs confirm overwriting an existing file. An explicitly raised Qt chooser
+remains the fallback when a GTK helper is unavailable or fails. The 3D
+isosurface export retains Qt so its selected output-format filter is preserved.
 
 ## Reproducibility
 
