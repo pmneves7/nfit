@@ -55,6 +55,8 @@ A few of its main capabilities are:
   saved histograms under memory pressure, and optional session disk caching;
 - organize project items with drag and drop, batch copy, paste, and delete,
   including lazy run pages and nested collections;
+- guard editor and viewer interactions during rebinning, saves, and background
+  tasks while keeping progress and cancellation controls available;
 - export editable analysis scripts; and
 - use native desktop installers or the Python package on macOS, Windows, and Linux.
 

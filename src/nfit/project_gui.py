@@ -238,6 +238,11 @@ from .qt_controls import (
     configure_numeric_spin_boxes,
     constrain_input_width,
 )
+from .qt_operation_guard import (
+    GuiOperationGuard,
+    close_operation_window,
+    guarded_gui_operation,
+)
 from .qt_widget_state import preserve_widget_state
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET
 from .spectral_channels import (
@@ -6468,6 +6473,7 @@ class _RebinProgressDialog:
         self._failed = False
 
         owner = parent.window if hasattr(parent, "window") else parent
+        self._interaction_guard = None
         self.dialog = QtWidgets.QDialog(owner)
         self.dialog.setObjectName("rebin_progress_dialog")
         self.dialog.setWindowTitle("Rebin progress")
@@ -6538,6 +6544,7 @@ class _RebinProgressDialog:
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._refresh_labels)
         self._timer.start()
+        self.dialog.rejected.connect(self._request_cancel)
 
     def _set_batch_visible(self, visible: bool) -> None:
         self.batch_label.setVisible(visible)
@@ -6608,6 +6615,8 @@ class _RebinProgressDialog:
     def show(self) -> None:
         from PySide6 import QtWidgets
 
+        if self._interaction_guard is None:
+            self._interaction_guard = GuiOperationGuard()
         self._resize_to_contents()
         self.dialog.show()
         self.dialog.raise_()
@@ -6783,6 +6792,7 @@ class _RebinProgressDialog:
             )
         self._refresh_labels()
         self.cancel_button.setEnabled(False)
+        self._release_interaction_guard()
 
     def fail(self, message: str) -> None:
         self._detail_base_text = f"Rebin failed: {message}"
@@ -6791,10 +6801,21 @@ class _RebinProgressDialog:
         self.cancel_button.setEnabled(True)
         self.cancel_button.setText("Close")
         self.cancel_button.setToolTip("Close the failed rebin progress window.")
+        self._release_interaction_guard()
+
+    def _release_interaction_guard(self) -> None:
+        if self._interaction_guard is not None:
+            guard, self._interaction_guard = self._interaction_guard, None
+            guard.close()
 
     def close(self) -> None:
         self._timer.stop()
-        self.dialog.close()
+        previous = self.dialog.blockSignals(True)
+        try:
+            self.dialog.close()
+        finally:
+            self.dialog.blockSignals(previous)
+        self._release_interaction_guard()
 
 
 class _FitProgressDialog:
@@ -6805,6 +6826,7 @@ class _FitProgressDialog:
 
         self.dialog = QtWidgets.QDialog(parent.window if hasattr(parent, "window") else parent)
         self.dialog.setWindowTitle("Fit progress")
+        self.dialog.setProperty("nfit_operation_dialog", True)
         self.dialog.setModal(False)
         self.dialog.resize(720, 520)
         self.close_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Close, self.dialog)
@@ -8185,6 +8207,7 @@ class NfitProjectExplorer:
         self._ignored_project_disk_signature = current
         return True
 
+    @guarded_gui_operation
     def save(self) -> bool:
         if self.project_path is None:
             return self.save_as()
@@ -8232,6 +8255,7 @@ class NfitProjectExplorer:
         self._sync_details()
         return True
 
+    @guarded_gui_operation
     def save_as(self) -> bool:
 
         path, _selected_filter = get_save_file_name(
@@ -9554,6 +9578,7 @@ class NfitProjectExplorer:
 
         return self.save_workflow_script_for_selection()
 
+    @guarded_gui_operation
     def fit_now_for_selection(self) -> FitTimelineEntry | None:
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
         fit_entry = self._fit_entry_for_item(self._current_item())
@@ -9598,6 +9623,7 @@ class NfitProjectExplorer:
         self._refresh_tree(select_group=group, select_fit=item_to_select)
         return result
 
+    @guarded_gui_operation
     def _start_background_task(
         self,
         *,
@@ -9679,6 +9705,9 @@ class NfitProjectExplorer:
                         progress.finish(success_message, summary_lines=lines)
                         if close_on_success:
                             progress.close()
+                except Exception as exc:
+                    progress.fail(str(exc))
+                    QtWidgets.QMessageBox.warning(self._parent_window, failure_title, str(exc))
                 finally:
                     try:
                         self.settle()
@@ -9694,6 +9723,9 @@ class NfitProjectExplorer:
                         "emcee posterior sampling cancelled; partial samples saved.",
                         summary_lines=lines,
                     )
+                except Exception as exc:
+                    progress.fail(str(exc))
+                    QtWidgets.QMessageBox.warning(self._parent_window, failure_title, str(exc))
                 finally:
                     try:
                         self.settle()
@@ -9760,13 +9792,18 @@ class NfitProjectExplorer:
         worker.progress.connect(handler.handle_progress)
 
         def cleanup() -> None:
-            progress.set_cancel_callback(None)
-            for widget, enabled in self._fit_disabled_widget_states:
-                widget.setEnabled(enabled)
-            self._fit_disabled_widget_states = []
-            self._fit_worker_thread = None
-            self._fit_worker = None
-            self._fit_worker_handler = None
+            try:
+                progress.set_cancel_callback(None)
+                for widget, enabled in self._fit_disabled_widget_states:
+                    widget.setEnabled(enabled)
+                self._fit_disabled_widget_states = []
+                self._fit_worker_thread = None
+                self._fit_worker = None
+                self._fit_worker_handler = None
+            finally:
+                if isinstance(progress, _RebinProgressDialog):
+                    progress._release_interaction_guard()
+                operation_guard.close()
 
         worker.finished.connect(handler.handle_success)
         worker.cancelled.connect(handler.handle_cancelled)
@@ -9778,7 +9815,13 @@ class NfitProjectExplorer:
         worker.failed.connect(worker.deleteLater)
         worker_thread.finished.connect(cleanup)
         worker_thread.finished.connect(worker_thread.deleteLater)
-        worker_thread.start()
+        operation_guard = GuiOperationGuard()
+        try:
+            worker_thread.start()
+        except Exception:
+            operation_guard.close()
+            progress.close()
+            raise
         return True
 
     def start_fit_for_selection(self) -> bool:
@@ -10266,6 +10309,7 @@ class NfitProjectExplorer:
             selected_name = first_name(node)
         return self.open_slice_viewer(group, selected_dataset_name=selected_name, use_composite=use_composite)
 
+    @guarded_gui_operation
     def open_slice_viewer(
         self,
         group: DataGroup,
@@ -10701,6 +10745,7 @@ class NfitProjectExplorer:
             else:
                 self.refresh_slice_viewer(group)
 
+    @guarded_gui_operation
     def refresh_slice_viewer(self, group: DataGroup, *, force_rebin: bool = False) -> Any | None:
         if id(group) not in self._slice_viewers:
             return None
@@ -17093,6 +17138,9 @@ class NfitProjectExplorer:
         self._sync_details()
 
     def _clear_details_panel(self) -> None:
+        from .qt_operation_guard import close_widget_popups
+
+        close_widget_popups(self.details_scroll)
         # The mask editor lives inside this panel. Clear its status-label
         # reference before Qt deletes the old details widgets.
         self.mask_application_status_label = None
@@ -20780,24 +20828,24 @@ class NfitProjectExplorer:
             if not viewers:
                 self._slice_viewers.pop(id(group), None)
         if close and viewer is not None and viewer.window is not None:
-            viewer.window.close()
+            close_operation_window(viewer.window)
 
     def _close_slice_viewer(self, group: DataGroup) -> None:
         viewers = self._slice_viewers.pop(id(group), [])
         for viewer in viewers:
             if viewer is not None and viewer.window is not None:
-                viewer.window.close()
+                close_operation_window(viewer.window)
 
     def _close_all_slice_viewers(self) -> None:
         for group_id in list(self._slice_viewers):
             viewers = self._slice_viewers.pop(group_id)
             for viewer in viewers:
                 if viewer is not None and viewer.window is not None:
-                    viewer.window.close()
+                    close_operation_window(viewer.window)
         for window_id in list(self._auxiliary_windows):
             window = self._auxiliary_windows.pop(window_id)
             if window is not None:
-                window.close()
+                close_operation_window(window)
 
 
 def _make_project_window_class():

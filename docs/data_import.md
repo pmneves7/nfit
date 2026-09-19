@@ -693,6 +693,13 @@ All rebin workflows use the same compact progress dialog. When a task prepares
 several datasets or dataset-group composites, it uses two levels: the upper bar
 reports completed viewer entries and the lower bar reports progress within the
 named current entry. A one-entry task hides the redundant upper status and bar.
+While rebinning, preparing viewers, saving, or running a background task, nfit
+blocks mouse, keyboard, shortcut, and close-window actions in the Project Explorer
+and other modeless windows, including data viewers. Progress controls, Cancel,
+and modal confirmation dialogs remain usable. Open drop-downs are dismissed
+before the operation or a control rebuild. Editing resumes after completion and
+the final UI refresh, including after cancellation or failure; clicks made while
+busy are discarded rather than replayed against refreshed controls.
 The dialog grows vertically when a current-item or resource message wraps, so
 the progress bars and cancellation control remain visible.
 Stage descriptions use sentence capitalization. Both levels show elapsed time

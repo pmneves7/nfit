@@ -63,6 +63,8 @@ different Python.
   window construction and focused model-editor presentation helpers.
 - `src/nfit/qt_widget_state.py`: shared Qt editor focus, tab, and scroll
   preservation during panel rebuilds.
+- `src/nfit/qt_operation_guard.py`: shared operation input and popup-lifetime
+  guards for Qt workflows.
 - `src/nfit/project_imports.py`: GUI-independent import, source, and reload orchestration.
 - `src/nfit/project_data.py`: GUI-independent dataset preparation facade,
   derived-data coordination, and viewer-ready orchestration.

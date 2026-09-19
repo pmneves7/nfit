@@ -32,6 +32,7 @@ GUI_INDEPENDENT_MODULES = (
 )
 PROJECT_GUI_CLIENT_MODULES = (
     PACKAGE_ROOT / "qt_widget_state.py",
+    PACKAGE_ROOT / "qt_operation_guard.py",
     PACKAGE_ROOT / "project_composite_physics.py",
     PACKAGE_ROOT / "analysis_gui.py",
     PACKAGE_ROOT / "metadata_dimensions_gui.py",

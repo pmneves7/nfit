@@ -56,6 +56,10 @@ def preserve_widget_state(root, *, enabled=True, is_current=lambda: True,
     from PySide6 import QtCore, QtWidgets
     from shiboken6 import isValid
 
+    from .qt_operation_guard import close_widget_popups
+
+    close_widget_popups(root)
+
     generation = getattr(root, "_nfit_state_generation", 0) + 1
     root._nfit_state_generation = generation
     # A full panel refresh supersedes pending restores from its smaller editors.

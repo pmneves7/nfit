@@ -503,6 +503,10 @@ class QtMDHistoSliceViewer:
     ) -> None:
         """Update displayed datasets in place while preserving viewer state."""
 
+        from .qt_operation_guard import close_widget_popups
+
+        close_widget_popups(self.window)
+
         previous_names = list(self.dataset_names)
         if 0 <= self.dataset_index < len(self._dataset_states):
             self._dataset_states[self.dataset_index] = self._capture_dataset_state()
