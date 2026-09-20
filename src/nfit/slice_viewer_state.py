@@ -9,6 +9,7 @@ import numpy as np
 from .dataset import PointListData
 from .mdhisto import MDHistoData
 from .plotting_core import MDHistoSliceViewer
+from .viewer_data import DeferredViewerDatasets
 
 
 @dataclass
@@ -65,9 +66,13 @@ class _DatasetViewState:
     display_step_factors: dict[int, int] | None = None
 
 
-def _coerce_datasets(data: MDHistoData | Sequence[MDHistoData]) -> list[MDHistoData]:
+def _coerce_datasets(
+    data: MDHistoData | PointListData | Sequence[MDHistoData | PointListData],
+) -> Sequence[MDHistoData | PointListData]:
     if isinstance(data, (MDHistoData, PointListData)):
         return [data]
+    if isinstance(data, DeferredViewerDatasets):
+        return data
     datasets = list(data)
     if not datasets:
         raise ValueError("QtMDHistoSliceViewer requires at least one dataset")

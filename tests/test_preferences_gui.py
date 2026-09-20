@@ -71,6 +71,58 @@ def test_preferences_colormap_folder_and_controls(qt_app, monkeypatch, tmp_path)
         dialog.close()
 
 
+def test_viewer_preload_preference_defaults_off_and_persists(qt_app, tmp_path):
+    from PySide6 import QtCore
+
+    from nfit.application_preferences import (
+        preload_viewer_data,
+        set_preload_viewer_data,
+    )
+
+    settings = QtCore.QSettings(
+        str(tmp_path / "preferences.ini"),
+        QtCore.QSettings.Format.IniFormat,
+    )
+    assert preload_viewer_data(settings) is False
+
+    set_preload_viewer_data(True, settings)
+    settings.sync()
+    restored = QtCore.QSettings(
+        str(tmp_path / "preferences.ini"),
+        QtCore.QSettings.Format.IniFormat,
+    )
+    assert preload_viewer_data(restored) is True
+
+    set_preload_viewer_data(False, restored)
+    assert preload_viewer_data(restored) is False
+
+
+def test_preferences_viewer_preload_control(qt_app, tmp_path):
+    from PySide6 import QtCore
+
+    from nfit.application_preferences import preload_viewer_data
+    from nfit.preferences_gui import PreferencesDialog
+
+    settings = QtCore.QSettings(
+        str(tmp_path / "preferences.ini"),
+        QtCore.QSettings.Format.IniFormat,
+    )
+    dialog = PreferencesDialog(settings=settings)
+    try:
+        checkbox = dialog.preload_viewer_data_checkbox
+        assert dialog.tabs.indexOf(checkbox.parentWidget()) == 1
+        assert dialog.tabs.tabText(1) == "Data viewer"
+        assert not checkbox.isChecked()
+        assert "on demand" in checkbox.toolTip()
+        assert "faster switching" in checkbox.toolTip()
+        assert "newly opened viewers" in checkbox.toolTip()
+
+        checkbox.setChecked(True)
+        assert preload_viewer_data(settings) is True
+    finally:
+        dialog.close()
+
+
 def test_viewer_uses_local_colormap_defaults_for_new_plots(qt_app, monkeypatch):
     import nfit.qt_slice_viewer as viewer_module
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer

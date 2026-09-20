@@ -15,6 +15,7 @@ from .colormaps import IMAGE_COLORMAPS, WATERFALL_COLORMAPS
 
 CONTINUOUS_COLORMAP_KEY = "colormaps/continuous_default"
 WATERFALL_COLORMAP_KEY = "colormaps/waterfall_default"
+PRELOAD_VIEWER_DATA_KEY = "viewer/preload_all_data"
 DEFAULT_CONTINUOUS_COLORMAP = "viridis"
 DEFAULT_WATERFALL_COLORMAP = "viridis"
 
@@ -156,6 +157,15 @@ def default_waterfall_colormap(
     )
 
 
+def preload_viewer_data(
+    settings: QtCore.QSettings | _LinuxApplicationSettings | None = None,
+) -> bool:
+    """Return whether newly opened viewers should preload all selectable data."""
+
+    store = application_settings() if settings is None else settings
+    return bool(store.value(PRELOAD_VIEWER_DATA_KEY, False, type=bool))
+
+
 def set_default_continuous_colormap(
     name: str,
     settings: QtCore.QSettings | _LinuxApplicationSettings | None = None,
@@ -181,4 +191,16 @@ def set_default_waterfall_colormap(
     (application_settings() if settings is None else settings).setValue(
         WATERFALL_COLORMAP_KEY,
         name,
+    )
+
+
+def set_preload_viewer_data(
+    enabled: bool,
+    settings: QtCore.QSettings | _LinuxApplicationSettings | None = None,
+) -> None:
+    """Persist whether newly opened viewers preload all selectable data."""
+
+    (application_settings() if settings is None else settings).setValue(
+        PRELOAD_VIEWER_DATA_KEY,
+        bool(enabled),
     )

@@ -26,6 +26,7 @@ from . import project_lindhard_editor as _project_lindhard_editor
 from . import project_model_editor as _project_model_editor
 from . import project_summary as _project_summary
 from . import project_tight_binding_editor as _project_tight_binding_editor
+from . import project_viewer_loading as _project_viewer_loading
 from .analysis.artifacts import (
     read_project_dataset_artifact,
     write_dataset_artifact,
@@ -37,7 +38,7 @@ from .analysis.core import (
 )
 from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
-from .application_preferences import application_settings
+from .application_preferences import application_settings, preload_viewer_data
 from .cache_utils import lru_store as _lru_store
 from .dataset import PointData4D, PointListData
 from .file_dialogs import (
@@ -251,6 +252,7 @@ from .spectral_channels import (
     normalized_spectral_channel_config,
 )
 from .symmetry import symmetry_spec_from_config
+from .viewer_data import DeferredViewerDatasets, ViewerLoadCancelled
 from .workflow import (
     WorkflowValidationError,
     analysis_workflow_script,
@@ -2314,12 +2316,54 @@ def slice_viewer_datasets(
     force_masks: bool = True,
     progress_callback: Any | None = None,
     defer_progress_completion: bool = False,
-) -> tuple[list[MDHistoData], list[str]]:
+    preload: bool = True,
+    selected_dataset_name: str | None = None,
+    selected_binning_name: str | None = None,
+) -> tuple[Sequence[MDHistoData | PointListData], list[str]]:
     """Return data and labels for every dataset in the group tree, with shared masks.
+
+    With ``preload=False``, return a catalog-backed sequence which prepares each
+    dataset/binning on first indexing. The selected names choose its initial
+    index. The eager default preserves existing scripting behavior.
 
     GUI callers may set ``defer_progress_completion`` while they construct and
     render the viewer window after these numerical preparations return.
     """
+
+    if not preload:
+        items = _project_viewer_loading.plan_viewer_items(
+            group, use_composite=use_composite,
+            dataset_binnings=lambda dataset: (
+                dataset_rebin_binnings(dataset)
+                if isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict) else []
+            ),
+        )
+
+        def prepare(dataset):
+            view = dataset_for_slice_viewer(
+                dataset,
+                extra_masks=[] if dataset.metadata.get("composite") else effective_dataset_masks(group, dataset),
+                force_rebin=force_rebin, force_masks=force_masks,
+                progress_callback=progress_callback,
+            )
+            if view is None:
+                return None
+            return attach_fit_channels_to_view(
+                group, dataset.name, view,
+                fallback_payload=current_model_channel(
+                    group, dataset, force_masks=force_masks, unmask_model=unmask_model,
+                ),
+            )
+
+        return _project_viewer_loading.deferred_viewer_datasets(
+            group, items, prepare=prepare,
+            enabled=lambda dataset: _dataset_is_effectively_enabled(group, dataset),
+            rebin_key=DATASET_REBIN_KEY, derived_key=DERIVED_RECIPE_KEY,
+            group_keys=_waterfall_group_keys(group, [item.name for item in items]),
+            selected_dataset_name=selected_dataset_name,
+            selected_binning_name=selected_binning_name,
+            force_rebin=force_rebin, progress_callback=progress_callback,
+        )
 
     data: list[MDHistoData] = []
     names: list[str] = []
@@ -2465,25 +2509,10 @@ def _entries_with_visualization_binnings(
         if not binnings:
             expanded.append(dataset)
             continue
-        fit_item = binnings[0]
-        fit_entry = dataset.copy(name=source_name)
-        owner = getattr(dataset, "_derived_owner_group", None)
-        if owner is not None:
-            # DatasetEntry.copy intentionally copies only serializable fields.
-            # Preserve this process-local link on temporary viewer aliases so
-            # a live derived recipe can still resolve its owning analysis.
-            fit_entry._derived_owner_group = owner
-        fit_entry.id = dataset.id
-        fit_entry._viewer_source_dataset_id = dataset.id
-        fit_entry._viewer_source_entry = dataset
-        fit_entry.enabled = _dataset_is_effectively_enabled(group, dataset)
-        fit_entry.metadata = {
-            **copy.deepcopy(dataset.metadata),
-            "binning_id": fit_item["id"],
-            "binning_name": fit_item["name"],
-            "source_dataset_name": source_name,
-        }
-        expanded.append(fit_entry)
+        expanded.append(_project_viewer_loading.viewer_binning_entry(
+            dataset, binnings[0], enabled=_dataset_is_effectively_enabled(group, dataset),
+            rebin_key=DATASET_REBIN_KEY, derived_key=DERIVED_RECIPE_KEY,
+        ))
         for item in binnings[1:]:
             config = item["config"]
             if not bool(config.get("enabled", False)):
@@ -2504,7 +2533,6 @@ def _entries_with_visualization_binnings(
                     config_override=config,
                     binning_id=item["id"],
                 )
-                auxiliary = dataset.copy(data=aux_data, name=view_name)
                 _report_effective_dataset_batch(
                     progress_callback,
                     batch_progress,
@@ -2513,27 +2541,12 @@ def _entries_with_visualization_binnings(
                     completed=True,
                 )
             else:
-                parameters = copy.deepcopy(dataset.parameters)
-                parameters[DATASET_REBIN_KEY] = config
-                auxiliary = dataset.copy(name=view_name, parameters=parameters)
-                if not isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
-                    auxiliary._viewer_source_entry = dataset
-                    auxiliary._viewer_rebin_config = config
-                    auxiliary._viewer_cache_id = item["id"]
-                if owner is not None:
-                    auxiliary._derived_owner_group = owner
-            auxiliary.id = f"{dataset.id}:{item['id']}"
-            auxiliary._viewer_source_dataset_id = dataset.id
-            auxiliary.fit_weight = 0.0
-            auxiliary.scale_factor_vary = False
-            auxiliary.metadata = {
-                **copy.deepcopy(dataset.metadata),
-                "binning_id": item["id"],
-                "binning_name": item["name"],
-                "source_dataset_name": source_name,
-                "visualization_binning": True,
-            }
-            expanded.append(auxiliary)
+                aux_data = None
+            expanded.append(_project_viewer_loading.viewer_binning_entry(
+                dataset, item, enabled=_dataset_is_effectively_enabled(group, dataset),
+                rebin_key=DATASET_REBIN_KEY, derived_key=DERIVED_RECIPE_KEY,
+                composite_data=aux_data,
+            ))
     return expanded
 
 
@@ -3791,6 +3804,83 @@ def _overlay_current_params(
         except (TypeError, ValueError):
             continue
     return params
+
+
+def current_model_channel(
+    group: DataGroup,
+    dataset: DatasetEntry,
+    *,
+    force_masks: bool = False,
+    unmask_model: bool = False,
+) -> dict[str, Any] | None:
+    """Evaluate the live model for one viewer dataset only.
+
+    This is the lazy-viewer counterpart to :func:`current_model_channels`.
+    ``dataset`` may be a temporary named-binning entry, so its name is kept
+    when compiling the one-dataset problem.  That preserves ``applies_to``
+    selectors and the alias handling used by the full overlay path while
+    avoiding preparation of sibling viewer entries.
+
+    A missing or failed live result is represented by ``None``.  Callers can
+    then pass it to :func:`attach_fit_channels_to_view`, which retains the
+    saved-fit fallback when one is available.
+    """
+
+    errors: dict[str, str] = {}
+    _MODEL_OVERLAY_ERRORS[id(group)] = errors
+    _MODEL_OVERLAY_ERRORS.move_to_end(id(group))
+    while len(_MODEL_OVERLAY_ERRORS) > _MODEL_OVERLAY_CACHE_LIMIT:
+        _MODEL_OVERLAY_ERRORS.popitem(last=False)
+    components = [
+        model for model in group.models.values() if isinstance(model, ModelComponentSpec)
+    ]
+    if not any(component.enabled for component in components):
+        return None
+
+    # Use the ordinary single-dataset fit preparation path rather than
+    # rebuilding points from the viewer payload.  In particular, a fitted
+    # dataset scale needs the unscaled view used by FitDataBundle, whereas the
+    # visible viewer payload already includes its current scale factor.
+    bundle = fit_data_bundle(
+        group,
+        dataset,
+        force_rebin=False,
+        force_masks=force_masks,
+    )
+    if bundle is None:
+        return None
+    is_composite = bool(dataset.metadata.get("composite"))
+    disabled = not _dataset_is_effectively_enabled(group, dataset)
+    fit_weight = 1.0 if is_composite else float(dataset.fit_weight)
+    if not np.isfinite(fit_weight) or fit_weight < 0.0:
+        errors[dataset.name] = "ValueError: fit weight must be finite and non-negative"
+        return None
+    input_data = FitDatasetInput(
+        name=dataset.name,
+        data=bundle.points,
+        weight=0.0 if disabled or (not is_composite and fit_weight == 0.0) else fit_weight,
+        data_type=dataset.data_type or DEFAULT_DATA_TYPE,
+        scale_value=1.0 if is_composite else float(dataset.scale_factor),
+        scale_vary=False if is_composite else bool(dataset.scale_factor_vary),
+        scale_group=None if is_composite else dataset.scale_factor_group,
+    )
+    try:
+        compiled = compile_fit_problem(
+            _components_with_binning_aliases(components, [input_data]),
+            [input_data],
+            description=group.name,
+        )
+        params = _overlay_current_params(group, compiled)
+    except Exception as exc:
+        errors[dataset.name] = f"{type(exc).__name__}: {exc}"
+        return None
+    return _fit_channels_from_params(
+        compiled,
+        params,
+        {dataset.name: bundle},
+        evaluate_masked=unmask_model,
+        dataset_errors=errors,
+    ).get(dataset.name)
 
 
 def current_model_channels(
@@ -6441,7 +6531,7 @@ def _capitalized_progress_text(text: str) -> str:
     return value[:1].upper() + value[1:]
 
 
-class RebinCancellationRequested(RuntimeError):
+class RebinCancellationRequested(ViewerLoadCancelled, RuntimeError):
     """Raised cooperatively when the user cancels a rebin operation."""
 
 
@@ -10309,29 +10399,94 @@ class NfitProjectExplorer:
             selected_name = first_name(node)
         return self.open_slice_viewer(group, selected_dataset_name=selected_name, use_composite=use_composite)
 
+    def _deferred_viewer_data(
+        self, group, *, use_composite=True, selected_dataset_name=None,
+        selected_binning_name=None, unmask_model=False, force_rebin=True,
+        force_masks=True,
+    ):
+        """Bind per-selection progress and input protection to the public loader."""
+        progress = None
+
+        def report(event):
+            nonlocal progress
+            if not self._interactive:
+                return
+            if progress is None:
+                progress = self._make_rebin_progress_callback("Loading selected viewer binning...")
+            if progress is not None:
+                progress(event)
+
+        source, names = slice_viewer_datasets(
+            group, use_composite=use_composite, preload=False,
+            selected_dataset_name=selected_dataset_name,
+            selected_binning_name=selected_binning_name,
+            unmask_model=unmask_model, force_rebin=force_rebin,
+            force_masks=force_masks, progress_callback=report,
+        )
+        if not isinstance(source, DeferredViewerDatasets):
+            return source, names
+
+        @guarded_gui_operation
+        def load(index):
+            nonlocal progress
+            try:
+                descriptor = source.descriptors[index]
+                for kind, _name, owner, target, binning_id, config in _project_binning_targets(self.project):
+                    if owner is not group or str(binning_id) != descriptor.binning_id:
+                        continue
+                    name = target.name if kind == "dataset" else _composite_dataset_name(target)
+                    if name != descriptor.source_dataset_name or _project_binning_is_current(
+                        kind, owner, target, binning_id, config
+                    ):
+                        continue
+                    item = {"id": binning_id, "name": descriptor.binning_name, "config": config}
+                    allowed = (
+                        self._confirm_dataset_rebin_memory([item]) if kind == "dataset"
+                        else self._confirm_composite_rebin_memory(target, [item])
+                    )
+                    if not allowed:
+                        raise RebinCancellationRequested("Viewer loading cancelled.")
+                result = source[index]
+                self._refresh_cache_badges()
+                return result
+            finally:
+                self._close_rebin_progress(progress)
+                progress = None
+
+        return DeferredViewerDatasets(source.descriptors, load, initial_index=source.initial_index), names
+
     @guarded_gui_operation
     def open_slice_viewer(
         self,
         group: DataGroup,
         *,
         selected_dataset_name: str | None = None,
+        selected_binning_name: str | None = None,
         use_composite: bool = True,
     ) -> Any | None:
         from PySide6 import QtWidgets
 
-        if not self._confirm_viewer_rebin_memory(
+        preload = preload_viewer_data()
+        if preload and not self._confirm_viewer_rebin_memory(
             group, use_composite=use_composite
         ):
             return None
-        progress = self._rebin_progress_callback_for_group(group, use_composite=use_composite)
+        progress = self._rebin_progress_callback_for_group(group, use_composite=use_composite) if preload else None
         try:
-            datasets, names = slice_viewer_datasets(
-                group,
-                use_composite=use_composite,
-                force_rebin=True,
-                progress_callback=progress,
-                defer_progress_completion=progress is not None,
-            )
+            if preload:
+                datasets, names = slice_viewer_datasets(
+                    group, use_composite=use_composite, force_rebin=True,
+                    progress_callback=progress,
+                    defer_progress_completion=progress is not None,
+                )
+            else:
+                datasets, names = self._deferred_viewer_data(
+                    group, use_composite=use_composite,
+                    selected_dataset_name=selected_dataset_name,
+                    selected_binning_name=selected_binning_name,
+                )
+                if isinstance(datasets, DeferredViewerDatasets):
+                    datasets[datasets.initial_index]
         except RebinCancellationRequested:
             self._close_rebin_progress(progress)
             return None
@@ -10373,6 +10528,7 @@ class NfitProjectExplorer:
                 )
             viewer = self._create_slice_viewer(group, datasets, names)
             viewer._nfit_use_composite = bool(use_composite)
+            viewer._nfit_preload_data = preload
             viewer._nfit_group = group
             viewer._nfit_dataset_ids = {
                 dataset.name: dataset.id for dataset in group.iter_datasets()
@@ -10389,6 +10545,10 @@ class NfitProjectExplorer:
                     lambda selected_name, group=group, use_composite=use_composite: self.open_slice_viewer(
                         group,
                         selected_dataset_name=selected_name,
+                        selected_binning_name=(
+                            viewer.binning_names[viewer.dataset_index]
+                            if hasattr(viewer, "binning_names") else None
+                        ),
                         use_composite=use_composite,
                     )
                 )
@@ -10396,13 +10556,20 @@ class NfitProjectExplorer:
                 viewer.set_unmask_model_callback(
                     lambda _enabled, group=group: self._request_overlay_refresh(group)
                 )
-            if selected_dataset_name in getattr(viewer, "source_dataset_names", names):
+            if (
+                not isinstance(getattr(viewer, "datasets", None), DeferredViewerDatasets)
+                and selected_dataset_name in getattr(viewer, "source_dataset_names", names)
+            ):
                 if hasattr(viewer, "_set_dataset_selection"):
                     viewer._set_dataset_selection(
                         viewer._source_dataset_options().index(selected_dataset_name)
                     )
                 else:
                     viewer.dataset_combo.setCurrentIndex(names.index(selected_dataset_name))
+                if selected_binning_name and getattr(viewer, "binning_combo", None) is not None:
+                    index = viewer.binning_combo.findText(selected_binning_name)
+                    if index >= 0:
+                        viewer._set_binning_selection(index)
             if progress is not None:
                 progress(
                     {
@@ -10471,16 +10638,23 @@ class NfitProjectExplorer:
         displayed_binning_name = str(
             displayed_data.metadata.get("binning_name", "Default")
         )
-        binning_ids_by_source = {
-            str(data.metadata.get("source_dataset_name", loaded_name)): str(
-                data.metadata.get("binning_id", FIT_BINNING_ID)
-            )
-            for data, loaded_name in zip(
-                viewer.datasets, viewer.dataset_names, strict=True
-            )
-            if str(data.metadata.get("binning_name", "Default"))
-            == displayed_binning_name
-        }
+        if isinstance(viewer.datasets, DeferredViewerDatasets):
+            binning_ids_by_source = {
+                item.source_dataset_name: item.binning_id
+                for item in viewer.datasets.descriptors
+                if item.binning_name == displayed_binning_name
+            }
+        else:
+            binning_ids_by_source = {
+                str(data.metadata.get("source_dataset_name", loaded_name)): str(
+                    data.metadata.get("binning_id", FIT_BINNING_ID)
+                )
+                for data, loaded_name in zip(
+                    viewer.datasets, viewer.dataset_names, strict=True
+                )
+                if str(data.metadata.get("binning_name", "Default"))
+                == displayed_binning_name
+            }
         if composite_scope is not None:
             saved_composite = getattr(viewer, "_nfit_plot_composite_recipe", None)
             if isinstance(saved_composite, dict):
@@ -10762,36 +10936,47 @@ class NfitProjectExplorer:
                 selected_binning_name = current_viewer.binning_combo.currentText()
             cache_key = (use_composite, unmask_model)
             try:
-                if cache_key not in prepared:
-                    progress = None
+                if not getattr(current_viewer, "_nfit_preload_data", True):
+                    datasets, names = self._deferred_viewer_data(
+                        group, use_composite=use_composite,
+                        selected_dataset_name=selected_name,
+                        selected_binning_name=selected_binning_name,
+                        unmask_model=unmask_model, force_rebin=force_rebin,
+                        force_masks=False,
+                    )
+                    if isinstance(datasets, DeferredViewerDatasets):
+                        datasets[datasets.initial_index]
+                else:
+                    if cache_key not in prepared:
+                        progress = None
 
-                    def report(event: dict[str, Any]) -> None:
-                        nonlocal progress
-                        # Only show a dialog when numerical work actually reports
-                        # progress; a cache-only redraw needs no progress window.
-                        if str(event.get("stage", "")) in {"rebin_batch", "rebin_ui", "viewer_prepare"}:
-                            return
-                        if progress is None:
-                            progress = self._make_rebin_progress_callback(
-                                "Updating data after settings changes...", aggregate=True
+                        def report(event: dict[str, Any]) -> None:
+                            nonlocal progress
+                            # Only show a dialog when numerical work actually reports
+                            # progress; a cache-only redraw needs no progress window.
+                            if str(event.get("stage", "")) in {"rebin_batch", "rebin_ui", "viewer_prepare"}:
+                                return
+                            if progress is None:
+                                progress = self._make_rebin_progress_callback(
+                                    "Updating data after settings changes...", aggregate=True
+                                )
+                            if progress is not None:
+                                progress(event)
+
+                        try:
+                            progress_options = {"progress_callback": report} if self._interactive else {}
+                            prepared[cache_key] = slice_viewer_datasets(
+                                group,
+                                use_composite=use_composite,
+                                unmask_model=unmask_model,
+                                force_rebin=force_rebin,
+                                force_masks=False,
+                                **progress_options,
                             )
-                        if progress is not None:
-                            progress(event)
-
-                    try:
-                        progress_options = {"progress_callback": report} if self._interactive else {}
-                        prepared[cache_key] = slice_viewer_datasets(
-                            group,
-                            use_composite=use_composite,
-                            unmask_model=unmask_model,
-                            force_rebin=force_rebin,
-                            force_masks=False,
-                            **progress_options,
-                        )
-                    finally:
-                        if progress is not None:
-                            self._close_rebin_progress(progress)
-                datasets, names = prepared[cache_key]
+                        finally:
+                            if progress is not None:
+                                self._close_rebin_progress(progress)
+                    datasets, names = prepared[cache_key]
             except Exception:
                 continue
             if not datasets:
@@ -10809,7 +10994,7 @@ class NfitProjectExplorer:
                             "spacegroup": group.spacegroup,
                             "lattice_parameters": copy.deepcopy(group.lattice_parameters),
                         }
-                        for _dataset in datasets
+                        for _index in range(len(datasets))
                     ]
                 if getattr(current_viewer, "binning_combo", None) is not None:
                     replacement["selected_binning_name"] = selected_binning_name
@@ -20767,7 +20952,7 @@ class NfitProjectExplorer:
     def _create_slice_viewer(
         self,
         group: DataGroup,
-        datasets: list[MDHistoData],
+        datasets: Sequence[MDHistoData | PointListData],
         names: list[str],
     ) -> Any:
         global QtMDHistoSliceViewer
@@ -20788,7 +20973,7 @@ class NfitProjectExplorer:
                     "spacegroup": group.spacegroup,
                     "lattice_parameters": copy.deepcopy(group.lattice_parameters),
                 }
-                for _dataset in datasets
+                for _index in range(len(datasets))
             ]
         if hasattr(viewer, "set_brillouin_zone_context_callback"):
             def persist_crystal_context(_dataset_name, context, *, group=group):

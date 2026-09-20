@@ -85,6 +85,8 @@ different Python.
   and metadata transformations for viewer-ready datasets.
 - `src/nfit/project_summary.py`: bounded, reusable numerical counts for
   dataset summaries without retaining their array payloads.
+- `src/nfit/project_viewer_loading.py` and `viewer_data.py`: metadata-only
+  viewer catalogs and on-demand dataset preparation.
 - `src/nfit/project_io.py`, `project_history.py`, and `project_models.py`: project
   serialization, fit-history snapshots, and model-state reconciliation.
 - `src/nfit/mapped_archive.py`: bounded temporary-disk array loading and

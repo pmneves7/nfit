@@ -303,8 +303,10 @@ def test_dataset_weight_change_clears_dependent_composite_cache_badge():
     project_gui._COMPOSITE_DATA_CACHE.clear()
 
 
-def test_open_composite_viewer_refreshes_every_cache_badge(monkeypatch):
+@pytest.mark.parametrize("preload", [False, True])
+def test_open_composite_viewer_refreshes_every_cache_badge(monkeypatch, preload):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setattr(project_gui, "preload_viewer_data", lambda: preload)
     project_gui._VIEWER_VIEW_CACHE.clear()
     project_gui._COMPOSITE_DATA_CACHE.clear()
 
@@ -342,14 +344,18 @@ def test_open_composite_viewer_refreshes_every_cache_badge(monkeypatch):
     viewer = explorer.open_slice_viewer(root, use_composite=True)
 
     assert viewer is not None
-    assert all(
+    assert [
         project_gui._composite_cached_binnings_current(root, subgroup)
         for subgroup in subgroups
-    )
+    ] == [True, preload]
     assert [item.icon(0).cacheKey() for item in subgroup_items] == [
         cached_icon,
-        cached_icon,
+        cached_icon if preload else plain_icon,
     ]
+    if not preload:
+        viewer._set_dataset_selection(1)
+        assert project_gui._composite_cached_binnings_current(root, subgroups[1])
+        assert subgroup_items[1].icon(0).cacheKey() == cached_icon
     assert all("cached and up to date" in item.toolTip(0) for item in subgroup_items)
 
     viewer.window.close()

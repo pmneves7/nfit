@@ -79,6 +79,7 @@ from .slice_viewer_state import (
     _point_list_two_theta_column_name,
     _point_list_wavelength,
 )
+from .viewer_data import DeferredViewerDatasets, ViewerLoadCancelled
 from .viewer_export import save_grid_csv, save_profile_csv, save_waterfall_csv
 
 _MARKER_OPTIONS = {
@@ -119,7 +120,7 @@ class QtMDHistoSliceViewer:
 
     def __init__(
         self,
-        data: MDHistoData | Sequence[MDHistoData],
+        data: MDHistoData | PointListData | Sequence[MDHistoData | PointListData],
         *,
         dataset_names: Sequence[str] | None = None,
         dataset_group_keys: Sequence[str] | None = None,
@@ -138,26 +139,12 @@ class QtMDHistoSliceViewer:
         self.app = _qt_app()
         cmap = default_continuous_colormap() if cmap is None else cmap
         self.datasets = _coerce_datasets(data)
-        self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
-        self.source_dataset_names = [
-            str(getattr(item, "metadata", {}).get("source_dataset_name", name))
-            for item, name in zip(self.datasets, self.dataset_names, strict=True)
-        ]
-        self.binning_names = [
-            str(getattr(item, "metadata", {}).get("binning_name", "Default"))
-            for item in self.datasets
-        ]
-        self.dataset_group_keys = _coerce_dataset_group_keys(
-            self.datasets,
-            dataset_group_keys,
+        self._set_dataset_catalog(dataset_names, dataset_group_keys, crystal_contexts)
+        self.dataset_index = (
+            self.datasets.initial_index
+            if isinstance(self.datasets, DeferredViewerDatasets)
+            else 0
         )
-        if crystal_contexts is None:
-            self.crystal_contexts = [{} for _ in self.datasets]
-        else:
-            self.crystal_contexts = [dict(value) for value in crystal_contexts]
-            if len(self.crystal_contexts) != len(self.datasets):
-                raise ValueError("crystal_contexts length must match datasets length")
-        self.dataset_index = 0
         self._initial_x_dim = x_dim
         self._initial_y_dim = y_dim
         self._initial_channel = channel
@@ -455,7 +442,7 @@ class QtMDHistoSliceViewer:
         self.bragg_peak_overlay: dict[str, Any] | None = None
         self.display_step_factors: dict[int, int] = {}
         self._dataset_states: list[_DatasetViewState | None] = [None] * len(self.datasets)
-        self._dataset_states[0] = _DatasetViewState(
+        self._dataset_states[self.dataset_index] = _DatasetViewState(
             model=self.model,
             show_fit=self.show_fit,
             tile_dim=self.tile_dim,
@@ -478,6 +465,56 @@ class QtMDHistoSliceViewer:
         configure_numeric_spin_boxes(self.app)
         self.update_plot()
 
+    def _set_dataset_catalog(
+        self,
+        dataset_names: Sequence[str] | None,
+        dataset_group_keys: Sequence[str] | None,
+        crystal_contexts: Sequence[dict[str, Any]] | None,
+    ) -> None:
+        if isinstance(self.datasets, DeferredViewerDatasets):
+            descriptors = self.datasets.descriptors
+            descriptor_names = [item.name for item in descriptors]
+            self.dataset_names = (
+                _coerce_dataset_names(self.datasets, dataset_names)
+                if dataset_names is not None
+                else descriptor_names
+            )
+            self.source_dataset_names = [item.source_dataset_name for item in descriptors]
+            self.binning_names = [item.binning_name for item in descriptors]
+            self.dataset_group_keys = (
+                _coerce_dataset_group_keys(self.datasets, dataset_group_keys)
+                if dataset_group_keys is not None
+                else [item.group_key for item in descriptors]
+            )
+            contexts = (
+                crystal_contexts
+                if crystal_contexts is not None
+                else [item.crystal_context for item in descriptors]
+            )
+            self.crystal_contexts = [dict(value) for value in contexts]
+            if len(self.crystal_contexts) != len(self.datasets):
+                raise ValueError("crystal_contexts length must match datasets length")
+            return
+        self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
+        self.source_dataset_names = [
+            str(getattr(item, "metadata", {}).get("source_dataset_name", name))
+            for item, name in zip(self.datasets, self.dataset_names, strict=True)
+        ]
+        self.binning_names = [
+            str(getattr(item, "metadata", {}).get("binning_name", "Default"))
+            for item in self.datasets
+        ]
+        self.dataset_group_keys = _coerce_dataset_group_keys(
+            self.datasets, dataset_group_keys
+        )
+        contexts = (
+            [{} for _ in range(len(self.datasets))]
+            if crystal_contexts is None else crystal_contexts
+        )
+        self.crystal_contexts = [dict(value) for value in contexts]
+        if len(self.crystal_contexts) != len(self.datasets):
+            raise ValueError("crystal_contexts length must match datasets length")
+
     def show(self) -> QtMDHistoSliceViewer:
         self.window.show()
         self.window.raise_()
@@ -493,7 +530,7 @@ class QtMDHistoSliceViewer:
 
     def replace_datasets(
         self,
-        data: MDHistoData | Sequence[MDHistoData],
+        data: MDHistoData | PointListData | Sequence[MDHistoData | PointListData],
         *,
         dataset_names: Sequence[str] | None = None,
         dataset_group_keys: Sequence[str] | None = None,
@@ -520,25 +557,7 @@ class QtMDHistoSliceViewer:
             or (previous_names[self.dataset_index] if 0 <= self.dataset_index < len(previous_names) else None)
         )
         self.datasets = _coerce_datasets(data)
-        self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
-        self.source_dataset_names = [
-            str(getattr(item, "metadata", {}).get("source_dataset_name", name))
-            for item, name in zip(self.datasets, self.dataset_names, strict=True)
-        ]
-        self.binning_names = [
-            str(getattr(item, "metadata", {}).get("binning_name", "Default"))
-            for item in self.datasets
-        ]
-        self.dataset_group_keys = _coerce_dataset_group_keys(
-            self.datasets,
-            dataset_group_keys,
-        )
-        if crystal_contexts is None:
-            self.crystal_contexts = [{} for _ in self.datasets]
-        else:
-            self.crystal_contexts = [dict(value) for value in crystal_contexts]
-            if len(self.crystal_contexts) != len(self.datasets):
-                raise ValueError("crystal_contexts length must match datasets length")
+        self._set_dataset_catalog(dataset_names, dataset_group_keys, crystal_contexts)
         if self.volume_panel is not None:
             self.content_stack.setCurrentIndex(0)
             self.view_mode_combo.setCurrentIndex(0)
@@ -565,30 +584,21 @@ class QtMDHistoSliceViewer:
         self._dataset_states = [None] * len(self.datasets)
         for index, name in enumerate(self.dataset_names):
             state = previous_states.get(name)
+            replacement = (
+                self.datasets.cached(index)
+                if isinstance(self.datasets, DeferredViewerDatasets)
+                else self.datasets[index]
+            )
             if state is not None:
-                tile_dim = state.tile_dim
-                if (
-                    tile_dim is not None
-                    and isinstance(state.model.data, MDHistoData)
-                    and isinstance(self.datasets[index], MDHistoData)
-                    and tile_dim < len(state.model.data.axes)
-                    and tile_dim < len(self.datasets[index].axes)
-                ):
-                    old_axis = state.model.data.axes[tile_dim]
-                    new_axis = self.datasets[index].axes[tile_dim]
-                    if (
-                        "metadata_dimension" in old_axis.metadata
-                        and old_axis.name == new_axis.name
-                        and np.allclose(state.tile_range, [old_axis.centers[0], old_axis.centers[-1]])
-                    ):
-                        state.tile_range = (float(new_axis.centers[0]), float(new_axis.centers[-1]))
-                state.model.data = self.datasets[index]
-                state.model.refresh_metadata_channels()
+                if replacement is not None:
+                    self._bind_dataset_state(state, index, data=replacement)
                 self._dataset_states[index] = state
         state = self._dataset_states[new_index]
         if state is None:
             state = self._default_dataset_state(new_index)
             self._dataset_states[new_index] = state
+        else:
+            self._bind_dataset_state(state, new_index)
         self.dataset_index = new_index
         self._sync_dataset_binning_combos()
         self._restore_dataset_state(state)
@@ -1680,6 +1690,7 @@ class QtMDHistoSliceViewer:
         index = int(index)
         if index in {0, 1, 2}:
             previous = self._active_plot_view_mode
+            previous_marker_face_color = self.marker_face_color
             if index != previous:
                 if previous == 1:
                     self._waterfall_marker_face_color = self.marker_face_color
@@ -1703,7 +1714,17 @@ class QtMDHistoSliceViewer:
             if index == 2 or previous == 2:
                 self._rebuild_hidden_axis_controls()
             self.content_stack.setCurrentIndex(0)
-            self.update_plot(preserve_view=False)
+            try:
+                self.update_plot(preserve_view=False)
+            except ViewerLoadCancelled:
+                self._restore_view_mode_after_load_failure(
+                    previous, previous_marker_face_color
+                )
+            except Exception as error:
+                self._restore_view_mode_after_load_failure(
+                    previous, previous_marker_face_color
+                )
+                self._report_view_load_error(error)
             return
         from .qt_volume_viewer import (
             QtVolumeViewerPanel,
@@ -1715,11 +1736,25 @@ class QtMDHistoSliceViewer:
             self.view_mode_combo.setCurrentIndex(0)
             return
         if self.volume_panel is None:
-            supported = [
-                (dataset, name, original_index)
-                for original_index, (dataset, name) in enumerate(zip(self.datasets, self.dataset_names, strict=True))
-                if supports_volume_view(dataset)
-            ]
+            try:
+                supported = [
+                    (dataset, name, original_index)
+                    for original_index, (dataset, name) in enumerate(
+                        zip(self.datasets, self.dataset_names, strict=True)
+                    )
+                    if supports_volume_view(dataset)
+                ]
+            except ViewerLoadCancelled:
+                self._restore_view_mode_after_load_failure(
+                    self._active_plot_view_mode, self.marker_face_color
+                )
+                return
+            except Exception as error:
+                self._restore_view_mode_after_load_failure(
+                    self._active_plot_view_mode, self.marker_face_color
+                )
+                self._report_view_load_error(error)
+                return
             selected = next(
                 (index for index, (_dataset, _name, original) in enumerate(supported) if original == self.dataset_index),
                 0,
@@ -1742,6 +1777,22 @@ class QtMDHistoSliceViewer:
             )
             self.content_stack.addWidget(self.volume_panel)
         self.content_stack.setCurrentWidget(self.volume_panel)
+
+    def _restore_view_mode_after_load_failure(
+        self, index: int, marker_face_color: str
+    ) -> None:
+        self._active_plot_view_mode = int(index)
+        self.marker_face_color = marker_face_color
+        blocked = self.view_mode_combo.blockSignals(True)
+        self.view_mode_combo.setCurrentIndex(int(index))
+        self.view_mode_combo.blockSignals(blocked)
+        self.content_stack.setCurrentIndex(0)
+
+    def _report_view_load_error(self, error: Exception) -> None:
+        message = f"Could not load datasets for this view: {error}"
+        self._last_dataset_load_error = message
+        if self.window is not None and hasattr(self.window, "statusBar"):
+            self.window.statusBar().showMessage(message, 10_000)
 
     def _close_volume_panel(self) -> None:
         panel = self.volume_panel
@@ -1994,6 +2045,15 @@ class QtMDHistoSliceViewer:
         index = int(index)
         if index == self.dataset_index or not (0 <= index < len(self.datasets)):
             return
+        try:
+            target_data = self.datasets[index]
+        except ViewerLoadCancelled:
+            self._sync_dataset_binning_combos()
+            return
+        except Exception as error:
+            self._report_dataset_load_error(index, error)
+            self._sync_dataset_binning_combos()
+            return
         source_state = self._capture_dataset_state()
         self._dataset_states[self.dataset_index] = source_state
         if self.hold_view_settings:
@@ -2004,9 +2064,55 @@ class QtMDHistoSliceViewer:
         if state is None:
             state = self._default_dataset_state(index)
             self._dataset_states[index] = state
+        else:
+            self._bind_dataset_state(state, index, data=target_data)
         self.dataset_index = index
         self._restore_dataset_state(state)
         self._sync_dataset_binning_combos()
+
+    def _bind_dataset_state(
+        self,
+        state: _DatasetViewState,
+        index: int,
+        *,
+        data: MDHistoData | PointListData | None = None,
+    ) -> None:
+        """Attach a retained presentation state to its current payload."""
+
+        replacement = self.datasets[index] if data is None else data
+        tile_dim = state.tile_dim
+        old_data = state.model.data
+        if (
+            tile_dim is not None
+            and isinstance(old_data, MDHistoData)
+            and isinstance(replacement, MDHistoData)
+            and tile_dim < len(old_data.axes)
+            and tile_dim < len(replacement.axes)
+        ):
+            old_axis = old_data.axes[tile_dim]
+            new_axis = replacement.axes[tile_dim]
+            if (
+                "metadata_dimension" in old_axis.metadata
+                and old_axis.name == new_axis.name
+                and np.allclose(
+                    state.tile_range,
+                    [old_axis.centers[0], old_axis.centers[-1]],
+                )
+            ):
+                state.tile_range = (
+                    float(new_axis.centers[0]),
+                    float(new_axis.centers[-1]),
+                )
+        state.model.data = replacement
+        state.model.refresh_metadata_channels()
+
+    def _report_dataset_load_error(self, index: int, error: Exception) -> None:
+        """Keep the active dataset selected and report a deferred-load failure."""
+
+        message = f"Could not load {self.dataset_names[index]}: {error}"
+        self._last_dataset_load_error = message
+        if self.window is not None and hasattr(self.window, "statusBar"):
+            self.window.statusBar().showMessage(message, 10_000)
 
     def _set_hold_view_settings(self, enabled: bool) -> None:
         self.hold_view_settings = bool(enabled)
@@ -4218,9 +4324,30 @@ class QtMDHistoSliceViewer:
         """Return lightweight state that identifies the current numerical view."""
 
         data = self.model.data
+        if isinstance(self.datasets, DeferredViewerDatasets):
+            datasets_identity = (
+                self.datasets.revision,
+                tuple(
+                    (
+                        index,
+                        mdhisto_source_identity(dataset)
+                        if isinstance(dataset, MDHistoData)
+                        else (id(dataset),),
+                    )
+                    for index in self.datasets.cached_indices
+                    if (dataset := self.datasets.cached(index)) is not None
+                ),
+            )
+        else:
+            datasets_identity = tuple(
+                mdhisto_source_identity(dataset)
+                if isinstance(dataset, MDHistoData)
+                else (id(dataset),)
+                for dataset in self.datasets
+            )
         if getattr(self.model, "is_point_list", False):
             return (
-                tuple(id(dataset) for dataset in self.datasets),
+                datasets_identity,
                 id(data),
                 self.model.x_key,
                 self.model.channel,
@@ -4230,12 +4357,7 @@ class QtMDHistoSliceViewer:
         else:
             selections = tuple(sorted(self.model._normalized_selections().items()))
         return (
-            tuple(
-                mdhisto_source_identity(dataset)
-                if isinstance(dataset, MDHistoData)
-                else (id(dataset),)
-                for dataset in self.datasets
-            ),
+            datasets_identity,
             mdhisto_source_identity(data),
             self.model.x_dim,
             self.model.y_dim,

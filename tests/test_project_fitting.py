@@ -554,6 +554,68 @@ def test_live_overlay_keeps_successful_datasets_and_records_failures(monkeypatch
     ]["bad"]
 
 
+def test_current_model_channel_prepares_only_selected_named_view(monkeypatch):
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[
+            DatasetEntry("selected", _grid_mdhisto_data(), kind="mdhisto"),
+            DatasetEntry("unselected", _grid_mdhisto_data(), kind="mdhisto"),
+        ],
+    )
+    model = create_model_component(group)
+    model.parameters["constant"] = 4.0
+    model.applies_to = ["selected"]
+    selected = group.get_dataset("selected").copy(name="selected · Display")
+    selected.metadata = {
+        **selected.metadata,
+        "source_dataset_name": "selected",
+        "binning_name": "Display",
+    }
+
+    calls = []
+    original = project_gui.fit_data_bundle
+
+    def record_selected_bundle(owner, dataset, **kwargs):
+        calls.append(dataset.name)
+        return original(owner, dataset, **kwargs)
+
+    monkeypatch.setattr(project_gui, "fit_data_bundle", record_selected_bundle)
+
+    payload = project_gui.current_model_channel(group, selected)
+
+    assert calls == ["selected · Display"]
+    assert payload is not None
+    assert payload["fit"] == pytest.approx(
+        np.full(selected.data.shape, 4.0)
+    )
+
+
+def test_current_model_channel_matches_eager_overlay_for_disabled_zero_weight_dataset():
+    selected = DatasetEntry("display", _grid_mdhisto_data(), kind="mdhisto")
+    selected.enabled = False
+    selected.fit_weight = 0.0
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[
+            DatasetEntry("fit", _grid_mdhisto_data(), kind="mdhisto"),
+            selected,
+        ],
+    )
+    model = create_model_component(group)
+    model.parameters["constant"] = 4.0
+
+    eager = project_gui.current_model_channels(group, unmask_model=True)["display"]
+    selected_only = project_gui.current_model_channel(
+        group, selected, unmask_model=True
+    )
+
+    assert selected_only is not None
+    np.testing.assert_allclose(selected_only["fit"], eager["fit"], equal_nan=True)
+    np.testing.assert_allclose(
+        selected_only["residual"], eager["residual"], equal_nan=True
+    )
+
+
 def test_point_fit_overlay_is_only_mapped_to_its_fitted_channel():
     from nfit.plotting import MDHistoSliceViewer
 

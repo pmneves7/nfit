@@ -585,6 +585,11 @@ from .susceptibility import (
     coupled_scalar_susceptibility,
 )
 from .symmetry import ReciprocalSymmetryOperation, SymmetrySpec, resolve_symmetry
+from .viewer_data import (
+    DeferredViewerDatasets,
+    ViewerDatasetDescriptor,
+    ViewerLoadCancelled,
+)
 from .viewer_export import (
     save_grid_csv,
     save_profile_csv,
@@ -693,6 +698,9 @@ def __dir__() -> list[str]:
     )
 
 __all__ = [
+    "DeferredViewerDatasets",
+    "ViewerDatasetDescriptor",
+    "ViewerLoadCancelled",
     "MetadataDimension",
     "MetadataBinning",
     "metadata_channel_values",

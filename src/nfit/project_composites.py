@@ -1846,19 +1846,23 @@ def composite_dataset_entry(
     *,
     force_rebin: bool = True,
     progress_callback: Any | None = None,
+    config_override: dict[str, Any] | None = None,
+    binning_id: str | None = None,
 ) -> DatasetEntry:
     child_scopes = _hierarchical_composite_scopes(group)
     datasets = _composite_candidates(
         group, include_backgrounds=bool(group.metadata.get("metadata_dimensions"))
     )
     first = datasets[0] if datasets else None
-    config = data_group_composite_config(group)
+    config = data_group_composite_config(group, config_override=config_override)
     return DatasetEntry(
         name=_composite_dataset_name(group),
         data=_cached_composite_dataset_data(
             group,
             force_rebin=force_rebin,
             progress_callback=progress_callback,
+            config_override=config_override,
+            binning_id=binning_id,
         ),
         kind=("mdhisto" if child_scopes else first.kind if first is not None else ""),
         data_type=(

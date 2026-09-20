@@ -11,8 +11,10 @@ from .application_preferences import (
     application_settings,
     default_continuous_colormap,
     default_waterfall_colormap,
+    preload_viewer_data,
     set_default_continuous_colormap,
     set_default_waterfall_colormap,
+    set_preload_viewer_data,
 )
 from .colormaps import (
     IMAGE_COLORMAP_GROUPS,
@@ -116,6 +118,34 @@ class PreferencesDialog(QtWidgets.QDialog):
         body.addWidget(loaded)
         body.addStretch()
         self.tabs.addTab(page, "Colormaps")
+
+        viewer_page = QtWidgets.QWidget()
+        viewer_body = QtWidgets.QVBoxLayout(viewer_page)
+        self.preload_viewer_data_checkbox = QtWidgets.QCheckBox(
+            "Preload all data-viewer datasets and binnings"
+        )
+        self.preload_viewer_data_checkbox.setObjectName(
+            "preferences_preload_viewer_data"
+        )
+        self.preload_viewer_data_checkbox.setToolTip(
+            "By default, a data viewer loads each selection on demand. Enable this to "
+            "preload every dataset and binning for faster switching. Applies to newly "
+            "opened viewers."
+        )
+        self.preload_viewer_data_checkbox.setChecked(preload_viewer_data(self.settings))
+        self.preload_viewer_data_checkbox.toggled.connect(
+            lambda enabled: set_preload_viewer_data(enabled, self.settings)
+        )
+        viewer_body.addWidget(self.preload_viewer_data_checkbox)
+        viewer_note = QtWidgets.QLabel(
+            "Preloading can make switching faster, but opening a viewer may take longer "
+            "and use more memory."
+        )
+        viewer_note.setWordWrap(True)
+        viewer_body.addWidget(viewer_note)
+        viewer_body.addStretch()
+        self.tabs.addTab(viewer_page, "Data viewer")
+
         from .performance_gui import PerformancePage
 
         self.tabs.addTab(PerformancePage(self), "Performance")

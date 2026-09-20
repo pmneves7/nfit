@@ -37,6 +37,36 @@ an independent viewer initialized from the current dataset and view settings.
 branch and reports the stored recipe name in the viewer.
 Closing one viewer does not affect the others.
 
+By default, a new viewer loads only the initially selected dataset and binning.
+All available choices still appear in the menus; selecting another loads its
+data, and revisiting a loaded choice reuses it. Valid saved bins are reused;
+missing or stale bins are computed when requested. Dependencies needed to
+prepare the selected composite or derived dataset are also loaded.
+
+To load everything before the window opens, enable **Preferences → Data viewer
+→ Preload all data-viewer datasets and binnings**. This installation-local
+preference applies to newly opened viewers. Preloading takes longer to open and
+retains more data, but makes subsequent switching faster. Waterfall comparisons
+and the volume viewer may load additional datasets when those modes are opened.
+The overall RAM and CPU preferences still control numerical preparation.
+
+Scripts retain eager loading by default. Request the same on-demand behavior
+explicitly when constructing a viewer:
+
+```python
+from nfit import QtMDHistoSliceViewer, slice_viewer_datasets
+
+datasets, names = slice_viewer_datasets(
+    group, preload=False, selected_dataset_name="Sample composite"
+)
+viewer = QtMDHistoSliceViewer(datasets, dataset_names=names)
+viewer.show()
+```
+
+The returned sequence exposes lightweight `descriptors` and `initial_index`.
+Indexing it loads one binning; iterating over it loads every entry. The loading
+preference does not change scientific settings or saved plot recipes.
+
 The controls are ordered **Dataset**, **Binning**, then **Channel**. Dataset
 selects the source dataset or composite; Binning selects one of its enabled
 named grids without duplicating that source in the Dataset menu. Only the
