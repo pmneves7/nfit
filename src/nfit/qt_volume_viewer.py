@@ -6,10 +6,16 @@ from typing import Any
 
 import numpy as np
 
+from .background_channels import available_background_channels, background_channel
 from .colormaps import VOLUME_COLORMAPS
 from .dataset import PointListData
 from .file_dialogs import get_save_file_name
-from .mdhisto import MDHistoAxis, MDHistoData, mdhisto_measured_bins
+from .mdhisto import (
+    MDHistoAxis,
+    MDHistoData,
+    mdhisto_measured_bins,
+    mdhisto_measured_bins_from_arrays,
+)
 from .plotting_core import gaussian_smooth_nan
 from .qt_slice_controls import _IntegratedAxisSlider
 from .qt_volume_controls import build_volume_panel_ui
@@ -41,6 +47,7 @@ def volume_channel_names(data: MDHistoData) -> tuple[str, ...]:
         values = data.metadata.get(name)
         if isinstance(values, np.ndarray) and values.shape == data.shape:
             names.append(name)
+    names.extend(available_background_channels(data))
     return tuple(names)
 
 
@@ -321,7 +328,9 @@ def extract_volume_arrays(
         raise ValueError("x, y, and z must be three distinct dataset axes")
     hidden_selections = dict(hidden_selections or {})
     color = _reduce_channel(data, color_channel, axes, hidden_selections, apply_masks)
-    opacity = _reduce_channel(data, opacity_channel, axes, hidden_selections, apply_masks)
+    opacity = color if opacity_channel == color_channel else _reduce_channel(
+        data, opacity_channel, axes, hidden_selections, apply_masks
+    )
     return VolumeArrays(
         x_edges=_axis_edges(data.axes[axes[0]]),
         y_edges=_axis_edges(data.axes[axes[1]]),
@@ -331,20 +340,19 @@ def extract_volume_arrays(
     )
 
 
-def _channel_array(data: MDHistoData, channel: str) -> np.ndarray:
-    if channel == "signal":
-        return np.asarray(data.signal, dtype=float)
-    if channel == "errors":
-        return np.asarray(data.errors, dtype=float)
-    if channel == "num_events":
-        return np.asarray(data.num_events, dtype=float)
+def _channel_array(data: MDHistoData, channel: str, selection: Any = Ellipsis) -> np.ndarray:
+    if channel in {"signal", "errors", "num_events"}:
+        return np.asarray(getattr(data, channel)[selection], dtype=float)
     if channel == "combined_mask":
-        return np.asarray(data.mask, dtype=float)
+        return np.asarray(data.mask[selection], dtype=float)
     if channel in {"file_mask", "nfit_mask"}:
-        return np.asarray(data.metadata.get(channel, np.zeros(data.shape, dtype=bool)), dtype=float)
+        stored = data.metadata.get(channel)
+        if not isinstance(stored, np.ndarray) or stored.shape != data.shape:
+            stored = np.broadcast_to(False, data.shape)
+        return np.asarray(stored[selection], dtype=float)
     values = data.metadata.get(channel)
     if isinstance(values, np.ndarray) and values.shape == data.shape:
-        return np.asarray(values, dtype=float)
+        return np.asarray(values[selection], dtype=float)
     raise ValueError(f"unknown 3D channel {channel!r}")
 
 
@@ -355,16 +363,8 @@ def _reduce_channel(
     selections: dict[int, tuple[int, int] | int],
     apply_masks: bool,
 ) -> np.ndarray:
-    values = _channel_array(data, channel).copy()
     is_mask = channel in {"combined_mask", "file_mask", "nfit_mask"}
     variance_channel = channel == "errors"
-    valid = None
-    if apply_masks and not is_mask:
-        invalid = ~mdhisto_measured_bins(data)
-        values[invalid] = np.nan
-        valid = ~invalid
-    if variance_channel:
-        values = values**2
     index: list[Any] = []
     integrated_original_dims: list[int] = []
     for dim, size in enumerate(data.shape):
@@ -378,8 +378,30 @@ def _reduce_channel(
             integrated_original_dims.append(dim)
         else:
             index.append(int(np.clip(selection, 0, size - 1)))
-    reduced = np.asarray(values[tuple(index)], dtype=float)
-    reduced_valid = None if valid is None else np.asarray(valid[tuple(index)], dtype=bool)
+    selection = tuple(index)
+    diagnostic = channel in available_background_channels(data)
+    selected = background_channel(data, channel, selection) if diagnostic else None
+    reduced = selected.values if selected is not None else _channel_array(data, channel, selection)
+    reduced_valid = None
+    if apply_masks and not is_mask:
+        if selected is not None:
+            reduced_valid = ~selected.mask
+            manual = data.metadata.get("nfit_mask")
+            if isinstance(manual, np.ndarray) and manual.shape == data.shape:
+                reduced_valid &= ~manual[selection]
+        else:
+            denominator = data.metadata.get("normalization_denominator")
+            reduced_valid = mdhisto_measured_bins_from_arrays(
+                data.mask[selection], data.num_events[selection],
+                zero_event_bins_are_measured=bool(data.metadata.get("zero_event_bins_are_measured", False)),
+                normalization_denominator=(
+                    denominator[selection]
+                    if isinstance(denominator, np.ndarray) and denominator.shape == data.shape else None
+                ),
+            )
+        reduced = np.where(reduced_valid, reduced, np.nan)
+    if variance_channel:
+        reduced = np.square(reduced)
     remaining_dims = [dim for dim in range(data.signal.ndim) if dim in axes or dim in integrated_original_dims]
     for original_dim in sorted(integrated_original_dims, reverse=True):
         position = remaining_dims.index(original_dim)

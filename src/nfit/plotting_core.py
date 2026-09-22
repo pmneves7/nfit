@@ -7,9 +7,14 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .background_channels import available_background_channels, background_channel
 from .colormaps import IMAGE_COLORMAPS
 from .dataset import PointData4D, PointListData
-from .mdhisto import MDHistoData, mdhisto_coverage_fraction, mdhisto_measured_bins
+from .mdhisto import (
+    MDHistoData,
+    mdhisto_coverage_fraction,
+    mdhisto_measured_bins_from_arrays,
+)
 from .quantities import display_axis_label, display_channel_label, display_unit
 
 
@@ -866,10 +871,10 @@ def plot_mdhisto_line(
     else:
         axis_index = _resolve_mdhisto_dim(data, axis_dim)
     channel_name = _resolve_mdhisto_channel(channel, data)
-    values = _mdhisto_channel_array(data, channel_name)
     index = [0] * data.signal.ndim
     index[axis_index] = slice(None)
-    y = np.asarray(values[tuple(index)], dtype=float)
+    selection = tuple(index)
+    y = np.asarray(_mdhisto_channel_array(data, channel_name, selection), dtype=float)
     x = np.asarray(data.axes[axis_index].centers, dtype=float)
     line_view = {
         "x_centers": x,
@@ -878,9 +883,13 @@ def plot_mdhisto_line(
     }
     if channel_name == "signal":
         line_view["errors"] = np.asarray(
-            _mdhisto_channel_array(data, "errors")[tuple(index)],
+            _mdhisto_channel_array(data, "errors", selection),
             dtype=float,
         )
+    elif channel_name in available_background_channels(data):
+        diagnostic = background_channel(data, channel_name, selection)
+        if diagnostic.errors is not None:
+            line_view["errors"] = np.asarray(diagnostic.errors, dtype=float)
     line_view = coarsen_mdhisto_view(line_view, x_step=axis_step)
     x = np.asarray(line_view["x_centers"], dtype=float)
     y = np.asarray(line_view["signal"], dtype=float)
@@ -890,7 +899,7 @@ def plot_mdhisto_line(
         y = np.where(source_finite, y, np.nan)
     if ax is None:
         _, ax = plt.subplots()
-    if channel_name == "signal":
+    if "errors" in line_view:
         yerr = np.asarray(line_view["errors"], dtype=float)
         source_error_finite = np.isfinite(yerr)
         yerr = gaussian_smooth_uncertainty(
@@ -1981,13 +1990,17 @@ def _mdhisto_1d_values(
     channel: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     channel_name = _resolve_mdhisto_channel(channel, data)
-    values = _mdhisto_channel_array(data, channel_name)
     index = [0] * data.signal.ndim
     index[axis_index] = slice(None)
-    y = np.asarray(values[tuple(index)], dtype=float)
+    selection = tuple(index)
+    y = np.asarray(_mdhisto_channel_array(data, channel_name, selection), dtype=float)
     yerr = None
     if channel_name == "signal":
-        yerr = np.asarray(_mdhisto_channel_array(data, "errors")[tuple(index)], dtype=float)
+        yerr = np.asarray(_mdhisto_channel_array(data, "errors", selection), dtype=float)
+    elif channel_name in available_background_channels(data):
+        selected = background_channel(data, channel_name, selection)
+        if selected.errors is not None:
+            yerr = np.asarray(selected.errors, dtype=float)
     elif (
         channel_name in data.auxiliary_channels
         and data.auxiliary_channels[channel_name].errors is not None
@@ -2022,7 +2035,11 @@ def _resolve_mdhisto_channel(
 ) -> str:
     normalized = MDHistoSliceViewer.CHANNEL_ALIASES.get(str(channel), str(channel))
     choices = (
-        (*MDHistoSliceViewer.CHANNELS, *data.auxiliary_channels)
+        (
+            *MDHistoSliceViewer.CHANNELS,
+            *data.auxiliary_channels,
+            *available_background_channels(data),
+        )
         if data is not None
         else MDHistoSliceViewer.CHANNELS
     )
@@ -2031,23 +2048,54 @@ def _resolve_mdhisto_channel(
     return normalized
 
 
-def _mdhisto_channel_array(data: MDHistoData, channel: str) -> np.ndarray:
+def _mdhisto_channel_array(
+    data: MDHistoData,
+    channel: str,
+    selection: object = Ellipsis,
+) -> np.ndarray:
+    if channel in available_background_channels(data):
+        selected = background_channel(data, channel, selection)
+        return np.where(
+            np.asarray(selected.mask, dtype=bool),
+            np.nan,
+            np.asarray(selected.values, dtype=float),
+        )
     if channel == "signal":
-        values = np.asarray(data.signal, dtype=float)
+        values = np.asarray(data.signal[selection], dtype=float)
     elif channel == "errors":
-        values = np.asarray(data.errors, dtype=float)
+        values = np.asarray(data.errors[selection], dtype=float)
     elif channel == "num_events":
-        values = np.asarray(data.num_events, dtype=float)
+        values = np.asarray(data.num_events[selection], dtype=float)
     elif channel == "combined_mask":
-        return np.asarray(data.mask, dtype=float)
+        return np.asarray(data.mask[selection], dtype=float)
     elif channel in {"file_mask", "nfit_mask"}:
-        return np.asarray(data.metadata.get(channel, np.zeros(data.shape, dtype=bool)), dtype=float)
+        stored = data.metadata.get(channel)
+        if stored is None:
+            return np.asarray(
+                np.broadcast_to(False, data.shape)[selection], dtype=float
+            )
+        return np.asarray(stored[selection], dtype=float)
     elif channel in data.auxiliary_channels:
-        values = np.asarray(data.auxiliary_channels[channel].values, dtype=float)
+        values = np.asarray(data.auxiliary_channels[channel].values[selection], dtype=float)
     else:
         raise ValueError(f"unknown channel {channel!r}")
-    empty = ~mdhisto_measured_bins(data)
-    return np.where(np.asarray(data.mask, dtype=bool) | empty, np.nan, values)
+    mask = np.asarray(data.mask[selection], dtype=bool)
+    events = np.asarray(data.num_events[selection], dtype=float)
+    denominator = data.metadata.get("normalization_denominator")
+    selected_denominator = (
+        np.asarray(denominator[selection], dtype=float)
+        if isinstance(denominator, np.ndarray) and denominator.shape == data.shape
+        else None
+    )
+    empty = ~mdhisto_measured_bins_from_arrays(
+        mask,
+        events,
+        zero_event_bins_are_measured=bool(
+            data.metadata.get("zero_event_bins_are_measured", False)
+        ),
+        normalization_denominator=selected_denominator,
+    )
+    return np.where(mask | empty, np.nan, values)
 
 
 def _panel_ratio(percent: float) -> float:
@@ -2511,6 +2559,15 @@ class MDHistoSliceViewer:
                 coverage_mask, (y_pos, x_pos), (0, 1)
             ),
         }
+        if self.channel in available_background_channels(self.data):
+            values2d, errors2d = self._slice_background_channel(
+                self.channel,
+                selections,
+                np.moveaxis(coverage_mask, (y_pos, x_pos), (0, 1)),
+            )
+            view[self.channel] = values2d
+            if errors2d is not None:
+                view[f"{self.channel}_errors"] = errors2d
         for name in self._metadata_channel_names():
             if name == "coverage_fraction":
                 continue
@@ -2629,19 +2686,86 @@ class MDHistoSliceViewer:
             value = self.data.metadata.get(name)
             if isinstance(value, np.ndarray) and value.shape == self.data.shape:
                 names.append(name)
+        diagnostic_names = set(available_background_channels(self.data))
         names.extend(
             name
             for name in self.data.auxiliary_channels
             if name not in type(self).CHANNELS
+            and name not in diagnostic_names
         )
         return tuple(names)
+
+    def _slice_background_channel(
+        self,
+        name: str,
+        selections: dict[int, tuple[int, int] | int],
+        coverage_mask: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        """Select and reduce one lazy background diagnostic like the signal."""
+
+        index: list[Any] = []
+        reduce_axes: list[int] = []
+        output_axis = 0
+        for dim in range(self.data.signal.ndim):
+            if dim in (self.x_dim, self.y_dim):
+                index.append(slice(None))
+                output_axis += 1
+                continue
+            selection = selections[dim]
+            if isinstance(selection, tuple):
+                start, stop = selection
+                index.append(slice(start, stop + 1))
+                reduce_axes.append(output_axis)
+                output_axis += 1
+            else:
+                index.append(selection)
+        selected = background_channel(self.data, name, tuple(index))
+        values = np.asarray(selected.values, dtype=float)
+        variance = (
+            None
+            if selected.errors is None
+            else np.square(np.asarray(selected.errors, dtype=float))
+        )
+        diagnostic_mask = np.asarray(selected.mask, dtype=bool)
+        if self.masked:
+            values = np.where(diagnostic_mask, np.nan, values)
+            if variance is not None:
+                variance = np.where(diagnostic_mask, np.nan, variance)
+        for axis in sorted(reduce_axes, reverse=True):
+            values = np.nansum(values, axis=axis)
+            diagnostic_mask = np.all(diagnostic_mask, axis=axis)
+            if variance is not None:
+                variance = np.nansum(variance, axis=axis)
+        remaining = [
+            dim for dim in range(self.data.signal.ndim)
+            if dim in (self.x_dim, self.y_dim)
+        ]
+        y_pos = remaining.index(self.y_dim)
+        x_pos = remaining.index(self.x_dim)
+        values2d = np.moveaxis(values, (y_pos, x_pos), (0, 1))
+        diagnostic_mask2d = np.moveaxis(
+            diagnostic_mask, (y_pos, x_pos), (0, 1)
+        )
+        effective_mask = diagnostic_mask2d | np.asarray(coverage_mask, dtype=bool)
+        effective_mask |= self._slice_metadata_mask("nfit_mask", selections)
+        if self.masked:
+            values2d = np.where(effective_mask, np.nan, values2d)
+        errors2d = None
+        if variance is not None:
+            errors2d = np.sqrt(np.moveaxis(variance, (y_pos, x_pos), (0, 1)))
+            if self.masked:
+                errors2d = np.where(effective_mask, np.nan, errors2d)
+        return values2d, errors2d
 
     def refresh_metadata_channels(self) -> None:
         """Refresh instance channel lists after MDHisto metadata changes."""
 
         if getattr(self, "is_point_list", False):
             return
-        extra_channels = self._metadata_channel_names()
+        extra_channels = (
+            *self._metadata_channel_names(),
+            *available_background_channels(self.data),
+        )
         self.CHANNELS = (*type(self).CHANNELS, *extra_channels)
         self.CHANNEL_LABELS = {
             **type(self).CHANNEL_LABELS,
@@ -2666,6 +2790,8 @@ class MDHistoSliceViewer:
                 )
                 for name, channel in self.data.auxiliary_channels.items()
             },
+            "background": "Background",
+            "unsubtracted": "Unsubtracted",
         }
         if hasattr(self, "channel") and self.channel not in self.CHANNELS:
             self.channel = self._resolve_channel("signal")
@@ -2916,6 +3042,19 @@ class MDHistoSliceViewer:
             return self.CHANNEL_LABELS.get(self.channel, self.channel)
         if self.channel == "residual":
             return self.CHANNEL_LABELS[self.channel]
+        if self.channel in available_background_channels(self.data):
+            selected = background_channel(
+                self.data,
+                self.channel,
+                tuple(0 for _ in self.data.shape),
+            )
+            return display_channel_label(
+                selected.label or self.CHANNEL_LABELS[self.channel],
+                selected.unit,
+                # Keep diagnostics visibly distinct from the primary physical
+                # quantity even when they share its units and quantity type.
+                quantity_type="unknown",
+            )
         source_channel = "signal" if self.channel in {"signal", "errors", "fit"} else self.channel
         auxiliary = self.data.auxiliary_channels.get(source_channel)
         if source_channel == "coverage_fraction" and auxiliary is None:

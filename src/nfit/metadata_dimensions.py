@@ -10,6 +10,12 @@ from typing import Any
 
 import numpy as np
 
+from .background_channels import (
+    BACKGROUND_EXCEPTIONS_KEY,
+    BACKGROUND_PROVENANCE_KEY,
+    BACKGROUND_PROVENANCE_VERSION,
+    available_background_channels,
+)
 from .dataset import PointData4D
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 
@@ -519,10 +525,21 @@ def stack_metadata_histograms(template, slices, dimensions, centers) -> MDHistoD
     errors = np.full(shape, np.nan)
     mask = np.ones(shape, dtype=bool)
     events = np.zeros(shape)
+    templates = dict(template.auxiliary_channels)
+    background_template = next((
+        data.auxiliary_channels["background"] for data in slices.values()
+        if available_background_channels(data)
+    ), None)
+    if background_template is not None:
+        templates["background"] = background_template
     channels = {
         key: (np.zeros(shape), None if channel.errors is None else np.full(shape, np.nan))
-        for key, channel in template.auxiliary_channels.items()
+        for key, channel in templates.items()
     }
+    exception_indices: list[np.ndarray] = []
+    exception_signal: list[np.ndarray] = []
+    exception_errors: list[np.ndarray] = []
+    exception_mask: list[np.ndarray] = []
     for indices, data in slices.items():
         target = (slice(None),) * len(template.shape) + indices
         signal[target], errors[target], mask[target], events[target] = (
@@ -532,12 +549,46 @@ def stack_metadata_histograms(template, slices, dimensions, centers) -> MDHistoD
             data.num_events,
         )
         for key, (values, uncertainty) in channels.items():
+            if key == "background" and background_template is not None and not available_background_channels(data):
+                values[target] = 0.0
+                if uncertainty is not None:
+                    uncertainty[target] = 0.0
+                continue
             values[target] = data.auxiliary_channels[key].values
             if uncertainty is not None:
                 uncertainty[target] = data.auxiliary_channels[key].errors
-    metadata = copy.deepcopy(template.metadata)
+        record = data.metadata.get(BACKGROUND_EXCEPTIONS_KEY) if available_background_channels(data) else None
+        if isinstance(record, dict) and set(record) == {"indices", "signal", "errors", "mask"}:
+            local = np.asarray(record["indices"], dtype=np.int64)
+            if local.ndim == 1 and np.all((local >= 0) & (local < data.signal.size)):
+                coordinates = np.unravel_index(local, data.shape)
+                output_coordinates = (*coordinates, *([np.full(local.shape, index, dtype=np.int64) for index in indices]))
+                exception_indices.append(np.ravel_multi_index(output_coordinates, shape))
+                exception_signal.append(np.asarray(record["signal"], dtype=float))
+                exception_errors.append(np.asarray(record["errors"], dtype=float))
+                exception_mask.append(np.asarray(record["mask"], dtype=bool))
+    metadata = copy.deepcopy({
+        key: value for key, value in template.metadata.items()
+        if key not in {BACKGROUND_EXCEPTIONS_KEY, BACKGROUND_PROVENANCE_KEY}
+    })
+    if background_template is not None:
+        metadata[BACKGROUND_PROVENANCE_KEY] = BACKGROUND_PROVENANCE_VERSION
     metadata.pop("temperature", None)
     metadata["metadata_dimensions"] = [d.to_dict() for d in dimensions]
+    if exception_indices:
+        order = np.argsort(np.concatenate(exception_indices), kind="stable")
+        metadata[BACKGROUND_EXCEPTIONS_KEY] = {
+            "indices": _readonly_exception_array(np.concatenate(exception_indices)[order]),
+            "signal": _readonly_exception_array(np.concatenate(exception_signal)[order]),
+            "errors": _readonly_exception_array(np.concatenate(exception_errors)[order]),
+            "mask": _readonly_exception_array(np.concatenate(exception_mask)[order]),
+        }
+    for array in (signal, errors, mask, events):
+        array.setflags(write=False)
+    for values, uncertainty in channels.values():
+        values.setflags(write=False)
+        if uncertainty is not None:
+            uncertainty.setflags(write=False)
     return template.with_updates(
         axes=template.axes
         + tuple(discrete_metadata_axis(d, c) for d, c in zip(dimensions, centers, strict=True)),
@@ -550,10 +601,16 @@ def stack_metadata_histograms(template, slices, dimensions, centers) -> MDHistoD
             key: MDHistoChannel(
                 values,
                 uncertainty,
-                template.auxiliary_channels[key].label,
-                template.auxiliary_channels[key].unit,
-                template.auxiliary_channels[key].quantity_type,
+                templates[key].label,
+                templates[key].unit,
+                templates[key].quantity_type,
             )
             for key, (values, uncertainty) in channels.items()
         },
     )
+
+
+def _readonly_exception_array(values: np.ndarray) -> np.ndarray:
+    result = np.array(values, copy=True)
+    result.setflags(write=False)
+    return result

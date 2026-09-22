@@ -9,6 +9,7 @@ from .application_preferences import (
     default_continuous_colormap,
     default_waterfall_colormap,
 )
+from .background_channels import available_background_channels
 from .colormaps import (
     IMAGE_COLORMAP_GROUPS,  # noqa: F401 - compatibility re-export
     WATERFALL_COLORMAP_GROUPS,  # noqa: F401 - compatibility re-export
@@ -3064,6 +3065,7 @@ class QtMDHistoSliceViewer:
                 self.update_plot(preserve_view=False)
             return
         self.model.channel = self.model._resolve_channel(channel)
+        self._sync_fit_channel_controls()
         self.update_plot(preserve_view=False)
 
     def _set_apply_masks(self, checked: bool) -> None:
@@ -3095,7 +3097,10 @@ class QtMDHistoSliceViewer:
     def _channel_available(self, name: str) -> bool:
         if getattr(self.model, "is_point_list", False):
             return self.model.point_overlay_channel(name) is not None
-        return name in self.model.CHANNELS
+        return (
+            name in self.model.CHANNELS
+            and self.model.channel not in available_background_channels(self.data)
+        )
 
     def _fit_panels_active(self) -> bool:
         """Side-by-side pcolor panels are used for 2D data with a fit shown."""

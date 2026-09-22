@@ -63,7 +63,7 @@ def reduce_masked_event_runs(
         variance += np.square(np.where(valid & (data.num_events > 0), data.errors, 0.0) * exposure)
         denominator += exposure
         events += np.where(valid, data.num_events, 0.0)
-        all_excluded &= masked.metadata["nfit_mask"]
+        all_excluded &= masked.metadata.get("nfit_mask", False)
 
     measured = denominator > 0.0
     with np.errstate(divide="ignore", invalid="ignore"):

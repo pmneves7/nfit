@@ -207,15 +207,25 @@ def _mdhisto_with_nfit_masks(
     data = dataset.data if data is None else data
     if not isinstance(data, MDHistoData):
         raise TypeError("dataset does not contain MDHistoData")
+    masks = tuple([*(extra_masks or []), *dataset.masks])
+    if not any(mask.enabled for mask in masks):
+        return _mdhisto_with_file_mask_only(data)
     file_mask = np.asarray(data.mask, dtype=bool)
     nfit_mask = _nfit_mask_for_mdhisto(dataset, data, extra_masks=extra_masks)
-    combined_mask = file_mask | nfit_mask
+    combined_mask = file_mask if not np.any(nfit_mask) else file_mask | nfit_mask
+    # ``MDHistoData`` owns immutable arrays.  Mark these newly evaluated masks
+    # immutable before construction so they can also serve as metadata channels
+    # without a second full-volume copy.
+    nfit_mask.setflags(write=False)
+    if combined_mask is not file_mask:
+        combined_mask.setflags(write=False)
     metadata = dict(data.metadata)
-    metadata["file_mask"] = file_mask.copy()
-    metadata["nfit_mask"] = nfit_mask.copy()
+    metadata["file_mask"] = file_mask
+    metadata["nfit_mask"] = nfit_mask
     metadata["nfit_mask_count"] = int(np.count_nonzero(nfit_mask))
     metadata["file_mask_count"] = int(np.count_nonzero(file_mask))
     metadata["combined_mask_count"] = int(np.count_nonzero(combined_mask))
+    metadata.pop("mask_application_pending", None)
     return MDHistoData(
         axes=data.axes,
         signal=data.signal,
@@ -227,6 +237,20 @@ def _mdhisto_with_nfit_masks(
         metadata=metadata,
         auxiliary_channels=data.auxiliary_channels,
     )
+
+
+def _mdhisto_with_file_mask_only(data: MDHistoData) -> MDHistoData:
+    """Return a view that exposes the imported file mask without a live mask channel."""
+
+    file_mask = np.asarray(data.mask, dtype=bool)
+    metadata = dict(data.metadata)
+    metadata["file_mask"] = file_mask
+    metadata.pop("nfit_mask", None)
+    metadata["nfit_mask_count"] = 0
+    metadata["file_mask_count"] = int(np.count_nonzero(file_mask))
+    metadata["combined_mask_count"] = metadata["file_mask_count"]
+    metadata.pop("mask_application_pending", None)
+    return data.with_updates(metadata=metadata)
 
 
 def _nfit_mask_for_mdhisto(

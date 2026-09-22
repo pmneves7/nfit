@@ -74,6 +74,49 @@ configuration marked **Use for fitting** contributes during optimization.
 Visualization configurations can use different axes, limits, or resolutions,
 and receive model and residual channels from the final fitted parameters.
 
+## Background visualization channels
+
+After applying a nonzero enabled background or subtracting a dataset in an
+analysis, **Channel** offers **Background**
+and **Unsubtracted**, alongside the primary **signal** (the difference).
+Background is the total scaled contribution actually subtracted on that grid.
+Unsubtracted reconstructs the signal before those background corrections.
+Both use the primary signal's physical units and follow its dataset scaling
+and spectral conversion. Selecting either channel changes only the plot:
+fitting continues to use the primary signal and its propagated uncertainties.
+
+The histogram retains background values and uncertainties, but no separate full
+unsubtracted array. Slices reconstruct the original values and uncertainties
+as needed. Sparse recovery records preserve original observations where masks,
+correlation corrections, or numerical cancellation prevent reliable reconstruction.
+No background arrays are added when there is no enabled nonzero background.
+Absent manual masks likewise do not require a full-volume false mask array.
+
+Rebinning or combining already-subtracted histograms reduces these channels
+using the primary signal’s valid bins and weights. Metadata stacks preserve
+each slice’s background independently. The original-data view on a newly
+reduced grid therefore describes the observations contributing to that grid.
+
+Background storage normally adds 16 bytes per bin before compression, plus any
+recovery records. Axes and the existing normalization arrays are shared. Saved
+bins and dataset exports retain the diagnostic information. Older saved bins
+remain usable; these channels become available after their background subtraction
+is recomputed, rather than forcing a rebin when opening an older project.
+
+Scripts can inspect the same channels without constructing a viewer:
+
+```python
+from nfit import available_background_channels, background_channel
+
+print(available_background_channels(data))
+# Read just one plane from a four-dimensional histogram.
+original = background_channel(data, "unsubtracted", (slice(None), slice(None), 0, 0))
+values, errors, mask = original.values, original.errors, original.mask
+```
+
+Omitting the selection explicitly requests the whole array. For large datasets,
+select the region needed for the plot.
+
 ## Composite neutron representations
 
 In a collection's **Composite dataset → Physics** tab, enable paired channels

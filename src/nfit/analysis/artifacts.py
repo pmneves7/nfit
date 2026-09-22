@@ -11,6 +11,7 @@ from typing import Any, BinaryIO
 import numpy as np
 
 from ..array_archive import write_array_archive
+from ..background_channel_io import background_metadata_payload, restore_background_metadata
 from ..dataset import PointListData
 from ..mapped_archive import MappedWorkspaceError, read_mapped_array_archive
 from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
@@ -174,6 +175,7 @@ def dataset_artifact_from_payload(archive: Any) -> MDHistoData | PointListData:
         )
     if kind != "mdhisto":
         raise ValueError(f"unknown analysis artifact container {kind!r}")
+    metadata = restore_background_metadata(metadata, archive)
     count = int(np.asarray(archive["axis_count"]).item())
     axes = tuple(
         MDHistoAxis(
@@ -209,7 +211,9 @@ def output_data(output: DatasetOutput | TableOutput) -> MDHistoData | PointListD
 
 
 def _payload(data: MDHistoData | PointListData) -> dict[str, Any]:
-    common: dict[str, Any] = {"format": np.asarray("nfit-analysis-artifact"), "version": np.asarray(1), "metadata_json": np.asarray(json.dumps(_json_metadata(data.metadata), sort_keys=True))}
+    metadata, background_arrays = background_metadata_payload(data.metadata)
+    common: dict[str, Any] = {"format": np.asarray("nfit-analysis-artifact"), "version": np.asarray(1), "metadata_json": np.asarray(json.dumps(_json_metadata(metadata), sort_keys=True))}
+    common.update(background_arrays)
     if isinstance(data, PointListData):
         common.update({"container": np.asarray("point_list"), "column_names_json": np.asarray(json.dumps(data.column_names)), "units_json": np.asarray(json.dumps(data.units)), "quantity_types_json": np.asarray(json.dumps(data.quantity_types)), "coordinate_names_json": np.asarray(json.dumps(data.coordinate_names)), "channels_json": np.asarray(json.dumps(data.channels))})
         common.update({f"column_{i}": data.column(name) for i, name in enumerate(data.column_names)})

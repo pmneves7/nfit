@@ -48,6 +48,8 @@ A few of its main capabilities are:
   coarsening, held cross-dataset viewer settings, symmetric color limits, and
   CSV export of maps and cuts;
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
+- inspect the subtracted signal, retained background, and on-demand unsubtracted
+  slices without adding visualization channels to fits;
 - open viewers on demand, with an optional preference to preload all datasets
   and binnings for faster switching;
 - construct and inspect crystal, tight-binding, Lindhard, and RPA models;

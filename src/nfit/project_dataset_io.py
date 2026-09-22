@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from .analysis.coordinates import signal_semantics
+from .background_channel_io import background_metadata_payload, restore_background_metadata
 from .dataset import PointListData
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from .pipeline import DatasetEntry
@@ -48,6 +49,7 @@ def save_dataset_file(
         )
     saved_metadata = dict(data.metadata)
     saved_metadata.setdefault("signal_semantics", signal_semantics(data))
+    saved_metadata, background_arrays = background_metadata_payload(saved_metadata)
     payload: dict[str, Any] = {
         "nfit_dataset_format": np.asarray("nfit-dataset"),
         "nfit_dataset_version": np.asarray(3, dtype=int),
@@ -65,6 +67,7 @@ def save_dataset_file(
             -1 if data.visual_normalization is None else data.visual_normalization
         ),
     }
+    payload.update(background_arrays)
     context = {
         key: copy.deepcopy(dataset.parameters[key])
         for key in (
@@ -184,6 +187,7 @@ def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
             )
         )
     metadata = _nfit_archive_json_mapping(archive, "metadata_json")
+    metadata = restore_background_metadata(metadata, archive)
     metadata["export_file"] = str(source)
     if "signal_semantics" not in metadata:
         raise ValueError(

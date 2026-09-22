@@ -4,6 +4,7 @@ from typing import Any
 
 import numpy as np
 
+from .background_channels import available_background_channels
 from .mdhisto import MDHistoData
 from .plotting_core import (
     MDHistoSliceViewer,
@@ -627,6 +628,7 @@ class WaterfallController(_ViewerController):
             available_channels = {
                 *MDHistoSliceViewer.CHANNELS,
                 *dataset.auxiliary_channels,
+                *available_background_channels(dataset),
             }
             for overlay in ("fit", "residual"):
                 values = dataset.metadata.get(overlay)

@@ -16,6 +16,13 @@ from typing import Any
 
 import numpy as np
 
+from .background_channels import (
+    BACKGROUND_EXCEPTIONS_KEY,
+    BACKGROUND_PROVENANCE_KEY,
+    BACKGROUND_PROVENANCE_VERSION,
+    preserve_reduced_background_original,
+)
+from .background_channels import background_channel as _background_channel
 from .dataset import PointData4D, PointListData
 from .mdhisto import (
     MDHistoAxis,
@@ -1122,6 +1129,10 @@ class _MDHistoRebinSource:
         *,
         batch_size: int,
         payload: str = "signal",
+        payload_values: np.ndarray | None = None,
+        payload_errors: np.ndarray | None = None,
+        payload_selector: Any | None = None,
+        payload_weighting: str | None = None,
         normalization_values: np.ndarray | None = None,
         filter_invalid: bool = True,
         volume_scale: float = 1.0,
@@ -1137,6 +1148,10 @@ class _MDHistoRebinSource:
         self.n_points = int(data.signal.size)
         self.batch_size = max(1, int(batch_size))
         self.payload = payload
+        self.payload_values = payload_values
+        self.payload_errors = payload_errors
+        self.payload_selector = payload_selector
+        self.payload_weighting = payload_weighting
         self.normalization_values = normalization_values
         self.filter_invalid = bool(filter_invalid)
         self.volume_scale = float(volume_scale)
@@ -1188,17 +1203,18 @@ class _MDHistoRebinSource:
             events = self._chunk(
                 self.data.num_events, start, stop, selection, dtype=float
             )
-            normalization = (
-                None
-                if self.normalization_values is None
-                else self._chunk(
+            if self.normalization_values is None:
+                normalization = None
+            else:
+                normalization = self._chunk(
                     self.normalization_values,
                     start,
                     stop,
                     selection,
                     dtype=float,
                 )
-            )
+            if self.payload_weighting is not None:
+                normalization = _background_rebin_weights(errors, normalization, self.payload_weighting)
             valid = np.ones(stop - start, dtype=bool)
             if self.filter_invalid:
                 valid &= np.isfinite(signal) & np.isfinite(errors) & ~mask
@@ -1229,9 +1245,28 @@ class _MDHistoRebinSource:
                 weights = volume * np.where(usable, coverage, 0.0)
                 errors_out = None
             else:
-                values = signal
+                selected_payload = (
+                    None if self.payload_selector is None else self.payload_selector(selection)
+                )
+                values = (
+                    np.asarray(selected_payload.values, dtype=float)
+                    if selected_payload is not None
+                    else signal
+                    if self.payload_values is None
+                    else self._chunk(
+                        self.payload_values, start, stop, selection, dtype=float
+                    )
+                )
                 weights = normalization
-                errors_out = errors
+                errors_out = (
+                    np.asarray(selected_payload.errors, dtype=float)
+                    if selected_payload is not None
+                    else errors
+                    if self.payload_errors is None
+                    else self._chunk(
+                        self.payload_errors, start, stop, selection, dtype=float
+                    )
+                )
             yield RebinBatch(
                 values[valid],
                 coordinates[valid],
@@ -1475,6 +1510,26 @@ def _rebin_mdhisto_coverage(
     return np.clip(coverage, 0.0, 1.0)
 
 
+def _background_rebin_weights(
+    primary_errors: np.ndarray,
+    data_weights: np.ndarray | None,
+    mean_weighting: str,
+) -> np.ndarray:
+    """Return uniform-reducer weights equivalent to the primary reducer."""
+
+    weights = (
+        np.ones(np.asarray(primary_errors).shape, dtype=float)
+        if data_weights is None
+        else np.asarray(data_weights, dtype=float)
+    )
+    if mean_weighting != "inverse_variance":
+        return weights
+    result = np.zeros(weights.shape, dtype=float)
+    errors = np.asarray(primary_errors, dtype=float)
+    np.divide(weights, np.square(errors), out=result, where=errors > 0.0)
+    return result
+
+
 def _rebin_mdhisto_data(
     data: MDHistoData,
     config: dict[str, Any],
@@ -1522,6 +1577,17 @@ def _rebin_mdhisto_data(
     normalization_values = None
     if normalization_channel is not None:
         normalization_values = np.asarray(normalization_channel.values, dtype=float)
+    background_channel = (
+        data.auxiliary_channels.get("background")
+        if data.metadata.get(BACKGROUND_PROVENANCE_KEY)
+        == BACKGROUND_PROVENANCE_VERSION
+        else None
+    )
+    background_result = None
+    unsubtracted_result = None
+    has_original_exceptions = (
+        background_channel is not None and BACKGROUND_EXCEPTIONS_KEY in data.metadata
+    )
 
     if use_stream:
         batch_size = _mdhisto_stream_batch_size(data, config)
@@ -1559,6 +1625,69 @@ def _rebin_mdhisto_data(
         )
         if result.n_samples is None or not np.any(result.n_samples > 0.0):
             raise ValueError("no valid data points remain before rebinning")
+        if background_channel is not None:
+            background_source = _MDHistoRebinSource(
+                data,
+                coordinate_transform,
+                batch_size=batch_size,
+                payload_values=np.asarray(background_channel.values, dtype=float),
+                payload_errors=(
+                    np.broadcast_to(0.0, data.shape)
+                    if background_channel.errors is None
+                    else np.asarray(background_channel.errors, dtype=float)
+                ),
+                normalization_values=normalization_values,
+                payload_weighting=_rebin_mean_weighting(config),
+            )
+            background_stream = (
+                SymmetryRebinSource(background_source, symmetry)
+                if symmetry is not None
+                else background_source
+            )
+            background_result = rebin_nd_stream(
+                background_stream,
+                axes=output_axes,
+                lower=lower,
+                upper=upper,
+                bin_edges=result.bins_list,
+                fractional=bool(config.get("fractional", False)),
+                fractional_axes=_rebin_fractional_axes(config, axes_config),
+                normalize=True,
+                mean_weighting="uniform",
+                minimum_samples=_rebin_minimum_samples(config),
+                max_parallel_bytes=_rebin_max_parallel_bytes(),
+                progress_callback=progress_callback,
+            )
+            if has_original_exceptions:
+                original_source = _MDHistoRebinSource(
+                    data,
+                    coordinate_transform,
+                    batch_size=batch_size,
+                    payload_selector=lambda selection: _background_channel(
+                        data, "unsubtracted", selection
+                    ),
+                    normalization_values=normalization_values,
+                    payload_weighting=_rebin_mean_weighting(config),
+                )
+                original_stream = (
+                    SymmetryRebinSource(original_source, symmetry)
+                    if symmetry is not None
+                    else original_source
+                )
+                unsubtracted_result = rebin_nd_stream(
+                    original_stream,
+                    axes=output_axes,
+                    lower=lower,
+                    upper=upper,
+                    bin_edges=result.bins_list,
+                    fractional=bool(config.get("fractional", False)),
+                    fractional_axes=_rebin_fractional_axes(config, axes_config),
+                    normalize=True,
+                    mean_weighting="uniform",
+                    minimum_samples=_rebin_minimum_samples(config),
+                    max_parallel_bytes=_rebin_max_parallel_bytes(),
+                    progress_callback=progress_callback,
+                )
         coords = None
     else:
         source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
@@ -1628,6 +1757,50 @@ def _rebin_mdhisto_data(
             if symmetry is not None
             else rebin_nd(signal, coords_valid, **kwargs)
         )
+        if background_channel is not None:
+            background_values = np.asarray(background_channel.values, dtype=float)[valid]
+            background_errors = (
+                np.zeros(signal.shape, dtype=float)
+                if background_channel.errors is None
+                else np.asarray(background_channel.errors, dtype=float)[valid]
+            )
+            background_kwargs = {
+                **kwargs,
+                "data_errs": background_errors,
+                "data_weights": _background_rebin_weights(
+                    errors,
+                    None if normalization_values is None else normalization_values[valid],
+                    _rebin_mean_weighting(config),
+                ),
+                "mean_weighting": "uniform",
+                "progress_callback": progress_callback,
+            }
+            background_result = (
+                rebin_nd_symmetry(
+                    background_values, coords_valid, symmetry, axes=output_axes, **background_kwargs
+                )
+                if symmetry is not None
+                else rebin_nd(background_values, coords_valid, **background_kwargs)
+            )
+            if has_original_exceptions:
+                source_unsubtracted = _background_channel(data, "unsubtracted", valid)
+                original_kwargs = {
+                    **background_kwargs,
+                    "data_errs": source_unsubtracted.errors,
+                }
+                unsubtracted_result = (
+                    rebin_nd_symmetry(
+                        source_unsubtracted.values,
+                        coords_valid,
+                        symmetry,
+                        axes=output_axes,
+                        **original_kwargs,
+                    )
+                    if symmetry is not None
+                    else rebin_nd(
+                        source_unsubtracted.values, coords_valid, **original_kwargs
+                    )
+                )
     if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None:
         raise RuntimeError("rebinning did not produce binned data")
     if result.bins_list is None:
@@ -1737,6 +1910,8 @@ def _rebin_mdhisto_data(
     coverage_mask = coverage < _rebin_minimum_coverage(config)
     mask |= coverage_mask
     metadata = dict(data.metadata)
+    metadata.pop(BACKGROUND_EXCEPTIONS_KEY, None)
+    metadata.pop(BACKGROUND_PROVENANCE_KEY, None)
     metadata["signal_semantics"] = "density"
     metadata["signal_semantics_source"] = "nfit_normalized_rebin"
     metadata["coverage_mask_count"] = int(np.count_nonzero(coverage_mask))
@@ -1773,6 +1948,24 @@ def _rebin_mdhisto_data(
             label="Combined detector-trajectory normalization",
             unit="arbitrary normalization units",
         )
+    if background_result is not None and background_result.binned_data is not None:
+        background_values = np.asarray(background_result.binned_data, dtype=float)
+        background_values.setflags(write=False)
+        background_errors = (
+            None
+            if background_result.binned_data_errs is None
+            else np.asarray(background_result.binned_data_errs, dtype=float)
+        )
+        if background_errors is not None:
+            background_errors.setflags(write=False)
+        auxiliary_channels["background"] = MDHistoChannel(
+            background_values,
+            background_errors,
+            label=background_channel.label,
+            unit=background_channel.unit,
+            quantity_type=background_channel.quantity_type,
+        )
+        metadata[BACKGROUND_PROVENANCE_KEY] = BACKGROUND_PROVENANCE_VERSION
     output_arrays = (
         np.asarray(result.binned_data, dtype=float),
         np.asarray(result.binned_data_errs, dtype=float),
@@ -1782,7 +1975,7 @@ def _rebin_mdhisto_data(
     )
     for array in output_arrays:
         array.setflags(write=False)
-    return MDHistoData(
+    output = MDHistoData(
         axes=rebinned_axes,
         signal=output_arrays[0],
         errors=output_arrays[1],
@@ -1798,6 +1991,19 @@ def _rebin_mdhisto_data(
             ),
         },
     )
+    if (
+        unsubtracted_result is None
+        or unsubtracted_result.binned_data is None
+        or unsubtracted_result.binned_data_errs is None
+        or background_result is None
+        or background_result.binned_data_errs is None
+    ):
+        return output
+    original_values = np.asarray(unsubtracted_result.binned_data, dtype=float)
+    original_errors = np.asarray(unsubtracted_result.binned_data_errs, dtype=float)
+    original_values.setflags(write=False)
+    original_errors.setflags(write=False)
+    return preserve_reduced_background_original(output, original_values, original_errors)
 
 
 def _rebin_point_data(

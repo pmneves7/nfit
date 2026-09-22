@@ -1235,7 +1235,7 @@ def _apply_dataset_backgrounds(
 ) -> MDHistoData:
     result = data
     for background in dataset.backgrounds:
-        if not background.enabled:
+        if not background.enabled or float(background.scale) == 0.0:
             continue
         if background.projection != "center":
             raise ValueError(
@@ -1857,8 +1857,8 @@ def _with_rebinned_mask_metadata(rebinned: MDHistoData, source: MDHistoData) -> 
             rebin_metadata[f"source_{key}"] = int(source.metadata[key])
     metadata["rebin"] = rebin_metadata
     output_mask = np.asarray(rebinned.mask, dtype=bool)
-    metadata["file_mask"] = np.zeros(rebinned.shape, dtype=bool)
-    metadata["nfit_mask"] = np.zeros(rebinned.shape, dtype=bool)
+    metadata.pop("file_mask", None)
+    metadata.pop("nfit_mask", None)
     metadata["file_mask_count"] = 0
     metadata["nfit_mask_count"] = 0
     metadata["combined_mask_count"] = int(np.count_nonzero(output_mask))

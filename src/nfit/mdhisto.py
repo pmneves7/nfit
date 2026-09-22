@@ -233,6 +233,8 @@ class MDHistoData:
 
         if name == "signal":
             return str(self.metadata.get("signal_unit", ""))
+        if name == "unsubtracted" and self.metadata.get("background_channels_version") == 1:
+            return self.channel_unit("signal")
         return self.auxiliary_channels[name].unit
 
     def channel_quantity_type(self, name: str = "signal") -> str:
@@ -240,6 +242,8 @@ class MDHistoData:
 
         if name == "signal":
             return str(self.metadata.get("signal_quantity_type", "unknown"))
+        if name == "unsubtracted" and self.metadata.get("background_channels_version") == 1:
+            return self.channel_quantity_type("signal")
         return self.auxiliary_channels[name].quantity_type
 
     def mutable_copy(self) -> MDHistoData:

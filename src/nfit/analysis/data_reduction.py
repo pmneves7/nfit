@@ -6,6 +6,11 @@ from typing import Any
 
 import numpy as np
 
+from ..background_channels import (
+    BACKGROUND_EXCEPTIONS_KEY,
+    BACKGROUND_PROVENANCE_KEY,
+    accumulate_background_channel,
+)
 from ..dataset import PointData4D
 from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, mdhisto_measured_bins
 from .coordinates import (
@@ -56,6 +61,9 @@ def combine_aligned_histograms(
     signal = left_signal + sign * scale * right_signal
     variance = left_variance + scale**2 * right_variance
     metadata = dict(left.metadata)
+    if operation != "subtract" or scale == 0.0:
+        metadata.pop(BACKGROUND_EXCEPTIONS_KEY, None)
+        metadata.pop(BACKGROUND_PROVENANCE_KEY, None)
     metadata["histogram_arithmetic"] = {
         "operation": operation,
         "right_scale": scale,
@@ -65,13 +73,25 @@ def combine_aligned_histograms(
         num_events = np.minimum(left.num_events, right.num_events)
     else:
         num_events = None
-    return left.with_updates(
+    output = left.with_updates(
         signal=np.where(valid, signal, np.nan),
         errors=np.where(valid, np.sqrt(np.maximum(variance, 0.0)), np.nan),
         mask=~valid,
         num_events=num_events,
         metadata=metadata,
         auxiliary_channels={},
+    )
+    if operation != "subtract" or scale == 0.0:
+        return output
+    contribution = right.signal if scale == 1.0 else scale * right.signal
+    contribution_errors = right.errors if abs(scale) == 1.0 else abs(scale) * right.errors
+    if contribution is not right.signal:
+        contribution.setflags(write=False)
+    if contribution_errors is not right.errors:
+        contribution_errors.setflags(write=False)
+    return accumulate_background_channel(
+        left, output, contribution=contribution,
+        contribution_errors=contribution_errors, valid=valid,
     )
 
 

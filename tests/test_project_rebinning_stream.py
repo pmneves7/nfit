@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from nfit import project_rebinning as rebinning
+from nfit.background_channels import BACKGROUND_PROVENANCE_KEY, BACKGROUND_PROVENANCE_VERSION
 from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 
 
@@ -78,6 +79,66 @@ def test_streamed_mdhisto_rebin_matches_dense_symmetry_fractional_weighted(monke
         streamed.auxiliary_channels["normalization_denominator"].values,
         dense.auxiliary_channels["normalization_denominator"].values,
     )
+
+
+def test_rebin_preserves_background_with_primary_weights(monkeypatch):
+    data = _data()
+    background = MDHistoChannel(
+        0.25 + np.asarray(data.signal, dtype=float) / 10.0,
+        np.full(data.shape, 0.2),
+        label="Background",
+        unit="arb.",
+    )
+    data = data.with_updates(
+        auxiliary_channels={**data.auxiliary_channels, "background": background},
+        metadata={
+            **data.metadata,
+            BACKGROUND_PROVENANCE_KEY: BACKGROUND_PROVENANCE_VERSION,
+            "background_original_exceptions_v1": {"indices": np.array([0]), "signal": np.array([1.0]), "errors": np.array([1.0]), "mask": np.array([False])},
+        },
+    )
+    config = _config(data)
+    config["mean_weighting"] = "inverse_variance"
+    monkeypatch.setattr(rebinning, "MDHISTO_STREAM_MIN_POINTS", data.signal.size + 1)
+    dense = rebinning._rebin_mdhisto_data(data, copy.deepcopy(config))
+    monkeypatch.setattr(rebinning, "MDHISTO_STREAM_MIN_POINTS", 0)
+    streamed = rebinning._rebin_mdhisto_data(data, copy.deepcopy(config))
+
+    assert dense.metadata[BACKGROUND_PROVENANCE_KEY] == BACKGROUND_PROVENANCE_VERSION
+    np.testing.assert_allclose(
+        streamed.auxiliary_channels["background"].values,
+        dense.auxiliary_channels["background"].values,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        streamed.auxiliary_channels["background"].errors,
+        dense.auxiliary_channels["background"].errors,
+        equal_nan=True,
+    )
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_rebin_preserves_original_uncertainty_after_correlated_subtraction(monkeypatch, streamed):
+    from nfit.background_channels import background_channel, record_background_original_exceptions
+    from nfit.backgrounds import subtract_aligned_background
+
+    data = _data()
+    config = _config(data)
+    monkeypatch.setattr(rebinning, "MDHISTO_STREAM_MIN_POINTS", 0 if streamed else data.signal.size + 1)
+    reference = rebinning._rebin_mdhisto_data(data, copy.deepcopy(config))
+    cancelled = subtract_aligned_background(data, data)
+    cancelled = cancelled.with_updates(
+        signal=np.where(cancelled.mask, np.nan, 0.0),
+        errors=np.where(cancelled.mask, np.nan, 0.0),
+    )
+    cancelled = record_background_original_exceptions(cancelled, data, ~cancelled.mask)
+    output = rebinning._rebin_mdhisto_data(cancelled, copy.deepcopy(config))
+    original = background_channel(output, "unsubtracted")
+    valid = ~output.mask
+    np.testing.assert_allclose(output.signal[valid], 0.0)
+    np.testing.assert_allclose(output.errors[valid], 0.0)
+    np.testing.assert_allclose(original.values[valid], reference.signal[valid])
+    np.testing.assert_allclose(original.errors[valid], reference.errors[valid])
 
 
 @pytest.mark.parametrize("with_symmetry", [False, True])

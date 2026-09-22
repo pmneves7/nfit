@@ -6,6 +6,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 from .analysis.coordinates import q_modulus_for_spectral
+from .background_channels import accumulate_background_channel
 from .mdhisto import MDHistoData, mdhisto_measured_bins
 
 
@@ -46,6 +47,8 @@ def subtract_aligned_background(
 ) -> MDHistoData:
     """Subtract an independently measured histogram on identical axes."""
 
+    if float(scale) == 0.0:
+        return data
     background = background_with_user_mask_zeros(background)
     if data.shape != background.shape or len(data.axes) != len(background.axes):
         raise ValueError("aligned background subtraction requires identical shapes")
@@ -95,13 +98,25 @@ def subtract_aligned_background(
         }
     )
     metadata["background_subtractions"] = history
-    return replace(
+    result = replace(
         data,
         signal=np.where(measured, signal, np.nan),
         errors=np.where(measured, np.sqrt(np.maximum(variance, 0.0)), np.nan),
         mask=np.asarray(data.mask, dtype=bool) | ~measured,
         num_events=np.minimum(data.num_events, background.num_events),
         metadata=metadata,
+    )
+    contribution = np.asarray(background.signal, dtype=float)
+    contribution_errors = np.asarray(background.errors, dtype=float)
+    if factor != 1.0:
+        contribution = _freeze_owned(factor * contribution)
+        contribution_errors = _freeze_owned(abs(factor) * contribution_errors)
+    return accumulate_background_channel(
+        data,
+        result,
+        contribution=contribution,
+        contribution_errors=contribution_errors,
+        valid=measured,
     )
 
 
@@ -140,6 +155,8 @@ def subtract_powder_background(
     background domain are masked rather than extrapolated.
     """
 
+    if float(scale) == 0.0:
+        return data
     if interpolation not in {"linear", "nearest"}:
         raise ValueError("background interpolation must be 'linear' or 'nearest'")
     background = background_with_user_mask_zeros(background)
@@ -207,13 +224,38 @@ def subtract_powder_background(
         }
     )
     metadata["background_subtractions"] = history
-    return replace(
+    result = replace(
         data,
         signal=np.where(valid_background, output_signal, np.nan),
         errors=np.where(valid_background, output_errors, np.nan),
         mask=np.asarray(data.mask, dtype=bool) | ~valid_background,
         metadata=metadata,
     )
+    contribution = (
+        _freeze_owned(interpolated)
+        if factor == 1.0
+        else _freeze_owned(factor * interpolated)
+    )
+    interpolated_errors = np.sqrt(np.maximum(interpolated_variance, 0.0))
+    contribution_errors = (
+        _freeze_owned(interpolated_errors)
+        if factor == 1.0
+        else _freeze_owned(abs(factor) * interpolated_errors)
+    )
+    return accumulate_background_channel(
+        data,
+        result,
+        contribution=contribution,
+        contribution_errors=contribution_errors,
+        valid=valid_background,
+    )
+
+
+def _freeze_owned(array: np.ndarray) -> np.ndarray:
+    """Mark a newly allocated numerical result immutable without copying it."""
+
+    array.setflags(write=False)
+    return array
 
 
 def _linear_interpolation_variance(

@@ -444,6 +444,49 @@ def with_paired_spectral_channels(
         active_values, active_errors = chipp, chipp_error
         quantity_type, unit, label = "dynamic_susceptibility", chipp_unit, "Dynamical susceptibility χ″"
 
+    from .background_channels import available_background_channels, scale_background_channels
+
+    if available_background_channels(data):
+        # Apply the same linear physical conversion to the diagnostic component.
+        # Never infer this factor by division by signal: zero differences are valid.
+        selected_chipp = (selected == "chi_double_prime" and chipp is not None) or cross is None
+        if source_representation == "cross_section":
+            cross_scale = (
+                MILLIBARN_PER_BARN if source_unit.startswith("barn/sr/meV")
+                else 1.0 if source_unit.startswith("mbarn/sr/meV")
+                else 1.0 / calibration if calibration > 0.0 else 1.0
+            )
+            factor = cross_scale
+            if selected_chipp:
+                if absolute_cross_section:
+                    factor = chipp_from_cross_section(
+                        cross_scale / MILLIBARN_PER_BARN, energy, temperature_K,
+                        form_factor_sq=form_factor, polarization=polarization,
+                        kf_ki=kinematic, moment_unit=moment_unit, g_factor=g_factor,
+                    )
+                else:
+                    factor = _arbitrary_chipp_from_cross(
+                        1.0, energy, temperature_K,
+                        form_factor_sq_values=form_factor, polarization=polarization,
+                        kf_ki=kinematic, moment_unit=moment_unit, g_factor=g_factor,
+                    )
+        elif selected_chipp:
+            factor = 1.0
+        elif absolute_chipp:
+            factor = MILLIBARN_PER_BARN * cross_section_from_chipp(
+                1.0, energy, temperature_K,
+                form_factor_sq=form_factor, polarization=polarization,
+                kf_ki=kinematic, moment_unit=moment_unit, g_factor=g_factor,
+            )
+        else:
+            factor = _arbitrary_cross_from_chipp(
+                1.0, energy, temperature_K,
+                form_factor_sq_values=form_factor, polarization=polarization,
+                kf_ki=kinematic, moment_unit=moment_unit, g_factor=g_factor,
+            )
+        data = scale_background_channels(data, factor, unit=unit, quantity_type=quantity_type)
+        channels["background"] = data.auxiliary_channels["background"]
+
     metadata = dict(data.metadata)
     metadata.update(
         {

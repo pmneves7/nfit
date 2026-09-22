@@ -21,6 +21,14 @@ from uuid import uuid4
 import numpy as np
 
 from .analysis.artifacts import write_dataset_artifact
+from .background_channels import (
+    BACKGROUND_EXCEPTIONS_KEY,
+    BACKGROUND_PROVENANCE_KEY,
+    BACKGROUND_PROVENANCE_VERSION,
+    background_channel,
+    preserve_reduced_background_original,
+    record_background_original_exceptions,
+)
 from .backgrounds import subtract_background
 from .cache_utils import (
     dataset_content_signature,
@@ -1589,7 +1597,7 @@ def _apply_composite_backgrounds(
         metadata["lattice_parameters"] = dict(root.lattice_parameters)
     result = replace(data, metadata=metadata)
     for background in backgrounds:
-        if not background.enabled:
+        if not background.enabled or float(background.scale) == 0.0:
             continue
         source = background.source_entry
         source_group = background.source_group
@@ -1722,6 +1730,9 @@ def _apply_composite_backgrounds(
                 signal=np.where(result.mask, np.nan, 0.0),
                 errors=np.where(result.mask, np.nan, 0.0),
             )
+            result = record_background_original_exceptions(
+                result, before_subtraction, ~result.mask
+            )
         elif (
             source is not None
             and background.scale == 1.0
@@ -1740,6 +1751,11 @@ def _apply_composite_backgrounds(
             signal[selection] = np.where(correlated, 0.0, signal[selection])
             errors[selection] = np.where(correlated, 0.0, errors[selection])
             result = result.with_updates(signal=signal, errors=errors)
+            affected = np.zeros(result.shape, dtype=bool)
+            affected[selection] = correlated
+            result = record_background_original_exceptions(
+                result, before_subtraction, affected
+            )
     return result
 
 
@@ -2018,6 +2034,10 @@ def _composite_mdhisto_data(
     signal_parts: list[np.ndarray] = []
     error_parts: list[np.ndarray] = []
     weight_parts: list[np.ndarray] = []
+    background_parts: list[np.ndarray | None] = []
+    background_error_parts: list[np.ndarray | None] = []
+    background_template: MDHistoChannel | None = None
+    original_parts: list[tuple[np.ndarray, np.ndarray] | None] = []
     coverage_inputs: list[tuple[MDHistoData, np.ndarray]] = []
     first_data: MDHistoData | None = None
     weighting_mode = _rebin_mean_weighting(config)
@@ -2082,6 +2102,28 @@ def _composite_mdhisto_data(
         scale = float(dataset.scale_factor)
         signal = np.asarray(data.signal[valid], dtype=float) * scale
         errors = _scaled_error_for_weight(dataset, np.asarray(data.errors[valid], dtype=float))
+        background = (
+            data.auxiliary_channels.get("background")
+            if data.metadata.get(BACKGROUND_PROVENANCE_KEY)
+            == BACKGROUND_PROVENANCE_VERSION
+            else None
+        )
+        if background is not None:
+            background_template = background if background_template is None else background_template
+            background_parts.append(np.asarray(background.values[valid], dtype=float) * scale)
+            background_error_parts.append(
+                np.zeros(signal.shape, dtype=float)
+                if background.errors is None
+                else _scaled_error_for_weight(dataset, np.asarray(background.errors[valid], dtype=float))
+            )
+        else:
+            background_parts.append(None)
+            background_error_parts.append(None)
+        if background is not None and data.metadata.get(BACKGROUND_EXCEPTIONS_KEY):
+            original = background_channel(data, "unsubtracted", valid)
+            original_parts.append((original.values * scale, original.errors * abs(scale)))
+        else:
+            original_parts.append(None)
         if normalization_channel is not None:
             weights = normalization_values[valid] * float(dataset.fit_weight)
         else:
@@ -2126,6 +2168,75 @@ def _composite_mdhisto_data(
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
     )
+    background_result = None
+    original_result = None
+    if background_template is not None:
+        primary_weights = (
+            np.divide(
+                weights_all,
+                np.square(errors_all),
+                out=np.zeros(weights_all.shape, dtype=float),
+                where=errors_all > 0.0,
+            )
+            if weighting_mode == "inverse_variance"
+            else weights_all
+        )
+        background_result = rebin_nd(
+            np.concatenate(
+                [
+                    np.zeros_like(signal) if values is None else values
+                    for signal, values in zip(signal_parts, background_parts, strict=True)
+                ]
+            ),
+            coords_all,
+            data_errs=np.concatenate(
+                [
+                    np.zeros_like(errors) if values is None else values
+                    for errors, values in zip(
+                        error_parts, background_error_parts, strict=True
+                    )
+                ]
+            ),
+            data_weights=primary_weights,
+            axes=output_basis,
+            lower=lower,
+            upper=upper,
+            **_rebin_grid_kwargs(config, axes_config),
+            fractional=bool(config.get("fractional", True)),
+            fractional_axes=_rebin_fractional_axes(config, axes_config),
+            normalize=True,
+            mean_weighting="uniform",
+            minimum_samples=_rebin_minimum_samples(config),
+            max_batch_bytes=_rebin_max_batch_bytes(config),
+            progress_callback=progress_callback,
+        )
+    if background_result is not None and any(item is not None for item in original_parts):
+        values_parts, uncertainties_parts = [], []
+        for signal, errors, bg, bg_errors, exact in zip(
+            signal_parts, error_parts, background_parts, background_error_parts,
+            original_parts, strict=True,
+        ):
+            if exact is not None:
+                values, uncertainties = exact
+            elif bg is None:
+                values, uncertainties = signal, errors
+            else:
+                values = signal + bg
+                uncertainties = np.sqrt(np.maximum(np.square(errors) - np.square(bg_errors), 0.0))
+            values_parts.append(values)
+            uncertainties_parts.append(uncertainties)
+        original_result = rebin_nd(
+            np.concatenate(values_parts), coords_all,
+            data_errs=np.concatenate(uncertainties_parts), data_weights=primary_weights,
+            axes=output_basis, lower=lower, upper=upper,
+            **_rebin_grid_kwargs(config, axes_config),
+            fractional=bool(config.get("fractional", True)),
+            fractional_axes=_rebin_fractional_axes(config, axes_config),
+            normalize=True, mean_weighting="uniform",
+            minimum_samples=_rebin_minimum_samples(config),
+            max_batch_bytes=_rebin_max_batch_bytes(config),
+            progress_callback=progress_callback,
+        )
     if (
         result.binned_data is None
         or result.binned_data_errs is None
@@ -2264,7 +2375,25 @@ def _composite_mdhisto_data(
             label="Combined detector-trajectory normalization",
             unit="arbitrary normalization units",
         )
-    return MDHistoData(
+    if background_result is not None and background_result.binned_data is not None:
+        background_values = np.asarray(background_result.binned_data, dtype=float)
+        background_values.setflags(write=False)
+        background_errors = (
+            None
+            if background_result.binned_data_errs is None
+            else np.asarray(background_result.binned_data_errs, dtype=float)
+        )
+        if background_errors is not None:
+            background_errors.setflags(write=False)
+        auxiliary_channels["background"] = MDHistoChannel(
+            background_values,
+            background_errors,
+            label=background_template.label,
+            unit=background_template.unit,
+            quantity_type=background_template.quantity_type,
+        )
+        metadata[BACKGROUND_PROVENANCE_KEY] = BACKGROUND_PROVENANCE_VERSION
+    output = MDHistoData(
         axes=axes,
         signal=np.asarray(result.binned_data, dtype=float),
         errors=np.asarray(result.binned_data_errs, dtype=float),
@@ -2275,6 +2404,14 @@ def _composite_mdhisto_data(
         metadata=metadata,
         auxiliary_channels=auxiliary_channels,
     )
+
+    if original_result is not None:
+        original_result.binned_data.setflags(write=False)
+        original_result.binned_data_errs.setflags(write=False)
+        return preserve_reduced_background_original(
+            output, original_result.binned_data, original_result.binned_data_errs,
+        )
+    return output
 
 
 def _composite_point_data(

@@ -39,6 +39,7 @@ from .analysis.spectral import (
     spectral_energy_reduce,
 )
 from .axes import AxisRole, infer_axis_role
+from .background_channels import available_background_channels, background_channel
 from .brillouin_zone import (
     BrillouinZoneNode,
     BrillouinZoneScene,
@@ -698,6 +699,8 @@ def __dir__() -> list[str]:
     )
 
 __all__ = [
+    "available_background_channels",
+    "background_channel",
     "DeferredViewerDatasets",
     "ViewerDatasetDescriptor",
     "ViewerLoadCancelled",

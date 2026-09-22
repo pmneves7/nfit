@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from .background_channels import scale_background_channels
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData
 from .pipeline import DatasetEntry
@@ -152,6 +153,7 @@ def _apply_kinematic_normalization_to_view(
     shape = [1] * data.signal.ndim
     shape[energy_dim] = factor_1d.size
     factor = factor_1d.reshape(shape)
+    data = scale_background_channels(data, factor)
     metadata = dict(data.metadata)
     metadata["nfit_kinematic_kf_ki_normalized"] = True
     metadata["nfit_kinematic_kf_ki_source"] = "Ei" if incident is not None else "Ef"
@@ -197,7 +199,10 @@ def _mdhisto_without_nfit_masks(data: MDHistoData) -> MDHistoData:
     file_mask = np.asarray(data.mask, dtype=bool)
     metadata = dict(data.metadata)
     metadata["file_mask"] = file_mask
-    metadata["nfit_mask"] = np.zeros(0, dtype=bool)
+    # An absent nfit mask is deliberately represented by a missing key.  A
+    # full false array can be as large as the measured volume, and consumers
+    # already treat a missing channel as no manual exclusions.
+    metadata.pop("nfit_mask", None)
     metadata["file_mask_count"] = int(np.count_nonzero(file_mask))
     metadata["nfit_mask_count"] = 0
     metadata["combined_mask_count"] = metadata["file_mask_count"]
@@ -215,6 +220,7 @@ def _apply_dataset_scale(
     if scale == 1.0:
         return data
     if isinstance(data, MDHistoData):
+        data = scale_background_channels(data, scale)
         return replace(
             data,
             signal=np.asarray(data.signal, dtype=float) * scale,
