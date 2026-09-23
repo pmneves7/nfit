@@ -10,6 +10,7 @@ from .application_preferences import (
     default_waterfall_colormap,
 )
 from .background_channels import available_background_channels
+from .box_cuts import rotated_box_profiles
 from .colormaps import (
     IMAGE_COLORMAP_GROUPS,  # noqa: F401 - compatibility re-export
     WATERFALL_COLORMAP_GROUPS,  # noqa: F401 - compatibility re-export
@@ -42,7 +43,9 @@ from .plotting_core import (
     waterfall_colors,  # noqa: F401 - compatibility re-export
     waterfall_step_bounds,
 )
+from .qt_box_cut_viewers import CutViewerContext, LiveBoxCutViewers
 from .qt_controls import configure_numeric_spin_boxes
+from .qt_rotated_box import RotatedBoxSelector
 from .qt_slice_controls import (
     _clear_layout,
     _compact_combobox,  # noqa: F401 - compatibility re-export
@@ -257,6 +260,7 @@ class QtMDHistoSliceViewer:
         self.tools_group = None
         self.show_box_check = None
         self.hist_axes_check = None
+        self.popout_cuts_check = None
         self.xcut_percent_slider = None
         self.ycut_percent_slider = None
         self.xcut_percent_label = None
@@ -265,6 +269,7 @@ class QtMDHistoSliceViewer:
         self.roi_x_width_spin = None
         self.roi_y_center_spin = None
         self.roi_y_width_spin = None
+        self.roi_angle_spin = None
         self.save_x_cut_button = None
         self.save_y_cut_button = None
         self.font_size_spin = None
@@ -437,6 +442,12 @@ class QtMDHistoSliceViewer:
         self._box_tool_has_auto_shown_hist_axes = False
         self._restoring_dataset_state = False
         self._roi_extents: tuple[float, float, float, float] | None = None
+        self._roi_angle = 0.0
+        self._cut_viewer_manager = LiveBoxCutViewers(
+            QtMDHistoSliceViewer,
+            lambda: self.popout_cuts_check.setChecked(False),
+        )
+        self._cut_viewers = self._cut_viewer_manager.viewers
         self._current_x_cut: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._current_y_cut: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._view_limit_callback_ids: list[int] = []
@@ -737,7 +748,9 @@ class QtMDHistoSliceViewer:
             "axis_linewidth": self.axis_linewidth,
             "show_binning_title": self.show_binning_title,
             "show_histogram_axes": bool(self.hist_axes_check and self.hist_axes_check.isChecked()),
+            "cuts_popped_out": bool(self.popout_cuts_check and self.popout_cuts_check.isChecked()),
             "roi_extents": self._roi_extents,
+            "roi_angle": self._roi_angle,
             "xcut_percent": self.xcut_percent,
             "ycut_percent": self.ycut_percent,
             "show_fit": self.show_fit,
@@ -1063,6 +1076,7 @@ class QtMDHistoSliceViewer:
             ),
         )
         self._roi_extents = settings.get("roi_extents", self._roi_extents)
+        self._roi_angle = float(settings.get("roi_angle", self._roi_angle))
         self.xcut_percent = int(settings.get("xcut_percent", self.xcut_percent))
         self.ycut_percent = int(settings.get("ycut_percent", self.ycut_percent))
         self._set_slider_silent(self.xcut_percent_slider, self.xcut_percent)
@@ -1072,6 +1086,12 @@ class QtMDHistoSliceViewer:
             self.hist_axes_check,
             bool(settings.get("show_histogram_axes", self.hist_axes_check.isChecked())),
         )
+        self._set_checkbox_silent(
+            self.popout_cuts_check,
+            bool(settings.get("cuts_popped_out", self.popout_cuts_check.isChecked())),
+        )
+        if not self.popout_cuts_check.isChecked():
+            self._close_cut_viewers()
         self._set_checkbox_silent(
             self.show_box_check,
             bool(settings.get("show_box_tool", self.show_box_check.isChecked())),
@@ -1409,6 +1429,7 @@ class QtMDHistoSliceViewer:
                 f"    axes_linewidth={self.axis_linewidth!r},",
                 f"    show_histogram_axes={self.hist_axes_check.isChecked()!r},",
                 f"    roi_extents={self._roi_extents!r},",
+                f"    roi_angle={self._roi_angle!r},",
                 f"    xcut_percent={self.xcut_percent!r},",
                 f"    ycut_percent={self.ycut_percent!r},",
                 f"    show_brillouin_zone_boundaries={self.show_brillouin_zone_boundaries!r},",
@@ -2130,6 +2151,7 @@ class QtMDHistoSliceViewer:
             if name not in {
                 "model",
                 "roi_extents",
+                "roi_angle",
                 "xlim",
                 "ylim",
                 "tile_dim",
@@ -2211,6 +2233,7 @@ class QtMDHistoSliceViewer:
 
         if compatible_xy:
             target.roi_extents = source.roi_extents
+            target.roi_angle = source.roi_angle
             target.xlim = source.xlim
             target.ylim = source.ylim
         return target
@@ -2224,10 +2247,12 @@ class QtMDHistoSliceViewer:
         return _DatasetViewState(
             model=self.model,
             roi_extents=self._roi_extents,
+            roi_angle=self._roi_angle,
             xlim=xlim,
             ylim=ylim,
             show_box_tool=bool(self.show_box_check.isChecked()) if self.show_box_check is not None else False,
             histogram_axes=bool(self.hist_axes_check.isChecked()) if self.hist_axes_check is not None else False,
+            cuts_popped_out=bool(self.popout_cuts_check.isChecked()) if self.popout_cuts_check is not None else False,
             roi_enabled=bool(self.roi_button.isChecked()) if self.roi_button is not None else False,
             xcut_percent=int(self.xcut_percent),
             ycut_percent=int(self.ycut_percent),
@@ -2322,6 +2347,7 @@ class QtMDHistoSliceViewer:
             self.model = state.model
             self.data = state.model.data
             self._roi_extents = state.roi_extents
+            self._roi_angle = state.roi_angle
             self.xcut_percent = int(state.xcut_percent)
             self.ycut_percent = int(state.ycut_percent)
             self.font_size = float(state.font_size)
@@ -2457,6 +2483,9 @@ class QtMDHistoSliceViewer:
             self._set_slider_silent(self.ycut_percent_slider, self.ycut_percent)
             self._set_checkbox_silent(self.show_box_check, state.show_box_tool)
             self._set_checkbox_silent(self.hist_axes_check, state.histogram_axes)
+            self._set_checkbox_silent(self.popout_cuts_check, state.cuts_popped_out)
+            if not state.cuts_popped_out:
+                self._close_cut_viewers()
             self._set_checkbox_silent(self.roi_button, state.roi_enabled)
             self.gamma_label.setVisible(self.model.color_scale == "power")
             self.gamma_spin.setVisible(self.model.color_scale == "power")
@@ -4200,21 +4229,16 @@ class QtMDHistoSliceViewer:
         self._mode_controllers.layouts._ensure_residual_1d_layout()
 
     def _create_rectangle_selector(self) -> None:
-        from matplotlib.widgets import RectangleSelector
-
-        self.rectangle_selector = RectangleSelector(
-            self.ax_image,
-            self._on_rectangle,
-            useblit=True,
-            button=[1],
-            minspanx=0,
-            minspany=0,
-            spancoords="data",
-            interactive=True,
-        )
+        self._discard_rectangle_selector()
+        self.rectangle_selector = RotatedBoxSelector(self.ax_image, self._on_rectangle)
         self.rectangle_selector.set_active(False)
         if self.show_box_check is not None:
             self._set_box_tool_visible(self.show_box_check.isChecked())
+
+    def _discard_rectangle_selector(self) -> None:
+        if self.rectangle_selector is not None:
+            self.rectangle_selector.disconnect_events()
+            self.rectangle_selector = None
 
     def update_plot(
         self,
@@ -4229,6 +4253,7 @@ class QtMDHistoSliceViewer:
         current_dims = (self.model.x_dim, self.model.y_dim)
         source_key = self._slice_source_key()
         if self._waterfall_mode_active():
+            self._close_cut_viewers()
             self._draw_waterfall_view(
                 previous_xlim,
                 previous_ylim,
@@ -4238,6 +4263,7 @@ class QtMDHistoSliceViewer:
             )
             return
         if self._tiled_mode_active():
+            self._close_cut_viewers()
             self._draw_tiled_view(
                 previous_xlim,
                 previous_ylim,
@@ -4270,6 +4296,7 @@ class QtMDHistoSliceViewer:
             self._refresh_cached_metadata_masks()
         view = self._current_slice
         if self._residual_axes_active():
+            self._close_cut_viewers()
             self._draw_1d_with_residual(previous_xlim, previous_dims, current_dims)
             return
         self._ensure_standard_plot_layout()
@@ -4279,6 +4306,7 @@ class QtMDHistoSliceViewer:
         values = self.model._display_values(view)
         vmin, vmax = self.model._color_limits(values)
         if self._is_effective_1d():
+            self._close_cut_viewers()
             self._draw_1d_view(view, values)
         else:
             self._draw_2d_view(view, values)
@@ -4567,6 +4595,11 @@ class QtMDHistoSliceViewer:
     ) -> None:
         self._mode_controllers.standard._draw_2d_view(view, values)
 
+    def _update_rotated_fit_compare_cuts(
+        self, extents: tuple[float, float, float, float]
+    ) -> None:
+        self._mode_controllers.fit_comparison._update_rotated_fit_compare_cuts(extents)
+
     def _draw_bragg_peak_overlay(self) -> None:
         self._mode_controllers.standard._draw_bragg_peak_overlay()
 
@@ -4627,6 +4660,7 @@ class QtMDHistoSliceViewer:
     def _set_histogram_axes_visible(self, visible: bool) -> None:
         self._sync_histogram_panel_controls()
         if not visible:
+            self._close_cut_viewers()
             self._clear_roi_sum_annotation()
             self._current_x_cut = None
             self._current_y_cut = None
@@ -4638,6 +4672,34 @@ class QtMDHistoSliceViewer:
             self.update_plot()
             return
         self._apply_histogram_axes_layout(draw=True)
+
+    def _set_cuts_popped_out(self, popped_out: bool) -> None:
+        if popped_out and not self.hist_axes_check.isChecked():
+            self.hist_axes_check.setChecked(True)
+        if not popped_out:
+            self._close_cut_viewers()
+        elif self._roi_extents is not None:
+            self._update_histogram_cuts_from_extents(self._roi_extents)
+        self._sync_histogram_panel_controls()
+        if self._fit_panels_active():
+            self.update_plot()
+        else:
+            self._apply_histogram_axes_layout(draw=True)
+
+    def _close_cut_viewers(self) -> None:
+        self._cut_viewer_manager.close()
+
+    def _sync_cut_viewers(self) -> None:
+        if not (self.popout_cuts_check and self.popout_cuts_check.isChecked()
+                and self.hist_axes_check and self.hist_axes_check.isChecked()):
+            return
+        self._cut_viewer_manager.update(
+            CutViewerContext(
+                self.data, self.model.x_dim, self.model.y_dim,
+                self.model._axis_label, self.dataset_names[self.dataset_index],
+            ),
+            {"x": self._current_x_cut, "y": self._current_y_cut},
+        )
 
     def _set_xcut_percent(self, value: int) -> None:
         self.xcut_percent = int(value)
@@ -4661,6 +4723,7 @@ class QtMDHistoSliceViewer:
         if self.hist_axes_check is None:
             return
         visible = bool(self.hist_axes_check.isChecked()) and not self._is_effective_1d()
+        visible = visible and not self.popout_cuts_check.isChecked()
         self.xcut_percent_slider.setEnabled(visible)
         self.ycut_percent_slider.setEnabled(visible)
         self.xcut_percent_label.setText(f"X cut height: {self.xcut_percent}%")
@@ -4681,6 +4744,7 @@ class QtMDHistoSliceViewer:
         if getattr(self.grid, "nrows", None) != 2 or getattr(self.grid, "ncols", None) != 3:
             return
         visible = bool(self.hist_axes_check.isChecked()) and not self._is_effective_1d()
+        visible = visible and not self.popout_cuts_check.isChecked()
         x_ratio = self._panel_ratio(self.xcut_percent) if visible else 0.001
         y_ratio = self._panel_ratio(self.ycut_percent) if visible else 0.001
         self.grid.set_height_ratios([1.0, x_ratio])
@@ -4701,6 +4765,7 @@ class QtMDHistoSliceViewer:
         y_center = float(self.roi_y_center_spin.value())
         x_width = max(float(self.roi_x_width_spin.value()), 0.0)
         y_width = max(float(self.roi_y_width_spin.value()), 0.0)
+        self._roi_angle = float(self.roi_angle_spin.value())
         extents = (
             x_center - 0.5 * x_width,
             x_center + 0.5 * x_width,
@@ -4718,6 +4783,7 @@ class QtMDHistoSliceViewer:
     ) -> None:
         x0, x1, y0, y1 = self._normalize_roi_extents(extents)
         if self.rectangle_selector is not None:
+            self.rectangle_selector.angle = self._roi_angle
             self.rectangle_selector.extents = (x0, x1, y0, y1)
             x0, x1, y0, y1 = self._normalize_roi_extents(self.rectangle_selector.extents)
         self._roi_extents = (x0, x1, y0, y1)
@@ -4739,6 +4805,7 @@ class QtMDHistoSliceViewer:
             self.roi_x_width_spin.setValue(abs(x1 - x0))
             self.roi_y_center_spin.setValue(0.5 * (y0 + y1))
             self.roi_y_width_spin.setValue(abs(y1 - y0))
+            self.roi_angle_spin.setValue(self._roi_angle)
         finally:
             self._syncing_roi_controls = False
 
@@ -4779,6 +4846,7 @@ class QtMDHistoSliceViewer:
         self._sync_export_controls()
         if self._fit_cuts_active():
             self._update_fit_compare_cuts(extents)
+            self._sync_cut_viewers()
             self.canvas.draw_idle()
             return
         if self.ax_xcut is None or self.ax_ycut is None:
@@ -4787,6 +4855,31 @@ class QtMDHistoSliceViewer:
             return
         x0, x1, y0, y1 = extents
         view = self._current_slice
+        if not np.isclose(self._roi_angle % 360, 0.0, atol=1e-10):
+            self.ax_xcut.clear()
+            self.ax_ycut.clear()
+            self._clear_roi_sum_annotation()
+            values = self.model._display_values(view)
+            errors = np.asarray(view["errors"], dtype=float)
+            profiles = rotated_box_profiles(
+                view, values, errors, extents, self._roi_angle,
+                coverage_threshold=self.coverage_threshold,
+            )
+            self._current_x_cut, self._current_y_cut = profiles.x, profiles.y
+            if np.any(profiles.selected):
+                self._show_roi_sum_annotation(
+                    values[profiles.selected], errors[profiles.selected], extents,
+                )
+            self.ax_xcut.errorbar(profiles.x[0], profiles.x[1], yerr=profiles.x[2], fmt="-", lw=1.2, capsize=0)
+            self.ax_ycut.errorbar(profiles.y[1], profiles.y[0], xerr=profiles.y[2], fmt="-", lw=1.2, capsize=0)
+            self.ax_xcut.set_ylabel("Weighted mean")
+            self.ax_xcut.set_xlabel(f"Box x · {self.model._axis_label(self.model.x_dim)}")
+            self.ax_ycut.set_xlabel("Weighted mean")
+            self.ax_ycut.set_ylabel(f"Box y · {self.model._axis_label(self.model.y_dim)}")
+            self._apply_histogram_axes_layout(draw=False)
+            self._sync_export_controls()
+            self._sync_cut_viewers()
+            return
         x_mask = (view["x_centers"] >= x0) & (view["x_centers"] <= x1)
         y_mask = (view["y_centers"] >= y0) & (view["y_centers"] <= y1)
         self.ax_xcut.clear()
@@ -4838,6 +4931,7 @@ class QtMDHistoSliceViewer:
         self.ax_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
         self._apply_histogram_axes_layout(draw=False)
         self._sync_export_controls()
+        self._sync_cut_viewers()
 
     def _clear_roi_sum_annotation(self) -> None:
         annotation = self.roi_sum_text
@@ -5208,4 +5302,5 @@ class QtMDHistoSliceViewer:
         extents = self._current_roi_extents(click, release)
         if extents is None:
             return
+        self._roi_angle = float(self.rectangle_selector.angle)
         self._set_roi_extents(extents, update_cuts=True, draw=True)

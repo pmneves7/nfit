@@ -10,6 +10,7 @@ import pytest
 
 PACKAGE_ROOT = Path(__file__).parents[1] / "src" / "nfit"
 GUI_INDEPENDENT_MODULES = (
+    PACKAGE_ROOT / "box_cuts.py",
     PACKAGE_ROOT / "array_archive.py",
     PACKAGE_ROOT / "analysis" / "artifacts.py",
     PACKAGE_ROOT / "corelli.py",
@@ -31,6 +32,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "analysis" / "runner.py",
 )
 PROJECT_GUI_CLIENT_MODULES = (
+    PACKAGE_ROOT / "qt_box_cut_viewers.py",
     PACKAGE_ROOT / "qt_widget_state.py",
     PACKAGE_ROOT / "qt_operation_guard.py",
     PACKAGE_ROOT / "project_composite_physics.py",
@@ -76,6 +78,22 @@ def test_project_clipboard_service_does_not_import_qt() -> None:
         elif isinstance(node, ast.ImportFrom):
             modules.append(node.module or "")
     assert not any(module.startswith(("PySide", "PyQt")) for module in modules)
+
+
+def test_box_cut_profiles_have_no_gui_imports() -> None:
+    tree = ast.parse((PACKAGE_ROOT / "box_cuts.py").read_text(encoding="utf-8"))
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    imported.update(
+        node.module or ""
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    )
+    assert not any(name.startswith(("PySide", "PyQt", "qt_", "project_gui")) for name in imported)
 
 
 def test_composite_cache_compat_is_stdlib_only_and_owns_signature_tag() -> None:

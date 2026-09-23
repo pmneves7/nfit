@@ -42,6 +42,7 @@ def _make_data_viewer_window_class():
 
         def closeEvent(self, event):
             self.viewer._close_volume_panel()
+            self.viewer._close_cut_viewers()
             super().closeEvent(event)
             callback = self.viewer._close_callback
             if callback is not None:

@@ -247,6 +247,49 @@ def test_static_box_histogram_labels_total_with_propagated_error():
     plt.close(fig)
 
 
+def test_rotated_box_profiles_select_pixels_along_principal_axes():
+    from nfit.box_cuts import box_membership, rotated_box_profiles
+
+    centers = np.array([-1.0, 0.0, 1.0])
+    extents = (-2.0, 2.0, -0.3, 0.3)
+    selected = box_membership(centers, centers, extents, 45.0)
+    assert np.array_equal(selected, np.eye(3, dtype=bool))
+    values = np.arange(9.0).reshape(3, 3)
+    view = {
+        "x_centers": centers,
+        "y_centers": centers,
+        "coverage_fraction": np.ones((3, 3)),
+    }
+    result = rotated_box_profiles(view, values, np.ones((3, 3)), extents, 45.0)
+    assert np.array_equal(result.selected, selected)
+    assert np.nansum(result.x[1]) == pytest.approx(12.0)
+    assert np.count_nonzero(np.isfinite(result.y[1])) == 1
+    assert result.y[1][np.isfinite(result.y[1])][0] == pytest.approx(4.0)
+    assert result.y[2][np.isfinite(result.y[2])][0] == pytest.approx(1 / np.sqrt(3))
+
+
+def test_static_rotated_box_cut_matches_public_profile():
+    import matplotlib.pyplot as plt
+
+    from nfit.box_cuts import rotated_box_profiles
+
+    data = _tiny_mdhisto_data()
+    model = MDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    view = model.slice_arrays()
+    extents = (-1.5, 1.5, -0.5, 1.5)
+    profiles = rotated_box_profiles(
+        view, model._display_values(view), view["errors"], extents, 30.0
+    )
+    fig = plot_mdhisto_slice(
+        data, x_dim=3, y_dim=2, show_histogram_axes=True,
+        roi_extents=extents, roi_angle=30.0,
+    )
+    assert np.allclose(fig.axes[3].lines[0].get_xdata(), profiles.x[0])
+    assert np.allclose(fig.axes[3].lines[0].get_ydata(), profiles.x[1], equal_nan=True)
+    assert fig.axes[0].patches
+    plt.close(fig)
+
+
 def test_mdhisto_slice_viewer_swaps_display_axes():
     data = _tiny_mdhisto_data()
     viewer = MDHistoSliceViewer(data, x_dim=3, y_dim=2)
@@ -2286,6 +2329,7 @@ def test_qt_copy_and_save_script_exports_current_display_state():
     viewer.line_width_spin.setValue(2.0)
     viewer.hist_axes_check.setChecked(True)
     viewer._set_roi_extents((-1.0, 1.0, -0.5, 0.5), update_cuts=True, draw=False)
+    viewer.roi_angle_spin.setValue(30.0)
     viewer.ax_image.set_xlim(-1.0, 1.0)
     viewer.ax_image.set_ylim(-0.5, 0.5)
 
@@ -2300,6 +2344,7 @@ def test_qt_copy_and_save_script_exports_current_display_state():
     assert "axes_linewidth=2.0" in script
     assert "show_histogram_axes=True" in script
     assert "roi_extents=(-1.0, 1.0, -0.5, 0.5)" in script
+    assert "roi_angle=30.0" in script
     assert QtWidgets.QApplication.clipboard().text() == script
 
 
@@ -2851,6 +2896,138 @@ def test_qt_roi_center_width_controls_sync_with_rectangle_extents():
     assert viewer.roi_x_width_spin.value() == pytest.approx(1.0)
     assert viewer.roi_y_center_spin.value() == pytest.approx(0.25)
     assert viewer.roi_y_width_spin.value() == pytest.approx(1.0)
+
+
+def test_qt_rotated_box_handle_snaps_and_updates_live_cuts():
+    from types import SimpleNamespace
+
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    viewer.show_box_check.setChecked(True)
+    viewer.roi_button.setChecked(True)
+    viewer._set_roi_extents((-1.5, 1.5, -0.5, 1.5), update_cuts=True, draw=False)
+    selector = viewer.rectangle_selector
+    point = selector._points()["R"]
+    cx = sum(viewer._roi_extents[:2]) / 2
+    cy = sum(viewer._roi_extents[2:]) / 2
+
+    def event(xy, key=None):
+        pixel = viewer.ax_image.transData.transform(xy)
+        return SimpleNamespace(button=1, inaxes=viewer.ax_image, xdata=xy[0], ydata=xy[1],
+                               x=pixel[0], y=pixel[1], key=key)
+
+    press = event(point)
+    selector._press(press)
+    offset = np.asarray(point) - (cx, cy)
+    theta = np.deg2rad(20.0)
+    target = np.array((cx, cy)) + np.array((
+        offset[0] * np.cos(theta) - offset[1] * np.sin(theta),
+        offset[0] * np.sin(theta) + offset[1] * np.cos(theta),
+    ))
+    selector._move(event(target, key="shift"))
+    assert viewer._roi_angle == pytest.approx(15.0)
+    assert viewer.roi_angle_spin.value() == pytest.approx(15.0)
+    assert viewer._current_x_cut is not None
+    selector._release(event(target, key="shift"))
+    viewer.update_plot(reuse_slice=True)
+    assert viewer.rectangle_selector.patch in viewer.ax_image.patches
+    viewer.window.close()
+
+
+def test_rotation_handle_remains_draggable_outside_plot_axes():
+    from types import SimpleNamespace
+
+    import matplotlib.pyplot as plt
+
+    from nfit.qt_rotated_box import RotatedBoxSelector
+
+    fig, ax = plt.subplots()
+    ax.set(xlim=(0, 1), ylim=(0, 1))
+    fig.canvas.draw()
+    selector = RotatedBoxSelector(ax, lambda _press, _move: None)
+    selector.extents = (0.4, 0.6, 0.85, 0.95)
+    selector.set_visible(True)
+    selector.set_active(True)
+    handle = selector._points()["R"]
+    start_pixel = ax.transData.transform(handle)
+    assert start_pixel[1] > ax.bbox.y1
+    press = SimpleNamespace(
+        button=1, inaxes=None, xdata=None, ydata=None,
+        x=start_pixel[0], y=start_pixel[1], key=None,
+    )
+    selector._press(press)
+    assert selector._drag == "R"
+    center = np.array([0.5, 0.9])
+    offset = np.asarray(handle) - center
+    theta = np.deg2rad(20.0)
+    target = center + np.array([
+        offset[0] * np.cos(theta) - offset[1] * np.sin(theta),
+        offset[0] * np.sin(theta) + offset[1] * np.cos(theta),
+    ])
+    target_pixel = ax.transData.transform(target)
+    selector._move(SimpleNamespace(
+        inaxes=None, xdata=None, ydata=None,
+        x=target_pixel[0], y=target_pixel[1], key="shift",
+    ))
+    assert selector.angle == pytest.approx(15.0)
+    selector.disconnect_events()
+    plt.close(fig)
+
+
+def test_qt_rotated_fit_compare_uses_box_axes():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_with_fit_channels(_tiny_mdhisto_data()), x_dim=3, y_dim=2)
+    viewer.hist_axes_check.setChecked(True)
+    viewer.show_fit_check.setChecked(True)
+    viewer.show_residual_check.setChecked(True)
+    viewer.roi_angle_spin.setValue(30.0)
+    assert viewer._current_x_cut is not None
+    assert viewer._current_y_cut is not None
+    assert any(line.get_label() == "fit" for line in viewer.ax_fit_cut.lines)
+    assert viewer.ax_residual_cut.lines
+    viewer.window.close()
+
+
+def test_qt_histogram_cuts_pop_out_into_live_1d_viewers():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    viewer.show_box_check.setChecked(True)
+    viewer.popout_cuts_check.setChecked(True)
+    assert set(viewer._cut_viewers) == {"x", "y"}
+    assert not viewer.ax_xcut.get_visible()
+    assert not viewer.ax_ycut.get_visible()
+    first = viewer._cut_viewers["x"].data
+    viewer.roi_angle_spin.setValue(30.0)
+    assert viewer._cut_viewers["x"].data is not first
+    assert viewer._cut_viewers["x"].data.signal.shape[0] == 1
+    viewer._set_roi_extents((100.0, 101.0, 100.0, 101.0), update_cuts=True, draw=False)
+    assert set(viewer._cut_viewers) == {"x", "y"}
+    viewer.popout_cuts_check.setChecked(False)
+    assert viewer._cut_viewers == {}
+    assert viewer.ax_xcut.get_visible()
+    viewer.window.close()
+
+
+def test_qt_fit_compare_popout_hides_inline_cut_panels():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_with_fit_channels(_tiny_mdhisto_data()), x_dim=3, y_dim=2)
+    viewer.show_fit_check.setChecked(True)
+    viewer.hist_axes_check.setChecked(True)
+    viewer.popout_cuts_check.setChecked(True)
+    assert set(viewer._cut_viewers) == {"x", "y"}
+    assert not viewer.ax_fit_cut.get_visible()
+    assert not viewer.ax_ycut.get_visible()
+    viewer.popout_cuts_check.setChecked(False)
+    assert viewer.ax_fit_cut.get_visible()
+    viewer.window.close()
 
 
 def test_qt_histogram_axes_visibility_and_panel_percent_controls():

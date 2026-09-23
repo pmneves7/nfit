@@ -16,10 +16,12 @@ from .viewer_data import DeferredViewerDatasets
 class _DatasetViewState:
     model: MDHistoSliceViewer
     roi_extents: tuple[float, float, float, float] | None = None
+    roi_angle: float = 0.0
     xlim: tuple[float, float] | None = None
     ylim: tuple[float, float] | None = None
     show_box_tool: bool = False
     histogram_axes: bool = False
+    cuts_popped_out: bool = False
     roi_enabled: bool = False
     xcut_percent: int = 20
     ycut_percent: int = 16

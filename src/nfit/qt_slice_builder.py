@@ -750,13 +750,18 @@ def _build_histogram_tool_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.show_box_check.setChecked(False)
     viewer.show_box_check.setToolTip("Show or hide the rectangle selection tool.")
     viewer.show_box_check.toggled.connect(viewer._set_box_tool_visible)
-    viewer.hist_axes_check = QtWidgets.QCheckBox("Show histogram axes")
+    viewer.hist_axes_check = QtWidgets.QCheckBox("Show x/y cuts")
     viewer.hist_axes_check.setChecked(False)
     viewer.hist_axes_check.setToolTip(
-        "Show or hide x/y profile cuts beside the image. Each point is an inverse-variance "
-        "weighted mean over the selected box with its propagated standard error."
+        "Show or hide x/y profile cuts. Each point is an inverse-variance weighted "
+        "mean over the selected box with its propagated standard error."
     )
     viewer.hist_axes_check.toggled.connect(viewer._set_histogram_axes_visible)
+    viewer.popout_cuts_check = QtWidgets.QCheckBox("Pop out x/y cuts")
+    viewer.popout_cuts_check.setToolTip(
+        "Show the two live box profiles in separate 1D data viewers instead of panels beside the image."
+    )
+    viewer.popout_cuts_check.toggled.connect(viewer._set_cuts_popped_out)
     viewer.xcut_percent_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
     viewer.ycut_percent_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
     viewer.xcut_percent_slider.setToolTip(
@@ -779,6 +784,12 @@ def _build_histogram_tool_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.roi_x_width_spin = _make_float_spinbox(0.0, 1.0e12)
     viewer.roi_y_center_spin = _make_float_spinbox()
     viewer.roi_y_width_spin = _make_float_spinbox(0.0, 1.0e12)
+    viewer.roi_angle_spin = _make_float_spinbox(-360.0, 360.0)
+    viewer.roi_angle_spin.setDecimals(1)
+    viewer.roi_angle_spin.setSuffix("°")
+    viewer.roi_angle_spin.setToolTip(
+        "Rotate the box about its center. Drag the round handle above the box; hold Shift to snap to 15° steps."
+    )
     viewer.roi_x_center_spin.setToolTip(
         "Center of the rectangle selection along the horizontal axis."
     )
@@ -795,21 +806,25 @@ def _build_histogram_tool_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.roi_x_width_spin.valueChanged.connect(lambda _value: viewer._set_roi_from_controls())
     viewer.roi_y_center_spin.valueChanged.connect(lambda _value: viewer._set_roi_from_controls())
     viewer.roi_y_width_spin.valueChanged.connect(lambda _value: viewer._set_roi_from_controls())
+    viewer.roi_angle_spin.valueChanged.connect(lambda _value: viewer._set_roi_from_controls())
     tools_layout.addWidget(viewer.roi_button, 0, 0, 1, 4)
     tools_layout.addWidget(viewer.show_box_check, 1, 0, 1, 2)
     tools_layout.addWidget(viewer.hist_axes_check, 1, 2, 1, 2)
-    tools_layout.addWidget(QtWidgets.QLabel("x center"), 2, 0)
-    tools_layout.addWidget(viewer.roi_x_center_spin, 2, 1)
-    tools_layout.addWidget(QtWidgets.QLabel("width"), 2, 2)
-    tools_layout.addWidget(viewer.roi_x_width_spin, 2, 3)
-    tools_layout.addWidget(QtWidgets.QLabel("y center"), 3, 0)
-    tools_layout.addWidget(viewer.roi_y_center_spin, 3, 1)
+    tools_layout.addWidget(viewer.popout_cuts_check, 2, 0, 1, 4)
+    tools_layout.addWidget(QtWidgets.QLabel("x center"), 3, 0)
+    tools_layout.addWidget(viewer.roi_x_center_spin, 3, 1)
     tools_layout.addWidget(QtWidgets.QLabel("width"), 3, 2)
-    tools_layout.addWidget(viewer.roi_y_width_spin, 3, 3)
-    tools_layout.addWidget(viewer.xcut_percent_label, 4, 0)
-    tools_layout.addWidget(viewer.xcut_percent_slider, 4, 1, 1, 3)
-    tools_layout.addWidget(viewer.ycut_percent_label, 5, 0)
-    tools_layout.addWidget(viewer.ycut_percent_slider, 5, 1, 1, 3)
+    tools_layout.addWidget(viewer.roi_x_width_spin, 3, 3)
+    tools_layout.addWidget(QtWidgets.QLabel("y center"), 4, 0)
+    tools_layout.addWidget(viewer.roi_y_center_spin, 4, 1)
+    tools_layout.addWidget(QtWidgets.QLabel("width"), 4, 2)
+    tools_layout.addWidget(viewer.roi_y_width_spin, 4, 3)
+    tools_layout.addWidget(QtWidgets.QLabel("Angle"), 5, 0)
+    tools_layout.addWidget(viewer.roi_angle_spin, 5, 1)
+    tools_layout.addWidget(viewer.xcut_percent_label, 6, 0)
+    tools_layout.addWidget(viewer.xcut_percent_slider, 6, 1, 1, 3)
+    tools_layout.addWidget(viewer.ycut_percent_label, 7, 0)
+    tools_layout.addWidget(viewer.ycut_percent_slider, 7, 1, 1, 3)
     viewer.save_x_cut_button = QtWidgets.QPushButton("Save x")
     viewer.save_y_cut_button = QtWidgets.QPushButton("Save y")
     viewer.save_x_cut_button.setToolTip(
@@ -820,8 +835,8 @@ def _build_histogram_tool_controls(viewer: Any, controls_layout: Any) -> None:
     )
     viewer.save_x_cut_button.clicked.connect(viewer.save_x_cut)
     viewer.save_y_cut_button.clicked.connect(viewer.save_y_cut)
-    tools_layout.addWidget(viewer.save_x_cut_button, 6, 0, 1, 2)
-    tools_layout.addWidget(viewer.save_y_cut_button, 6, 2, 1, 2)
+    tools_layout.addWidget(viewer.save_x_cut_button, 8, 0, 1, 2)
+    tools_layout.addWidget(viewer.save_y_cut_button, 8, 2, 1, 2)
     tools_layout.setColumnStretch(1, 1)
     tools_layout.setColumnStretch(3, 1)
     viewer._sync_histogram_panel_controls()

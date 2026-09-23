@@ -210,10 +210,30 @@ waterfall-axis coordinate, or the zero-based trace index for a group of
 one-dimensional datasets. The public `save_grid_csv` and
 `save_waterfall_csv` functions provide the same export without Qt.
 
-The histogram box controls provide **Save x** and **Save y** below the panel
-size sliders. They write the current inverse-variance weighted profile as
-`x,intensity,uncertainty` or `y,intensity,uncertainty` through the public
-`save_profile_csv` function.
+### Histogram box cuts
+
+Enable **Box tool** to draw and resize a rectangular selection. Drag the round
+handle above the rectangle to rotate it about its center; hold Shift while
+dragging to snap to 15-degree increments. The **Angle** field sets the same
+rotation numerically. The two cuts always run along the rectangle's own x and
+y sides. Rotation uses the numerical coordinates of the displayed axes; when
+the axes have different units, the angle describes this plotted coordinate
+plane rather than a physical angle between like quantities.
+
+**Show x/y cuts** controls both profiles. Check **Pop out x/y cuts** to put
+each profile in its own one-dimensional data viewer instead of panels beside
+the image. The viewers update while the box moves, resizes, or rotates and
+close when the cuts are hidden or the source viewer closes. They are live
+views of the selection, not new project datasets. The x/y panel-size sliders
+apply to inline panels only.
+
+**Save x** and **Save y** write the current inverse-variance weighted profiles
+as `x,intensity,uncertainty` or `y,intensity,uncertainty` through the public
+`save_profile_csv` function. For a rotated box, x and y are coordinates along
+its sides, with the box center retaining its displayed x and y coordinates.
+Copied figure scripts preserve the angle through `roi_angle` in
+`plot_mdhisto_slice`; `nfit.box_cuts.rotated_box_profiles` computes the same
+profiles without Qt.
 
 ### Gridlines
 
@@ -303,10 +323,12 @@ Y_{\mathrm{box}}=\sum_i y_i,
 \sigma_{Y_{\mathrm{box}}}=\sqrt{\sum_i\sigma_i^2}.
 $$
 
-The sum uses the finite, displayed bins inside the rectangle. Its one-sigma
+The sum uses the finite, displayed bins whose centers fall inside the rectangle.
+For rotated cuts, contributing pixels are grouped by their projected positions
+along each box side at approximately the displayed grid resolution. Its one-sigma
 uncertainty assumes that their errors are independent. Copied figure scripts
-produce the same annotation when histogram axes and rectangle extents are
-included.
+produce the same annotation when histogram cuts, rectangle extents, and angle
+are included.
 
 Plot smoothing is specified in displayed-bin widths. It affects only the
 rendered figure and exported figure recipe, not fitting, rebinning, or numerical

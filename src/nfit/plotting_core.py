@@ -309,6 +309,7 @@ def plot_mdhisto_slice(
     font_size: float = 10.0,
     show_histogram_axes: bool = False,
     roi_extents: tuple[float, float, float, float] | None = None,
+    roi_angle: float = 0.0,
     xcut_percent: float = 20.0,
     ycut_percent: float = 16.0,
     axes_linewidth: float = 1.0,
@@ -437,6 +438,7 @@ def plot_mdhisto_slice(
                 ax_xcut,
                 ax_ycut,
                 ax_image=ax_image,
+                roi_angle=roi_angle,
             )
             _apply_axes_linewidth((ax_image, ax_colorbar, ax_xcut, ax_ycut), colorbar, axes_linewidth)
 
@@ -2178,7 +2180,33 @@ def _draw_mdhisto_roi_cuts(
     ax_ycut,
     *,
     ax_image=None,
+    roi_angle: float = 0.0,
 ) -> None:
+    if not np.isclose(float(roi_angle) % 360, 0.0, atol=1e-10):
+        from matplotlib.patches import Polygon
+
+        from .box_cuts import box_corners, rotated_box_profiles
+
+        values = model._display_values(view)
+        errors = np.asarray(view["errors"], dtype=float)
+        profiles = rotated_box_profiles(
+            view, values, errors, roi_extents, roi_angle,
+            coverage_threshold=model.coverage_threshold,
+        )
+        ax_xcut.errorbar(profiles.x[0], profiles.x[1], yerr=profiles.x[2], fmt="-", lw=1.2, capsize=0)
+        ax_ycut.errorbar(profiles.y[1], profiles.y[0], xerr=profiles.y[2], fmt="-", lw=1.2, capsize=0)
+        ax_xcut.set_ylabel("Weighted mean")
+        ax_xcut.set_xlabel(f"Box x · {model._axis_label(model.x_dim)}")
+        ax_ycut.set_xlabel("Weighted mean")
+        ax_ycut.set_ylabel(f"Box y · {model._axis_label(model.y_dim)}")
+        if ax_image is not None:
+            ax_image.add_patch(Polygon(box_corners(roi_extents, roi_angle),
+                                       closed=True, fill=False, edgecolor="#4f8bd6", lw=1.5))
+            total, uncertainty, _ = integrated_box_sum(
+                values[profiles.selected], errors[profiles.selected]
+            )
+            _draw_box_sum_annotation(ax_image, roi_extents, total, uncertainty)
+        return
     x0, x1, y0, y1 = roi_extents
     x0, x1 = sorted((float(x0), float(x1)))
     y0, y1 = sorted((float(y0), float(y1)))

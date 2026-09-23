@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 
 from .background_channels import available_background_channels
+from .box_cuts import rotated_box_profiles, rotated_box_sum_profile
 from .mdhisto import MDHistoData
 from .plotting_core import (
     MDHistoSliceViewer,
@@ -116,8 +117,7 @@ class PlotLayoutController(_ViewerController):
         self._tile_colorbar_axes = []
         self._tile_colorbars = []
         if self.rectangle_selector is not None:
-            self.rectangle_selector.set_active(False)
-            self.rectangle_selector = None
+            self._viewer._discard_rectangle_selector()
         self._plot_layout_mode = ("waterfall", 1)
         self._suppress_matplotlib_coordinate_status()
 
@@ -182,8 +182,7 @@ class PlotLayoutController(_ViewerController):
         self._compare_colorbars = []
         self._compare_colorbar_axes = []
         if self.rectangle_selector is not None:
-            self.rectangle_selector.set_active(False)
-            self.rectangle_selector = None
+            self._viewer._discard_rectangle_selector()
         self._plot_layout_mode = (
             "tiled",
             panel_count,
@@ -255,8 +254,7 @@ class PlotLayoutController(_ViewerController):
         if with_cuts:
             self._create_rectangle_selector()
         elif self.rectangle_selector is not None:
-            self.rectangle_selector.set_active(False)
-            self.rectangle_selector = None
+            self._viewer._discard_rectangle_selector()
         self._plot_layout_mode = ("fit_compare", panel_count, with_cuts, with_residual_cut)
 
     def _ensure_residual_1d_layout(self) -> None:
@@ -286,8 +284,7 @@ class PlotLayoutController(_ViewerController):
         self._tile_colorbars = []
         self._suppress_matplotlib_coordinate_status()
         if self.rectangle_selector is not None:
-            self.rectangle_selector.set_active(False)
-            self.rectangle_selector = None
+            self._viewer._discard_rectangle_selector()
         self._plot_layout_mode = ("residual_1d", 2)
 
 
@@ -757,6 +754,16 @@ class FitComparisonController(_ViewerController):
             else:
                 extents = self._roi_extents
             self._set_roi_extents(extents, update_cuts=True, draw=False)
+            if self.popout_cuts_check.isChecked():
+                self.grid.set_height_ratios([1.0, 0.001])
+                self.grid.set_width_ratios([
+                    *[value for _ in range(len(panels)) for value in (1.0, 0.045)],
+                    *([0.001] * (1 + int(with_residual_cut))),
+                ])
+                for cut_axis in (self.ax_fit_cut, self.ax_ycut,
+                                 self.ax_residual_cut, self.ax_residual_ycut):
+                    if cut_axis is not None:
+                        cut_axis.set_visible(False)
         self._sync_control_visibility()
         self._sync_limit_spinboxes(vmin, vmax)
         self._last_plot_dims = current_dims
@@ -777,6 +784,9 @@ class FitComparisonController(_ViewerController):
         """
 
         if self.ax_fit_cut is None or self._current_slice is None or extents is None:
+            return
+        if not np.isclose(self._roi_angle % 360, 0.0, atol=1e-10):
+            self._viewer._update_rotated_fit_compare_cuts(extents)
             return
         x0, x1, y0, y1 = extents
         data_view = self._current_slice
@@ -952,6 +962,85 @@ class FitComparisonController(_ViewerController):
             self.ax_residual_ycut.set_xlabel("Res. (σ)")
             self.ax_residual_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
             self.ax_residual_ycut.tick_params(labelleft=False)
+        self._sync_export_controls()
+
+    def _update_rotated_fit_compare_cuts(
+        self, extents: tuple[float, float, float, float]
+    ) -> None:
+        """Render data, fit, and residual cuts in the box's local axes."""
+
+        view = self._current_slice
+        values = self.model._display_values(view)
+        errors = np.asarray(view["errors"], dtype=float)
+        data = rotated_box_profiles(
+            view, values, errors, extents, self._roi_angle,
+            coverage_threshold=self.coverage_threshold,
+        )
+        self._current_x_cut, self._current_y_cut = data.x, data.y
+        for axis in (self.ax_fit_cut, self.ax_ycut, self.ax_residual_cut, self.ax_residual_ycut):
+            if axis is not None:
+                axis.clear()
+        self._clear_roi_sum_annotation()
+        if np.any(data.selected):
+            self._show_roi_sum_annotation(
+                values[data.selected], errors[data.selected], extents
+            )
+        self.ax_fit_cut.errorbar(
+            data.x[0], data.x[1], yerr=data.x[2], marker="o", linestyle="None",
+            ms=self.marker_size, color=self.line_color, ecolor=self.line_color,
+            label="data",
+        )
+        if self.ax_ycut is not None:
+            self.ax_ycut.errorbar(
+                data.y[1], data.y[0], xerr=data.y[2], marker="o", linestyle="None",
+                ms=self.marker_size, color=self.line_color, ecolor=self.line_color,
+                label="data",
+            )
+        if self.unmask_model:
+            raw_model = self._viewer._comparison_panel_model(
+                self.data, self.model.channel, masked=False
+            )
+            fit_view = self._smoothed_slice_view(raw_model.slice_arrays())
+        else:
+            fit_view = view
+        fit = rotated_box_profiles(
+            fit_view, np.asarray(fit_view["fit"], dtype=float),
+            np.asarray(fit_view["errors"], dtype=float), extents, self._roi_angle,
+            coverage_threshold=0.0 if self.unmask_model else self.coverage_threshold,
+        )
+        self.ax_fit_cut.plot(
+            fit.x[0], fit.x[1], linestyle="-", color=self.fit_line_color,
+            lw=self.fit_line_width, label="fit",
+        )
+        if self.ax_ycut is not None:
+            self.ax_ycut.plot(
+                fit.y[1], fit.y[0], linestyle="-", color=self.fit_line_color,
+                lw=self.fit_line_width, label="fit",
+            )
+        if self.ax_residual_cut is not None:
+            residual = np.asarray(fit_view["residual"], dtype=float)
+            x_sum = rotated_box_sum_profile(
+                fit_view, residual, extents, self._roi_angle, data.x[0], axis="x"
+            )
+            y_sum = rotated_box_sum_profile(
+                fit_view, residual, extents, self._roi_angle, data.y[0], axis="y"
+            )
+            self.ax_residual_cut.axhline(0.0, color="0.5", lw=1.0)
+            self.ax_residual_cut.plot(data.x[0], x_sum, marker="o", linestyle="None",
+                                      color=self.line_color)
+            if self.ax_residual_ycut is not None:
+                self.ax_residual_ycut.axvline(0.0, color="0.5", lw=1.0)
+                self.ax_residual_ycut.plot(y_sum, data.y[0], marker="o", linestyle="None",
+                                           color=self.line_color)
+        x_label = f"Box x · {self.model._axis_label(self.model.x_dim)}"
+        y_label = f"Box y · {self.model._axis_label(self.model.y_dim)}"
+        self.ax_fit_cut.set(xlabel=x_label, ylabel="Weighted mean")
+        if self.ax_ycut is not None:
+            self.ax_ycut.set(xlabel="Weighted mean", ylabel=y_label)
+        if self.ax_residual_cut is not None:
+            self.ax_residual_cut.set(xlabel=x_label, ylabel="Res. (σ)")
+        if self.ax_residual_ycut is not None:
+            self.ax_residual_ycut.set(xlabel="Res. (σ)", ylabel=y_label)
         self._sync_export_controls()
 
     def _comparison_panel_model(

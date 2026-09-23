@@ -97,6 +97,8 @@ different Python.
   `analysis_window_builder.py`: focused Qt presentation helpers.
 - `src/nfit/qt_slice_viewer.py`, `qt_slice_modes.py`, and `plotting_core.py`:
   interactive viewer coordination, slice-mode controllers, and plot primitives.
+- `src/nfit/box_cuts.py`, `qt_rotated_box.py`, and `qt_box_cut_viewers.py`:
+  box-profile arithmetic, rotated selection interaction, and live cut viewers.
 - `src/nfit/viewer_export.py`: GUI-independent profile, map, and waterfall CSV export.
 - `src/nfit/app_distribution.py`, `app_updates.py`, `app_updates_gui.py`, and
   `tools/distribution/`: desktop packaging metadata, verified updates, installers,
