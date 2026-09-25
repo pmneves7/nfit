@@ -374,6 +374,7 @@ class TiledSliceController(_ViewerController):
                 cmap=self.model._display_cmap(),
                 norm=norm,
             )
+            self._viewer._apply_axes_ratio(axis)
             self._viewer._draw_gridline_overlay(
                 axis, coordinate_overrides={self.tile_dim: panel.coordinate}
             )
@@ -722,6 +723,7 @@ class FitComparisonController(_ViewerController):
                 cmap=self.model._display_cmap(),
                 norm=norm,
             )
+            self._viewer._apply_axes_ratio(ax)
             self._viewer._draw_gridline_overlay(ax)
             ax.set_title(title)
             ax.set_xlabel(model._axis_label(model.x_dim))
@@ -1265,6 +1267,7 @@ class StandardSliceController(_ViewerController):
             cmap=self.model._display_cmap(),
             norm=norm,
         )
+        self._viewer._apply_axes_ratio(self.ax_image)
         self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
         self.ax_image.set_ylabel(self.model._axis_label(self.model.y_dim))
         self._viewer._draw_gridline_overlay()

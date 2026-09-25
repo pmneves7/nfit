@@ -52,7 +52,8 @@ class _DatasetViewState:
     smoothing_fill_nans: bool = False
     show_brillouin_zone_boundaries: bool = False
     show_major_gridlines: bool = False
-    brillouin_zone_color: str = "#e57373"
+    axes_ratio: str = "fit"
+    brillouin_zone_color: str = "#000000"
     brillouin_zone_linewidth: float = 1.5
     brillouin_zone_alpha: float = 1.0
     tile_dim: int | None = None

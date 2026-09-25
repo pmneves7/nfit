@@ -46,8 +46,8 @@ A few of its main capabilities are:
   subtraction with masked correction windows, directional measured-background
   replay at sample angles with bounded compiled parallel acceleration, reversible displayed-axis
   coarsening, held cross-dataset viewer settings, symmetric color limits, and
-  rotatable histogram box cuts with live one-dimensional pop-out viewers, and
-  CSV export of maps and cuts;
+  rotatable histogram box cuts with one-dimensional pop-out viewers, selectable
+  two-dimensional axes ratios, x/y axis swapping, and CSV export of maps and cuts;
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
 - inspect the subtracted signal, retained background, and on-demand unsubtracted
   slices without adding visualization channels to fits;

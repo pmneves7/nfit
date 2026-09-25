@@ -214,15 +214,16 @@ one-dimensional datasets. The public `save_grid_csv` and
 
 Enable **Box tool** to draw and resize a rectangular selection. Drag the round
 handle above the rectangle to rotate it about its center; hold Shift while
-dragging to snap to 15-degree increments. The **Angle** field sets the same
-rotation numerically. The two cuts always run along the rectangle's own x and
-y sides. Rotation uses the numerical coordinates of the displayed axes; when
+dragging to snap to 15-degree increments. The outline follows the pointer;
+histogram profiles update when the mouse is released. The **Angle** field sets
+the same rotation numerically. The two cuts always run along the rectangle's
+own x and y sides. Rotation uses the numerical coordinates of the displayed axes; when
 the axes have different units, the angle describes this plotted coordinate
 plane rather than a physical angle between like quantities.
 
 **Show x/y cuts** controls both profiles. Check **Pop out x/y cuts** to put
 each profile in its own one-dimensional data viewer instead of panels beside
-the image. The viewers update while the box moves, resizes, or rotates and
+the image. The viewers update after the box moves, resizes, or rotates and
 close when the cuts are hidden or the source viewer closes. They are live
 views of the selection, not new project datasets. The x/y panel-size sliders
 apply to inline panels only.
@@ -234,6 +235,20 @@ its sides, with the box center retaining its displayed x and y coordinates.
 Copied figure scripts preserve the angle through `roi_angle` in
 `plot_mdhisto_slice`; `nfit.box_cuts.rotated_box_profiles` computes the same
 profiles without Qt.
+
+### Two-dimensional axes ratio
+
+Use **Swap x/y** beside the displayed-axis selectors to exchange the plot
+directions. **Axes ratio** offers **Fit panel** (the default), **Equal inverse Å**,
+and **Equal r.l.u.** Equal inverse Å scales each displayed momentum-axis
+direction by its reciprocal-space length, using the dataset's UB matrix or
+lattice parameters. It requires two momentum axes and a reciprocal metric.
+If either requirement is missing, the viewer returns to **Fit panel**.
+The ratio control preserves lengths along the displayed directions; it does
+not shear the plot to represent an oblique angle. Equal r.l.u. uses the lengths
+of the displayed HKL direction vectors and requires two momentum axes. Saved
+plots and copied scripts retain the choice through `axes_ratio` in the public
+two-dimensional plotting functions.
 
 ### Gridlines
 
@@ -253,8 +268,8 @@ point symmetry does not otherwise change the Wigner--Seitz boundary. Set this
 information in **Crystal orientation**. If either the metric or centering is
 missing when the Brillouin-zone overlay is enabled, the viewer prompts for it
 and stores the result on the data group. The two gridline modes share their
-color, line thickness, and opacity controls. Defaults are 1.5 points and full
-opacity.
+color, line thickness, and opacity controls. Defaults are black, 1.5 points,
+and full opacity.
 
 Copied scripts and saved plots preserve the selected overlay through
 `show_brillouin_zone_boundaries`, `show_major_gridlines`,

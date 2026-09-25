@@ -270,7 +270,7 @@ def draw_brillouin_zone_slice(
     ax: Any,
     zone_slice: BrillouinZoneSlice,
     *,
-    color: str = "#e57373",
+    color: str = "#000000",
     linewidth: float = 1.0,
     alpha: float = 0.75,
 ) -> Any:

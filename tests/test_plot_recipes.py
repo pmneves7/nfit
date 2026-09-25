@@ -50,6 +50,22 @@ def test_plot_recipe_restores_major_gridlines_and_shared_style():
     assert all(line.get_alpha() == 0.6 for line in gridlines)
 
 
+def test_plot_recipe_preserves_physical_axes_ratio_in_render_and_script(tmp_path):
+    data = _data().with_updates(metadata={
+        "lattice_parameters": {"a": 4.0, "b": 8.0, "c": 4.0},
+    })
+    entry = new_plot_entry(
+        "Map", "dataset-id",
+        {"x_dim": "H", "y_dim": "K", "axes_ratio": "q"},
+        plot_type="mdhisto_slice",
+    )
+
+    assert render_plot(entry, data).axes[0].get_aspect() == 0.5
+    assert "'axes_ratio': 'q'" in plot_script(
+        entry, project_path=tmp_path / "sample.nfit"
+    )
+
+
 def test_slice_recipe_preserves_empty_bins_from_legacy_fill_recipe():
     axes = (
         MDHistoAxis("H", np.arange(4.0), "rlu", "momentum"),

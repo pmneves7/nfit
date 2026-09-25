@@ -95,8 +95,15 @@ def test_static_and_qt_slice_views_draw_scriptable_brillouin_zone_boundaries():
         and artist.get_gid() == "nfit-brillouin-zone-boundaries"
         for artist in figure.axes[0].collections
     )
+    boundary = next(
+        artist for artist in figure.axes[0].collections
+        if isinstance(artist, LineCollection)
+        and artist.get_gid() == "nfit-brillouin-zone-boundaries"
+    )
+    assert mcolors.to_hex(boundary.get_colors()[0]) == "#000000"
 
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    assert viewer.brillouin_zone_color_combo.currentData() == "#000000"
     viewer.show_brillouin_zone_check.setChecked(True)
     settings = viewer.current_plot_settings()
     assert settings["show_brillouin_zone_boundaries"] is True
@@ -138,6 +145,7 @@ def test_static_major_gridlines_use_shared_style_and_exclude_zone_boundaries():
     assert gridlines
     assert all(line.get_linewidth() == pytest.approx(1.5) for line in gridlines)
     assert all(line.get_alpha() == pytest.approx(1.0) for line in gridlines)
+    assert all(mcolors.to_hex(line.get_color()) == "#000000" for line in gridlines)
     with pytest.raises(ValueError, match="mutually exclusive"):
         plot_mdhisto_slice(
             data,
@@ -2898,7 +2906,7 @@ def test_qt_roi_center_width_controls_sync_with_rectangle_extents():
     assert viewer.roi_y_width_spin.value() == pytest.approx(1.0)
 
 
-def test_qt_rotated_box_handle_snaps_and_updates_live_cuts():
+def test_qt_rotated_box_handle_snaps_and_updates_cuts_on_release():
     from types import SimpleNamespace
 
     pytest.importorskip("PySide6")
@@ -2927,13 +2935,95 @@ def test_qt_rotated_box_handle_snaps_and_updates_live_cuts():
         offset[0] * np.sin(theta) + offset[1] * np.cos(theta),
     ))
     selector._move(event(target, key="shift"))
-    assert viewer._roi_angle == pytest.approx(15.0)
-    assert viewer.roi_angle_spin.value() == pytest.approx(15.0)
+    assert selector.angle == pytest.approx(15.0)
+    assert viewer._roi_angle == pytest.approx(0.0)
+    assert viewer.roi_angle_spin.value() == pytest.approx(0.0)
     assert viewer._current_x_cut is not None
     selector._release(event(target, key="shift"))
+    assert viewer._roi_angle == pytest.approx(15.0)
+    assert viewer.roi_angle_spin.value() == pytest.approx(15.0)
     viewer.update_plot(reuse_slice=True)
     assert viewer.rectangle_selector.patch in viewer.ax_image.patches
     viewer.window.close()
+
+
+def test_2d_axes_ratio_matches_static_and_qt_and_swaps_axes():
+    pytest.importorskip("PySide6")
+    from nfit.axes_ratio import mdhisto_axes_aspect
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data().with_updates(metadata={
+        "lattice_parameters": {"a": 4.0, "b": 4.0, "c": 8.0},
+    })
+    ratio = mdhisto_axes_aspect(data, 3, 2, "q")
+    assert ratio == pytest.approx(1 / (2 * np.sqrt(2)))
+    assert mdhisto_axes_aspect(data, 3, 2, "rlu") == pytest.approx(1 / np.sqrt(2))
+    assert mdhisto_axes_aspect(data, 3, 2, "fit") == "auto"
+    with pytest.raises(ValueError, match="momentum axes"):
+        mdhisto_axes_aspect(data, 3, 0, "q")
+
+    figure = plot_mdhisto_slice(
+        data, x_dim=3, y_dim=2, axes_ratio="q", show_histogram_axes=True
+    )
+    assert figure.axes[0].get_aspect() == pytest.approx(ratio)
+    figure.canvas.draw()
+    assert figure.axes[1].bbox.y0 == pytest.approx(figure.axes[0].bbox.y0)
+    assert figure.axes[1].bbox.y1 == pytest.approx(figure.axes[0].bbox.y1)
+    assert figure.axes[3].bbox.x0 == pytest.approx(figure.axes[0].bbox.x0)
+    assert figure.axes[3].bbox.x1 == pytest.approx(figure.axes[0].bbox.x1)
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.axes_ratio_combo.setCurrentIndex(viewer.axes_ratio_combo.findData("q"))
+    assert viewer.ax_image.get_aspect() == pytest.approx(ratio)
+    viewer.hist_axes_check.setChecked(True)
+    viewer.canvas.draw()
+    assert viewer.ax_xcut.bbox.x0 == pytest.approx(viewer.ax_image.bbox.x0)
+    assert viewer.ax_xcut.bbox.x1 == pytest.approx(viewer.ax_image.bbox.x1)
+    assert viewer.ax_ycut.bbox.y0 == pytest.approx(viewer.ax_image.bbox.y0)
+    assert viewer.ax_ycut.bbox.y1 == pytest.approx(viewer.ax_image.bbox.y1)
+    assert viewer.current_plot_settings()["axes_ratio"] == "q"
+    assert "axes_ratio='q'" in viewer.figure_script()
+    viewer.swap_axes_button.click()
+    assert (viewer.model.x_dim, viewer.model.y_dim) == (2, 3)
+    assert viewer.ax_image.get_aspect() == pytest.approx(1 / ratio)
+    assert viewer.x_combo.currentText() == data.axes[2].name
+    assert viewer.y_combo.currentText() == data.axes[3].name
+    viewer.axes_ratio_combo.setCurrentIndex(viewer.axes_ratio_combo.findData("rlu"))
+    assert viewer.ax_image.get_aspect() == pytest.approx(np.sqrt(2))
+    restored = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    restored.apply_plot_settings(viewer.current_plot_settings())
+    assert restored.axes_ratio == "rlu"
+    assert (restored.model.x_dim, restored.model.y_dim) == (2, 3)
+    assert restored.ax_image.get_aspect() == pytest.approx(np.sqrt(2))
+    restored.window.close()
+    viewer.window.close()
+    without_metric = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    without_metric.axes_ratio_combo.setCurrentIndex(
+        without_metric.axes_ratio_combo.findData("q")
+    )
+    assert without_metric.axes_ratio == "fit"
+    assert without_metric.ax_image.get_aspect() == "auto"
+    assert "lattice" in without_metric.axes_ratio_combo.toolTip()
+    without_metric.window.close()
+
+
+def test_2d_axes_ratio_applies_to_tiled_and_fit_comparison_plots():
+    from nfit.plotting import plot_mdhisto_fit_comparison, plot_mdhisto_tiled_slices
+
+    data = _tiny_mdhisto_data().with_updates(metadata={
+        "lattice_parameters": {"a": 4.0, "b": 4.0, "c": 8.0},
+    })
+    ratio = 1 / (2 * np.sqrt(2))
+    tiled = plot_mdhisto_tiled_slices(
+        data, x_dim=3, y_dim=2, tile_dim=1, axes_ratio="q"
+    )
+    assert all(axis.get_aspect() == pytest.approx(ratio) for axis in tiled._nfit_tiled_axes)
+    comparison = plot_mdhisto_fit_comparison(
+        data, data, x_dim=3, y_dim=2, axes_ratio="q"
+    )
+    assert all(
+        axis.get_aspect() == pytest.approx(ratio)
+        for axis in comparison.axes if axis.get_title() in {"Data", "Fit", "Residual"}
+    )
 
 
 def test_rotation_handle_remains_draggable_outside_plot_axes():

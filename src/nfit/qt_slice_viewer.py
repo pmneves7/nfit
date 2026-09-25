@@ -9,6 +9,7 @@ from .application_preferences import (
     default_continuous_colormap,
     default_waterfall_colormap,
 )
+from .axes_ratio import mdhisto_axes_aspect
 from .background_channels import available_background_channels
 from .box_cuts import rotated_box_profiles
 from .colormaps import (
@@ -26,6 +27,7 @@ from .plotting_core import (
     TiledSlice,
     WaterfallTrace,
     _draw_box_sum_annotation,
+    align_mdhisto_cut_axes,
     coarsen_mdhisto_view,
     default_tiled_slice_step,
     default_waterfall_offset,  # noqa: F401 - compatibility re-export
@@ -207,6 +209,9 @@ class QtMDHistoSliceViewer:
         self.axis_selector_widget = None
         self.x_combo = None
         self.y_combo = None
+        self.swap_axes_button = None
+        self.axes_ratio_combo = None
+        self.axes_ratio_label = None
         self._axis_y_label = None
         self.x_min_spin = None
         self.x_max_spin = None
@@ -350,7 +355,8 @@ class QtMDHistoSliceViewer:
         self.smoothing_fill_nans = False
         self.show_brillouin_zone_boundaries = False
         self.show_major_gridlines = False
-        self.brillouin_zone_color = "#e57373"
+        self.axes_ratio = "fit"
+        self.brillouin_zone_color = "#000000"
         self.brillouin_zone_linewidth = 1.5
         self.brillouin_zone_alpha = 1.0
         self.marker = "o"
@@ -735,6 +741,7 @@ class QtMDHistoSliceViewer:
             "smoothing_fill_nans": self.smoothing_fill_nans,
             "show_brillouin_zone_boundaries": self.show_brillouin_zone_boundaries,
             "show_major_gridlines": self.show_major_gridlines,
+            "axes_ratio": self.axes_ratio,
             "brillouin_zone_spacegroup": self._effective_brillouin_zone_context().get("spacegroup"),
             "brillouin_zone_lattice_parameters": self._effective_brillouin_zone_context().get("lattice_parameters"),
             "brillouin_zone_color": self.brillouin_zone_color,
@@ -886,6 +893,12 @@ class QtMDHistoSliceViewer:
         self.brillouin_zone_color = str(
             settings.get("brillouin_zone_color", self.brillouin_zone_color)
         )
+        self.axes_ratio = str(settings.get("axes_ratio", "fit"))
+        ratio_index = self.axes_ratio_combo.findData(self.axes_ratio)
+        if ratio_index >= 0:
+            self.axes_ratio_combo.blockSignals(True)
+            self.axes_ratio_combo.setCurrentIndex(ratio_index)
+            self.axes_ratio_combo.blockSignals(False)
         self.brillouin_zone_linewidth = float(
             settings.get("brillouin_zone_linewidth", self.brillouin_zone_linewidth)
         )
@@ -1427,6 +1440,7 @@ class QtMDHistoSliceViewer:
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
                 f"    axes_linewidth={self.axis_linewidth!r},",
+                f"    axes_ratio={self.axes_ratio!r},",
                 f"    show_histogram_axes={self.hist_axes_check.isChecked()!r},",
                 f"    roi_extents={self._roi_extents!r},",
                 f"    roi_angle={self._roi_angle!r},",
@@ -1496,6 +1510,7 @@ class QtMDHistoSliceViewer:
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
                 f"    axes_linewidth={self.axis_linewidth!r},",
+                f"    axes_ratio={self.axes_ratio!r},",
                 f"    tile_label_decimals={self.tile_label_decimals!r},",
                 f"    tile_label_prefix={self.tile_label_prefix!r},",
                 f"    tile_label_unit={self.tile_label_unit!r},",
@@ -2063,6 +2078,47 @@ class QtMDHistoSliceViewer:
         self._rebuild_hidden_axis_controls()
         self.update_plot(preserve_view=False)
 
+    def _swap_display_axes(self) -> None:
+        if getattr(self.model, "is_point_list", False) or self._is_effective_1d():
+            return
+        self.model.x_dim, self.model.y_dim = self.model.y_dim, self.model.x_dim
+        self._sync_axis_combos()
+        self._sync_tile_controls()
+        self._rebuild_hidden_axis_controls()
+        self.update_plot(preserve_view=False)
+
+    def _set_axes_ratio(self, _index: int) -> None:
+        if self._restoring_dataset_state:
+            return
+        self.axes_ratio = str(self.axes_ratio_combo.currentData())
+        self.update_plot(reuse_slice=True)
+
+    def _apply_axes_ratio(self, axis) -> None:
+        context = self._effective_brillouin_zone_context()
+        try:
+            aspect = mdhisto_axes_aspect(
+                self.data, self.model.x_dim, self.model.y_dim, self.axes_ratio,
+                lattice_parameters=context.get("lattice_parameters"),
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            self.axes_ratio = "fit"
+            self.axes_ratio_combo.blockSignals(True)
+            self.axes_ratio_combo.setCurrentIndex(0)
+            self.axes_ratio_combo.blockSignals(False)
+            self.axes_ratio_combo.setToolTip(str(error))
+            if self.window is not None and hasattr(self.window, "statusBar"):
+                self.window.statusBar().showMessage(str(error), 10_000)
+            aspect = "auto"
+        else:
+            self.axes_ratio_combo.setToolTip(
+                str(self.axes_ratio_combo.property("default_tooltip"))
+            )
+        axis.set_aspect(aspect, adjustable="box")
+        if axis is self.ax_image:
+            align_mdhisto_cut_axes(axis, self.ax_fit_cut or self.ax_xcut, self.ax_ycut)
+        if self._compare_axes and axis is self._compare_axes[-1]:
+            align_mdhisto_cut_axes(axis, self.ax_residual_cut, self.ax_residual_ycut)
+
     def _set_dataset_index(self, index: int) -> None:
         index = int(index)
         if index == self.dataset_index or not (0 <= index < len(self.datasets)):
@@ -2283,6 +2339,7 @@ class QtMDHistoSliceViewer:
             smoothing_fill_nans=bool(self.smoothing_fill_nans),
             show_brillouin_zone_boundaries=bool(self.show_brillouin_zone_boundaries),
             show_major_gridlines=bool(self.show_major_gridlines),
+            axes_ratio=str(self.axes_ratio),
             brillouin_zone_color=str(self.brillouin_zone_color),
             brillouin_zone_linewidth=float(self.brillouin_zone_linewidth),
             brillouin_zone_alpha=float(self.brillouin_zone_alpha),
@@ -2380,6 +2437,10 @@ class QtMDHistoSliceViewer:
                 state.show_brillouin_zone_boundaries
             )
             self.show_major_gridlines = bool(state.show_major_gridlines)
+            self.axes_ratio = str(state.axes_ratio)
+            ratio_index = self.axes_ratio_combo.findData(self.axes_ratio)
+            if ratio_index >= 0:
+                self.axes_ratio_combo.setCurrentIndex(ratio_index)
             self.brillouin_zone_color = str(state.brillouin_zone_color)
             self.brillouin_zone_linewidth = float(state.brillouin_zone_linewidth)
             self.brillouin_zone_alpha = float(state.brillouin_zone_alpha)
@@ -3995,6 +4056,12 @@ class QtMDHistoSliceViewer:
             self.y_combo.setVisible(not is_point and not grouped_waterfall)
         if self._axis_y_label is not None:
             self._axis_y_label.setVisible(not is_point and not grouped_waterfall)
+        if self.swap_axes_button is not None:
+            self.swap_axes_button.setVisible(not is_point and not is_line and not grouped_waterfall)
+        if self.axes_ratio_combo is not None:
+            self.axes_ratio_combo.setVisible(not is_point and not is_line and not is_waterfall)
+        if self.axes_ratio_label is not None:
+            self.axes_ratio_label.setVisible(not is_point and not is_line and not is_waterfall)
         if self.hidden_group is not None:
             self.hidden_group.setVisible(not is_line)
         if self.color_group is not None:

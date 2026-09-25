@@ -213,13 +213,13 @@ class RotatedBoxSelector:
                 new_cy + (top - bottom) / 2,
             )
         self._redraw()
-        if self._extents[1] > self._extents[0] and self._extents[3] > self._extents[2]:
-            self.onselect(self._press_event, event)
 
     def _release(self, event) -> None:
         if self._drag is None:
             return
         self._move(event)
+        if self._extents[1] > self._extents[0] and self._extents[3] > self._extents[2]:
+            self.onselect(self._press_event, event)
         self._drag = None
         self._press_event = None
         self._press_geometry = None

@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .axes_ratio import mdhisto_axes_aspect
 from .background_channels import available_background_channels, background_channel
 from .colormaps import IMAGE_COLORMAPS
 from .dataset import PointData4D, PointListData
@@ -16,6 +17,27 @@ from .mdhisto import (
     mdhisto_measured_bins_from_arrays,
 )
 from .quantities import display_axis_label, display_channel_label, display_unit
+
+
+def align_mdhisto_cut_axes(ax_image: Any, ax_xcut: Any = None, ax_ycut: Any = None) -> None:
+    """Keep shared profile axes aligned when an image has a fixed aspect."""
+
+    from matplotlib.transforms import Bbox
+
+    if ax_xcut is not None:
+        def x_locator(axis, _renderer):
+            image = ax_image.get_position()
+            cell = axis.get_subplotspec().get_position(axis.figure)
+            return Bbox.from_extents(image.x0, cell.y0, image.x1, cell.y1)
+
+        ax_xcut.set_axes_locator(x_locator)
+    if ax_ycut is not None:
+        def y_locator(axis, _renderer):
+            image = ax_image.get_position()
+            cell = axis.get_subplotspec().get_position(axis.figure)
+            return Bbox.from_extents(cell.x0, image.y0, cell.x1, image.y1)
+
+        ax_ycut.set_axes_locator(y_locator)
 
 
 def draw_mdhisto_brillouin_zones(
@@ -28,7 +50,7 @@ def draw_mdhisto_brillouin_zones(
     coordinate_overrides: dict[int, float] | None = None,
     spacegroup: str | None = None,
     lattice_parameters: dict[str, float] | None = None,
-    color: str = "#e57373",
+    color: str = "#000000",
     linewidth: float = 1.5,
     alpha: float = 1.0,
 ) -> Any:
@@ -313,11 +335,12 @@ def plot_mdhisto_slice(
     xcut_percent: float = 20.0,
     ycut_percent: float = 16.0,
     axes_linewidth: float = 1.0,
+    axes_ratio: str = "fit",
     show_brillouin_zone_boundaries: bool = False,
     show_major_gridlines: bool = False,
     brillouin_zone_spacegroup: str | None = None,
     brillouin_zone_lattice_parameters: dict[str, float] | None = None,
-    brillouin_zone_color: str = "#e57373",
+    brillouin_zone_color: str = "#000000",
     brillouin_zone_linewidth: float = 1.5,
     brillouin_zone_alpha: float = 1.0,
     figsize: tuple[float, float] = (8.0, 6.5),
@@ -400,6 +423,14 @@ def plot_mdhisto_slice(
             cmap=model._display_cmap(),
             norm=model._color_norm(values),
         )
+        ax_image.set_aspect(
+            mdhisto_axes_aspect(
+                data, model.x_dim, model.y_dim, axes_ratio,
+                lattice_parameters=brillouin_zone_lattice_parameters,
+            ),
+            adjustable="box",
+        )
+        align_mdhisto_cut_axes(ax_image, ax_xcut, ax_ycut)
         ax_image.set_xlabel(model._axis_label(model.x_dim))
         ax_image.set_ylabel(model._axis_label(model.y_dim))
         if xlim is not None:
@@ -670,6 +701,7 @@ def plot_mdhisto_tiled_slices(
     ylim: tuple[float, float] | None = None,
     font_size: float = 10.0,
     axes_linewidth: float = 1.0,
+    axes_ratio: str = "fit",
     tile_label_decimals: int = 1,
     tile_label_prefix: str = "{axis} = ",
     tile_label_unit: str = "{unit}",
@@ -680,7 +712,7 @@ def plot_mdhisto_tiled_slices(
     show_major_gridlines: bool = False,
     brillouin_zone_spacegroup: str | None = None,
     brillouin_zone_lattice_parameters: dict[str, float] | None = None,
-    brillouin_zone_color: str = "#e57373",
+    brillouin_zone_color: str = "#000000",
     brillouin_zone_linewidth: float = 1.5,
     brillouin_zone_alpha: float = 1.0,
     figsize: tuple[float, float] = (10.0, 8.0),
@@ -776,6 +808,13 @@ def plot_mdhisto_tiled_slices(
                 shading="auto",
                 cmap=model._display_cmap(),
                 norm=norm,
+            )
+            ax.set_aspect(
+                mdhisto_axes_aspect(
+                    data, model.x_dim, model.y_dim, axes_ratio,
+                    lattice_parameters=brillouin_zone_lattice_parameters,
+                ),
+                adjustable="box",
             )
             if show_tile_labels:
                 ax.text(
@@ -1700,11 +1739,12 @@ def plot_mdhisto_fit_comparison(
     symmetric_about_zero: bool = False,
     x_step: float | None = None,
     y_step: float | None = None,
+    axes_ratio: str = "fit",
     show_brillouin_zone_boundaries: bool = False,
     show_major_gridlines: bool = False,
     brillouin_zone_spacegroup: str | None = None,
     brillouin_zone_lattice_parameters: dict[str, float] | None = None,
-    brillouin_zone_color: str = "#e57373",
+    brillouin_zone_color: str = "#000000",
     brillouin_zone_linewidth: float = 1.5,
     brillouin_zone_alpha: float = 1.0,
     figsize: tuple[float, float] | None = None,
@@ -1743,6 +1783,7 @@ def plot_mdhisto_fit_comparison(
         symmetric_about_zero=symmetric_about_zero,
         x_step=x_step,
         y_step=y_step,
+        axes_ratio=axes_ratio,
         show_brillouin_zone_boundaries=show_brillouin_zone_boundaries,
         show_major_gridlines=show_major_gridlines,
         brillouin_zone_spacegroup=brillouin_zone_spacegroup,
@@ -1855,6 +1896,7 @@ def _plot_mdhisto_fit_slice_comparison(
     symmetric_about_zero: bool,
     x_step: float | None,
     y_step: float | None,
+    axes_ratio: str,
     show_brillouin_zone_boundaries: bool,
     show_major_gridlines: bool,
     brillouin_zone_spacegroup: str | None,
@@ -1927,6 +1969,13 @@ def _plot_mdhisto_fit_slice_comparison(
             shading="auto",
             cmap=cmap,
             norm=norm,
+        )
+        ax.set_aspect(
+            mdhisto_axes_aspect(
+                data, data_model.x_dim, data_model.y_dim, axes_ratio,
+                lattice_parameters=brillouin_zone_lattice_parameters,
+            ),
+            adjustable="box",
         )
         ax.set_title(title)
         ax.set_xlabel(model._axis_label(model.x_dim))

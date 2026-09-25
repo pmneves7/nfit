@@ -174,6 +174,7 @@ def render_plot(
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),
             axes_linewidth=float(settings.get("axis_linewidth", 1.5)),
+            axes_ratio=str(settings.get("axes_ratio", "fit")),
             tile_label_decimals=int(settings.get("tile_label_decimals", 1)),
             tile_label_prefix=str(settings.get("tile_label_prefix", "{axis} = ")),
             tile_label_unit=str(settings.get("tile_label_unit", "{unit}")),
@@ -190,7 +191,7 @@ def render_plot(
             brillouin_zone_lattice_parameters=settings.get(
                 "brillouin_zone_lattice_parameters"
             ),
-            brillouin_zone_color=settings.get("brillouin_zone_color", "#e57373"),
+            brillouin_zone_color=settings.get("brillouin_zone_color", "#000000"),
             brillouin_zone_linewidth=float(
                 settings.get("brillouin_zone_linewidth", 1.5)
             ),
@@ -234,6 +235,7 @@ def render_plot(
             ),
             x_step=settings.get("x_step"),
             y_step=settings.get("y_step"),
+            axes_ratio=str(settings.get("axes_ratio", "fit")),
             show_brillouin_zone_boundaries=bool(
                 settings.get("show_brillouin_zone_boundaries", False)
             ),
@@ -242,7 +244,7 @@ def render_plot(
             brillouin_zone_lattice_parameters=settings.get(
                 "brillouin_zone_lattice_parameters"
             ),
-            brillouin_zone_color=settings.get("brillouin_zone_color", "#e57373"),
+            brillouin_zone_color=settings.get("brillouin_zone_color", "#000000"),
             brillouin_zone_linewidth=float(
                 settings.get("brillouin_zone_linewidth", 1.5)
             ),
@@ -283,6 +285,7 @@ def render_plot(
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),
             axes_linewidth=float(settings.get("axis_linewidth", 1.5)),
+            axes_ratio=str(settings.get("axes_ratio", "fit")),
             show_histogram_axes=bool(settings.get("show_histogram_axes", False)),
             roi_extents=_quad(settings.get("roi_extents")),
             xcut_percent=float(settings.get("xcut_percent", 20.0)),
@@ -295,7 +298,7 @@ def render_plot(
             brillouin_zone_lattice_parameters=settings.get(
                 "brillouin_zone_lattice_parameters"
             ),
-            brillouin_zone_color=settings.get("brillouin_zone_color", "#e57373"),
+            brillouin_zone_color=settings.get("brillouin_zone_color", "#000000"),
             brillouin_zone_linewidth=float(
                 settings.get("brillouin_zone_linewidth", 1.5)
             ),

@@ -10,6 +10,7 @@ import pytest
 
 PACKAGE_ROOT = Path(__file__).parents[1] / "src" / "nfit"
 GUI_INDEPENDENT_MODULES = (
+    PACKAGE_ROOT / "axes_ratio.py",
     PACKAGE_ROOT / "box_cuts.py",
     PACKAGE_ROOT / "array_archive.py",
     PACKAGE_ROOT / "analysis" / "artifacts.py",
