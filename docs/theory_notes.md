@@ -86,7 +86,7 @@ Quantitative use requires two choices:
 
 ### Static susceptibility
 
-The zero-frequency Kramers--Kronig relation is
+For a reciprocal scalar channel, the zero-frequency Kramers--Kronig relation is
 
 $$
 \chi'(\mathbf Q,0)
@@ -98,6 +98,11 @@ For the relaxational response this integral equals the fitted static
 susceptibility at the same $\mathbf Q$. Bulk magnetometry probes
 $\mathbf Q=0$; the required $g$, $\mu_B$, $\mu_0$, number-density, and molar
 conversions are given in [Physics conventions](physics_conventions.md).
+The positive-energy form assumes an odd absorptive spectrum at fixed
+$\mathbf Q$. In a nonreciprocal channel use the full signed-frequency
+dispersion relation. A separately defined thermodynamic static value, such as
+the conserved uniform [Lindhard limit](lindhard.md#degenerate-transitions-and-the-static-limit),
+is not necessarily this dynamic zero-frequency limit.
 
 The Hohenberg--Brinkman first-moment sum rule provides a further consistency
 check between the energy-weighted spectrum and exchange-weighted equal-time
@@ -117,6 +122,22 @@ from one additional equation.
 
 TPSC and Anderson-lattice physics are useful comparisons, but are not
 implemented closures.
+
+These are reduced phenomenological implementations of reaction-field,
+mode-coupling, and amplitude-conservation ideas. Their names do not imply the
+complete microscopic Moriya or Takahashi theories, a predicted damping law,
+or exact critical behavior. Converge the BZ mesh and energy quadrature and
+report the cutoff alongside fitted closure parameters. A low-dimensional
+finite mesh cannot establish a finite ordering temperature in a regime
+excluded by the Mermin--Wagner theorem [9].
+
+In a field, the implemented constraint fixes the **connected fluctuating**
+amplitude. It does not add $|\langle\mathbf S\rangle|^2$ to that amplitude.
+For a rigid spin the exact total-moment identity instead requires
+$\langle\delta\mathbf S^2\rangle+|\langle\mathbf S\rangle|^2=S(S+1)$.
+Therefore a field-independent target equal to $S(S+1)$ is not an exact
+finite-field fixed-spin closure. nfit's field-on closure is an empirical
+fluctuation constraint and does not predict saturation or an ordered moment.
 
 ### Onsager or spherical closure
 
@@ -194,7 +215,7 @@ dependence [7].
 
 | quantity | no closure | with a closure |
 | --- | --- | --- |
-| local static susceptibility | fitted `chi0` | derived by Onsager, SCR, or TAC |
+| local static susceptibility | fitted `chi0` | retained by Onsager; derived by SCR or TAC |
 | relaxation rate | fitted `gamma0` | still fitted |
 | reaction field | absent | derived `lambda(T)` for Onsager |
 | moment budget | diagnostic integral | `moment_target`, `m2_total`, or `total_amplitude` |
@@ -204,6 +225,7 @@ dependence [7].
 has units of inverse energy. Without a closure it is fitted and used directly.
 With SCR it is the fitted bare reference susceptibility; with TAC it seeds the
 self-consistent solve.
+Onsager retains this local `chi0` and solves the reaction field instead.
 
 `chi0_eff` is the local susceptibility actually inserted into the RPA
 denominator. It equals `chi0` without a closure and is derived by SCR or TAC.
@@ -240,6 +262,15 @@ effective self-consistent margin. If the closure has no solution, the bare
 margin remains available and the record states that an effective closure was
 not obtained. The BZ grid is finite, so this is the smallest *sampled*
 denominator rather than a continuous optimization over reciprocal space.
+
+These scalar-eigenvalue expressions apply to an isotropic local static
+response. With unequal longitudinal and transverse susceptibilities, the
+field-on calculation instead uses the full local tensor and the
+dimensionless feedback eigenvalues defined in
+[Physics conventions](physics_conventions.md#tensor-anisotropic-interactions).
+The reported critical mode then belongs to that feedback matrix;
+`stability_lambda_max` remains the maximum bare exchange eigenvalue in meV
+and alone does not determine the field-on margin.
 
 The fit report also records the integrated moment, static susceptibilities,
 and `chi0 * gamma0`. These trends can help choose a model:

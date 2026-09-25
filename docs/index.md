@@ -18,7 +18,7 @@ University, pneves1@jhu.edu). AI and large-language-model coding tools have
 assisted with portions of the code, tests, and documentation. Authorship and
 responsibility for the project remain with Paul M. Neves.
 
-Current package version: 0.102.1.
+Current package version: 0.102.2.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the
@@ -47,6 +47,7 @@ plotting
 :caption: Physics and models
 
 physics_conventions
+response_validation
 electronic_structure_models
 spin_fluctuation_models
 powder_convergence

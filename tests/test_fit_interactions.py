@@ -402,6 +402,67 @@ def test_zeeman_closure_smoke():
     assert np.max(np.abs(values)) < 1e5
 
 
+def test_zeeman_bulk_static_chi_uses_full_tensor_resolvent():
+    from nfit.fit_config_heisenberg_rpa import _RpaComponentEvaluator
+    from nfit.spin_fluctuations import build_rpa_geometry
+    from nfit.tensor_rpa import TensorStructure
+
+    geometry = build_rpa_geometry([0.0], [0.0], [0.0], [[0.0, 0.0, 0.0]], [])
+    exchange = np.array([[0.0, 0.0, 0.2], [0.0, 0.0, 0.0], [0.2, 0.0, 0.0]])
+    structure = TensorStructure(
+        n_sites=1,
+        n_q=1,
+        parameter_names=("J",),
+        dense_terms={"J": exchange.astype(complex)[None]},
+    )
+    evaluator = object.__new__(_RpaComponentEvaluator)
+    evaluator.zeeman_mode = True
+    evaluator._zeeman_keys = {
+        "chi_perp_ratio": "chi_perp_ratio",
+        "gamma_perp_ratio": "gamma_perp_ratio",
+    }
+    evaluator.gamma0_key = "gamma0"
+    evaluator._bulk_q0_context = (geometry, structure)
+    evaluator._bulk_q0_modes = lambda _params: ("tensor", np.linalg.eigvalsh(exchange), np.zeros((3, 3)), 1)
+    evaluator._tensor_values = lambda _params: {"J": 1.0}
+
+    chi_zz = evaluator._bulk_static_chi(
+        {"chi_perp_ratio": 2.0, "gamma_perp_ratio": 1.0, "gamma0": 1.0},
+        chi0=1.0,
+        lambda_shift=0.0,
+        b_hat=np.array([0.0, 0.0, 1.0]),
+    )
+    assert chi_zz == pytest.approx(1.0 / (1.0 - 0.2**2 * 2.0))
+
+
+def test_zeeman_diagnostics_report_transverse_static_stability_margin():
+    from types import SimpleNamespace
+
+    from nfit.fit_config_heisenberg_rpa import _RpaComponentEvaluator
+    from nfit.spin_fluctuations import build_rpa_geometry
+    from nfit.tensor_rpa import zeeman_cartesian_propagator
+
+    geometry = build_rpa_geometry([0.0], [0.0], [0.0], [[0.0, 0.0, 0.0]], [])
+    exchange = np.diag([0.6, 0.0, 0.0]).astype(complex)[None]
+
+    def builder(omega, chi0, gamma0):
+        return zeeman_cartesian_propagator(
+            omega,
+            np.array([0.0, 0.0, 1.0]),
+            chi0=chi0,
+            gamma0=gamma0,
+            omega_larmor=0.1,
+            chi_perp_ratio=2.0,
+        )
+
+    evaluator = object.__new__(_RpaComponentEvaluator)
+    evaluator.zeeman_mode = True
+    evaluator._closure_context = lambda: (geometry, None)
+    model = SimpleNamespace(exchange=exchange, n_sites=1, propagator_builder=builder)
+    metrics = evaluator._stability_metrics(model, 1.0, 0.0, gamma0=1.0)
+    assert metrics["stability_margin"] == pytest.approx(-0.2)
+
+
 def test_component_diagnostics_static_chi_matches_direct_rpa():
     """chi_static_q0 (KK of the modes) equals the direct static RPA at Q=0."""
     from nfit.fit_config import compute_component_diagnostics

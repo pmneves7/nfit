@@ -217,6 +217,9 @@ For a scalar channel this convention produces positive absorption at positive
 $E$ and agrees with the correlation convention above. For a tensor the
 absorptive part means $(\boldsymbol\chi-\boldsymbol\chi^\dagger)/(2i)$,
 not elementwise imaginary parts of complex off-diagonal entries.
+These are equilibrium spectral properties of an exact retarded response;
+approximations such as constant-width Lindhard broadening need not preserve
+all of them at finite width. See the [Lindhard response](lindhard.md#complex-susceptibility).
 
 The retarded susceptibility is causal. For a scalar component, its real part $\chi'_s$ is the
 in-phase, reactive response, and $\chi'_s(\mathbf Q,0)$ is the static
@@ -242,8 +245,15 @@ $$
 
 In this convention, $1/\pi$ relates $S_s$ to $\chi''_s$ and is not included
 in the definition of $\chi''_s$. The Bose or detailed-balance denominator is
-evaluated stably near $E=0$. Together with the odd-in-$E$ dissipative
-response, it gives the balance between neutron energy loss and gain.
+evaluated stably near $E=0$. For reciprocal scalar channels the dissipative
+response is odd in energy at fixed $\mathbf Q$. In general detailed balance
+relates opposite momenta and exchanged tensor indices:
+$S_s^{\alpha\beta}(\mathbf Q,-E)=e^{-E/(k_BT)}
+S_s^{\beta\alpha}(-\mathbf Q,E)$.
+Strictly elastic mean-spin or nondecaying connected correlations at $E=0$
+must be handled separately; multiplying by $1-e^{-E/(k_BT)}$ annihilates
+such a delta function, so a finite-energy absorptive spectrum alone cannot
+reconstruct its weight.
 
 ### Spin and magnetic-moment susceptibility
 
@@ -544,6 +554,11 @@ $$
 Here $E$, $dE$, and the inverse-energy unit of $\chi''_s$ must be expressed
 consistently. The index $i$ labels the Cartesian field component. Both sides
 have dimensions of inverse energy.
+The displayed positive-energy form assumes reciprocity at that momentum;
+otherwise the signed-frequency integral is required. It relates dynamic
+retarded limits and does not replace a separately specified thermodynamic
+static limit for an exactly conserved uniform quantity, as discussed for
+[Lindhard susceptibility](lindhard.md#degenerate-transitions-and-the-static-limit).
 
 Bulk susceptibility is the uniform response and therefore requires
 $\mathbf Q=0$. It is not obtained by integrating a finite-$\mathbf Q$ neutron
@@ -764,6 +779,18 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   reaction field `lambda_shift` is an energy subtracted from every interaction
   eigenvalue. nfit reports the smallest sampled denominator as
   `stability_margin`. This is the same sign convention as the scalar model.
+- **Field-on stability.** If the static local response is anisotropic, define
+  $C=X_0(0)$ in meV$^{-1}$ and
+  $C_N=I_N\otimes C$ for $N$ magnetic sites. The dimensionless Hermitian
+  feedback matrix is
+  $F(\mathbf Q)=C_N^{1/2}[\mathbb J(\mathbf Q)-\lambda_{\rm shift}I_{3N}]C_N^{1/2}$.
+  Stability requires every eigenvalue $\rho_\nu(F)<1$, and
+  `stability_margin` is $1-\max_{\mathbf Q,\nu}\rho_\nu$ over the sampled
+  momenta. This reduces to the scalar expression only when $C=\chi_0 I_3$.
+  The static bulk tensor is the uniform-site contraction of
+  $[C_N^{-1}-\mathbb J(\mathbf0)+\lambda_{\rm shift}I_{3N}]^{-1}$ divided
+  by $N$. A longitudinal projection can depend on transverse local
+  susceptibilities when exchange mixes Cartesian components.
 - **Dipole sign.** The dipolar Hamiltonian is
   $H=+\tfrac12 D_{\mathrm{dip}}\sum_{i\neq j}\mathbf S_i\,\mathbb
   T(\mathbf r_{ij})\,\mathbf S_j$ with

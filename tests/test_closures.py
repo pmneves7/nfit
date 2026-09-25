@@ -284,6 +284,31 @@ def test_tier_b_onsager_solves_with_field_on():
     assert zp + th == pytest.approx(0.8, abs=1e-9)
 
 
+def test_tier_b_rejects_transverse_instability_from_static_local_tensor():
+    from nfit.tensor_rpa import zeeman_cartesian_propagator
+
+    exchange = np.diag([0.6, 0.0, 0.0]).astype(complex)[None]
+
+    def builder(omega, chi0, gamma0):
+        return zeeman_cartesian_propagator(
+            omega,
+            np.array([0.0, 0.0, 1.0]),
+            chi0=chi0,
+            gamma0=gamma0,
+            omega_larmor=0.1,
+            chi_perp_ratio=2.0,
+        )
+
+    model = TierBMoments(exchange, 1, builder, omega_points=20)
+    with pytest.raises(ValueError, match="RPA instability"):
+        model.moment(
+            chi0=1.0,
+            gamma0=1.0,
+            temperature_K=10.0,
+            cutoff_mev=10.0,
+        )
+
+
 def test_tier_b_scr_solves_with_field_on():
     _, tier_b = _tier_b_pair(omega_larmor=1.0, omega_points=300)
     result = solve_scr(

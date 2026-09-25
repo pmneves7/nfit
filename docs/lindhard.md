@@ -100,7 +100,14 @@ the physical absorptive tensor in a script, use
 scalar intensity when contracted with the elementwise imaginary array.
 
 This convention gives positive diagonal $\chi^{0\prime\prime}$ for a
-positive-energy absorption process. The response obeys the corresponding
+positive-energy absorption process in the zero-width limit. A finite $\eta$
+also spreads negative-energy transitions into positive energies: positivity
+of the full absorptive matrix is not guaranteed for arbitrary complex probes
+or spin-polarized bands. In particular, the Lorentzian tail of an
+emission-only circular channel can be negative at positive energy. This is a
+limitation of constant denominator broadening, not evidence for physical gain.
+Check convergence as $\eta$ decreases; do not clip tensor eigenvalues or add
+an extra Bose factor to the bubble. The response obeys the corresponding
 causal frequency and $\mathbf q\leftrightarrow-\mathbf q$ conjugation
 relation; a Hermitian scalar response at a symmetry-equivalent wavevector has
 $\chi^0(-E)=\chi^0(E)^*$.
@@ -138,6 +145,23 @@ implemented derivative uses the Lorentzian of width $\eta$ above. The familiar
 $D_\uparrow(\mu)/2$ means the zero-temperature, converged zero-width limit;
 see
 [Physics conventions](physics_conventions.md#electronic-response-conventions).
+
+The thermodynamic substitution at exactly zero energy is a separate static
+prescription, not the analytic continuation of the finite-$\eta$ dynamic
+function. For an implicit-spin Hamiltonian, total spin at $\mathbf q=0$ is
+conserved: its finite-energy retarded response vanishes, while the equilibrium
+Pauli susceptibility above is finite. Thus a Kramers--Kronig integral of that
+uniform dynamic spectrum does **not** recover the substituted static value.
+The static and uniform dynamic orders of limits differ. With spin--orbit
+coupling, total spin need not commute with the Hamiltonian and interband
+uniform response can remain.
+
+Replacing $0^+$ by a constant $\eta$ is not a conserving collision model.
+Mermin's [relaxation-time analysis](https://doi.org/10.1103/PhysRevB.1.2362)
+demonstrates the distinction for density response; nfit does not implement a
+Mermin correction or a corresponding spin-relaxation vertex. Bulk predictions
+use the explicit static prescription, with the mesh and width convergence
+requirements stated above.
 
 `orbital_pair_operator_basis(model)` constructs the complete ordered
 $|a\rangle\langle b|$ basis and its conjugate map.
@@ -559,7 +583,16 @@ editable scheduler wrapper; calculation and merging remain scheduler-neutral.
 
 ## References
 
+Graser *et al.*, Eqs. (12)--(14), give the multiorbital particle--hole bubble
+and its four eigenvector factors. When comparing tensor entries, match the
+operator/adjoint index order and momentum convention before comparing signs;
+their four-index orbital object must also be projected with nfit's declared
+$S_\alpha=\sigma_\alpha/2$ normalization.
+
 - J. Lindhard, *Kgl. Danske Videnskab. Selskab, Mat.-Fys. Medd.* **28**,
   no. 8 (1954).
 - S. Graser *et al.*, *New J. Phys.* **11**, 025016 (2009),
   [doi:10.1088/1367-2630/11/2/025016](https://doi.org/10.1088/1367-2630/11/2/025016).
+- N. D. Mermin, “Lindhard Dielectric Function in the Relaxation-Time
+  Approximation”, *Phys. Rev. B* **1**, 2362 (1970),
+  [doi:10.1103/PhysRevB.1.2362](https://doi.org/10.1103/PhysRevB.1.2362).

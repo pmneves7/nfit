@@ -115,6 +115,13 @@ Exchange therefore softens the same static denominator into either critical
 relaxation or a propagating paramagnon, without introducing a second model
 type or a separate interaction dressing.
 
+A nonzero inertia does not by itself guarantee propagating modes. The poles
+are
+$E=[-i/\Gamma_0\pm\sqrt{4a_E\delta_\nu-\Gamma_0^{-2}}]/(2a_E)$.
+They are underdamped only when $4a_E\delta_\nu>\Gamma_0^{-2}$;
+otherwise both poles are purely relaxational. The undamped natural energy
+$E_\nu$ is therefore not generally the maximum of $\chi''$.
+
 The dimensionless neutron weight is
 
 $$
@@ -153,6 +160,44 @@ Useful checks are:
 
 Positive $J$ favors the wavevector where the largest eigenvalue of
 $J(\mathbf Q)$ is maximal under this convention.
+
+Bare evaluations check stability at their supplied momenta. A fit to a
+restricted region can miss an instability elsewhere; inspect full-zone
+diagnostics and converge their momentum grid before interpreting a fitted
+state as a stable paramagnet. A finite grid does not prove global stability.
+
+### Physical scope and local-moment benchmark
+
+The exchange feedback is the molecular-field/RPA construction; the local
+relaxation and inertia are phenomenological inputs. It does not derive
+$\Gamma_0$, an ordered-state spin-wave spectrum, or the exact quantum response
+of the Heisenberg Hamiltonian. A finite uniform relaxation rate also presumes
+spin relaxation into other degrees of freedom. An isolated isotropic
+Heisenberg Hamiltonian conserves total spin and has no such uniform
+finite-energy relaxation.
+
+For equivalent free spins of quantum number $S$, a useful high-temperature
+benchmark sets $\chi_0=S(S+1)/(3k_BT)$. With
+$J(\mathbf0)=\sum_jJ_{ij}$ for a one-site Bravais lattice, the uniform result is
+
+$$
+\chi(\mathbf0,0)=\frac{S(S+1)}{3k_B(T-\Theta_{\rm CW})},\qquad
+\Theta_{\rm CW}=\frac{S(S+1)}{3k_B}\sum_jJ_{ij}.
+$$
+
+$k_B$ is in meV/K, so $\Theta_{\rm CW}$ is in K. Positive exchange gives a
+positive Curie--Weiss temperature in nfit's Hamiltonian convention. This
+temperature dependence is a benchmark or user constraint; fitting `chi0`
+freely does not impose it. Mean-field ordering temperatures are not exact,
+especially in low dimensions or frustrated systems.
+
+Quadratic onsite tensors are an effective Gaussian anisotropy of this
+response. They are not an exact single-ion crystal-field diagonalization.
+For a genuine spin $1/2$, every symmetric quadratic single-ion Hamiltonian
+is a constant, since $\{S_\alpha,S_\beta\}=\delta_{\alpha\beta}/2$;
+do not interpret an onsite tensor as a physical zero-field splitting of
+that doublet. A microscopic anisotropic local propagator requires a separate
+level calculation.
 
 ## Calculable data
 
@@ -238,6 +283,13 @@ Available terms are:
 - an Ewald-summed dipole--dipole tensor; and
 - a Zeeman term from the dataset magnetic field.
 
+The dipolar Ewald sum uses the periodic “tin-foil” boundary convention and
+omits the reciprocal term at $\mathbf Q+\mathbf G=0$. Its uniform value
+therefore does not include a sample-shape demagnetizing field. Bulk comparison
+requires a compatible internal-field convention or a separate demagnetization
+correction; changing the Ewald convergence cutoffs does not supply that
+macroscopic boundary term.
+
 With no tensor terms, nfit uses the scalar path unchanged. At zero field, one
 Hermitian eigendecomposition of $\mathbb J(\mathbf Q)$ serves every energy at a
 given momentum. A field makes the local propagator gyrotropic and requires a
@@ -295,6 +347,24 @@ absorption. The positive circular absorption peaks at
 $\sqrt{E_L^2+\Gamma_\perp^2}$; the full transverse Cartesian response sums
 both circular channels and need not peak at exactly that value.
 At zero field and unit ratios the model returns the local scalar relaxor.
+
+The local static tensor is
+$C=\chi_\perp(I_3-\hat{\mathbf b}\hat{\mathbf b}^T)
++\chi_0\hat{\mathbf b}\hat{\mathbf b}^T$.
+For unequal local susceptibilities, stability and bulk response use this full
+tensor, as defined in [Physics conventions](physics_conventions.md#tensor-anisotropic-interactions).
+Testing only $1-\lambda_\nu\chi_0$ can miss a transverse instability.
+The fit evaluator and field-on moment integrals check this criterion; bulk
+predictions solve the full static matrix before projecting along the field.
+Fits using unequal `chi_perp_ratio` with versions before 0.102.2 should be
+rechecked, especially when anisotropic exchange mixes longitudinal and
+transverse components.
+
+For a direct `tensor_zeeman_susceptibility` call, supply
+`static_local_propagator=C` when the energy array contains no zero-energy
+point. Without either this matrix or a zero-energy row, the low-level solver
+can evaluate a supplied dynamic propagator but cannot certify its static
+stability. The model fitting path supplies the matrix automatically.
 
 This is a phenomenological precessing relaxor with adjustable static
 susceptibilities, not a calculation of saturation or thermal level populations.
@@ -410,6 +480,12 @@ scripts, fit-result export, reports, and model/residual channels use the shared
 model machinery.
 
 ## References
+
+The exchange denominator and reaction-field sign can be compared directly
+with G. M. Wysin, “Onsager reaction-field theory for magnetic models on
+diamond and hcp lattices”, Eq. (12),
+[arXiv:cond-mat/9909266](https://arxiv.org/abs/cond-mat/9909266).
+Its classical static construction does not derive nfit's dynamical ansatz.
 
 - T. Moriya, *Spin Fluctuations in Itinerant Electron Magnetism*
   (Springer, 1985).

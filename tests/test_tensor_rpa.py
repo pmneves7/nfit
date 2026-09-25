@@ -16,10 +16,13 @@ from nfit.spin_fluctuations import (
     reduce_site_network_with_tensors,
 )
 from nfit.tensor_rpa import (
+    TensorStructure,
     build_tensor_structure,
     cartesian_qhat_per_point,
     tensor_rpa_unpolarized_chipp,
     tensor_susceptibility,
+    tensor_zeeman_susceptibility,
+    zeeman_cartesian_propagator,
 )
 
 PYROCHLORE = {
@@ -222,6 +225,95 @@ def test_tensor_instability_raises():
         tensor_rpa_unpolarized_chipp(
             structure, geometry, E, cartesian_qhat_per_point(geometry, np.eye(3)),
             chi0=5.0, gamma0=1.0, param_values={"J1": 1.0, "J2": 1.0},
+        )
+
+
+@pytest.mark.parametrize("explicit_static", [False, True])
+def test_zeeman_static_tensor_stability_uses_transverse_local_susceptibility(
+    explicit_static,
+):
+    """The field-on instability can precede the scalar chi0*lambda threshold."""
+
+    geometry = build_rpa_geometry([0.0], [0.0], [0.0], [[0.0, 0.0, 0.0]], [])
+    structure = TensorStructure(
+        n_sites=1,
+        n_q=1,
+        parameter_names=("J",),
+        dense_terms={"J": np.diag([0.6, 0.0, 0.0]).astype(complex)[None]},
+    )
+    local = zeeman_cartesian_propagator(
+        np.zeros(1),
+        np.array([0.0, 0.0, 1.0]),
+        chi0=1.0,
+        gamma0=1.0,
+        omega_larmor=0.1,
+        chi_perp_ratio=2.0,
+    )[0]
+    energy = np.array([1.0 if explicit_static else 0.0])
+    with pytest.raises(ValueError, match="RPA instability"):
+        tensor_zeeman_susceptibility(
+            structure,
+            geometry,
+            energy,
+            zeeman_cartesian_propagator(
+                energy,
+                np.array([0.0, 0.0, 1.0]),
+                chi0=1.0,
+                gamma0=1.0,
+                omega_larmor=0.1,
+                chi_perp_ratio=2.0,
+            ),
+            param_values={"J": 1.0},
+            static_local_propagator=local if explicit_static else None,
+        )
+
+
+def test_zeeman_resolvent_keeps_static_tensor_exchange_mixing():
+    geometry = build_rpa_geometry([0.0], [0.0], [0.0], [[0.0, 0.0, 0.0]], [])
+    exchange = np.array([[0.0, 0.0, 0.2], [0.0, 0.0, 0.0], [0.2, 0.0, 0.0]])
+    structure = TensorStructure(
+        n_sites=1,
+        n_q=1,
+        parameter_names=("J",),
+        dense_terms={"J": exchange.astype(complex)[None]},
+    )
+    local = zeeman_cartesian_propagator(
+        np.zeros(1),
+        np.array([0.0, 0.0, 1.0]),
+        chi0=1.0,
+        gamma0=1.0,
+        omega_larmor=0.0,
+        chi_perp_ratio=2.0,
+    )
+    chi = tensor_zeeman_susceptibility(
+        structure,
+        geometry,
+        np.zeros(1),
+        local,
+        param_values={"J": 1.0},
+        static_local_propagator=local[0],
+    )
+    np.testing.assert_allclose(chi[0, 2, 2].real, 1.0 / (1.0 - 0.2**2 * 2.0))
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"chi0": 0.0, "gamma0": 1.0}, "chi0"),
+        ({"chi0": 1.0, "gamma0": 0.0}, "gamma0"),
+        ({"chi0": 1.0, "gamma0": 1.0, "chi_perp_ratio": 0.0}, "chi_perp_ratio"),
+        ({"chi0": 1.0, "gamma0": 1.0, "gamma_perp_ratio": 0.0}, "gamma_perp_ratio"),
+    ],
+)
+def test_zeeman_local_propagator_rejects_nonpositive_scales(kwargs, message):
+    values = {"chi0": 1.0, "gamma0": 1.0}
+    values.update(kwargs)
+    with pytest.raises(ValueError, match=message):
+        zeeman_cartesian_propagator(
+            np.array([0.0]),
+            np.array([0.0, 0.0, 1.0]),
+            omega_larmor=0.0,
+            **values,
         )
 
 

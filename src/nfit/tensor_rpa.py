@@ -263,6 +263,66 @@ def _tensor_eigh(matrices: ComplexArray) -> tuple[FloatArray, ComplexArray]:
     return _batched_eigh(matrices)
 
 
+def check_tensor_exchange_stability(
+    exchange: ComplexArray,
+    n_sites: int,
+    static_local_propagator: ComplexArray,
+    *,
+    lambda_shift: float = 0.0,
+) -> float:
+    """Check stability for preassembled ``(n_q, 3N, 3N)`` exchange matrices."""
+
+    margins = 1.0 - tensor_exchange_stability_eigenvalues(
+        exchange,
+        n_sites,
+        static_local_propagator,
+        lambda_shift=lambda_shift,
+    )
+    margin = float(np.min(margins))
+    if margin <= 0.0:
+        raise ValueError(
+            "RPA instability: largest eigenvalue of X0(0)^(1/2) "
+            "[J(Q)-lambda_shift I] X0(0)^(1/2) is >= 1 "
+            f"(value = {1.0 - margin:.6g})"
+        )
+    return margin
+
+
+def tensor_exchange_stability_eigenvalues(
+    exchange: ComplexArray,
+    n_sites: int,
+    static_local_propagator: ComplexArray,
+    *,
+    lambda_shift: float = 0.0,
+) -> FloatArray:
+    """Return dimensionless static feedback eigenvalues for each sampled Q.
+
+    ``C`` is the positive-definite, site-local static susceptibility in
+    inverse meV, repeated over sites. Exchange and the reaction-field shift
+    are in meV. Stability requires every eigenvalue of
+    ``C^1/2 [J-lambda I] C^1/2`` to be below one; using ``chi0 * eig(J)``
+    instead is valid only for an isotropic local static response.
+    """
+
+    local = np.asarray(static_local_propagator, dtype=complex)
+    if local.shape != (3, 3) or not np.all(np.isfinite(local)):
+        raise ValueError("static local propagator must be a finite 3x3 matrix")
+    if not np.allclose(local, local.conj().T, rtol=1e-10, atol=1e-12):
+        raise ValueError("static local propagator must be Hermitian")
+    values, vectors = np.linalg.eigh(local)
+    if np.any(values <= 0.0):
+        raise ValueError("static local susceptibility must be positive definite")
+    root = (vectors * np.sqrt(values)[None, :]) @ vectors.conj().T
+    exchange = np.asarray(exchange, dtype=complex)
+    dim = 3 * int(n_sites)
+    if exchange.ndim != 3 or exchange.shape[1:] != (dim, dim):
+        raise ValueError("exchange must have shape (n_q, 3N, 3N)")
+    root_full = np.kron(np.eye(int(n_sites)), root)
+    shifted = exchange - float(lambda_shift) * np.eye(dim)[None, :, :]
+    stability = root_full[None] @ shifted @ root_full[None]
+    return np.asarray(np.linalg.eigvalsh(stability), dtype=float)
+
+
 # Target complex elements per point block, matching the scalar path's budget:
 # block * 3N stays near this so the (block, 3, 3N) temporaries hold a few tens
 # of megabytes regardless of dataset size.
@@ -413,6 +473,16 @@ def zeeman_cartesian_propagator(
     norm = float(np.linalg.norm(field_axis))
     if not np.all(np.isfinite(field_axis)) or norm == 0.0:
         raise ValueError("b_hat must be a finite nonzero 3-vector")
+    if not np.isfinite(chi0) or chi0 <= 0.0:
+        raise ValueError("chi0 must be finite and positive")
+    if not np.isfinite(gamma0) or gamma0 <= 0.0:
+        raise ValueError("gamma0 must be finite and positive")
+    if not np.isfinite(omega_larmor):
+        raise ValueError("omega_larmor must be finite")
+    if not np.isfinite(chi_perp_ratio) or chi_perp_ratio <= 0.0:
+        raise ValueError("chi_perp_ratio must be finite and positive")
+    if not np.isfinite(gamma_perp_ratio) or gamma_perp_ratio <= 0.0:
+        raise ValueError("gamma_perp_ratio must be finite and positive")
     # The frame construction below (and the zz / antisymmetric projectors) is
     # only correct for a unit vector, so normalize rather than trusting callers.
     b_hat = field_axis / norm
@@ -491,6 +561,7 @@ def tensor_zeeman_susceptibility(
     *,
     param_values: Mapping[str, float],
     lambda_shift: float = 0.0,
+    static_local_propagator: ComplexArray | None = None,
 ) -> ComplexArray:
     """Return ``chi_{alpha beta}`` (n_points, 3, 3) with a tensor local propagator.
 
@@ -501,12 +572,28 @@ def tensor_zeeman_susceptibility(
     ``chi_{alpha beta} = (1/N) phi_alpha^dagger (1 - X0 J)^{-1} X0 phi_beta`` with
     ``phi_alpha`` the uniform-site Cartesian source. ``lambda_shift`` is the
     Onsager reaction field, ``J(Q) -> J(Q) - lambda_shift``; 0.0 leaves the
-    computation untouched.
+    computation untouched. If ``static_local_propagator`` is supplied, the
+    static RPA stability criterion is checked before solving. Otherwise a
+    zero-energy row in ``energy`` is used to infer the local static response;
+    when all requested energies are nonzero, this low-level API cannot certify
+    static stability and callers that need that guarantee should pass the
+    zero-energy propagator explicitly.
     """
 
     exchange = assemble_tensor_exchange(structure, param_values)  # (n_q, 3N, 3N)
     n_sites = structure.n_sites
     dim = 3 * n_sites
+    if static_local_propagator is None:
+        zero_rows = np.flatnonzero(np.asarray(energy, dtype=float) == 0.0)
+        if zero_rows.size:
+            static_local_propagator = propagator[int(zero_rows[0])]
+    if static_local_propagator is not None:
+        check_tensor_exchange_stability(
+            exchange,
+            n_sites,
+            static_local_propagator,
+            lambda_shift=lambda_shift,
+        )
     if lambda_shift != 0.0:
         exchange = exchange - lambda_shift * np.eye(dim)[None]
     idx = geometry.point_index
@@ -557,6 +644,7 @@ def tensor_rpa_zeeman_unpolarized_chipp(
     *,
     param_values: Mapping[str, float],
     lambda_shift: float = 0.0,
+    static_local_propagator: ComplexArray | None = None,
 ) -> FloatArray:
     """Unpolarized ``chi''`` per point for the field-on (Tier-B) path."""
 
@@ -567,6 +655,7 @@ def tensor_rpa_zeeman_unpolarized_chipp(
         propagator,
         param_values=param_values,
         lambda_shift=lambda_shift,
+        static_local_propagator=static_local_propagator,
     )
     return _chipp_from_chi(chi, q_hat)
 

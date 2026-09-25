@@ -11,7 +11,7 @@ becomes self-consistent instead of freely fitted:
 - **Moriya SCR**: ``chi0_eff^-1(T) = chi0^-1 + u <m^2>(T)`` solved
   self-consistently; the mode-coupling ``u`` is the fit parameter
   ``mode_coupling_u`` and the model's ``chi0`` is reinterpreted as the bare
-  (T = 0) value.
+  reference susceptibility.
 - **Takahashi TAC**: ``chi0_eff(T)`` solved so zero-point plus thermal
   amplitude equals ``total_amplitude`` (fixed or fitted); the model's
   ``chi0`` only seeds the root search.
@@ -227,6 +227,18 @@ class TierBMoments:
         self, omega: FloatArray, chi0: float, gamma0: float, lambda_shift: float
     ) -> FloatArray:
         """Per-site ``(1/N) Im Tr [(1 - X0 J')^{-1} X0]`` on (omega, Q)."""
+
+        from .tensor_rpa import check_tensor_exchange_stability
+
+        static_local = np.asarray(
+            self.propagator_builder(np.zeros(1), chi0, gamma0)[0], dtype=complex
+        )
+        check_tensor_exchange_stability(
+            self.exchange,
+            self.n_sites,
+            static_local,
+            lambda_shift=lambda_shift,
+        )
 
         dim = 3 * self.n_sites
         n_q = self.exchange.shape[0]

@@ -782,6 +782,42 @@ class _RpaComponentEvaluator:
         mode, *payload = self._bulk_q0_modes(params)
         if mode == "tensor":
             lam, amps, n_sites = payload
+            if self.zeeman_mode:
+                from .tensor_rpa import (
+                    tensor_zeeman_susceptibility,
+                    zeeman_cartesian_propagator,
+                )
+
+                axis = (
+                    np.asarray(b_hat, dtype=float)
+                    if b_hat is not None
+                    else np.array([0.0, 0.0, 1.0])
+                )
+                ratios = self._zeeman_keys
+                local = zeeman_cartesian_propagator(
+                    np.zeros(1),
+                    axis,
+                    chi0=chi0,
+                    gamma0=float(params[self.gamma0_key]),
+                    omega_larmor=0.0,
+                    chi_perp_ratio=float(params[ratios["chi_perp_ratio"]]),
+                    gamma_perp_ratio=float(params[ratios["gamma_perp_ratio"]]),
+                )[0]
+                geometry, structure = self._bulk_q0_context
+                chi = tensor_zeeman_susceptibility(
+                    structure,
+                    geometry,
+                    np.zeros(1),
+                    local[None],
+                    param_values=self._tensor_values(params),
+                    lambda_shift=lambda_shift,
+                    static_local_propagator=local,
+                )[0]
+                if b_hat is None:
+                    return float(np.trace(chi).real / 3.0)
+                direction = np.asarray(b_hat, dtype=float)
+                direction = direction / np.linalg.norm(direction)
+                return float(np.real(direction @ chi @ direction))
             denom = 1.0 - (lam - lambda_shift) * chi0
             if np.any(denom <= 0.0):
                 raise ValueError("RPA instability at Q=0")
@@ -931,6 +967,15 @@ class _RpaComponentEvaluator:
                     chi_perp_ratio=float(params[self._zeeman_keys["chi_perp_ratio"]]),
                     gamma_perp_ratio=float(params[self._zeeman_keys["gamma_perp_ratio"]]),
                 )
+                static_local = zeeman_cartesian_propagator(
+                    np.zeros(1),
+                    b_hat,
+                    chi0=chi0,
+                    gamma0=float(params[self.gamma0_key]),
+                    omega_larmor=g_factor * MU_B_MEV_PER_T * magnitude,
+                    chi_perp_ratio=float(params[self._zeeman_keys["chi_perp_ratio"]]),
+                    gamma_perp_ratio=float(params[self._zeeman_keys["gamma_perp_ratio"]]),
+                )[0]
                 if elastic:
                     chi_tensor = tensor_zeeman_susceptibility(
                         structure,
@@ -939,6 +984,7 @@ class _RpaComponentEvaluator:
                         propagator,
                         param_values=self._tensor_values(params),
                         lambda_shift=lambda_shift,
+                        static_local_propagator=static_local,
                     )
                     response = unpolarized_static_chi(chi_tensor, q_hat)
                 else:
@@ -946,6 +992,7 @@ class _RpaComponentEvaluator:
                         structure, geometry, energy, q_hat, propagator,
                         param_values=self._tensor_values(params),
                         lambda_shift=lambda_shift,
+                        static_local_propagator=static_local,
                     )
                 polarization = 1.0
             elif self.tensor_mode:
@@ -1138,8 +1185,44 @@ class _RpaComponentEvaluator:
         model: Any,
         chi0: float,
         lambda_shift: float,
+        gamma0: float | None = None,
     ) -> dict[str, float]:
         """Return the smallest sampled RPA denominator and its BZ location."""
+
+        if self.zeeman_mode and hasattr(model, "propagator_builder"):
+            if gamma0 is None:
+                raise ValueError("field-on stability metrics require gamma0")
+            local = model.propagator_builder(np.zeros(1), chi0, gamma0)[0]
+            # The field-on closure builder captures the field direction and
+            # static transverse ratio. The local tensor, rather than chi0 I,
+            # determines the actual instability edge.
+            stability = np.asarray(model.exchange, dtype=complex)
+            from .tensor_rpa import tensor_exchange_stability_eigenvalues
+
+            dressed_values = tensor_exchange_stability_eigenvalues(
+                stability,
+                model.n_sites,
+                local,
+                lambda_shift=lambda_shift,
+            )
+            margins = 1.0 - dressed_values
+            q_mode = int(np.unravel_index(np.argmin(margins), margins.shape)[0])
+            mode_index = int(np.argmin(margins[q_mode]))
+            margin = float(margins[q_mode, mode_index])
+            bz_geometry, _bz_structure = self._closure_context()
+            critical_q = np.asarray(bz_geometry.unique_hkl[q_mode], dtype=float)
+            raw_eigenvalues = np.linalg.eigvalsh(stability)
+            lambda_max = float(np.max(raw_eigenvalues))
+            ratio = 1.0 - margin
+            return {
+                "stability_margin": margin,
+                "stability_ratio": ratio,
+                "stability_lambda_max": lambda_max,
+                "stability_q_h": float(critical_q[0]),
+                "stability_q_k": float(critical_q[1]),
+                "stability_q_l": float(critical_q[2]),
+                "stability_mode_index": float(mode_index),
+            }
 
         if hasattr(model, "eigenvalues"):
             eigenvalues = np.asarray(model.eigenvalues, dtype=float)
@@ -1193,7 +1276,9 @@ class _RpaComponentEvaluator:
         }
         try:
             model = self._closure_moment_model(params, field)
-            bare_stability = self._stability_metrics(model, chi0, 0.0)
+            bare_stability = self._stability_metrics(
+                model, chi0, 0.0, gamma0=gamma0
+            )
         except (ValueError, np.linalg.LinAlgError) as exc:
             record.update({"unstable": 1.0, "diagnostic_error": str(exc)})
             return record
@@ -1222,7 +1307,9 @@ class _RpaComponentEvaluator:
                 }
             )
             return record
-        record.update(self._stability_metrics(model, chi0, lambda_shift))
+        record.update(
+            self._stability_metrics(model, chi0, lambda_shift, gamma0=gamma0)
+        )
         record.update(
             {
                 "chi0_eff": chi0,
