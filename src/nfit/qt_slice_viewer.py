@@ -2968,7 +2968,12 @@ class QtMDHistoSliceViewer:
             items = list(self.model.point_channels)
         else:
             items = list(self.model.CHANNELS)
-        self._set_combo_items_silent(self.channel_combo, items, self.model.channel)
+        from .qt_channel_menu import populate_channel_combo
+
+        populate_channel_combo(
+            self.channel_combo, items, self.model.channel,
+            point_list=getattr(self.model, "is_point_list", False),
+        )
 
     def _non_singleton_dims(self) -> list[int]:
         if getattr(self.model, "is_point_list", False):

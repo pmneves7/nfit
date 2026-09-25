@@ -19,6 +19,7 @@ from .colormaps import (
     WATERFALL_COLORMAP_GROUPS,
     populate_qt_colormap_combo,
 )
+from .qt_channel_menu import ChannelComboBox
 from .qt_slice_controls import (
     _compact_combobox,
     _DualRangeSlider,
@@ -267,14 +268,16 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
     dataset_layout.addWidget(QtWidgets.QLabel("Binning"), 1, 0)
     dataset_layout.addWidget(viewer.binning_combo, 1, 1)
     viewer._sync_dataset_binning_combos()
-    viewer.channel_combo = QtWidgets.QComboBox()
-    viewer.channel_combo.addItems(viewer.model.CHANNELS)
+    viewer.channel_combo = ChannelComboBox()
     viewer.channel_combo.setToolTip(
-        "Choose the data channel to display, such as signal, combined_mask, file_mask, nfit_mask, fit, or residual."
+        "Choose a signal, fit diagnostic, coverage/normalization, or mask channel. "
+        "This changes visualization only; it does not change the data used for fitting."
     )
     _compact_combobox(viewer.channel_combo)
-    viewer.channel_combo.setCurrentText(viewer.model.channel)
-    viewer.channel_combo.currentTextChanged.connect(viewer._set_channel)
+    viewer.channel_combo.currentIndexChanged.connect(
+        lambda _index: viewer._set_channel(viewer.channel_combo.currentData())
+        if viewer.channel_combo.currentData() is not None else None
+    )
     viewer._sync_channel_combo()
     viewer.apply_masks_check = QtWidgets.QCheckBox("Apply Masks")
     viewer.apply_masks_check.setChecked(viewer.model.masked)

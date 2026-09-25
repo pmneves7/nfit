@@ -74,6 +74,17 @@ configuration marked **Use for fitting** contributes during optimization.
 Visualization configurations can use different axes, limits, or resolutions,
 and receive model and residual channels from the final fitted parameters.
 
+For histograms, the Channel menu groups signal quantities first, followed by
+additional channels, fit diagnostics, coverage and normalization, and masks.
+Readable labels such as **Standard uncertainty** and **User mask** replace raw
+field names; hover over an entry to see its scripting identifier. Group headings
+cannot be selected. Custom point-data channel labels remain unchanged. Channel
+selection affects visualization only, and saved plots retain their stable channel
+identifiers.
+
+When switching datasets or binnings, the loading progress dialog belongs to the
+active viewer so closing it does not bring the project explorer in front.
+
 ## Background visualization channels
 
 After applying a nonzero enabled background or subtracting a dataset in an

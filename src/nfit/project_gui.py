@@ -6562,7 +6562,8 @@ class _RebinProgressDialog:
         self._cancel_callback = None
         self._failed = False
 
-        owner = parent.window if hasattr(parent, "window") else parent
+        parent_window = getattr(parent, "window", None)
+        owner = parent_window if parent_window is not None and not callable(parent_window) else parent
         self._interaction_guard = None
         self.dialog = QtWidgets.QDialog(owner)
         self.dialog.setObjectName("rebin_progress_dialog")
@@ -10406,13 +10407,17 @@ class NfitProjectExplorer:
     ):
         """Bind per-selection progress and input protection to the public loader."""
         progress = None
+        progress_owner = None
 
         def report(event):
             nonlocal progress
             if not self._interactive:
                 return
             if progress is None:
-                progress = self._make_rebin_progress_callback("Loading selected viewer binning...")
+                progress = self._make_rebin_progress_callback(
+                    "Loading selected viewer binning...",
+                    parent=progress_owner,
+                )
             if progress is not None:
                 progress(event)
 
@@ -10428,7 +10433,11 @@ class NfitProjectExplorer:
 
         @guarded_gui_operation
         def load(index):
-            nonlocal progress
+            nonlocal progress, progress_owner
+            if self._interactive:
+                from PySide6 import QtWidgets
+
+                progress_owner = QtWidgets.QApplication.activeWindow()
             try:
                 descriptor = source.descriptors[index]
                 for kind, _name, owner, target, binning_id, config in _project_binning_targets(self.project):
@@ -10452,6 +10461,7 @@ class NfitProjectExplorer:
             finally:
                 self._close_rebin_progress(progress)
                 progress = None
+                progress_owner = None
 
         return DeferredViewerDatasets(source.descriptors, load, initial_index=source.initial_index), names
 
@@ -11040,9 +11050,14 @@ class NfitProjectExplorer:
         title: str,
         *,
         aggregate: bool = False,
+        parent: Any | None = None,
     ) -> Any | None:
         try:
-            progress = _RebinProgressDialog(self, title, aggregate=aggregate)
+            progress = _RebinProgressDialog(
+                self if parent is None else parent,
+                title,
+                aggregate=aggregate,
+            )
         except ImportError:
             return None
         progress.show()
