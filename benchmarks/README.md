@@ -1,4 +1,24 @@
-# Rebin benchmarks
+# Numerical benchmarks
+
+## Lindhard acceleration
+
+The three Lindhard scripts compare existing exact CPU backends, shifted-q
+eigensystem reuse, and an isolated approximate spectral FFT experiment:
+
+```bash
+/Users/pmneves/anaconda3/envs/nfit/bin/python benchmarks/benchmark_lindhard_dispatch.py
+/Users/pmneves/anaconda3/envs/nfit/bin/python benchmarks/benchmark_lindhard_cache.py
+/Users/pmneves/anaconda3/envs/nfit/bin/python benchmarks/benchmark_lindhard_spectral.py
+```
+
+Run them separately to avoid CPU contention. They exclude import/JIT startup,
+use one native BLAS thread, and record repeated timings and numerical errors.
+See [the measured results and limitations](results/lindhard-acceleration.md).
+`lindhard_spectral_candidate.py` is a benchmark experiment, not a selectable
+production backend. Its dense transition storage is intended for small and
+moderate operator bases.
+
+## Rebinning
 
 `benchmark_rebin.py` measures preparation, accumulation, normalization, total
 wall time, and process peak RSS for a representative fractional 4D rebin.

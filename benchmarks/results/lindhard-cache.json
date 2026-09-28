@@ -1,0 +1,100 @@
+{
+  "benchmark": "warm Lindhard eta change with offmesh q-parallel response",
+  "cache_comparison": "legacy mode caches the base eigensystem only; cached mode also retains shifted-q eigensystems under the normal bounded LRU",
+  "q_parallel_threshold_override": false,
+  "python": "3.14.7",
+  "numpy": "2.5.3",
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "results": [
+    {
+      "name": "q-parallel-cache-dominated",
+      "orbitals_and_bands": 48,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "offmesh_q_values": 4,
+      "paired_energy_points": 12,
+      "workers": 2,
+      "native_thread_limit_per_q_worker": 1,
+      "q_parallel_applied": true,
+      "rounds": 3,
+      "warm_calls_per_round": 3,
+      "cache_bytes": 268435456,
+      "legacy_warm_median_ms": 1373.8139579654671,
+      "cached_warm_median_ms": 919.7055830154568,
+      "speedup": 1.4937540701461398,
+      "legacy_cache_entries": 5,
+      "cached_cache_entries": 9,
+      "max_abs_response_difference": 0.0,
+      "legacy_samples_ms": [
+        1409.9224589881487,
+        1401.1863750056364,
+        1373.8139579654671,
+        1429.1206250200048,
+        1372.6378330029547,
+        1432.5663749477826,
+        1321.719250001479,
+        1277.457584044896,
+        1340.6687499955297
+      ],
+      "cached_samples_ms": [
+        919.7055830154568,
+        933.4301250055432,
+        938.5362089960836,
+        910.9231250477023,
+        945.6368329701945,
+        898.0727500165813,
+        909.6877920092084,
+        930.9650830109604,
+        908.286958001554
+      ]
+    },
+    {
+      "name": "q-parallel-long-energy-scan",
+      "orbitals_and_bands": 12,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "offmesh_q_values": 4,
+      "paired_energy_points": 196,
+      "workers": 2,
+      "native_thread_limit_per_q_worker": 1,
+      "q_parallel_applied": true,
+      "rounds": 3,
+      "warm_calls_per_round": 3,
+      "cache_bytes": 268435456,
+      "legacy_warm_median_ms": 300.01100001391023,
+      "cached_warm_median_ms": 280.9662090148777,
+      "speedup": 1.0677832080441534,
+      "legacy_cache_entries": 5,
+      "cached_cache_entries": 9,
+      "max_abs_response_difference": 0.0,
+      "legacy_samples_ms": [
+        305.2550829597749,
+        288.5182080208324,
+        307.46495799394324,
+        292.3394580138847,
+        300.2161670010537,
+        300.01100001391023,
+        304.76633296348155,
+        294.8857499868609,
+        293.82899997290224
+      ],
+      "cached_samples_ms": [
+        283.5646669846028,
+        289.7452089819126,
+        281.77762497216463,
+        266.5462919976562,
+        264.13208403391764,
+        266.0603750264272,
+        302.84529202617705,
+        280.9662090148777,
+        271.3272499968298
+      ]
+    }
+  ]
+}

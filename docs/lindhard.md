@@ -474,6 +474,12 @@ small responses. This scheduling changes neither the mesh nor the order of
 the returned points; `q_parallel_execution` in the result provenance records
 whether it was used.
 
+Off-mesh shifted eigensystems are retained in the same bounded response cache
+for serial and parallel q evaluation. Repeated calls that change only
+broadening or occupations can reuse them; changing the Hamiltonian or
+sampling invalidates reuse. Cold parallel requests still batch the missing
+eigensystems. Cache eviction changes runtime, not the susceptibility.
+
 Filling mode solves one chemical potential at each required temperature. It
 therefore requires $T>0$ in the current implementation. Source mode uses
 `chemical_potential_meV` from the tight-binding component.

@@ -610,6 +610,124 @@ def test_independent_q_groups_parallelize_without_changing_response(
     )
 
 
+def test_q_parallel_shifted_eigensystems_are_reused_across_broadening(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        electronic_response_module,
+        "_Q_PARALLEL_MIN_WORK",
+        0,
+    )
+    model = _chain_model()
+    mesh = k_mesh(model, (64,))
+    q = np.column_stack(
+        (np.arange(13, 21, dtype=float) / 100.0, np.zeros((8, 2)))
+    )
+    energy = np.linspace(-2.0, 2.0, q.shape[0])
+    cache = ElectronicResponseCache(max_bytes=4 * 1024**2, max_entries=32)
+    evaluate_calls = []
+    evaluated_systems = []
+    original_evaluate = electronic_response_module.evaluate_eigensystem
+
+    def counted_evaluate(*args, **kwargs):
+        evaluate_calls.append(np.asarray(args[1]).shape)
+        result = original_evaluate(*args, **kwargs)
+        evaluated_systems.append(result)
+        return result
+
+    monkeypatch.setattr(
+        electronic_response_module,
+        "evaluate_eigensystem",
+        counted_evaluate,
+    )
+    settings = {
+        "temperature_K": 20.0,
+        "chemical_potential_meV": 0.0,
+        "workers": 4,
+        "backend": "numpy",
+        "cache": cache,
+    }
+    cold = bare_spin_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        broadening_meV=0.3,
+        **settings,
+    )
+
+    # The cold path still diagonalizes two q values per worker batch.
+    assert evaluate_calls == [(64, 3), (128, 3), (128, 3), (128, 3), (128, 3)]
+    shifted_batches = evaluated_systems[1:]
+    for q_value in q:
+        key = electronic_response_module._eigensystem_cache_key(
+            model,
+            mesh.reduced_coordinates + q_value[None, :],
+            eigenvectors=True,
+            backend="numpy",
+            workers=1,
+            max_batch_bytes=256 * 1024**2,
+        )
+        cached_shift = cache.get(key)
+        assert cached_shift is not None
+        assert not cached_shift.eigenvalues.flags.writeable
+        assert not cached_shift.eigenvectors.flags.writeable
+        assert all(
+            not np.shares_memory(cached_shift.eigenvectors, batch.eigenvectors)
+            for batch in shifted_batches
+        )
+    evaluate_calls.clear()
+    warm = bare_spin_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        broadening_meV=0.8,
+        **settings,
+    )
+    assert evaluate_calls == []
+    assert cache.device_entries == 0
+    assert cache.entries >= 9  # base plus all eight shifted eigensystems
+
+    serial = bare_spin_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        broadening_meV=0.8,
+        temperature_K=20.0,
+        chemical_potential_meV=0.0,
+        workers=1,
+        backend="numpy",
+    )
+    np.testing.assert_allclose(
+        warm.values_per_meV_cell,
+        serial.values_per_meV_cell,
+        rtol=2.0e-14,
+        atol=2.0e-14,
+    )
+    assert cold.values_per_meV_cell.shape == warm.values_per_meV_cell.shape
+
+    changed_model = build_electronic_model(
+        direct_lattice=np.diag([2.0, 8.0, 9.0]),
+        basis=[BasisState("s", site="A", orbital="s")],
+        hoppings={(1, 0, 0): [[-12.0]]},
+        orbital_centers=[[0.25, 0.0, 0.0]],
+        periodic_axes=(0,),
+        energy_unit="meV",
+    )
+    evaluate_calls.clear()
+    bare_spin_susceptibility(
+        changed_model,
+        q,
+        energy,
+        mesh,
+        broadening_meV=0.8,
+        **settings,
+    )
+    assert evaluate_calls == [(64, 3), (128, 3), (128, 3), (128, 3), (128, 3)]
+
+
 def test_inverse_indices_are_grouped_without_repeated_full_array_scans():
     inverse = np.asarray([2, 0, 1, 2, 0, 1, 1], dtype=np.intp)
 

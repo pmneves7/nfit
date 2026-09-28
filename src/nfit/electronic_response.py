@@ -127,6 +127,20 @@ def _split_shifted_eigensystems(
     return result
 
 
+def _owned_eigensystem(values: ElectronicEigensystem) -> ElectronicEigensystem:
+    """Copy one eigensystem so a cached q slice owns only its accounted bytes."""
+
+    return ElectronicEigensystem(
+        eigenvalues=readonly_array(values.eigenvalues, np.float64),
+        eigenvectors=(
+            None
+            if values.eigenvectors is None
+            else readonly_array(values.eigenvectors, np.complex128)
+        ),
+        provenance=dict(values.provenance),
+    )
+
+
 @dataclass
 class ElectronicResponseCache:
     """Bounded in-memory cache of immutable electronic-response intermediates."""
@@ -275,6 +289,28 @@ class ElectronicResponseCache:
             return self._device_bytes
 
 
+def _eigensystem_cache_key(
+    model: ElectronicModel,
+    coordinates: np.ndarray,
+    *,
+    eigenvectors: bool,
+    backend: ElectronicBackend | str | None,
+    workers: int | None,
+    max_batch_bytes: int,
+) -> tuple[Any, ...]:
+    """Return the authoritative key for one immutable eigensystem."""
+
+    return (
+        "eigensystem",
+        model.content_digest,
+        array_digest(coordinates, np.float64),
+        bool(eigenvectors),
+        None if backend is None else str(backend),
+        workers,
+        int(max_batch_bytes),
+    )
+
+
 def _cached_eigensystem(
     model: ElectronicModel,
     coordinates: np.ndarray,
@@ -285,14 +321,13 @@ def _cached_eigensystem(
     max_batch_bytes: int,
     cache: ElectronicResponseCache | None,
 ) -> ElectronicEigensystem:
-    key = (
-        "eigensystem",
-        model.content_digest,
-        array_digest(coordinates, np.float64),
-        bool(eigenvectors),
-        None if backend is None else str(backend),
-        workers,
-        int(max_batch_bytes),
+    key = _eigensystem_cache_key(
+        model,
+        coordinates,
+        eigenvectors=eigenvectors,
+        backend=backend,
+        workers=workers,
+        max_batch_bytes=max_batch_bytes,
     )
     if cache is not None:
         cached = cache.get(key)
@@ -1611,23 +1646,51 @@ def _bare_lindhard_direct(
                 dtype=float,
             ).reshape(-1, 3)
             shifted_by_q: dict[str, ElectronicEigensystem] = {}
-            if direct_q.size:
-                coordinates = (
-                    k[None, :, :] + direct_q[:, None, :]
-                ).reshape(-1, 3)
-                shifted_batch = evaluate_eigensystem(
+            missing_q: list[np.ndarray] = []
+            missing_keys: dict[str, tuple[Any, ...]] = {}
+            for q_value in direct_q:
+                shifted_coordinates = k + q_value[None, :]
+                key = _eigensystem_cache_key(
                     model,
-                    coordinates,
+                    shifted_coordinates,
                     eigenvectors=True,
                     backend=backend,
                     workers=inner_workers,
                     max_batch_bytes=max_batch_bytes,
                 )
-                shifted_by_q = _split_shifted_eigensystems(
-                    shifted_batch,
-                    direct_q,
-                    k.shape[0],
+                q_key = array_digest(q_value, np.float64)
+                cached = None if cache is None else cache.get(key)
+                if cached is None:
+                    missing_q.append(q_value)
+                    missing_keys[q_key] = key
+                else:
+                    shifted_by_q[q_key] = cached
+            if missing_q:
+                missing_coordinates = (
+                    k[None, :, :] + np.asarray(missing_q)[:, None, :]
+                ).reshape(-1, 3)
+                shifted_batch = evaluate_eigensystem(
+                    model,
+                    missing_coordinates,
+                    eigenvectors=True,
+                    backend=backend,
+                    workers=inner_workers,
+                    max_batch_bytes=max_batch_bytes,
                 )
+                shifted_by_q.update(
+                    _split_shifted_eigensystems(
+                        shifted_batch,
+                        np.asarray(missing_q),
+                        k.shape[0],
+                    )
+                )
+                if cache is not None:
+                    for q_value in missing_q:
+                        q_key = array_digest(q_value, np.float64)
+                        cache.put(
+                            missing_keys[q_key],
+                            _owned_eigensystem(shifted_by_q[q_key]),
+                        )
             return _bare_lindhard_direct(
                 model,
                 transferred_q[indices],

@@ -1,0 +1,747 @@
+{
+  "benchmark": "implicit_scalar_lindhard_numpy_vs_numba",
+  "seed": 20260928,
+  "repeats": 2,
+  "temperature_K": 30.0,
+  "chemical_potential_meV": 7.0,
+  "broadening_meV": 1.5,
+  "q_evaluation": "direct",
+  "backend": "numpy eigensystem; transition contraction varied",
+  "warmup": "both Numba serial and parallel kernels per band count; excluded",
+  "eigensystem_cache": "warm per band count and Q; included state is reused during timing",
+  "completed_response_cache": "disabled (cache=None) for every call",
+  "native_blas_thread_limit": 1,
+  "environment": {
+    "hostname": "MacBook-Pro.local",
+    "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "numba": "0.67.0",
+    "logical_cpus": 16,
+    "physical_memory_bytes": 137438953472,
+    "thread_environment": {}
+  },
+  "cases": [
+    {
+      "bands": 1,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 1,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        0.4
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.0007659579860046506,
+            0.0008466250146739185
+          ],
+          "median_seconds": 0.0008062915003392845,
+          "minimum_seconds": 0.0007659579860046506,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.0006145829684101045,
+            0.0006220829673111439
+          ],
+          "median_seconds": 0.0006183329678606242,
+          "minimum_seconds": 0.0006145829684101045,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 1.6553383667497167e-23,
+          "max_relative_complex_error": 1.0189681765855741e-15
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.0006448749918490648,
+            0.0006851250072941184
+          ],
+          "median_seconds": 0.0006649999995715916,
+          "minimum_seconds": 0.0006448749918490648,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 1.6553383667497167e-23,
+          "max_relative_complex_error": 1.0189681765855741e-15
+        }
+      ]
+    },
+    {
+      "bands": 1,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 3,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        9.0
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.0006253750179894269,
+            0.0006972909905016422
+          ],
+          "median_seconds": 0.0006613330042455345,
+          "minimum_seconds": 0.0006253750179894269,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.0006197500042617321,
+            0.0006975829601287842
+          ],
+          "median_seconds": 0.0006586664821952581,
+          "minimum_seconds": 0.0006197500042617321,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 1.6553383667497167e-23,
+          "max_relative_complex_error": 1.0189681765855741e-15
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.0006456249975599349,
+            0.0007730830111540854
+          ],
+          "median_seconds": 0.0007093540043570101,
+          "minimum_seconds": 0.0006456249975599349,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 1.6553383667497167e-23,
+          "max_relative_complex_error": 1.0189681765855741e-15
+        }
+      ]
+    },
+    {
+      "bands": 1,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 101,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        9.0
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.0013754579704254866,
+            0.0018856250098906457
+          ],
+          "median_seconds": 0.0016305414901580662,
+          "minimum_seconds": 0.0013754579704254866,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.0011415419867262244,
+            0.0012309580342844129
+          ],
+          "median_seconds": 0.0011862500105053186,
+          "minimum_seconds": 0.0011415419867262244,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 3.9731048562781867e-23,
+          "max_relative_complex_error": 2.5540311355915025e-15
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.0009245839901268482,
+            0.0010158329969272017
+          ],
+          "median_seconds": 0.000970208493527025,
+          "minimum_seconds": 0.0009245839901268482,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 3.9731048562781867e-23,
+          "max_relative_complex_error": 2.5540311355915025e-15
+        }
+      ]
+    },
+    {
+      "bands": 1,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 401,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        9.0
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.004170959000475705,
+            0.0038887920090928674
+          ],
+          "median_seconds": 0.004029875504784286,
+          "minimum_seconds": 0.0038887920090928674,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.002844250004272908,
+            0.002985415980219841
+          ],
+          "median_seconds": 0.0029148329922463745,
+          "minimum_seconds": 0.002844250004272908,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 5.295409749134289e-23,
+          "max_relative_complex_error": 3.3724568243515415e-15
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.001645374984946102,
+            0.0017262499895878136
+          ],
+          "median_seconds": 0.0016858124872669578,
+          "minimum_seconds": 0.001645374984946102,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 5.295409749134289e-23,
+          "max_relative_complex_error": 3.3724568243515415e-15
+        }
+      ]
+    },
+    {
+      "bands": 6,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 1,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        0.4
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.008544125012122095,
+            0.008632041048258543
+          ],
+          "median_seconds": 0.008588083030190319,
+          "minimum_seconds": 0.008544125012122095,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.00801979098469019,
+            0.008110583992674947
+          ],
+          "median_seconds": 0.008065187488682568,
+          "minimum_seconds": 0.00801979098469019,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 2.776198056328147e-17,
+          "max_relative_complex_error": 1.0877203897047564e-15
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.007991583028342575,
+            0.008043334004469216
+          ],
+          "median_seconds": 0.008017458516405895,
+          "minimum_seconds": 0.007991583028342575,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 2.776198056328147e-17,
+          "max_relative_complex_error": 1.0877203897047564e-15
+        }
+      ]
+    },
+    {
+      "bands": 6,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 3,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        9.0
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.008849708014167845,
+            0.00867829198250547
+          ],
+          "median_seconds": 0.008763999998336658,
+          "minimum_seconds": 0.00867829198250547,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.00805995799601078,
+            0.008113124989904463
+          ],
+          "median_seconds": 0.008086541492957622,
+          "minimum_seconds": 0.00805995799601078,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 9.783901919332687e-17,
+          "max_relative_complex_error": 5.148465342325639e-15
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.0077971660066396,
+            0.008111167000606656
+          ],
+          "median_seconds": 0.007954166503623128,
+          "minimum_seconds": 0.0077971660066396,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 9.783901919332687e-17,
+          "max_relative_complex_error": 5.148465342325639e-15
+        }
+      ]
+    },
+    {
+      "bands": 6,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 101,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        9.0
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.026582959049846977,
+            0.0274402080103755
+          ],
+          "median_seconds": 0.02701158353011124,
+          "minimum_seconds": 0.026582959049846977,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.019690999994054437,
+            0.019558249972760677
+          ],
+          "median_seconds": 0.019624624983407557,
+          "minimum_seconds": 0.019558249972760677,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 3.283912181224055e-16,
+          "max_relative_complex_error": 1.384498687290963e-14
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.011163708986714482,
+            0.011120290961116552
+          ],
+          "median_seconds": 0.011141999973915517,
+          "minimum_seconds": 0.011120290961116552,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 3.283912181224055e-16,
+          "max_relative_complex_error": 1.384498687290963e-14
+        }
+      ]
+    },
+    {
+      "bands": 6,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 401,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        9.0
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.11683724995236844,
+            0.11252487503224984
+          ],
+          "median_seconds": 0.11468106249230914,
+          "minimum_seconds": 0.11252487503224984,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.05451470799744129,
+            0.054435125028248876
+          ],
+          "median_seconds": 0.054474916512845084,
+          "minimum_seconds": 0.054435125028248876,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 3.469837242783084e-16,
+          "max_relative_complex_error": 1.4845519845132793e-14
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.020973249978851527,
+            0.020881707954686135
+          ],
+          "median_seconds": 0.02092747896676883,
+          "minimum_seconds": 0.020881707954686135,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 3.469837242783084e-16,
+          "max_relative_complex_error": 1.4845519845132793e-14
+        }
+      ]
+    },
+    {
+      "bands": 12,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 1,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        0.4
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.03305083297891542,
+            0.033548542007338256
+          ],
+          "median_seconds": 0.03329968749312684,
+          "minimum_seconds": 0.03305083297891542,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.03213291597785428,
+            0.031976375030353665
+          ],
+          "median_seconds": 0.032054645504103974,
+          "minimum_seconds": 0.031976375030353665,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 5.276000040296825e-16,
+          "max_relative_complex_error": 1.0571906793958212e-14
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.031807208026293665,
+            0.031961958040483296
+          ],
+          "median_seconds": 0.03188458303338848,
+          "minimum_seconds": 0.031807208026293665,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 5.276000040296825e-16,
+          "max_relative_complex_error": 1.0571906793958212e-14
+        }
+      ]
+    },
+    {
+      "bands": 12,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 3,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        9.0
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.035120333021041006,
+            0.03539475001161918
+          ],
+          "median_seconds": 0.03525754151633009,
+          "minimum_seconds": 0.035120333021041006,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.03274475003127009,
+            0.03272112499689683
+          ],
+          "median_seconds": 0.03273293751408346,
+          "minimum_seconds": 0.03272112499689683,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 5.553757660464643e-16,
+          "max_relative_complex_error": 1.1128470033021527e-14
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.031697124999482185,
+            0.03170341701479629
+          ],
+          "median_seconds": 0.031700271007139236,
+          "minimum_seconds": 0.031697124999482185,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 5.553757660464643e-16,
+          "max_relative_complex_error": 1.1128470033021527e-14
+        }
+      ]
+    },
+    {
+      "bands": 12,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 101,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        9.0
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.14020000002346933,
+            0.13796500000171363
+          ],
+          "median_seconds": 0.13908250001259148,
+          "minimum_seconds": 0.13796500000171363,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.07728212495567277,
+            0.07732595899142325
+          ],
+          "median_seconds": 0.07730404197354801,
+          "minimum_seconds": 0.07728212495567277,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 1.4678713030594245e-15,
+          "max_relative_complex_error": 3.071247398168517e-14
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.04372887499630451,
+            0.04488104197662324
+          ],
+          "median_seconds": 0.044304958486463875,
+          "minimum_seconds": 0.04372887499630451,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 1.4678713030594245e-15,
+          "max_relative_complex_error": 3.071247398168517e-14
+        }
+      ]
+    },
+    {
+      "bands": 12,
+      "mesh_shape": [
+        32,
+        32
+      ],
+      "mesh_points": 1024,
+      "energy_count": 401,
+      "unique_q_count": 1,
+      "q_reduced": [
+        0.137,
+        0.271,
+        0.0
+      ],
+      "energy_mev": [
+        0.4,
+        9.0
+      ],
+      "variants": [
+        {
+          "transition_backend": "numpy",
+          "workers": 1,
+          "seconds": [
+            0.45466083398787305,
+            0.4544554589665495
+          ],
+          "median_seconds": 0.45455814647721127,
+          "minimum_seconds": 0.4544554589665495,
+          "resolved_transition_backends": "numpy",
+          "max_absolute_complex_error": 0.0,
+          "max_relative_complex_error": 0.0
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 1,
+          "seconds": [
+            0.21882445900700986,
+            0.2148569580167532
+          ],
+          "median_seconds": 0.21684070851188153,
+          "minimum_seconds": 0.2148569580167532,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 1.4678713030594245e-15,
+          "max_relative_complex_error": 3.071247398168517e-14
+        },
+        {
+          "transition_backend": "numba",
+          "workers": 4,
+          "seconds": [
+            0.08201679104240611,
+            0.08162279101088643
+          ],
+          "median_seconds": 0.08181979102664627,
+          "minimum_seconds": 0.08162279101088643,
+          "resolved_transition_backends": "numba",
+          "max_absolute_complex_error": 1.4678713030594245e-15,
+          "max_relative_complex_error": 3.071247398168517e-14
+        }
+      ]
+    }
+  ]
+}

@@ -559,10 +559,35 @@ use the fused Numba contraction when their batch size can amortize compilation
 and dispatch. The NumPy and Numba reference paths can always be forced; the
 resolved implementation is recorded in susceptibility provenance.
 
+For long constant-Q energy scans, explicitly selecting
+`response_transition_backend="numba"` with several `response_workers` can
+also accelerate the implicit scalar-spin response. Automatic selection keeps
+that case on NumPy. Local 32 x 32 mesh benchmarks with 6-12 bands and 401
+energies measured about 5.5x speedup with four Numba workers; short requests
+showed little benefit. These timings exclude JIT startup and are not full-fit
+runtime predictions.
+
+The repository's `benchmarks/benchmark_lindhard_spectral.py` evaluates an
+experimental approximation: transition masses are deposited on a gap-energy
+grid and convolved with the complex retarded denominator using an FFT. On
+tested long scans it was 2.7-8.5x faster than the fastest measured exact CPU
+path, including preparation, with peak-normalized complex errors of
+0.004-0.015% at grid spacing one sixteenth of the broadening. It was slower
+for three-energy requests. This experiment is not a production backend:
+large operator bases, narrow broadening, and interaction poles need additional
+memory and error controls. Workloads, convergence data, and limitations are
+recorded in `benchmarks/results/lindhard-acceleration.md` and the adjacent
+JSON files.
+
 For sufficiently large calculations with several distinct transferred
 wavevectors, nfit partitions the total `response_workers` allocation across
 the independent q groups and assigns the remaining workers within each group.
-The base mesh eigensystem is shared rather than recomputed. Fourier Hamiltonian
+The base mesh eigensystem is shared rather than recomputed. Off-mesh shifted
+eigensystems also use the bounded response cache, including in parallel q
+batches. Changing only broadening or occupations can reuse them; a changed
+Hamiltonian or mesh invalidates reuse. Cold misses are still diagonalized in
+batches, and each retained q slice owns its arrays so eviction can release
+its accounted storage independently. Fourier Hamiltonian
 assembly uses thread-safe direct contractions while those q groups run in
 parallel. Small jobs and single-q energy scans stay on the lower-overhead
 serial-q path.
