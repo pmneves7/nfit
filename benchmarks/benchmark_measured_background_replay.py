@@ -50,11 +50,10 @@ class Fixture:
     shape: tuple[int, int, int, int]
 
 
-def make_fixture(events: int, transforms: int, seed: int) -> Fixture:
+def make_fixture(events: int, transforms: int, seed: int, *, shape=(48, 48, 12, 32)) -> Fixture:
     """Create deterministic directional events spanning many distinct bins."""
 
     rng = np.random.default_rng(seed)
-    shape = (48, 48, 12, 32)
     edges = (
         np.linspace(-3.2, 3.2, shape[0] + 1),
         np.linspace(-3.2, 3.2, shape[1] + 1),
@@ -237,10 +236,8 @@ def main() -> None:
             "rows_per_call": min(rows, args.events),
             "calls_per_run": (args.events + rows - 1) // rows,
             "scratch_bytes_per_task": compiled.REPLAY_SCRATCH_BYTES_PER_TASK,
-            "estimated_max_scratch_bytes": (
-                min(rows, args.events)
-                * args.transforms
-                * compiled.REPLAY_SCRATCH_BYTES_PER_TASK
+            "estimated_max_scratch_bytes": compiled.replay_scratch_bytes(
+                min(rows, args.events), args.transforms
             ),
             "repeats": args.repeats,
             "timing_excludes": ["fixture/flag preparation", "JIT compilation", "I/O", "normalization"],

@@ -1,0 +1,312 @@
+{
+  "environment": {
+    "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+    "python": "3.14.7",
+    "numpy": "2.5.3",
+    "numba": "0.67.0"
+  },
+  "timing_excludes": [
+    "JIT compilation",
+    "fixture preparation",
+    "output-grid allocation",
+    "file I/O",
+    "trajectory normalization"
+  ],
+  "timing_includes": [
+    "batch scratch allocation",
+    "mapping",
+    "optional transpose",
+    "collision handling",
+    "scatter"
+  ],
+  "runs": [
+    {
+      "workload": {
+        "events": 20000,
+        "transforms": 12,
+        "workers": 4,
+        "repeats": 7,
+        "spatial_bins": 48,
+        "nonuniform": false
+      },
+      "bitwise_equal": true,
+      "timings": {
+        "binary/serial": {
+          "allocation": 0.00032524997368454933,
+          "mapping": 0.0017745409859344363,
+          "collision": 0.0003494999837130308,
+          "scatter": 0.0012413330259732902,
+          "total": 0.0037108330288901925
+        },
+        "transpose/serial": {
+          "allocation": 0.00034429202787578106,
+          "mapping": 0.0017220419831573963,
+          "collision": 0.0005452090408653021,
+          "scatter": 0.0012378329993225634,
+          "total": 0.003977874992415309
+        },
+        "binary/energy": {
+          "allocation": 0.00035145803121849895,
+          "mapping": 0.0017494169878773391,
+          "collision": 0.00033587502548471093,
+          "scatter": 0.0006462919991463423,
+          "total": 0.0031375419930554926
+        },
+        "transpose/energy": {
+          "allocation": 0.00030345801496878266,
+          "mapping": 0.0017388329724781215,
+          "collision": 0.0005717079620808363,
+          "scatter": 0.0006078339647501707,
+          "total": 0.0032505409908480942
+        },
+        "predicted/serial": {
+          "allocation": 0.0002941670245490968,
+          "mapping": 0.0008103330037556589,
+          "collision": 0.00035395799204707146,
+          "scatter": 0.0011705000069923699,
+          "total": 0.0027469999622553587
+        }
+      }
+    },
+    {
+      "workload": {
+        "events": 20000,
+        "transforms": 722,
+        "workers": 1,
+        "repeats": 5,
+        "spatial_bins": 48,
+        "nonuniform": false
+      },
+      "bitwise_equal": true,
+      "timings": {
+        "binary/serial": {
+          "allocation": 0.02153049799380824,
+          "mapping": 0.34515829203883186,
+          "collision": 0.05235887906746939,
+          "scatter": 0.0142939169309102,
+          "total": 0.4328575419494882
+        },
+        "transpose/serial": {
+          "allocation": 0.02046478894772008,
+          "mapping": 0.3445537079242058,
+          "collision": 0.06027616694336757,
+          "scatter": 0.013979043113067746,
+          "total": 0.43903891602531075
+        },
+        "binary/energy": {
+          "allocation": 0.021139876102097332,
+          "mapping": 0.3445766240474768,
+          "collision": 0.052294416120275855,
+          "scatter": 0.014430248003918678,
+          "total": 0.4328718329779804
+        },
+        "transpose/energy": {
+          "allocation": 0.020563165948260576,
+          "mapping": 0.34527558292029426,
+          "collision": 0.0634602110949345,
+          "scatter": 0.014715376077219844,
+          "total": 0.44296354200923815
+        },
+        "predicted/serial": {
+          "allocation": 0.019822290109004825,
+          "mapping": 0.10849600192159414,
+          "collision": 0.051780086010694504,
+          "scatter": 0.014059626031666994,
+          "total": 0.19398462498793378
+        }
+      }
+    },
+    {
+      "workload": {
+        "events": 12000,
+        "transforms": 2888,
+        "workers": 4,
+        "repeats": 5,
+        "spatial_bins": 48,
+        "nonuniform": false
+      },
+      "bitwise_equal": true,
+      "timings": {
+        "binary/serial": {
+          "allocation": 0.05473841092316434,
+          "mapping": 0.18914312514243647,
+          "collision": 0.03281975194113329,
+          "scatter": 0.012795873917639256,
+          "total": 0.2895999169559218
+        },
+        "transpose/serial": {
+          "allocation": 0.048207501240540296,
+          "mapping": 0.1891812570975162,
+          "collision": 0.07528283208375797,
+          "scatter": 0.011972669919487089,
+          "total": 0.32374337496003136
+        },
+        "binary/energy": {
+          "allocation": 0.054665127070620656,
+          "mapping": 0.189252749143634,
+          "collision": 0.03331341891316697,
+          "scatter": 0.004639624152332544,
+          "total": 0.2806578330346383
+        },
+        "transpose/energy": {
+          "allocation": 0.04810704494593665,
+          "mapping": 0.18966316594742239,
+          "collision": 0.07699945895001292,
+          "scatter": 0.004780869989190251,
+          "total": 0.3205741249839775
+        },
+        "predicted/serial": {
+          "allocation": 0.044840043934527785,
+          "mapping": 0.07120070594828576,
+          "collision": 0.030253538163378835,
+          "scatter": 0.010710080154240131,
+          "total": 0.155581291008275
+        }
+      }
+    },
+    {
+      "workload": {
+        "events": 20000,
+        "transforms": 722,
+        "workers": 4,
+        "repeats": 7,
+        "spatial_bins": 48,
+        "nonuniform": false
+      },
+      "bitwise_equal": true,
+      "timings": {
+        "binary/serial": {
+          "allocation": 0.02442787284962833,
+          "mapping": 0.0905191222555004,
+          "collision": 0.015276415040716529,
+          "scatter": 0.01615383313037455,
+          "total": 0.14586604200303555
+        },
+        "transpose/serial": {
+          "allocation": 0.022900416050106287,
+          "mapping": 0.09018379094777629,
+          "collision": 0.03112725104438141,
+          "scatter": 0.015352706948760897,
+          "total": 0.15994041704107076
+        },
+        "binary/energy": {
+          "allocation": 0.022860705037601292,
+          "mapping": 0.0899444580427371,
+          "collision": 0.015171832987107337,
+          "scatter": 0.0051520009292289615,
+          "total": 0.1331425000098534
+        },
+        "transpose/energy": {
+          "allocation": 0.021061497915070504,
+          "mapping": 0.09005224716383964,
+          "collision": 0.030686456884723157,
+          "scatter": 0.005056543101090938,
+          "total": 0.14828200003830716
+        },
+        "predicted/serial": {
+          "allocation": 0.02047741407295689,
+          "mapping": 0.03000395803246647,
+          "collision": 0.014295043831225485,
+          "scatter": 0.014532292145304382,
+          "total": 0.07930095901247114
+        }
+      }
+    },
+    {
+      "workload": {
+        "events": 20000,
+        "transforms": 722,
+        "workers": 4,
+        "repeats": 5,
+        "spatial_bins": 96,
+        "nonuniform": false
+      },
+      "bitwise_equal": true,
+      "timings": {
+        "binary/serial": {
+          "allocation": 0.020858499046880752,
+          "mapping": 0.10921541496645659,
+          "collision": 0.018128123017959297,
+          "scatter": 0.03643574699526653,
+          "total": 0.18477262498345226
+        },
+        "transpose/serial": {
+          "allocation": 0.02066408604150638,
+          "mapping": 0.10895554209128022,
+          "collision": 0.03332429088186473,
+          "scatter": 0.036865999980363995,
+          "total": 0.20066020800732076
+        },
+        "binary/energy": {
+          "allocation": 0.020542209036648273,
+          "mapping": 0.10904166690306738,
+          "collision": 0.01823058311128989,
+          "scatter": 0.012122292129788548,
+          "total": 0.1599937499850057
+        },
+        "transpose/energy": {
+          "allocation": 0.02060350019019097,
+          "mapping": 0.10921596211846918,
+          "collision": 0.033547791943419725,
+          "scatter": 0.01206991693470627,
+          "total": 0.1756420419551432
+        },
+        "predicted/serial": {
+          "allocation": 0.018612999003380537,
+          "mapping": 0.030260665982495993,
+          "collision": 0.01741358480649069,
+          "scatter": 0.034489749057684094,
+          "total": 0.09996837499784306
+        }
+      }
+    },
+    {
+      "workload": {
+        "events": 20000,
+        "transforms": 722,
+        "workers": 4,
+        "repeats": 5,
+        "spatial_bins": 48,
+        "nonuniform": true
+      },
+      "bitwise_equal": true,
+      "timings": {
+        "binary/serial": {
+          "allocation": 0.022660540067590773,
+          "mapping": 0.09239445783896372,
+          "collision": 0.01551099686184898,
+          "scatter": 0.022510250099003315,
+          "total": 0.15415649994974956
+        },
+        "transpose/serial": {
+          "allocation": 0.020870417065452784,
+          "mapping": 0.09242520795669407,
+          "collision": 0.03204283310333267,
+          "scatter": 0.02193029090994969,
+          "total": 0.16883445798885077
+        },
+        "binary/energy": {
+          "allocation": 0.021723999991081655,
+          "mapping": 0.09236074902582914,
+          "collision": 0.015514958009589463,
+          "scatter": 0.0068403761251829565,
+          "total": 0.13761170802172273
+        },
+        "transpose/energy": {
+          "allocation": 0.023220207076519728,
+          "mapping": 0.09236133296508342,
+          "collision": 0.03290037397528067,
+          "scatter": 0.007110664970241487,
+          "total": 0.1539633339853026
+        },
+        "predicted/serial": {
+          "allocation": 0.02285224909428507,
+          "mapping": 0.09289237292250618,
+          "collision": 0.015192834020126611,
+          "scatter": 0.0206842488842085,
+          "total": 0.15139733400428668
+        }
+      }
+    }
+  ]
+}

@@ -195,3 +195,51 @@ def test_replay_energy_bins_keep_exact_edges_and_nonfinite_rejection(edges):
     )
     # Seven coincident transforms still represent one observation per source event.
     np.testing.assert_array_equal(counts, np.bincount(expected[expected >= 0], minlength=len(edges)-1))
+
+
+@pytest.mark.parametrize('edges', [
+    np.linspace(-3.2, 3.2, 49),
+    np.array([-2.0, -0.73, 0.0, 0.001, 1.9, 3.0]),
+    np.linspace(1e12, 1e12 + 1, 33),
+    np.array([-1e308, 0.0, 1e308]),
+    np.array([0.0, 1e-310, 2e-310]),
+])
+def test_predicted_bin_membership_is_exact_even_with_inaccurate_hint(edges):
+    values = np.concatenate([
+        edges, np.nextafter(edges, -np.inf), np.nextafter(edges, np.inf),
+        [np.nan, -np.inf, np.inf],
+    ])
+    for value in values:
+        assert kernels._bin_index(value, edges, True) == kernels._bin_index(value, edges)
+
+
+@pytest.mark.parametrize('nonuniform', [False, True])
+@pytest.mark.parametrize('workers', [1, 4])
+def test_predicted_replay_is_bitwise_equal_to_binary_search(monkeypatch, nonuniform, workers):
+    rng = np.random.default_rng(728)
+    edges = tuple(np.linspace(-2.0, 2.0, 9) for _ in range(4))
+    if nonuniform:
+        edges = (edges[0] ** 3 / 4, *edges[1:])
+    assert kernels._regular_axes(edges[:3]).tolist() == [not nonuniform, True, True]
+    transforms = 72
+    inverses = np.repeat(np.eye(3)[None], transforms, axis=0)
+    angles = np.linspace(0, 2*np.pi, transforms)
+    inverses[:, 0, 0] = inverses[:, 1, 1] = np.cos(angles)
+    inverses[:, 0, 1] = np.sin(angles)
+    inverses[:, 1, 0] = -np.sin(angles)
+    args = (
+        rng.uniform(-3, 3, (257, 3)), rng.uniform(-2, 2, 257),
+        rng.integers(-1, 1, 257), rng.normal(size=257), rng.random(257),
+        inverses, rng.uniform(-1, 1, transforms), edges, (8, 8, 8, 8),
+    )
+    exclusions = [rng.random(4096) < .05 for _ in range(transforms)]
+    _, predicted = _run(*args, workers=workers, exclusions=exclusions)
+    mapper = kernels._map_transforms
+
+    def binary_mapper(*args):
+        return mapper(*args[:-1])  # Default flags use the original binary searches.
+
+    monkeypatch.setattr(kernels, '_map_transforms', binary_mapper)
+    _, binary = _run(*args, workers=workers, exclusions=exclusions)
+    for actual, expected in zip(predicted, binary, strict=True):
+        assert actual.tobytes() == expected.tobytes()

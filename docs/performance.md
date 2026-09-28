@@ -58,6 +58,11 @@ The energy-bin lookup is performed once per source event and reused across all
 angles and momentum symmetry operations; edge handling and accumulation order
 are unchanged.
 
+For near-uniform momentum axes, replay predicts a bin index arithmetically,
+then verifies membership against the original edges. A failed prediction uses
+binary search; nonuniform axes use binary search directly. This changes neither
+edge conventions nor floating-point accumulation order.
+
 Both temporary memory and event-transform work per batch are bounded. Progress
 and cancellation are checked before replay and between batches, and the dialog
 reports the backend and CPU count. The first call may need JIT compilation;
@@ -71,6 +76,29 @@ Use `benchmarks/benchmark_measured_background_replay.py` to compare the warmed
 event kernel with the NumPy reference at 722 synthetic sample angles. This
 benchmark excludes file loading and detector-trajectory normalization and is
 not an end-to-end runtime prediction for a project.
+
+`benchmarks/replay_candidates.py` compares the binary-search baseline, an
+intermediate-array transpose, disjoint-energy parallel scatter, and the production
+index predictor. It checks bitwise equality and includes allocation and transpose
+costs. The transpose and parallel-scatter variants are experiments only.
+
+A local four-worker test (20,000 source events, warmed kernels, median of 5–7
+interleaved repetitions) measured:
+
+| Workload | Binary lookup | Checked predictor | Speedup |
+| --- | ---: | ---: | ---: |
+| 722 transforms, 884,736 output bins | 146 ms | 79 ms | 1.84× |
+| 722 transforms, 3,538,944 output bins | 185 ms | 100 ms | 1.85× |
+| 2,888 transforms, 12,000 source events | 290 ms | 156 ms | 1.86× |
+| 12 transforms | 3.7 ms | 2.7 ms | 1.35× |
+| 722 transforms, nonuniform axes | 154 ms | 151 ms | 1.02× |
+
+These are replay-kernel measurements, not end-to-end project speedups; they
+exclude file I/O, normalization and JIT compilation. Numerical outputs matched
+bitwise in every trial. The transpose was slower on the main workload; parallel
+scatter improved total replay by only about 9%, so neither is enabled. Recorded
+workloads and per-stage timings are in
+`benchmarks/results/replay_candidates_20260928.json`.
 
 Raw direct-geometry event reduction also processes symmetry coordinate copies
 one at a time, so their temporary coordinate storage does not grow with the

@@ -32,12 +32,35 @@ def effective_workers(workers: int) -> int:
 
 
 @njit(inline="always")
-def _bin_index(value, edges):
+def _bin_index(value, edges, regular=False):
     if not np.isfinite(value) or value < edges[0] or value > edges[-1]:
         return -1
     if value == edges[-1]:
         return edges.size - 2
+    if regular:
+        span = edges[-1] - edges[0]
+        if np.isfinite(span) and span > 0:
+            position = (value - edges[0]) / span * (edges.size - 1)
+            if np.isfinite(position) and 0 <= position < edges.size - 1:
+                candidate = int(position)
+                # Arithmetic only predicts an index. Actual edges determine
+                # membership, including roundoff near internal boundaries.
+                if edges[candidate] <= value < edges[candidate + 1]:
+                    return candidate
     return np.searchsorted(edges, value, side="right") - 1
+
+
+def _regular_axes(edges):
+    """Choose an index predictor only where near-uniform spacing warrants it."""
+    with np.errstate(over="ignore", invalid="ignore"):
+        return np.asarray([
+            len(edge) > 1
+            and np.isfinite(edge[-1] - edge[0])
+            and edge[-1] > edge[0]
+            and np.allclose(np.diff(edge), (edge[-1] - edge[0]) / (len(edge) - 1),
+                            rtol=1e-10, atol=0)
+            for edge in edges
+        ], dtype=np.bool_)
 
 
 @njit(cache=True, fastmath=False, nogil=True)
@@ -75,9 +98,13 @@ def _map_transforms(
     energy_bins,
     shape,
     raw_bins,
+    regular_axes=None,
 ):
     """Map transforms in parallel while hoisting typed-list array access."""
 
+    regular0 = False if regular_axes is None else regular_axes[0]
+    regular1 = False if regular_axes is None else regular_axes[1]
+    regular2 = False if regular_axes is None else regular_axes[2]
     transforms = inverses.shape[0]
     for transform in prange(transforms):
         transform_index = np.int64(transform)
@@ -111,9 +138,9 @@ def _map_transforms(
                 + lab[event, 1] * inverse[2, 1]
                 + lab[event, 2] * inverse[2, 2]
             )
-            index0 = _bin_index(coordinate0, edge0)
-            index1 = _bin_index(coordinate1, edge1)
-            index2 = _bin_index(coordinate2, edge2)
+            index0 = _bin_index(coordinate0, edge0, regular0)
+            index1 = _bin_index(coordinate1, edge1, regular1)
+            index2 = _bin_index(coordinate2, edge2, regular2)
             if index0 < 0 or index1 < 0 or index2 < 0 or index3 < 0:
                 continue
             flat = ((index0 * shape[1] + index1) * shape[2] + index2) * shape[3] + index3
@@ -183,6 +210,7 @@ def _map_and_combine(
         _energy_bin_indices(energies, edge3),
         shape,
         raw_bins,
+        _regular_axes((edge0, edge1, edge2)),
     )
     _combine_collisions(raw_bins, weights, unique_bins, combined_weights, hash_slots)
 
