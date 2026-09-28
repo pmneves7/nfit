@@ -36,6 +36,7 @@ provides double-click startup and a Dock icon using your existing environment.
 
 A few of its main capabilities are:
 
+- monitor nfit and system CPU and RAM usage live in the project toolbar;
 - import, combine, mask, rebin, and visualize multidimensional neutron data,
   with parent-owned hierarchical binning and explicit background recipe context,
   including raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data,

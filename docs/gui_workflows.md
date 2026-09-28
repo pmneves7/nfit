@@ -17,6 +17,14 @@ Click **Help** beside **File** in the project explorer toolbar to open the local
 documentation home page (`docs/_build/html/index.html`) in your default web
 browser. If it has not been built, Help shows the build command instead.
 
+The right side of the toolbar shows live nfit and system CPU and RAM percentages.
+Readings are sampled on a background thread every two seconds while the display
+is visible. CPU percentages use the total capacity of all logical CPUs; nfit RAM
+is resident process memory divided by physical RAM, and system RAM is the
+system used-memory percentage. nfit readings exclude child processes. A dash
+means a reading is not yet available. Monitoring does not run for command-line
+or scripting use without the project window.
+
 The **File** menu shows the running nfit version. Open **File → Preferences…** for application-wide preferences. The **Colormaps**
 page sets the defaults for newly opened continuous and waterfall plots, shows
 the shared custom-palette folder, opens it in your file manager, and explains

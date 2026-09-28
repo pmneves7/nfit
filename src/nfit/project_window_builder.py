@@ -190,6 +190,10 @@ def _build_window_shell(
     help_button.clicked.connect(self.show_help)
     toolbar.addWidget(help_button)
 
+    from .qt_resource_monitor import add_resource_monitor
+
+    add_resource_monitor(toolbar)
+
     splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
     self.window.setCentralWidget(splitter)
     return toolbar, file_button, menu, splitter
