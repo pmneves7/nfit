@@ -19,7 +19,10 @@ REPLAY_SCRATCH_BYTES_PER_TASK = 56
 def replay_scratch_bytes(events: int, transforms: int) -> int:
     """Return a conservative temporary-array bound for a replay batch."""
 
-    return max(0, int(events)) * max(0, int(transforms)) * REPLAY_SCRATCH_BYTES_PER_TASK
+    # One energy-bin index is shared by all transforms of a source event.
+    return max(0, int(events)) * (
+        max(0, int(transforms)) * REPLAY_SCRATCH_BYTES_PER_TASK + 8
+    )
 
 
 def effective_workers(workers: int) -> int:
@@ -35,6 +38,15 @@ def _bin_index(value, edges):
     if value == edges[-1]:
         return edges.size - 2
     return np.searchsorted(edges, value, side="right") - 1
+
+
+@njit(cache=True, fastmath=False, nogil=True)
+def _energy_bin_indices(energies, edges):
+    """Energy is unchanged by every angle and momentum symmetry operation."""
+    result = np.empty(energies.size, dtype=np.int64)
+    for event in range(energies.size):
+        result[event] = _bin_index(energies[event], edges)
+    return result
 
 
 @njit(inline="always")
@@ -60,7 +72,7 @@ def _map_transforms(
     edge0,
     edge1,
     edge2,
-    edge3,
+    energy_bins,
     shape,
     raw_bins,
 ):
@@ -77,7 +89,8 @@ def _map_transforms(
         for event in range(lab.shape[0]):
             detector = detector_indices[event]
             energy = energies[event]
-            if detector < 0 or not np.isfinite(energy):
+            index3 = energy_bins[event]
+            if detector < 0 or index3 < 0:
                 continue
             if detector >= transform_accepted.size or not transform_accepted[detector]:
                 continue
@@ -101,7 +114,6 @@ def _map_transforms(
             index0 = _bin_index(coordinate0, edge0)
             index1 = _bin_index(coordinate1, edge1)
             index2 = _bin_index(coordinate2, edge2)
-            index3 = _bin_index(energy, edge3)
             if index0 < 0 or index1 < 0 or index2 < 0 or index3 < 0:
                 continue
             flat = ((index0 * shape[1] + index1) * shape[2] + index2) * shape[3] + index3
@@ -168,7 +180,7 @@ def _map_and_combine(
         edge0,
         edge1,
         edge2,
-        edge3,
+        _energy_bin_indices(energies, edge3),
         shape,
         raw_bins,
     )

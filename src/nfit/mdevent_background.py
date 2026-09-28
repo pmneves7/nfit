@@ -338,7 +338,7 @@ def _replay_runs(background, sources, target, prepared, *, max_batch_bytes, prog
                 [np.empty(0, dtype=bool) if mask is None else mask for mask in excluded_bins],
                 output_size=size,
             )
-            bytes_per_row = 128 + _REPLAY_NUMBA.REPLAY_SCRATCH_BYTES_PER_TASK * transform_count
+            bytes_per_row = 128 + _REPLAY_NUMBA.replay_scratch_bytes(1, transform_count)
         else:
             bytes_per_row = 128 * transform_count + 128
         # Never materialize the synthetic event collection, or allocate a full

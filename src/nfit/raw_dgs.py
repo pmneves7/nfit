@@ -466,7 +466,9 @@ def bin_raw_dgs_group(
                             else:
                                 q_sample = q_lab @ gonio
                                 hkl = q_sample @ hkl_transform.T
-                                coordinate_blocks = tuple(
+                                # Consume one symmetry copy at a time; do not retain
+                                # a full coordinate batch for every operation.
+                                coordinate_blocks = (
                                     np.column_stack((hkl @ operation.T, energy))
                                     @ basis_inverse
                                     for operation in symmetry

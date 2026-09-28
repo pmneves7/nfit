@@ -536,3 +536,24 @@ def test_mantid_cncs_t0_formula_uses_requested_incident_energy():
         + 1.89672170078 * energy
     )
     assert _evaluate_mantid_t0_formula(formula, energy) == pytest.approx(expected)
+
+
+def test_raw_dgs_streamed_symmetry_matches_separate_operations(tmp_path):
+    source = tmp_path / 'SEQ_42.nxs.h5'
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    options = dict(lower=[-10, -10, -10, -100], upper=[10, 10, 10, 20],
+                   num_bins=[2, 2, 2, 3], max_batch_bytes=128)
+    operations = [np.eye(3), -np.eye(3), np.diag([-1.0, 1.0, 1.0])]
+    combined = bin_raw_dgs_group(group, symmetry_operations=operations, **options)
+    separate = [bin_raw_dgs_group(group, symmetry_operations=[op], **options) for op in operations]
+    np.testing.assert_array_equal(combined.num_events, sum(data.num_events for data in separate))
+    denominator = sum(data.metadata['normalization_denominator'] for data in separate)
+    np.testing.assert_allclose(combined.metadata['normalization_denominator'], denominator,
+                               rtol=8*np.finfo(float).eps, atol=0)
+    # Reconstruct summed counts, rather than averaging normalized intensities.
+    counts = sum(np.nan_to_num(data.signal) * data.metadata['normalization_denominator']
+                 for data in separate)
+    valid = ~combined.mask
+    np.testing.assert_allclose(combined.signal[valid], (counts / np.where(denominator > 0, denominator, 1))[valid],
+                               rtol=8*np.finfo(float).eps, atol=0)

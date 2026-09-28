@@ -54,6 +54,9 @@ operations; copies landing in the same output bin are combined before their
 variance is accumulated. Worker-local lookup tables avoid repeatedly searching
 all earlier angle copies. A deterministic compiled scatter updates the shared
 output arrays without allocating a full four-dimensional histogram per worker.
+The energy-bin lookup is performed once per source event and reused across all
+angles and momentum symmetry operations; edge handling and accumulation order
+are unchanged.
 
 Both temporary memory and event-transform work per batch are bounded. Progress
 and cancellation are checked before replay and between batches, and the dialog
@@ -68,6 +71,10 @@ Use `benchmarks/benchmark_measured_background_replay.py` to compare the warmed
 event kernel with the NumPy reference at 722 synthetic sample angles. This
 benchmark excludes file loading and detector-trajectory normalization and is
 not an end-to-end runtime prediction for a project.
+
+Raw direct-geometry event reduction also processes symmetry coordinate copies
+one at a time, so their temporary coordinate storage does not grow with the
+number of symmetry operations.
 
 ## Performance preferences and benchmarks
 

@@ -88,7 +88,7 @@ def test_replay_kernel_hash_matches_across_threads_for_many_distinct_transforms(
     np.testing.assert_allclose(serial[0][:transforms], 5.0 * weights)
     np.testing.assert_allclose(serial[1][:transforms], 12.0 * weights**2)
     np.testing.assert_array_equal(serial[2][:transforms], 2.0)
-    assert kernels.replay_scratch_bytes(2, transforms) == 2 * transforms * 56
+    assert kernels.replay_scratch_bytes(2, transforms) == 2 * (transforms * 56 + 8)
 
 
 def test_replay_kernel_hash_avalanches_strided_flat_indices():
@@ -170,3 +170,28 @@ def test_replay_kernel_restores_numba_threads_on_success_and_failure(monkeypatch
     with pytest.raises(RuntimeError, match="injected kernel failure"):
         _run(*args, workers=1)
     assert numba.get_num_threads() == previous
+
+
+@pytest.mark.parametrize('edges', [
+    np.linspace(-2.0, 3.0, 17),
+    np.array([-2.0, -0.73, 0.0, 0.001, 1.9, 3.0]),
+])
+def test_replay_energy_bins_keep_exact_edges_and_nonfinite_rejection(edges):
+    values = np.concatenate([
+        edges, np.nextafter(edges, -np.inf), np.nextafter(edges, np.inf),
+        [np.nan, -np.inf, np.inf],
+    ])
+    expected = np.searchsorted(edges, values, side='right') - 1
+    expected[values == edges[-1]] = len(edges) - 2
+    expected[(values < edges[0]) | (values > edges[-1]) | ~np.isfinite(values)] = -1
+    np.testing.assert_array_equal(kernels._energy_bin_indices(values, edges), expected)
+
+    spatial = np.array([0.0, 1.0])
+    _, (_, _, counts) = _run(
+        np.full((values.size, 3), 0.5), values, np.zeros(values.size, dtype=np.int64),
+        np.ones(values.size), np.ones(values.size),
+        np.repeat(np.eye(3)[None], 7, axis=0), np.ones(7),
+        (spatial, spatial, spatial, edges), (1, 1, 1, len(edges) - 1), workers=2,
+    )
+    # Seven coincident transforms still represent one observation per source event.
+    np.testing.assert_array_equal(counts, np.bincount(expected[expected >= 0], minlength=len(edges)-1))
