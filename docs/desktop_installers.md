@@ -133,6 +133,10 @@ complete authoritative runtime and optional dependency lists are in
 `pyproject.toml`; `environment.yml` also contains the test, documentation, and
 packaging tools used by contributors.
 
+Installer builds verify CPU and RAM sampling in the bundled runtime. The
+resource monitor requires `psutil`, which is included in both the package
+dependencies and the installer build environment.
+
 ## Application updates
 
 Installed copies check the latest published GitHub Release shortly after

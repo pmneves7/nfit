@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 def smoke_test() -> dict:
-    """Exercise the bundled GUI, local help, data archive, optimizer, and JIT."""
+    """Exercise bundled GUI, resource monitoring, help, archives, optimizer, and JIT."""
     import tempfile
 
     import h5py
@@ -26,6 +26,13 @@ def smoke_test() -> dict:
     from .app_distribution import application_version, local_help_index, platform_key
     from .project_gui import _qt_app
     from .rebin import rebin_nd
+    from .resource_usage import ResourceUsageSampler
+
+    resources = ResourceUsageSampler().sample()
+    assert 0 <= resources.process_cpu_percent <= 100
+    assert 0 < resources.process_memory_percent <= 100
+    assert 0 <= resources.system_cpu_percent <= 100
+    assert 0 <= resources.system_memory_percent <= 100
 
     app = _qt_app()
     assert not app.windowIcon().isNull()
@@ -58,6 +65,7 @@ def smoke_test() -> dict:
         "platform": platform_key(),
         "help": str(index),
         "splash": "ok",
+        "resource_monitor": "ok",
         "status": "ok",
     }
 

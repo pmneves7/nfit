@@ -16,6 +16,9 @@ def test_distribution_name_and_gui_entry_point_are_pip_ready():
     assert project["scripts"]["nfit"] == "nfit.project_gui:main"
     assert "pyside6>=6.11.2" in project["dependencies"]
     assert "certifi>=2026.7.22" in project["dependencies"]
+    assert "psutil>=5.9" in project["dependencies"]
+    environment = (Path(__file__).resolve().parents[1] / "environment.yml").read_text()
+    assert "  - psutil>=5.9\n" in environment
     assert "colorcet>=3.1" in project["dependencies"]
     assert "cmcrameri>=1.10" in project["dependencies"]
     assert "cmocean>=4.0.3" in project["dependencies"]
@@ -26,7 +29,7 @@ def test_distribution_name_and_gui_entry_point_are_pip_ready():
 def test_release_metadata_has_author_license_and_urls():
     project = _project_metadata()
 
-    assert project["version"] == "0.102.9"
+    assert project["version"] == "0.102.10"
     assert project["authors"] == [{"name": "Paul M. Neves", "email": "pneves1@jhu.edu"}]
     assert project["license"] == "MIT"
     assert project["license-files"] == ["LICENSE"]
