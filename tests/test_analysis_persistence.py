@@ -97,6 +97,26 @@ def test_mdhisto_artifact_preserves_axes_and_auxiliary_channels(tmp_path):
     assert restored.auxiliary_channels["coverage"].quantity_type == "scattering_intensity"
 
 
+def test_mdhisto_artifact_preserves_grid_normalization(tmp_path):
+    axis = MDHistoAxis("E", np.array([0.0, 1.0, 2.0]), "meV", "energy")
+    denominator = np.array([4.0, 0.0])
+    denominator.setflags(write=False)
+    data = MDHistoData(
+        (axis,), np.ones(2), np.ones(2), np.zeros(2, bool), np.ones(2),
+        metadata={"normalization_denominator": denominator},
+        auxiliary_channels={
+            "normalization_denominator": MDHistoChannel(denominator, label="Normalization")
+        },
+    )
+    path = tmp_path / "normalized.npz"
+    write_dataset_artifact(data, path)
+    with np.load(path) as archive:
+        assert "normalization_denominator" not in str(archive["metadata_json"].item())
+        assert "normalization_denominator_auxiliary_channel" in archive
+    restored = read_dataset_artifact(path)
+    np.testing.assert_array_equal(restored.metadata["normalization_denominator"], denominator)
+
+
 def test_runner_publishes_artifact_and_fresh_result(tmp_path):
     key = "persistence_test_operation"
     table = PointListData({"H": [1.0], "I": [2.0]}, coordinate_names=["H"], channels=[{"label": "I", "value": "I", "error": None}])

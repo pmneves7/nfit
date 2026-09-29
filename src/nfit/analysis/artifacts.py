@@ -203,6 +203,13 @@ def dataset_artifact_from_payload(archive: Any) -> MDHistoData | PointListData:
     }
     coordinate = int(np.asarray(archive["coordinate_system"]).item()) if "coordinate_system" in archive else -1
     visual = int(np.asarray(archive["visual_normalization"]).item()) if "visual_normalization" in archive else -1
+    if "normalization_denominator" in archive:
+        metadata["normalization_denominator"] = np.asarray(
+            archive["normalization_denominator"], dtype=float
+        )
+    elif "normalization_denominator_auxiliary_channel" in archive:
+        name = str(np.asarray(archive["normalization_denominator_auxiliary_channel"]).item())
+        metadata["normalization_denominator"] = channels[name].values
     return MDHistoData(axes, archive["signal"], archive["errors"], archive["mask"], archive["num_events"], coordinate_system=None if coordinate < 0 else coordinate, visual_normalization=None if visual < 0 else visual, metadata=metadata, auxiliary_channels=channels)
 
 
@@ -211,7 +218,11 @@ def output_data(output: DatasetOutput | TableOutput) -> MDHistoData | PointListD
 
 
 def _payload(data: MDHistoData | PointListData) -> dict[str, Any]:
-    metadata, background_arrays = background_metadata_payload(data.metadata)
+    metadata = dict(data.metadata)
+    denominator = metadata.get("normalization_denominator")
+    if isinstance(denominator, np.ndarray):
+        metadata.pop("normalization_denominator")
+    metadata, background_arrays = background_metadata_payload(metadata)
     common: dict[str, Any] = {"format": np.asarray("nfit-analysis-artifact"), "version": np.asarray(1), "metadata_json": np.asarray(json.dumps(_json_metadata(metadata), sort_keys=True))}
     common.update(background_arrays)
     if isinstance(data, PointListData):
@@ -226,6 +237,14 @@ def _payload(data: MDHistoData | PointListData) -> dict[str, Any]:
         common.update({f"aux_{i}_values": channel.values, f"aux_{i}_label": np.asarray(channel.label), f"aux_{i}_unit": np.asarray(channel.unit), f"aux_{i}_quantity_type": np.asarray(channel.quantity_type)})
         if channel.errors is not None:
             common[f"aux_{i}_errors"] = channel.errors
+    if isinstance(denominator, np.ndarray):
+        channel = data.auxiliary_channels.get("normalization_denominator")
+        if channel is not None and np.shares_memory(channel.values, denominator):
+            common["normalization_denominator_auxiliary_channel"] = np.asarray(
+                "normalization_denominator"
+            )
+        else:
+            common["normalization_denominator"] = denominator
     return common
 
 

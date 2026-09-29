@@ -8,7 +8,7 @@ import numpy as np
 import nfit.project_data as project_data
 import nfit.project_dataset_io as project_dataset_io
 from nfit.dataset import PointListData
-from nfit.mdhisto import MDHistoAxis, MDHistoData
+from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from nfit.pipeline import DatasetEntry
 
 PACKAGE_ROOT = Path(__file__).parents[1] / "src" / "nfit"
@@ -79,6 +79,56 @@ def test_dataset_io_service_round_trips_point_list_data(tmp_path) -> None:
     assert restored.coordinate_names == ["x"]
     assert restored.metadata["nested"] == {"array": [1.0]}
     assert context == {}
+
+
+def test_dataset_io_preserves_grid_normalization_without_json_expansion(tmp_path) -> None:
+    axis = MDHistoAxis("Energy", np.asarray([0.0, 1.0, 2.0]), "meV", "energy")
+    denominator = np.asarray([4.0, 0.0])
+    denominator.setflags(write=False)
+    common = dict(
+        axes=(axis,), signal=np.asarray([2.0, 0.0]),
+        errors=np.asarray([0.2, 0.0]), mask=np.asarray([False, True]),
+        num_events=np.asarray([3.0, 0.0]),
+        metadata={
+            "signal_semantics": "density",
+            "normalization_denominator": denominator,
+            "zero_event_bins_are_measured": True,
+        },
+    )
+    with_channel = MDHistoData(
+        **common,
+        auxiliary_channels={
+            "normalization_denominator": MDHistoChannel(
+                denominator, label="Normalization"
+            )
+        },
+    )
+    without_channel = MDHistoData(**common)
+
+    for label, data in (("shared", with_channel), ("separate", without_channel)):
+        path = tmp_path / f"{label}.npz"
+        project_dataset_io.save_dataset_file(
+            DatasetEntry(label, data), path, use_view=False
+        )
+        with np.load(path, allow_pickle=False) as archive:
+            assert "normalization_denominator" not in str(
+                archive["metadata_json"].item()
+            )
+            assert (
+                "normalization_denominator_auxiliary_channel" in archive
+            ) == (label == "shared")
+            assert ("normalization_denominator" in archive) == (
+                label == "separate"
+            )
+        restored, _ = project_dataset_io._load_nfit_dataset_file(path)
+        np.testing.assert_array_equal(
+            restored.metadata["normalization_denominator"], denominator
+        )
+        if label == "shared":
+            assert np.shares_memory(
+                restored.metadata["normalization_denominator"],
+                restored.auxiliary_channels["normalization_denominator"].values,
+            )
 
 
 def test_dataset_io_service_has_no_gui_dependency() -> None:

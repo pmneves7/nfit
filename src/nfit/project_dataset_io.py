@@ -48,6 +48,11 @@ def save_dataset_file(
             "dataset saving currently supports MDHistoData or PointListData datasets"
         )
     saved_metadata = dict(data.metadata)
+    normalization_denominator = saved_metadata.get("normalization_denominator")
+    if isinstance(normalization_denominator, np.ndarray):
+        saved_metadata.pop("normalization_denominator")
+    else:
+        normalization_denominator = None
     saved_metadata.setdefault("signal_semantics", signal_semantics(data))
     saved_metadata, background_arrays = background_metadata_payload(saved_metadata)
     payload: dict[str, Any] = {
@@ -68,6 +73,18 @@ def save_dataset_file(
         ),
     }
     payload.update(background_arrays)
+    if normalization_denominator is not None:
+        channel = data.auxiliary_channels.get("normalization_denominator")
+        if (
+            channel is not None
+            and channel.values.shape == normalization_denominator.shape
+            and np.shares_memory(channel.values, normalization_denominator)
+        ):
+            payload["normalization_denominator_auxiliary_channel"] = np.asarray(
+                "normalization_denominator"
+            )
+        else:
+            payload["normalization_denominator"] = normalization_denominator
     context = {
         key: copy.deepcopy(dataset.parameters[key])
         for key in (
@@ -215,6 +232,19 @@ def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
         )
         for index, name in enumerate(channel_names)
     }
+    if "normalization_denominator" in archive:
+        denominator = np.asarray(archive["normalization_denominator"], dtype=float)
+        denominator.setflags(write=False)
+        metadata["normalization_denominator"] = denominator
+    elif "normalization_denominator_auxiliary_channel" in archive:
+        name = _nfit_archive_text(
+            archive, "normalization_denominator_auxiliary_channel"
+        )
+        if name not in auxiliary_channels:
+            raise ValueError(
+                f"{source} is missing normalization auxiliary channel {name!r}"
+            )
+        metadata["normalization_denominator"] = auxiliary_channels[name].values
     return MDHistoData(
         axes=tuple(axes),
         signal=np.asarray(archive["signal"], dtype=float),

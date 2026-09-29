@@ -31,7 +31,9 @@ instrument or file format.
   signatures before reuse and decoded on demand. Unchanged saved binnings reuse
   their compressed members during atomic saves. Large and small arrays use the
   same standard NPZ representation, with internal parallelism bounded by the
-  machine's CPU and managed RAM limits.
+  machine's CPU and managed RAM limits. Histogram normalization grids are
+  stored as arrays rather than expanded into JSON, so large cached binnings
+  remain practical to save and reopen.
 - **Dataset identity is unique.** Importing or copying a dataset assigns a new
   ID, even when the source file is the same. Project loading rejects duplicate
   IDs because analysis and background references would otherwise be ambiguous.
