@@ -163,6 +163,7 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
 
         monitor = toolbar.widgetForAction(toolbar.actions()[-1])
         assert monitor.objectName() == "resource_monitor"
+        assert monitor.text().startswith(f"nfit {application_version()} | CPU —")
         assert monitor.toolTip()
 
         all_actions = {
@@ -179,7 +180,6 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
             "Save",
             "Save As",
             "Preferences…",
-            f"nfit version {application_version()}",
             "Close",
             "Quit",
             "Check for updates…",
@@ -208,8 +208,6 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
         ) != QtGui.QKeySequence.SequenceMatch.NoMatch
         assert all_actions["Check for updates…"].toolTip()
         assert all_actions["Update settings…"].toolTip()
-        assert explorer.version_action.toolTip()
-        assert not explorer.version_action.isEnabled()
         assert explorer._external_change_timer.parent() is explorer.window
         assert explorer._external_change_timer.interval() == 1500
     finally:

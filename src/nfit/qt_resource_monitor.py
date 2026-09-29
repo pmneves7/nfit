@@ -6,6 +6,7 @@ from threading import Event, Thread
 
 from PySide6 import QtCore, QtWidgets
 
+from .app_distribution import application_version
 from .resource_usage import ResourceUsageSampler
 
 _SAMPLE_SECONDS = 2.0
@@ -39,6 +40,7 @@ class ResourceMonitor(QtWidgets.QLabel):
         self.setObjectName("resource_monitor")
         self.setToolTip(_TOOLTIP)
         self.setContentsMargins(8, 0, 8, 0)
+        self._version = application_version()
         self._latest = [None]
         self._stop = Event()
         self._thread = None
@@ -76,10 +78,10 @@ class ResourceMonitor(QtWidgets.QLabel):
     def _refresh(self):
         usage = self._latest[0]
         if usage is None:
-            self.setText("nfit CPU —  RAM —   |   System CPU —  RAM —")
+            self.setText(f"nfit {self._version} | CPU —  RAM —   |   System CPU —  RAM —")
             return
         self.setText(
-            f"nfit CPU {usage.process_cpu_percent:.1f}%  "
+            f"nfit {self._version} | CPU {usage.process_cpu_percent:.1f}%  "
             f"RAM {usage.process_memory_percent:.1f}%   |   "
             f"System CPU {usage.system_cpu_percent:.1f}%  "
             f"RAM {usage.system_memory_percent:.1f}%"

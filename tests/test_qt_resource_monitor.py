@@ -47,7 +47,10 @@ def test_sampling_runs_off_thread_and_stops_on_hide(monitor, monkeypatch):
         time.sleep(0.001)
     assert value._latest[0] is not None
     value._refresh()
-    assert value.text() == "nfit CPU 12.0%  RAM 3.0%   |   System CPU 45.0%  RAM 67.0%"
+    assert value.text() == (
+        f"nfit {value._version} | CPU 12.0%  RAM 3.0%   |   "
+        "System CPU 45.0%  RAM 67.0%"
+    )
     assert all(ident != threading.get_ident() for ident in calls)
     assert "logical CPU" in value.toolTip()
     value.hide()

@@ -2,7 +2,6 @@
 import copy
 import sys
 
-from nfit.app_distribution import application_version
 from nfit.project_archive import read_project_manifest
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
@@ -275,7 +274,6 @@ def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch,
         ),
         "Save As": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.SaveAs),
         "Preferences…": "",
-        f"nfit version {application_version()}": "",
         "Close": _standard_shortcut_text(
             QtGui, QtGui.QKeySequence.StandardKey.Close
         ),
