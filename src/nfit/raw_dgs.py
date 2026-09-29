@@ -484,18 +484,16 @@ def bin_raw_dgs_group(
                                 flat = _flat_bin_indices(coords, edges, shape)
                                 keep = flat >= 0
                                 if np.any(keep):
-                                    ravel = data_sum.ravel()
-                                    ravel += np.bincount(
-                                        flat[keep], weights=weights[keep], minlength=ravel.size
+                                    indices = flat[keep]
+                                    accepted_weights = weights[keep]
+                                    # A detector bank is sparse on a large 4D grid.
+                                    # Dense bincount temporaries would touch every
+                                    # output bin once for each bank.
+                                    np.add.at(data_sum.ravel(), indices, accepted_weights)
+                                    np.add.at(
+                                        variance_sum.ravel(), indices, accepted_weights**2
                                     )
-                                    variance_sum.ravel()[:] += np.bincount(
-                                        flat[keep],
-                                        weights=weights[keep] ** 2,
-                                        minlength=variance_sum.size,
-                                    )
-                                    event_count.ravel()[:] += np.bincount(
-                                        flat[keep], minlength=event_count.size
-                                    )
+                                    np.add.at(event_count.ravel(), indices, 1)
                     processed += stop - start
                     if progress_callback is not None:
                         progress_callback(

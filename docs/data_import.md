@@ -327,6 +327,9 @@ instrument definition, applies available detector-efficiency and $k_i/k_f$
 corrections, and normalizes by retained proton charge and detector-trajectory
 coverage. **Output coordinates** selects a four-dimensional single-crystal
 HKLE histogram or a two-dimensional powder $|\mathbf Q|,\Delta E$ histogram.
+Sparse detector-bank contributions are accumulated directly into the output
+grid, so a large four-dimensional grid does not require a full-grid temporary
+for every bank.
 The powder path bins radially from detector events without first allocating an
 intermediate four-dimensional volume.
 

@@ -87,6 +87,26 @@ def test_raw_dgs_metadata_and_streamed_hkle_binning(tmp_path):
     assert not result.mask.item()
 
 
+def test_raw_dgs_accumulates_repeated_events_in_one_sparse_bin(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    options = dict(
+        lower=[-10, -10, -10, -100],
+        upper=[10, 10, 10, 20],
+        num_bins=[1, 1, 1, 1],
+    )
+    one = bin_raw_dgs_group(group, **options)
+    with h5py.File(source, "r+") as handle:
+        handle["entry/bank1_events/event_time_offset"][1] = 9000.0
+    two = bin_raw_dgs_group(group, **options)
+
+    assert two.num_events.item() == 2.0
+    np.testing.assert_allclose(two.signal, 2.0 * one.signal)
+    np.testing.assert_allclose(two.errors, np.sqrt(2.0) * one.errors)
+
+
 def test_raw_dgs_supports_one_nonuniform_axis_and_minimum_samples(tmp_path):
     source = tmp_path / "SEQ_42.nxs.h5"
     _write_raw_dgs(source)
