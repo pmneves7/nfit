@@ -337,6 +337,9 @@ Detector geometry is reused across runs only when their complete embedded
 instrument XML definitions are identical. The bounded cache checks the XML
 contents on each read, so mixed instruments and edited definitions retain
 their own detector positions and efficiency parameters.
+Detector masks are applied to the geometry before event lookup, and sorted
+detector indices are reused across event chunks. Each reduction reads fresh run
+metadata once and uses that snapshot for both events and normalization.
 
 Use **Vanadium normalization** to select a processed vanadium workspace.
 Non-positive values exclude detectors, while positive values weight their

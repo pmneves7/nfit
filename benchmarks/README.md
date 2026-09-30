@@ -43,3 +43,25 @@ arrays require several gigabytes. Compare backends in separate processes: peak
 RSS is a process-lifetime high-water mark, and the first Numba run may include
 JIT compilation. Record CPU model, available cores, memory, operating system,
 Python, NumPy, and Numba versions with published results.
+
+`benchmark_rebin_modes.py` compares discrete assignment, fractional momentum
+with discrete energy, and fractional assignment on all four axes. It uses the
+same source and output basis and grid for every mode. Repeated timings separate
+the first dispatch from resident-kernel performance:
+
+```bash
+/Users/pmneves/anaconda3/envs/nfit/bin/python benchmarks/benchmark_rebin_modes.py \
+  --shape 96,80,64,24 --workers 8 --batch-mb 192 --repeats 3
+/Users/pmneves/anaconda3/envs/nfit/bin/python benchmarks/benchmark_rebin_modes.py \
+  --project /absolute/path/to/project.nfit --member assets/binnings/example/data.npz \
+  --workers 8 --batch-mb 192 --coarsen 2 --repeats 3
+```
+
+Run worker counts and batch sizes in separate processes. JSON lines report
+source loading separately, per-mode elapsed time, resolved backend and workers,
+output summaries, and process peak RSS. Fractional and discrete results differ
+scientifically; only comparisons of the same mode should require numerical
+equivalence. Native raw-DGS and MDE event histograms already assign events
+discretely, so this comparison measures subsequent histogram rebinning.
+
+See [SEQUOIA reduction and binning measurements](results/sequoia-performance.md).

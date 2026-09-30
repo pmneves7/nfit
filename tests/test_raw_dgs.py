@@ -115,6 +115,48 @@ def test_raw_detector_geometry_cache_is_bounded(tmp_path, geometry_cache):
     assert raw_dgs._detector_geometry_from_xml.cache_info().currsize == 8
 
 
+def test_detector_geometry_lookup_preserves_rows_and_owns_immutable_arrays():
+    positions = np.arange(9.0).reshape(3, 3)
+    geometry = raw_dgs._DetectorGeometry(np.array([7, 2, 5]), positions, np.array([.7, .2, .5]))
+    positions.fill(-1.0)
+    ids = np.array([2, 7, 99, 2])
+    found_positions, exponents, valid = geometry.event_geometry_for_ids(ids)
+    np.testing.assert_array_equal(valid, [True, True, False, True])
+    np.testing.assert_array_equal(found_positions, [[3, 4, 5], [0, 1, 2], [0, 0, 0], [3, 4, 5]])
+    np.testing.assert_array_equal(exponents, [.2, .7, 0, .2])
+    order = geometry._sorted_ids_and_order
+    geometry.event_geometry_for_ids(ids)
+    assert geometry._sorted_ids_and_order is order
+    assert not any(array.flags.writeable for array in (*order, geometry.positions))
+
+
+@pytest.mark.parametrize("powder", [False, True])
+def test_raw_reduction_reads_metadata_once_per_run_but_refreshes_next_operation(tmp_path, monkeypatch, powder):
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    original = raw_dgs.inspect_raw_dgs_run
+    calls = []
+
+    def inspect(path):
+        calls.append(path)
+        return original(path)
+
+    monkeypatch.setattr(raw_dgs, "inspect_raw_dgs_run", inspect)
+    options = (
+        dict(lower=[0, -100], upper=[20, 40], num_bins=[1, 1], coordinate_mode="powder")
+        if powder else dict(lower=[-10, -10, -10, -100], upper=[10, 10, 10, 40], num_bins=[1]*4)
+    )
+    first = bin_raw_dgs_group(group, **options)
+    assert len(calls) == 1
+    with pytest.importorskip("h5py").File(source, "r+") as handle:
+        handle["entry/DASlogs/BL17:Det:TH:BL:Ei/average_value"][0] = 40.0
+    second = bin_raw_dgs_group(group, **options)
+    assert len(calls) == 2
+    assert first.metadata["raw_dgs_energy_windows_meV"][0]["incident_energy_meV"] == 20.0
+    assert second.metadata["raw_dgs_energy_windows_meV"][0]["incident_energy_meV"] == 40.0
+
+
 def test_raw_dgs_metadata_and_streamed_hkle_binning(tmp_path):
     source = tmp_path / "SEQ_42.nxs.h5"
     _write_raw_dgs(source)
@@ -468,7 +510,7 @@ def test_raw_dgs_uses_mantid_ki_over_kf_event_weight(monkeypatch, tmp_path):
     source = tmp_path / "SEQ_42.nxs.h5"
     _write_raw_dgs(source)
     group = raw_dgs_dataset_group([source])
-    monkeypatch.setattr(raw_dgs, "_trajectory_normalization", lambda *args: np.ones(args[3]))
+    monkeypatch.setattr(raw_dgs, "_trajectory_normalization", lambda *args, **kwargs: np.ones(args[3]))
 
     result = bin_raw_dgs_group(
         group,
@@ -489,7 +531,7 @@ def test_raw_dgs_applies_mantid_he3_tube_efficiency(monkeypatch, tmp_path):
     source = tmp_path / "SEQ_42.nxs.h5"
     _write_raw_dgs(source, with_he3=True)
     group = raw_dgs_dataset_group([source])
-    monkeypatch.setattr(raw_dgs, "_trajectory_normalization", lambda *args: np.ones(args[3]))
+    monkeypatch.setattr(raw_dgs, "_trajectory_normalization", lambda *args, **kwargs: np.ones(args[3]))
 
     result = bin_raw_dgs_group(
         group,
@@ -528,7 +570,7 @@ def test_raw_dgs_feldman_cousins_zero_error_is_normalized(monkeypatch, tmp_path)
     source = tmp_path / "SEQ_42.nxs.h5"
     _write_raw_dgs(source)
     group = raw_dgs_dataset_group([source])
-    monkeypatch.setattr(raw_dgs, "_trajectory_normalization", lambda *args: np.full(args[3], 2.0))
+    monkeypatch.setattr(raw_dgs, "_trajectory_normalization", lambda *args, **kwargs: np.full(args[3], 2.0))
 
     result = bin_raw_dgs_group(
         group,

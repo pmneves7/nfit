@@ -15,7 +15,7 @@ import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cached_property, lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -360,11 +360,15 @@ def bin_raw_dgs_group(
     total = sum(int(dataset.metadata.get("event_count", 0)) for dataset in selected)
     processed = 0
     energy_bounds_by_dataset_id: dict[str, tuple[float, float]] = {}
+    run_infos_by_dataset_id: dict[str, RawDGSRunInfo] = {}
     resolved_energy_windows = []
     for dataset in selected:
         source = Path(dataset.metadata["source_file"])
         info = inspect_raw_dgs_run(source)
-        geometry = _detector_geometry(source)
+        run_infos_by_dataset_id[dataset.id] = info
+        geometry = _masked_detector_geometry(
+            _detector_geometry(source), detector_norm, detector_mask
+        )
         ei = float(config.get("incident_energy_override") or info.incident_energy)
         t0 = float(config.get("t0_override") if config.get("t0_override") is not None else info.t0)
         if ei <= 0.0 or info.l1 <= 0.0:
@@ -418,10 +422,6 @@ def bin_raw_dgs_group(
                             np.searchsorted(event_index, np.arange(start, stop), side="right") - 1
                         )
                         valid &= pulse_keep[np.clip(pulse_index, 0, pulse_keep.size - 1)]
-                    if detector_norm is not None:
-                        valid &= detector_norm.value_for_ids(event_ids) > 0.0
-                    if detector_mask is not None:
-                        valid &= detector_mask.value_for_ids(event_ids) > 0.0
                     if np.any(valid):
                         positions = positions[valid]
                         he3_exponents = he3_exponents[valid]
@@ -514,6 +514,7 @@ def bin_raw_dgs_group(
             detector_norm,
             detector_mask,
             energy_bounds_by_dataset_id,
+            run_infos_by_dataset_id=run_infos_by_dataset_id,
             **(
                 {"progress_callback": progress_callback}
                 if progress_callback is not None
@@ -531,6 +532,7 @@ def bin_raw_dgs_group(
             detector_mask,
             symmetry,
             energy_bounds_by_dataset_id,
+            run_infos_by_dataset_id=run_infos_by_dataset_id,
             **(
                 {"progress_callback": progress_callback}
                 if progress_callback is not None
@@ -653,6 +655,7 @@ def _trajectory_normalization(
     energy_bounds_by_dataset_id=None,
     *,
     progress_callback=None,
+    run_infos_by_dataset_id=None,
 ):
     """Native MDNorm-style detector trajectories for compatible direct-geometry runs."""
     config = group.metadata["raw_dgs"]
@@ -662,7 +665,11 @@ def _trajectory_normalization(
     detector_payload = None
     shared_detector_geometry = True
     for dataset in datasets:
-        info = inspect_raw_dgs_run(dataset.metadata["source_file"])
+        info = (
+            inspect_raw_dgs_run(dataset.metadata["source_file"])
+            if run_infos_by_dataset_id is None
+            else run_infos_by_dataset_id[dataset.id]
+        )
         geometry = _detector_geometry(info.path)
         direction = geometry.positions / np.linalg.norm(geometry.positions, axis=1)[:, None]
         solid = (
@@ -795,6 +802,7 @@ def _powder_trajectory_normalization(
     energy_bounds_by_dataset_id,
     *,
     progress_callback=None,
+    run_infos_by_dataset_id=None,
 ):
     """Accumulate the radial MDNorm-style denominator for raw runs."""
 
@@ -802,7 +810,11 @@ def _powder_trajectory_normalization(
     result = np.zeros(shape)
     payloads = []
     for dataset in datasets:
-        info = inspect_raw_dgs_run(dataset.metadata["source_file"])
+        info = (
+            inspect_raw_dgs_run(dataset.metadata["source_file"])
+            if run_infos_by_dataset_id is None
+            else run_infos_by_dataset_id[dataset.id]
+        )
         geometry = _detector_geometry(info.path)
         direction = geometry.positions / np.linalg.norm(
             geometry.positions, axis=1
@@ -983,9 +995,25 @@ class _DetectorGeometry:
     positions: np.ndarray
     he3_exponents: np.ndarray
 
-    def event_geometry_for_ids(self, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def __post_init__(self):
+        for name, dtype in (("detector_ids", np.int64), ("positions", float),
+                            ("he3_exponents", float)):
+            values = np.asarray(getattr(self, name), dtype=dtype)
+            if values.flags.writeable:
+                values = values.copy()
+                values.setflags(write=False)
+            object.__setattr__(self, name, values)
+
+    @cached_property
+    def _sorted_ids_and_order(self):
         order = np.argsort(self.detector_ids)
         sorted_ids = self.detector_ids[order]
+        order.setflags(write=False)
+        sorted_ids.setflags(write=False)
+        return sorted_ids, order
+
+    def event_geometry_for_ids(self, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        sorted_ids, order = self._sorted_ids_and_order
         found = np.searchsorted(sorted_ids, ids)
         valid = found < sorted_ids.size
         valid[valid] &= sorted_ids[found[valid]] == ids[valid]
@@ -994,6 +1022,21 @@ class _DetectorGeometry:
         positions[valid] = self.positions[order[found[valid]]]
         exponents[valid] = self.he3_exponents[order[found[valid]]]
         return positions, exponents, valid
+
+
+def _masked_detector_geometry(geometry, detector_norm, detector_mask):
+    """Apply static detector selection once per run, before event lookups."""
+
+    enabled = np.ones(geometry.detector_ids.size, dtype=bool)
+    for selection in (detector_norm, detector_mask):
+        if selection is not None:
+            enabled &= selection.value_for_ids(geometry.detector_ids) > 0.0
+    if np.all(enabled):
+        return geometry
+    return _DetectorGeometry(
+        geometry.detector_ids[enabled], geometry.positions[enabled],
+        geometry.he3_exponents[enabled],
+    )
 
 
 def _detector_geometry(path: Path) -> _DetectorGeometry:
@@ -1047,8 +1090,6 @@ def _detector_geometry_from_xml(xml: bytes) -> _DetectorGeometry:
         np.asarray(positions, dtype=float),
         np.asarray(he3_exponents, dtype=float),
     )
-    for array in (geometry.detector_ids, geometry.positions, geometry.he3_exponents):
-        array.setflags(write=False)
     return geometry
 
 
