@@ -55,6 +55,66 @@ def _write_raw_dgs(path, *, with_he3=False):
             logs.create_group(name).create_dataset("average_value", data=[value])
 
 
+@pytest.fixture
+def geometry_cache():
+    raw_dgs._detector_geometry_from_xml.cache_clear()
+    yield
+    raw_dgs._detector_geometry_from_xml.cache_clear()
+
+
+def _rewrite_instrument_xml(path, old, new):
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(path, "r+") as handle:
+        group = handle["entry/instrument/instrument_xml"]
+        xml = group["data"][()].tobytes().decode().replace(old, new)
+        del group["data"]
+        group.create_dataset("data", data=np.frombuffer(xml.encode(), dtype="u1"))
+
+
+def test_raw_detector_geometry_reuses_only_identical_xml(tmp_path, geometry_cache):
+    first_path, second_path = (tmp_path / name for name in ("SEQ_42.nxs.h5", "SEQ_43.nxs.h5"))
+    _write_raw_dgs(first_path, with_he3=True)
+    _write_raw_dgs(second_path, with_he3=True)
+    first = raw_dgs._detector_geometry(first_path)
+    assert raw_dgs._detector_geometry(second_path) is first
+    assert raw_dgs._detector_geometry_from_xml.cache_info().misses == 1
+    for array in (first.detector_ids, first.positions, first.he3_exponents):
+        assert not array.flags.writeable
+
+    # A different instrument may reuse detector IDs. Its full definition,
+    # including positions and efficiency parameters, must remain independent.
+    _rewrite_instrument_xml(second_path, '<instrument xmlns=', '<instrument name="HYSPEC" xmlns=')
+    _rewrite_instrument_xml(second_path, 'x="1" y="0" z="2"', 'x="2" y="0" z="2"')
+    _rewrite_instrument_xml(second_path, 'val="10.0"', 'val="5.0"')
+    second = raw_dgs._detector_geometry(second_path)
+    assert second is not first
+    np.testing.assert_array_equal(second.detector_ids, first.detector_ids)
+    np.testing.assert_allclose(second.positions, [[2.0, 0.0, 2.0]])
+    np.testing.assert_allclose(second.he3_exponents, first.he3_exponents / 2.0)
+    assert raw_dgs._detector_geometry(first_path) is first
+
+
+def test_raw_detector_geometry_detects_definition_edits(tmp_path, geometry_cache):
+    path = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(path)
+    before = raw_dgs._detector_geometry(path)
+    _rewrite_instrument_xml(path, 'x="1" y="0" z="2"', 'x="3" y="0" z="2"')
+    after = raw_dgs._detector_geometry(path)
+    assert after is not before
+    np.testing.assert_allclose(before.positions, [[1.0, 0.0, 2.0]])
+    np.testing.assert_allclose(after.positions, [[3.0, 0.0, 2.0]])
+
+
+def test_raw_detector_geometry_cache_is_bounded(tmp_path, geometry_cache):
+    path = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(path)
+    with pytest.importorskip("h5py").File(path, "r") as handle:
+        xml = handle["entry/instrument/instrument_xml/data"][()].tobytes()
+    for index in range(10):
+        raw_dgs._detector_geometry_from_xml(xml.replace(b'x="1"', f'x="{index}"'.encode()))
+    assert raw_dgs._detector_geometry_from_xml.cache_info().currsize == 8
+
+
 def test_raw_dgs_metadata_and_streamed_hkle_binning(tmp_path):
     source = tmp_path / "SEQ_42.nxs.h5"
     _write_raw_dgs(source)

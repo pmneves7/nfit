@@ -15,6 +15,7 @@ import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -996,12 +997,22 @@ class _DetectorGeometry:
 
 
 def _detector_geometry(path: Path) -> _DetectorGeometry:
-    """Resolve detector pixels from an IDF's component/type hierarchy."""
+    """Read the current IDF and reuse geometry only for identical XML contents."""
     import h5py
 
     with h5py.File(path, "r") as handle:
-        xml_data = handle["entry/instrument/instrument_xml/data"][()]
-    root = ET.fromstring(xml_data.tobytes().decode())
+        xml = handle["entry/instrument/instrument_xml/data"][()].tobytes()
+    try:
+        return _detector_geometry_from_xml(xml)
+    except ValueError as error:
+        raise ValueError(f"{path.name}: {error}") from error
+
+
+@lru_cache(maxsize=8)
+def _detector_geometry_from_xml(xml: bytes) -> _DetectorGeometry:
+    """Keep a bounded set of immutable geometries, keyed by the full IDF."""
+
+    root = ET.fromstring(xml)
     namespace = root.tag.split("}")[0] + "}"
     types = {item.get("name"): item for item in root.findall(f"{namespace}type")}
     idlists = {item.get("idname"): item for item in root.findall(f"{namespace}idlist")}
@@ -1030,12 +1041,15 @@ def _detector_geometry(path: Path) -> _DetectorGeometry:
         positions.extend(item[0] for item in leaf_positions)
         he3_exponents.extend(_he3_exponent(*item) for item in leaf_positions)
     if not ids:
-        raise ValueError(f"{path.name} instrument XML did not define detector pixel positions")
-    return _DetectorGeometry(
+        raise ValueError("instrument XML did not define detector pixel positions")
+    geometry = _DetectorGeometry(
         np.asarray(ids, dtype=np.int64),
         np.asarray(positions, dtype=float),
         np.asarray(he3_exponents, dtype=float),
     )
+    for array in (geometry.detector_ids, geometry.positions, geometry.he3_exponents):
+        array.setflags(write=False)
+    return geometry
 
 
 def _expand_type(name, types, rotation, translation, ns, he3_parameters, inherited_he3):

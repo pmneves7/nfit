@@ -333,6 +333,11 @@ for every bank.
 The powder path bins radially from detector events without first allocating an
 intermediate four-dimensional volume.
 
+Detector geometry is reused across runs only when their complete embedded
+instrument XML definitions are identical. The bounded cache checks the XML
+contents on each read, so mixed instruments and edited definitions retain
+their own detector positions and efficiency parameters.
+
 Use **Vanadium normalization** to select a processed vanadium workspace.
 Non-positive values exclude detectors, while positive values weight their
 normalization trajectories. **Detector mask** can supply an additional
