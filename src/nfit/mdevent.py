@@ -480,22 +480,16 @@ def bin_mdevent_group(
                             wanted, chosen[:, 2].astype(np.int64)
                         )
                         hkl = chosen[:, 5:8] @ transform.T
+                        weights = chosen[:, 0] * signal_factors
+                        variances = chosen[:, 1] * np.square(signal_factors)
                         for operation in symmetry:
                             transformed_hkl = hkl @ operation.T
                             coords = np.column_stack((transformed_hkl, chosen[:, 8])) @ basis_inverse
-                            flat = _flat_bin_indices(coords, edges, shape)
-                            valid = (flat >= 0) & active_runs
-                            np.add.at(
-                                data_sum_flat,
-                                flat[valid],
-                                chosen[valid, 0] * signal_factors[valid],
+                            _accumulate_discrete_event_coordinates(
+                                coords, weights, variances, edges, shape,
+                                data_sum_flat, variance_sum_flat, event_count_flat,
+                                enabled=active_runs,
                             )
-                            np.add.at(
-                                variance_sum_flat,
-                                flat[valid],
-                                chosen[valid, 1] * np.square(signal_factors[valid]),
-                            )
-                            np.add.at(event_count_flat, flat[valid], 1.0)
                 processed += (stop - start) * len(symmetry)
                 if progress_callback is not None:
                     progress_callback(
@@ -2081,6 +2075,31 @@ def _accumulate_powder_detector_trajectory(
             output.ravel()[flat] += (
                 weight * ENERGY_TO_K2 * (second * second - first * first)
             )
+
+
+def _accumulate_discrete_event_coordinates(
+    coordinates, weights, variances, edges, shape,
+    data_sum, variance_sum, event_count, *, enabled=None,
+):
+    """Shared ordered accumulation for already projected neutron events."""
+    compiled = getattr(_MDEVENT_NUMBA, "accumulate_discrete_event_coordinates", None)
+    if compiled is not None:
+        compiled(
+            coordinates, weights, variances, enabled,
+            tuple(np.asarray(edge, dtype=float) for edge in edges),
+            np.asarray(shape, dtype=np.int64),
+            data_sum.ravel(), variance_sum.ravel(), event_count.ravel(),
+        )
+        return
+    flat = _flat_bin_indices(coordinates, edges, shape)
+    valid = flat >= 0
+    if enabled is not None:
+        valid &= enabled
+    indices = flat[valid]
+    values = weights[valid]
+    np.add.at(data_sum.ravel(), indices, values)
+    np.add.at(variance_sum.ravel(), indices, values**2 if variances is None else variances[valid])
+    np.add.at(event_count.ravel(), indices, 1.0)
 
 
 def _flat_bin_indices(coords, edges, shape):

@@ -65,3 +65,17 @@ equivalence. Native raw-DGS and MDE event histograms already assign events
 discretely, so this comparison measures subsequent histogram rebinning.
 
 See [SEQUOIA reduction and binning measurements](results/sequoia-performance.md).
+
+`benchmark_event_accumulation.py` compares the ordered NumPy reference with the
+compiled event accumulator, with exact output checks and compilation excluded
+from repeated timings:
+
+```bash
+/Users/pmneves/anaconda3/envs/nfit/bin/python benchmarks/benchmark_event_accumulation.py --span 4
+/Users/pmneves/anaconda3/envs/nfit/bin/python benchmarks/benchmark_event_accumulation.py --span 1.35
+```
+
+The default million-event workload uses a 64 × 64 × 64 × 48 grid and several
+hundred MiB of arrays. Use `--events` and `--shape` to reduce it for smaller
+machines. This measures event accumulation, excluding reduction, coordinate
+projection, normalization, and archive reading.

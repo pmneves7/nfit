@@ -16,8 +16,11 @@ about 1.5 TiB of physical RAM, and an NVIDIA RTX A6000 with 48 GiB of memory.
 nfit preferences limit work to 64 CPUs and 200,000 MiB of RAM. The runtime
 uses Python 3.14.7 and NumPy 2.5.3; the Shiver environment uses Mantid 6.16.0.1.
 Native BLAS was limited to one thread during the nfit candidate measurements.
-Candidate modules were run with the existing installed nfit runtime; these
-experiments did not update the cluster desktop application.
+Candidates were benchmarked with the existing installed nfit runtime before
+updating its loose source modules and offline documentation. The desktop
+shortcut continues to use the existing installation. No GUI launch check was
+performed. Measurements include normal filesystem/OS caching; they are not
+cold-disk measurements.
 
 Raw reduction times include reading detector events, calibration, coordinate
 conversion, histogram accumulation, trajectory normalization, and output-array
@@ -63,6 +66,173 @@ The corresponding optimized sapphire reduction took 317.61 s (5.29 min),
 with 54.86 s of collection import reported separately. Its 117,417,178 accepted
 events, masks, signal, and errors agree with the previous saved result; arrays
 were compared at float64 tolerance (1e-12), with exact counts and masks.
+
+## Dataset event caches and symmetry binnings
+
+The single project contains both datasets, all 1,355 per-run event caches, both
+basic histograms, and the NiO `3bar` and `3barm` histograms. Each cached event
+retains laboratory Q in Å⁻¹, energy transfer in meV, and corrected weight as five
+float64 values. Output axes, UB, symmetry, and histogram bounds are applied
+when binning; changes to the raw/calibration inputs or reduction settings
+invalidate the relevant run's cache.
+
+| Operation with initial event-cache implementation | Time |
+| --- | ---: |
+| NiO reduction, basic binning, and cache construction | 257.74 s |
+| Sapphire reduction, basic binning, and cache construction | 341.15 s |
+| Save both datasets' event caches and basic binnings | 26.27 s |
+| NiO basic binning from saved event caches | 110.41 s |
+| NiO `3bar` binning, six symmetry operations | 529.60 s |
+| NiO `3barm` binning, twelve symmetry operations | 1,005.38 s |
+| Save both additional symmetry binnings | 40.96 s |
+
+All three cached NiO computations reported 617 cache hits and zero misses.
+Raw metadata, instrument geometry, and calibration loaders were replaced by
+functions that raise during these runs. Counts and masks match exactly;
+signal, errors, and full normalization arrays agree at 1e-12 tolerance.
+Project opening took 0.129 s with `numpy.load` replaced by a function that
+raises, demonstrating metadata-only loading. Binnings and reduced events
+remain lazy.
+
+Before event compression, per-run cache assets occupied 10,129,415,838 bytes
+for NiO and 13,956,879,112 bytes for sapphire. The project with both symmetry
+histograms occupied 27,142,435,999 bytes (25.28 GiB). Event caches retain events
+outside the first output grid so later grids can be constructed without raw
+reduction.
+
+`3bar` uses `x,y,z; y,z,x; z,x,y; -x,-y,-z; -y,-z,-x; -z,-x,-y`.
+`3barm` uses `x,y,z; y,z,x; z,x,y; y,x,z; x,z,y; z,y,x; -x,-y,-z;
+-y,-z,-x; -z,-x,-y; -y,-x,-z; -x,-z,-y; -z,-y,-x`.
+
+## Ordered event accumulation and trajectory normalization
+
+A compiled event pass combines bin lookup, range rejection, and the three
+ordered updates for signal, variance, and counts. Coordinate transforms retain
+their existing float64 operation order. Detector trajectory normalization
+reuses its private worker grids across batches and merges the four monotone
+momentum/energy crossing lists instead of insertion-sorting all crossings.
+Every geometry still supplies its own detector angles and solid-angle weights.
+
+Controlled warm measurements on the local Apple ARM machine:
+
+- One million events on a 64 × 64 × 64 × 48 grid: ordered NumPy accumulation
+  0.165 s versus compiled accumulation 0.0303 s (5.45×), for a mostly
+  out-of-grid sample; 0.1992 s versus 0.05384 s (3.70×) for a denser sample.
+  Signal, variance, and count arrays are exactly equal. Five runs were timed
+  after compilation.
+- 320,000 trajectories (64 runs, 5,000 detectors), four workers,
+  32³ × 101 bins: insertion sort median 0.3127 s versus ordered crossing merge
+  0.1524 s (2.05×). Coverage is exact; maximum normalization difference is
+  5.68 × 10⁻¹⁴, consistent with float64 roundoff. Five warm runs were timed.
+
+On the complete saved NiO event caches, these changes reduced basic binning
+from 110.41 s to 72.69 s (1.52×). The six-operation `3bar` computation fell
+from 529.60 s to 275.24 s (1.92×); the latter includes Python profiling
+and is therefore conservative. It spent 118.66 s in the event phase and
+151.02 s in normalization. Both outputs passed full-array comparison with
+the saved binnings: exact counts/masks and 1e-12 signal/error/normalization
+tolerance. Both used 617 cache hits and zero misses. Peak process RSS was
+23.01 GiB for basic; the subsequent profiled `3bar` process high-water mark
+was 41.47 GiB. No project bytes were changed by this benchmark.
+
+The profile identifies additional archive-directory/chunk overhead and a
+14.42 s serial merge of normalization worker grids. Subsequent changes
+coalesce bounded event blocks, open each cached run once, and merge independent
+normalization output
+tiles in parallel with the worker addition order preserved.
+
+## Event-cache compression experiment
+
+The storage experiment used the shared NPZ/DEFLATE writer used by rebin
+artifacts, retaining float64 bits and standard NumPy compatibility. Small bank
+chunks are buffered into approximately 32 MiB blocks in original event order.
+Columns use standard Fortran-order NPY storage, which compresses the NiO sample
+better than interleaved rows. This is ordinary NPZ storage, not a custom codec.
+Each block remains independently and lazily readable; older uncompressed caches
+are also supported.
+
+Conversion of all 1,355 saved caches, including reading them and verifying
+SHA-256 hashes of the original and decoded event bytes, took 338.08 s using
+eight bounded run workers. Every run's raw-event progress count, run metadata,
+and normalization payload also matched. Compressed cache assets occupy
+18,708,588,627 bytes, versus 24,086,294,950 bytes previously (22.3% smaller).
+The compressed trial project occupied 21,764,702,616 bytes (20.27 GiB), down from 25.28 GiB.
+Saving took 26.84 s; opening with numerical loads forbidden took 0.346 s.
+Existing basic and symmetry histogram caches remained in that same project.
+The final storage policy uses uncompressed event blocks, following the user's
+preference for repeated-binning speed over these storage savings. Histogram
+rebins retain their existing compression; both event formats remain readable.
+
+Before the uniform-grid lookup change, complete binning from compressed
+caches took 87.63 s for basic and 253.89 s for `3bar`, with exact counts/masks
+and signal/errors/normalization agreement at 1e-12. Both reported 617 hits and
+zero misses. Compression adds CPU decoding work: the uncompressed basic
+candidate took 72.69 s, so storage savings are not a free speed increase.
+These are complete operation measurements, including archive reads, projection,
+accumulation, normalization, and finalization.
+
+Additional controlled tests of the uniform-grid event lookup compare the
+existing fused binary-search kernel with arithmetic lookup, corrected against
+actual bin edges. For one million events and a 64 × 64 × 64 × 48 grid, the
+five-run warm medians were 0.05096 s versus 0.03750 s for the denser coordinate
+span ±1.35 (1.36×), and 0.03061 s versus 0.01126 s for span ±4 (2.72×).
+Outputs were exactly equal. Nonuniform grids retain binary search; edge and
+adjacent-float tests include large coordinate offsets and tiny steps.
+
+With the uniform-grid lookup enabled, complete compressed-cache timings were
+84.46 s for basic, 231.04 s for `3bar`, and 400.53 s for `3barm`. All three
+passed full numerical comparisons with their saved binnings, with exact
+counts/masks and 1e-12 signal/errors/normalization tolerance. Each reported
+617 cache hits and zero misses. Peak RSS high-water marks were 23.04, 42.28,
+and 43.51 GiB, respectively, in the sequential benchmark process.
+
+A separate experiment precomputed detector directions and each run's energy
+crossings outside the trajectory loop, with angle snapshots checked for exact
+agreement across batches. For 320,000 controlled trajectories its warm median
+changed from approximately 0.148 s to 0.144 s. This small gain did not justify
+the additional preparation/cache machinery, and it was not adopted.
+
+## Final uncompressed event policy
+
+The final project uses uncompressed, coalesced event blocks. Conversion from
+the compressed trial, including per-run event-byte SHA-256 checks and matching
+normalization/run metadata/progress counts, took 40.98 s with eight bounded
+workers. Cache assets occupy 24,006,909,616 bytes; the complete project is
+27,063,023,605 bytes (25.20 GiB). The smaller header count saves approximately
+79 MB even without compression. Saving took 31.72 s, and project opening with
+numerical loads forbidden took 0.384 s. All 1,355 event caches and all requested
+histograms remain inside the single project.
+
+Event data remains on disk and is read one approximately 32 MiB block at a time.
+Project opening does not hold the 25.20 GiB numerical payload in process RAM.
+Binning still requires histogram arrays, trajectory worker grids, and the small
+per-run normalization snapshots. The OS may cache file pages independently of
+nfit's numerical heap.
+
+The final complete uncompressed-cache benchmark measured:
+
+| NiO binning | Initial cache implementation | Final CPU/block implementation | Speedup |
+| --- | ---: | ---: | ---: |
+| basic | 110.41 s | 56.69 s | 1.95× |
+| `3bar` | 529.60 s | 202.11 s | 2.62× |
+| `3barm` | 1,005.38 s | 373.96 s | 2.69× |
+
+All three report 617 cache hits and zero misses, with raw metadata, geometry,
+and calibration loaders set to fail if called. Counts and masks match exactly;
+signal, errors, and full normalization arrays agree with the saved histograms
+at 1e-12 tolerance. The project file's size and modification time remained
+unchanged. Peak RSS high-water marks were 22.98, 42.16, and 43.53 GiB in the
+sequential process. Basic's event phase finished at 27.07 s and its normalization
+phase at 54.59 s; corresponding `3bar` phases finished at 63.49 and 195.58 s.
+For `3barm` normalization finished at 366.16 s. These timings include archive
+reads, coordinate projection, event accumulation, normalization and finalization;
+comparison/loading of the saved reference is excluded.
+
+Validation used the local nfit conda interpreter: full suite 2,177 passed,
+one optional GPU test skipped, plus the final uncompressed-cache/Numba/archive
+focused suite of 116 passing tests and a final three-test packaging check.
+Ruff, byte-compilation, Sphinx with warnings treated as errors, and diff checks
+passed. The desktop GUI launch check is left to the user as requested.
 
 ## Histogram rebin modes, workers, and batches
 

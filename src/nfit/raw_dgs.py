@@ -15,6 +15,7 @@ import math
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from functools import cached_property, lru_cache
 from pathlib import Path
@@ -26,9 +27,10 @@ from .mdevent import (
     _MDEVENT_NUMBA,
     ENERGY_TO_K2,
     FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
+    MDEVENT_TRAJECTORY_BATCH_TASKS,
     _accumulate_detector_trajectory,
+    _accumulate_discrete_event_coordinates,
     _accumulate_powder_detector_trajectory,
-    _flat_bin_indices,
     _requested_edges,
     _symmetry_matrices,
     _trajectory_worker_count,
@@ -373,105 +375,100 @@ def bin_raw_dgs_group(
         use_cache = bool(config.get("cache_reduced_events", True))
         signature = reduction_signature(dataset, config) if use_cache else None
         cache = cached_reduction(dataset, signature) if use_cache else None
-        if cache is not None:
-            with cache.open() as archive:
+        with cache.open() if cache is not None else nullcontext() as archive:
+            if cache is not None:
                 header = json.loads(str(archive["header_json"].item()))
                 info = _run_info_from_cache(header["run_info"])
                 normalization_payload = {
                     key: np.asarray(archive[key])
                     for key in ("detector_ids", "direction", "solid", "charge")
                 }
-            cache_hits += 1
-        else:
-            if not calibration_loaded:
-                normalization_path = config.get("normalization_file")
-                detector_norm = (
-                    load_detector_normalization(normalization_path)
-                    if normalization_path else None
+                cache_hits += 1
+            else:
+                if not calibration_loaded:
+                    normalization_path = config.get("normalization_file")
+                    detector_norm = (
+                        load_detector_normalization(normalization_path)
+                        if normalization_path else None
+                    )
+                    detector_mask = _combined_detector_mask(config)
+                    calibration_loaded = True
+                info = inspect_raw_dgs_run(source)
+                geometry = _detector_geometry(source)
+                normalization_payload = _run_normalization_payload(
+                    info, geometry, detector_norm, detector_mask, config
                 )
-                detector_mask = _combined_detector_mask(config)
-                calibration_loaded = True
-            info = inspect_raw_dgs_run(source)
-            geometry = _detector_geometry(source)
-            normalization_payload = _run_normalization_payload(
-                info, geometry, detector_norm, detector_mask, config
+                cache_misses += 1
+            run_infos_by_dataset_id[dataset.id] = info
+            normalization_payloads_by_dataset_id[dataset.id] = normalization_payload
+            ei = float(config.get("incident_energy_override") or info.incident_energy)
+            if ei <= 0.0 or info.l1 <= 0.0:
+                raise ValueError(f"{source.name} has no usable incident energy or source distance")
+            energy_bounds = _energy_transfer_bounds(config, ei)
+            energy_bounds_by_dataset_id[dataset.id] = energy_bounds
+            resolved_energy_windows.append(
+                {
+                    "dataset_id": dataset.id,
+                    "run_number": info.run_number,
+                    "incident_energy_meV": ei,
+                    "minimum_meV": energy_bounds[0],
+                    "maximum_meV": energy_bounds[1],
+                }
             )
-            cache_misses += 1
-        run_infos_by_dataset_id[dataset.id] = info
-        normalization_payloads_by_dataset_id[dataset.id] = normalization_payload
-        ei = float(config.get("incident_energy_override") or info.incident_energy)
-        if ei <= 0.0 or info.l1 <= 0.0:
-            raise ValueError(f"{source.name} has no usable incident energy or source distance")
-        energy_bounds = _energy_transfer_bounds(config, ei)
-        energy_bounds_by_dataset_id[dataset.id] = energy_bounds
-        resolved_energy_windows.append(
-            {
-                "dataset_id": dataset.id,
-                "run_number": info.run_number,
-                "incident_energy_meV": ei,
-                "minimum_meV": energy_bounds[0],
-                "maximum_meV": energy_bounds[1],
-            }
-        )
-        gonio = _goniometer(info.omega, info.phi, info.chi)
-        hkl_transform = None if powder else np.linalg.inv(
-            2.0 * np.pi * np.asarray(config["ub_matrix"], dtype=float)
-        )
+            gonio = _goniometer(info.omega, info.phi, info.chi)
+            hkl_transform = None if powder else np.linalg.inv(
+                2.0 * np.pi * np.asarray(config["ub_matrix"], dtype=float)
+            )
 
-        def accumulate(chunks, *, gonio=gonio, hkl_transform=hkl_transform, cache=cache):
-            nonlocal processed
-            for events, raw_count in chunks:
-                q_lab, energy, weights = events[:, :3], events[:, 3], events[:, 4]
-                if powder:
-                    coordinate_blocks = (
-                        np.column_stack((np.linalg.norm(q_lab, axis=1), energy)),
-                    )
-                else:
-                    hkl = (q_lab @ gonio) @ hkl_transform.T
-                    coordinate_blocks = (
-                        np.column_stack((hkl @ operation.T, energy)) @ basis_inverse
-                        for operation in symmetry
-                    )
-                for coords in coordinate_blocks:
-                    flat = _flat_bin_indices(coords, edges, shape)
-                    keep = flat >= 0
-                    if np.any(keep):
-                        indices = flat[keep]
-                        accepted_weights = weights[keep]
-                        np.add.at(data_sum.ravel(), indices, accepted_weights)
-                        np.add.at(variance_sum.ravel(), indices, accepted_weights**2)
-                        np.add.at(event_count.ravel(), indices, 1)
-                processed += raw_count
-                if progress_callback is not None:
-                    progress_callback(
-                        {
-                            "stage": "raw_dgs_events",
-                            "iteration": processed,
-                            "total": total,
-                            "message": (
-                                f"binning cached events {processed:,}/{total:,}"
-                                if cache is not None else
-                                f"reducing raw events {processed:,}/{total:,}"
-                            ),
-                        }
-                    )
+            def accumulate(chunks, *, gonio=gonio, hkl_transform=hkl_transform, cache=cache):
+                nonlocal processed
+                for events, raw_count in chunks:
+                    q_lab, energy, weights = events[:, :3], events[:, 3], events[:, 4]
+                    if powder:
+                        coordinate_blocks = (
+                            np.column_stack((np.linalg.norm(q_lab, axis=1), energy)),
+                        )
+                    else:
+                        hkl = (q_lab @ gonio) @ hkl_transform.T
+                        coordinate_blocks = (
+                            np.column_stack((hkl @ operation.T, energy)) @ basis_inverse
+                            for operation in symmetry
+                        )
+                    for coords in coordinate_blocks:
+                        _accumulate_discrete_event_coordinates(
+                            coords, weights, None, edges, shape,
+                            data_sum, variance_sum, event_count,
+                        )
+                    processed += raw_count
+                    if progress_callback is not None:
+                        progress_callback(
+                            {
+                                "stage": "raw_dgs_events",
+                                "iteration": processed,
+                                "total": total,
+                                "message": (
+                                    f"binning cached events {processed:,}/{total:,}"
+                                    if cache is not None else
+                                    f"reducing raw events {processed:,}/{total:,}"
+                                ),
+                            }
+                        )
 
-        if cache is not None:
-            with cache.open() as archive:
+            if cache is not None:
                 accumulate(iter_cached_event_chunks(archive, max_batch_bytes))
-        else:
-            chunks = _iter_reduced_event_chunks(
-                info, config, _masked_detector_geometry(geometry, detector_norm, detector_mask),
-                ei, energy_bounds, max_batch_bytes,
-            )
-            if use_cache:
-                header = {"run_info": {
-                    **asdict(info), "path": str(info.path), "ub_matrix": info.ub_matrix.tolist(),
-                }}
-                chunks = cache_event_chunks(
-                    dataset, signature, header, normalization_payload, chunks
+            else:
+                chunks = _iter_reduced_event_chunks(
+                    info, config, _masked_detector_geometry(geometry, detector_norm, detector_mask),
+                    ei, energy_bounds, max_batch_bytes,
                 )
-            accumulate(chunks)
+                if use_cache:
+                    header = {"run_info": {
+                        **asdict(info), "path": str(info.path), "ub_matrix": info.ub_matrix.tolist(),
+                    }}
+                    chunks = cache_event_chunks(
+                        dataset, signature, header, normalization_payload, chunks
+                    )
+                accumulate(chunks)
     if powder:
         normalization = _powder_trajectory_normalization(
             group,
@@ -772,47 +769,50 @@ def _trajectory_normalization(
             )
 
     report_progress()
-    if accelerated and detector_payload is not None and shared_detector_geometry:
-        _, theta, phi, solid = detector_payload
-        detector_count = max(int(theta.size), 1)
-        payload_batch = max(1, 32_000_000 // detector_count)
-        for start in range(0, len(payloads), payload_batch):
-            batch = payloads[start : start + payload_batch]
-            flat = _MDEVENT_NUMBA.run_trajectory_normalization(
-                theta,
-                phi,
-                solid,
+    if accelerated:
+        edge_arrays = tuple(np.asarray(edge) for edge in edges)
+        shape_array = np.asarray(shape, dtype=np.int64)
+        factory = getattr(_MDEVENT_NUMBA, "trajectory_normalization_accumulator", None)
+        accumulator = (
+            factory(*edge_arrays, shape_array, workers=workers)
+            if factory is not None else None
+        )
+
+        def accumulate_batch(theta, phi, solid, batch):
+            args = (
+                theta, phi, solid,
                 np.asarray([item[0] for item in batch]),
                 np.asarray([item[1] for item in batch]),
                 np.asarray([item[2] for item in batch]),
                 np.asarray([item[3] for item in batch]),
-                *[np.asarray(edge) for edge in edges],
-                np.asarray(shape, dtype=np.int64),
-                workers=workers,
+                *edge_arrays, shape_array,
             )
-            result += np.asarray(flat).reshape(shape)
-            completed += sum(int(np.count_nonzero(item[5] > 0.0)) for item in batch)
-            report_progress()
-        return result
-    if accelerated:
-        for inverse, ei, energy_bounds, charge, direction, solid in payloads:
-            theta = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
-            phi = np.arctan2(direction[:, 1], direction[:, 0])
-            flat = _MDEVENT_NUMBA.run_trajectory_normalization(
-                theta,
-                phi,
-                solid,
-                np.asarray([inverse]),
-                np.asarray([ei]),
-                np.asarray([energy_bounds]),
-                np.asarray([charge]),
-                *[np.asarray(edge) for edge in edges],
-                np.asarray(shape, dtype=np.int64),
-                workers=workers,
-            )
-            result += np.asarray(flat).reshape(shape)
-            completed += int(np.count_nonzero(solid > 0.0))
-            report_progress()
+            if accumulator is not None:
+                accumulator.accumulate(*args)
+            else:
+                flat = _MDEVENT_NUMBA.run_trajectory_normalization(*args, workers=workers)
+                result[:] += np.asarray(flat).reshape(shape)
+
+        if detector_payload is not None and shared_detector_geometry:
+            _, theta, phi, solid = detector_payload
+            payload_batch = max(1, MDEVENT_TRAJECTORY_BATCH_TASKS // max(int(theta.size), 1))
+            for start in range(0, len(payloads), payload_batch):
+                batch = payloads[start:start + payload_batch]
+                accumulate_batch(theta, phi, solid, batch)
+                completed += sum(int(np.count_nonzero(item[5] > 0.0)) for item in batch)
+                report_progress()
+        else:
+            # The accumulator receives each geometry's own angles and weights.
+            # Worker grids depend only on the output grid, not the instrument.
+            for payload in payloads:
+                direction, solid = payload[4:6]
+                theta = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
+                phi = np.arctan2(direction[:, 1], direction[:, 0])
+                accumulate_batch(theta, phi, solid, [payload])
+                completed += int(np.count_nonzero(solid > 0.0))
+                report_progress()
+        if accumulator is not None:
+            return np.asarray(accumulator.result()).reshape(shape)
         return result
     report_stride = max(task_total // 100, 1)
     for inverse, ei, energy_bounds, charge, direction, solid in payloads:

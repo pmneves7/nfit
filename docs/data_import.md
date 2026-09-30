@@ -333,6 +333,19 @@ for every bank.
 The powder path bins radially from detector events without first allocating an
 intermediate four-dimensional volume.
 
+Native raw-event and HKLE MDE binning use an ordered compiled pass for bin lookup
+and the signal, variance, and event-count updates when Numba is available.
+Uniform output grids use arithmetic bin lookup corrected against their actual
+edges; nonuniform grids retain binary search. Coordinate transforms retain
+their float64 operation order. Event accumulation
+does not allocate worker-sized copies of the output volume. Trajectory
+normalization reuses its worker grids across batches and supplies each
+instrument geometry's own detector angles and solid-angle weights. Momentum
+and energy crossings are merged as ordered lists, preserving the exact
+piecewise trajectory integral without repeatedly sorting every crossing. The
+final merge processes independent output tiles in parallel while retaining
+each bin's worker addition order.
+
 Detector geometry is reused across runs only when their complete embedded
 instrument XML definitions are identical. The bounded cache checks the XML
 contents on each read, so mixed instruments and edited definitions retain
@@ -365,9 +378,14 @@ reduces only that new run. Project opening binds cache references without readin
 any event arrays. Binning reads one run in bounded event chunks and releases
 those arrays as it proceeds. Saving streams existing cache members without
 loading the event table. Private staging files are used before the first save.
-Uncompressed event chunks favor repeated-binning speed and can substantially
-increase project size (40 bytes per retained event, plus small trajectory and
-archive metadata).
+Event blocks are stored as uncompressed float64 arrays for fast repeated
+binning. Small bank chunks are combined into approximately 32 MiB blocks in
+their original event order; each block is loaded independently. Column storage
+keeps coordinate and weight arrays contiguous. The complete event cache stays
+on disk rather than occupying RAM when the project opens. Each retained event
+uses 40 bytes, plus small trajectory and archive metadata. Previously saved
+compressed event caches remain readable; saved histogram rebins retain their
+lossless NPZ compression.
 
 The cache signature includes the raw, vanadium, and mask file paths, sizes, and
 nanosecond modification/change times, together with incident-energy/time-zero

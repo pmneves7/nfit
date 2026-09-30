@@ -679,3 +679,52 @@ def test_raw_dgs_streamed_symmetry_matches_separate_operations(tmp_path):
     valid = ~combined.mask
     np.testing.assert_allclose(combined.signal[valid], (counts / np.where(denominator > 0, denominator, 1))[valid],
                                rtol=8*np.finfo(float).eps, atol=0)
+
+
+@pytest.mark.parametrize('mixed_geometry', [False, True])
+def test_raw_trajectory_accumulator_reuses_worker_grids_across_batches(
+    tmp_path, monkeypatch, mixed_geometry,
+):
+    from types import SimpleNamespace
+
+    backend = raw_dgs._MDEVENT_NUMBA
+    if backend is None:
+        pytest.skip('Numba trajectory backend is unavailable')
+    sources = [tmp_path / f'SEQ_{number}.nxs.h5' for number in (42, 43, 44)]
+    for path in sources:
+        _write_raw_dgs(path)
+    group = raw_dgs_dataset_group(sources)
+    one = raw_dgs._DetectorGeometry(np.array([42]), np.array([[1., 0., 2.]]), np.zeros(1))
+    two = raw_dgs._DetectorGeometry(
+        np.array([42, 43]), np.array([[2., 0., 1.], [0., 1., 2.]]), np.zeros(2),
+    )
+    monkeypatch.setattr(raw_dgs, '_detector_geometry', lambda path: two if mixed_geometry and path == sources[1] else one)
+    monkeypatch.setattr(raw_dgs, '_trajectory_worker_count', lambda *_: 2)
+    monkeypatch.setattr(raw_dgs, 'MDEVENT_TRAJECTORY_BATCH_TASKS', 1)
+    options = (group, group.datasets, [np.linspace(-4, 4, 6)]*3+[np.linspace(-19, 19, 6)], (5,)*4, np.eye(4), None, None)
+    # The compatibility path allocates and reduces a separate worker grid per batch.
+    monkeypatch.setattr(raw_dgs, '_MDEVENT_NUMBA', SimpleNamespace(run_trajectory_normalization=backend.run_trajectory_normalization))
+    expected = raw_dgs._trajectory_normalization(*options)
+    created, accumulated = [], []
+
+    def factory(*args, **kwargs):
+        accumulator = backend.trajectory_normalization_accumulator(*args, **kwargs)
+        created.append(accumulator)
+        accumulate = accumulator.accumulate
+
+        def record(*payload):
+            accumulated.append(payload[0].copy())
+            return accumulate(*payload)
+
+        accumulator.accumulate = record
+        return accumulator
+
+    monkeypatch.setattr(raw_dgs, '_MDEVENT_NUMBA', SimpleNamespace(
+        trajectory_normalization_accumulator=factory,
+        run_trajectory_normalization=lambda *_args, **_kwargs: pytest.fail('one-shot normalization was used'),
+    ))
+    actual = raw_dgs._trajectory_normalization(*options)
+    assert len(created) == 1
+    assert len(accumulated) == 3
+    assert [len(theta) for theta in accumulated] == ([1, 2, 1] if mixed_geometry else [1, 1, 1])
+    np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)

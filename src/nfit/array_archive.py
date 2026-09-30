@@ -10,8 +10,9 @@ import zlib
 from collections import deque
 from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import ExitStack, contextmanager
 from typing import Any, BinaryIO
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 import numpy as np
 
@@ -52,14 +53,8 @@ class _ParallelDeflater:
         return b"".join(completed)
 
 
-def write_array_archive(destination: BinaryIO, payload: Mapping[str, Any]) -> None:
-    """Write a lossless, pickle-free NPZ using the shared CPU and RAM limits."""
-
-    arrays = {name: np.asanyarray(value) for name, value in payload.items()}
-    if any(array.dtype.hasobject for array in arrays.values()):
-        raise ValueError("object arrays cannot be saved in an nfit array archive")
-    largest = max((array.nbytes for array in arrays.values()), default=0)
-    workers = min(
+def _compression_workers(largest: int) -> int:
+    return min(
         max(1, (largest + _CHUNK_BYTES - 1) // _CHUNK_BYTES),
         operation_worker_count(
             largest,
@@ -67,16 +62,52 @@ def write_array_archive(destination: BinaryIO, payload: Mapping[str, Any]) -> No
             min_parallel_bytes=_PARALLEL_MIN_BYTES,
         ),
     )
+
+
+@contextmanager
+def array_archive_writer(destination: BinaryIO, *, max_member_bytes: int, compressed: bool = True):
+    """Yield a lossless array writer without retaining the preceding members.
+
+    ``max_member_bytes`` bounds parallel compression work using the same CPU
+    and RAM policy as histogram artifacts. Each member remains independently
+    readable by NumPy; the caller supplies arrays as they become available.
+    """
+
+    workers = _compression_workers(max_member_bytes) if compressed else 1
+    with ExitStack() as stack:
+        executor = (
+            stack.enter_context(ThreadPoolExecutor(max_workers=workers))
+            if workers > 1 else None
+        )
+        archive = stack.enter_context(
+            ZipFile(destination, "w", compression=ZIP_DEFLATED if compressed else ZIP_STORED, allowZip64=True)
+        )
+
+        def write(name, value):
+            array = np.asanyarray(value)
+            if array.dtype.hasobject:
+                raise ValueError("object arrays cannot be saved in an nfit array archive")
+            with archive.open(f"{name}.npy", "w", force_zip64=True) as stream:
+                # zipfile owns headers, CRCs, sizes and ZIP64. Fall back to
+                # its compressor if a future Python changes this interface.
+                if executor is not None and array.nbytes >= _PARALLEL_MIN_BYTES and hasattr(stream, "_compressor"):
+                    stream._compressor = _ParallelDeflater(executor, workers)
+                np.lib.format.write_array(stream, array, allow_pickle=False)
+
+        yield write
+
+
+def write_array_archive(destination: BinaryIO, payload: Mapping[str, Any]) -> None:
+    """Write a lossless, pickle-free NPZ using the shared CPU and RAM limits."""
+
+    arrays = {name: np.asanyarray(value) for name, value in payload.items()}
+    if any(array.dtype.hasobject for array in arrays.values()):
+        raise ValueError("object arrays cannot be saved in an nfit array archive")
+    largest = max((array.nbytes for array in arrays.values()), default=0)
+    workers = _compression_workers(largest)
     if workers <= 1:
         np.savez_compressed(destination, **arrays)
         return
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        with ZipFile(destination, "w", compression=ZIP_DEFLATED, allowZip64=True) as archive:
-            for name, array in arrays.items():
-                with archive.open(f"{name}.npy", "w", force_zip64=True) as stream:
-                    # zipfile owns headers, CRCs, sizes and ZIP64. Its compressor
-                    # is the sole private adapter here; fall back to its ordinary
-                    # compressor if a future Python changes the writer interface.
-                    if array.nbytes >= _PARALLEL_MIN_BYTES and hasattr(stream, "_compressor"):
-                        stream._compressor = _ParallelDeflater(executor, workers)
-                    np.lib.format.write_array(stream, array, allow_pickle=False)
+    with array_archive_writer(destination, max_member_bytes=largest) as write:
+        for name, array in arrays.items():
+            write(name, array)

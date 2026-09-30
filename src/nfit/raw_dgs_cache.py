@@ -1,7 +1,7 @@
 """Dataset-owned, streamed reduced-event caches for direct-geometry runs.
 
 Event chunks remain on disk. The project stores each run as a separate nested
-NPZ, with uncompressed float64 arrays for fast, bounded reads. No event arrays
+NPZ, with uncompressed float64 blocks for bounded reads. No event arrays
 are loaded when cache references are bound on project open.
 """
 
@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import tempfile
-import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +16,7 @@ from typing import Any
 
 import numpy as np
 
+from .array_archive import array_archive_writer
 from .project_archive import (
     REDUCED_EVENT_ASSET_ROOT,
     ArchiveMember,
@@ -26,6 +26,8 @@ from .project_archive import (
 
 _CACHE_KEY = "raw_dgs_reduction_cache"
 _CACHE_VERSION = 1
+_EVENT_ROW_BYTES = 5 * 8
+_EVENT_BLOCK_ROWS = (32 * 1024**2 + _EVENT_ROW_BYTES - 1) // _EVENT_ROW_BYTES
 _REDUCTION_DEFAULTS = {
     "incident_energy_override": None,
     "t0_override": None,
@@ -97,26 +99,43 @@ def cached_reduction(dataset, signature):
     return cache if cache is not None and cache.signature == signature else None
 
 
-def _write_array(archive, name, value):
-    with archive.open(name + ".npy", "w", force_zip64=True) as stream:
-        np.lib.format.write_array(stream, np.asarray(value), allow_pickle=False)
-
-
 def cache_event_chunks(dataset, signature, header, normalization, chunks):
     """Write and yield chunks; publish a cache only after complete reduction."""
     staging = tempfile.TemporaryDirectory(prefix="nfit-reduced-events-")
     path = Path(staging.name) / "events.npz"
     chunk_count = 0
+    # Column storage makes the coordinate/weight columns contiguous. Buffering
+    # preserves event order and bounds storage without repeated bank headers.
+    buffer = np.empty((_EVENT_BLOCK_ROWS, 5), dtype=np.float64, order="F")
+    filled = 0
+    pending_raw_count = 0
     try:
-        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:
+        with path.open("wb") as stream, array_archive_writer(
+            stream, max_member_bytes=buffer.nbytes, compressed=False,
+        ) as write:
             for key, value in normalization.items():
-                _write_array(archive, key, value)
+                write(key, value)
             for events, raw_count in chunks:
-                _write_array(archive, f"events_{chunk_count}", events)
-                _write_array(archive, f"raw_count_{chunk_count}", raw_count)
-                chunk_count += 1
+                if not len(events):
+                    pending_raw_count += raw_count
+                position = 0
+                while position < len(events):
+                    end = min(len(events), position + _EVENT_BLOCK_ROWS - filled)
+                    buffer[filled:filled + end - position] = events[position:end]
+                    pending_raw_count += raw_count * end // len(events) - raw_count * position // len(events)
+                    filled += end - position
+                    position = end
+                    if filled == _EVENT_BLOCK_ROWS:
+                        write(f"events_{chunk_count}", buffer)
+                        write(f"raw_count_{chunk_count}", pending_raw_count)
+                        chunk_count += 1
+                        filled = pending_raw_count = 0
                 yield events, raw_count
-            _write_array(archive, "header_json", json.dumps({**header, "chunk_count": chunk_count}))
+            if filled or pending_raw_count:
+                write(f"events_{chunk_count}", np.asfortranarray(buffer[:filled]))
+                write(f"raw_count_{chunk_count}", pending_raw_count)
+                chunk_count += 1
+            write("header_json", json.dumps({**header, "chunk_count": chunk_count}))
         dataset._raw_dgs_reduction_cache = _ReducedEventCache(signature, path, staging)
         dataset.metadata[_CACHE_KEY] = {
             "version": _CACHE_VERSION,

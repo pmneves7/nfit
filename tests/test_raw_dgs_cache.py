@@ -1,6 +1,7 @@
 """Raw reductions are reusable per run and remain lazy in project archives."""
 
 import copy
+import json
 import zipfile
 
 import numpy as np
@@ -18,10 +19,41 @@ from nfit import (
     save_project,
 )
 from nfit.pipeline import DataGroup
-from nfit.raw_dgs_cache import iter_cached_event_chunks
+from nfit.raw_dgs_cache import cache_event_chunks, iter_cached_event_chunks
 from tests.test_raw_dgs import _rewrite_instrument_xml, _write_raw_dgs
 
 OPTIONS = dict(lower=[-10, -10, -10, -100], upper=[10, 10, 10, 20], num_bins=[2]*4)
+
+
+@pytest.mark.parametrize('empty', [False, True])
+def test_cache_stores_bounded_blocks_and_preserves_event_bits(tmp_path, monkeypatch, empty):
+    from nfit import raw_dgs_cache
+    from nfit.pipeline import DatasetEntry
+
+    monkeypatch.setattr(raw_dgs_cache, '_EVENT_BLOCK_ROWS', 7)
+    dataset = DatasetEntry(name='run', data=None)
+    # Include empty banks, a chunk straddling several blocks, signed zero, NaN,
+    # and more raw events than retained events. Storage must preserve exact bits.
+    events = np.arange(95, dtype=np.float64).reshape(19, 5)
+    events[0, :3] = [0., -0., np.nan]
+    chunks = [(events[:0], 11), (events[:3], 6), (events[3:], 32), (events[:0], 5)]
+    if empty:
+        chunks = [(events[:0], 11), (events[:0], 5)]
+    yielded = list(cache_event_chunks(dataset, 'signature', {}, {}, iter(chunks)))
+    assert all(left[0] is right[0] for left, right in zip(yielded, chunks, strict=True))
+    with zipfile.ZipFile(dataset._raw_dgs_reduction_cache.content) as archive:
+        assert all(info.compress_type == zipfile.ZIP_STORED for info in archive.infolist())
+        assert archive.testzip() is None
+    with dataset._raw_dgs_reduction_cache.open() as archive:
+        header = json.loads(str(archive['header_json'].item()))
+        assert header['chunk_count'] == (1 if empty else 3)
+        assert archive['events_0'].flags.f_contiguous
+        decoded = list(iter_cached_event_chunks(archive, 80))
+    assert max(len(chunk) for chunk, _ in decoded) <= 2
+    actual = np.concatenate([chunk for chunk, _ in decoded])
+    expected = events[:0] if empty else events
+    np.testing.assert_array_equal(actual.view(np.uint64), expected.view(np.uint64))
+    assert sum(count for _, count in decoded) == sum(count for _, count in chunks)
 
 
 def assert_equal(left, right):
@@ -113,12 +145,19 @@ def test_cache_mask_file_changes_invalidate_events_and_normalization(tmp_path):
     assert not second.metadata['normalization_denominator'].any()
 
 
-def test_cache_roundtrip_is_lazy_streamed_and_prunes_removed_runs(tmp_path, monkeypatch):
+@pytest.mark.parametrize('previously_compressed', [False, True])
+def test_cache_roundtrip_is_lazy_streamed_and_prunes_removed_runs(tmp_path, monkeypatch, previously_compressed):
     sources = [tmp_path / f'SEQ_{run}.nxs.h5' for run in (42, 43)]
     for source in sources:
         _write_raw_dgs(source)
     group = raw_dgs_dataset_group(sources)
     expected = bin_raw_dgs_group(group, **OPTIONS)
+    if previously_compressed:
+        for dataset in group.datasets:
+            cache = dataset._raw_dgs_reduction_cache
+            with cache.open() as archive:
+                payload = {key: archive[key] for key in archive.files}
+            np.savez_compressed(cache.content, **payload)
     project = NfitProject([DataGroup('test', subgroups=[group])])
     path = tmp_path / 'events.nfit'
     save_project(project, path)

@@ -8,6 +8,58 @@ from numba import get_num_threads, get_thread_id, njit, prange, set_num_threads
 ENERGY_TO_K2 = 2.072124855
 
 
+@njit(cache=True, fastmath=False, nogil=True)
+def accumulate_discrete_event_coordinates(
+    coordinates, weights, variances, enabled, edges, shape,
+    data_sum, variance_sum, event_count,
+):
+    """Find a bin and update all three sums in one ordered event pass."""
+    reciprocal_steps = np.zeros(coordinates.shape[1])
+    for dim in range(coordinates.shape[1]):
+        edge = edges[dim]
+        step = (edge[-1] - edge[0]) / (edge.size - 1)
+        tolerance = 16.0 * np.finfo(np.float64).eps * max(abs(edge[0]), abs(edge[-1]), abs(step))
+        uniform = step > 0.0 and np.isfinite(1.0 / step)
+        for index in range(edge.size):
+            if abs(edge[index] - (edge[0] + index * step)) > tolerance:
+                uniform = False
+                break
+        if uniform:
+            reciprocal_steps[dim] = 1.0 / step
+    for row in range(coordinates.shape[0]):
+        if enabled is not None and not enabled[row]:
+            continue
+        flat = 0
+        valid = True
+        for dim in range(coordinates.shape[1]):
+            edge = edges[dim]
+            value = coordinates[row, dim]
+            if not np.isfinite(value) or value < edge[0] or value > edge[-1]:
+                valid = False
+                break
+            if reciprocal_steps[dim] > 0.0:
+                index = min(int((value - edge[0]) * reciprocal_steps[dim]), edge.size - 2)
+                # Correct against the saved edges rather than rounded arithmetic.
+                while index > 0 and value < edge[index]:
+                    index -= 1
+                while index < edge.size - 2 and value >= edge[index + 1]:
+                    index += 1
+            else:
+                index = np.searchsorted(edge, value, side="right") - 1
+                if value == edge[-1]:
+                    index = edge.size - 2
+            if index < 0 or index >= shape[dim]:
+                valid = False
+                break
+            flat = flat * shape[dim] + index
+        if valid:
+            weight = weights[row]
+            variance = weight * weight if variances is None else variances[row]
+            data_sum[flat] += weight
+            variance_sum[flat] += variance
+            event_count[flat] += 1.0
+
+
 @njit(nogil=True, parallel=True)
 def _eager_trajectory_partial(workers, output_size):
     """Allocate private trajectory grids through Numba's eager zeroing path."""
@@ -82,39 +134,60 @@ def accumulate_trajectory_normalization(
             continue
         thread = get_thread_id()
         intersections = scratch[thread]
-        count = 2
-        intersections[0] = clipped_low
-        intersections[1] = clipped_high
+        # Each coordinate contributes a monotone crossing list. Merge the
+        # four lists while integrating, without a quadratic insertion sort.
+        count = 0
+        end0 = end1 = end2 = 0
         for dim in range(3):
             edges = edge0 if dim == 0 else (edge1 if dim == 1 else edge2)
             qin = qin0 if dim == 0 else (qin1 if dim == 1 else qin2)
             qout = qout0 if dim == 0 else (qout1 if dim == 1 else qout2)
             if abs(qout) > 1e-14:
-                for boundary in edges:
-                    value = (qin - boundary) / qout
+                for boundary_index in range(edges.size):
+                    index = edges.size - 1 - boundary_index if qout > 0.0 else boundary_index
+                    value = (qin - edges[index]) / qout
                     if clipped_low < value < clipped_high:
                         intersections[count] = value
                         count += 1
-        for boundary in edge3:
-            value = np.sqrt(max(ei - boundary, 0.0) / ENERGY_TO_K2)
+            if dim == 0:
+                end0 = count
+            elif dim == 1:
+                end1 = count
+            else:
+                end2 = count
+        for boundary_index in range(edge3.size - 1, -1, -1):
+            value = np.sqrt(max(ei - edge3[boundary_index], 0.0) / ENERGY_TO_K2)
             if clipped_low < value < clipped_high:
                 intersections[count] = value
                 count += 1
-        # The intersection count is modest; insertion sort avoids another array.
-        for i in range(1, count):
-            value = intersections[i]
-            j = i - 1
-            while j >= 0 and intersections[j] > value:
-                intersections[j + 1] = intersections[j]
-                j -= 1
-            intersections[j + 1] = value
+        cursor0, cursor1, cursor2, cursor3 = 0, end0, end1, end2
         weight = proton_charges[run] * detector_weight
-        for i in range(count - 1):
-            first = intersections[i]
-            second = intersections[i + 1]
-            if second - first <= 1e-12:
+        first = clipped_low
+        while first < clipped_high:
+            second = clipped_high
+            if cursor0 < end0:
+                second = min(second, intersections[cursor0])
+            if cursor1 < end1:
+                second = min(second, intersections[cursor1])
+            if cursor2 < end2:
+                second = min(second, intersections[cursor2])
+            if cursor3 < count:
+                second = min(second, intersections[cursor3])
+            # Advance all exactly coincident crossings; narrow nonzero intervals
+            # retain the same 1e-12 rejection as the sorted-list implementation.
+            if cursor0 < end0 and intersections[cursor0] == second:
+                cursor0 += 1
+            if cursor1 < end1 and intersections[cursor1] == second:
+                cursor1 += 1
+            if cursor2 < end2 and intersections[cursor2] == second:
+                cursor2 += 1
+            if cursor3 < count and intersections[cursor3] == second:
+                cursor3 += 1
+            previous = first
+            first = second
+            if second - previous <= 1e-12:
                 continue
-            middle = 0.5 * (first + second)
+            middle = 0.5 * (previous + second)
             coordinate0 = qin0 - qout0 * middle
             coordinate1 = qin1 - qout1 * middle
             coordinate2 = qin2 - qout2 * middle
@@ -133,7 +206,24 @@ def accumulate_trajectory_normalization(
                 index3 = edge3.size - 2
             if 0 <= index0 < edge0.size - 1 and 0 <= index1 < edge1.size - 1 and 0 <= index2 < edge2.size - 1 and 0 <= index3 < edge3.size - 1:
                 flat = ((index0 * shape[1] + index1) * shape[2] + index2) * shape[3] + index3
-                partial[thread, flat] += weight * ENERGY_TO_K2 * (second * second - first * first)
+                partial[thread, flat] += weight * ENERGY_TO_K2 * (second * second - previous * previous)
+
+
+@njit(cache=True, parallel=True, fastmath=False, nogil=True)
+def _merge_trajectory_partials(partial):
+    """Merge independent output tiles, retaining the worker addition order."""
+    size = partial.shape[1]
+    result = np.empty(size, dtype=np.float64)
+    tile = 2048
+    for block in prange((size + tile - 1) // tile):
+        start = block * tile
+        stop = min(start + tile, size)
+        for index in range(start, stop):
+            result[index] = 0.0
+        for worker in range(partial.shape[0]):
+            for index in range(start, stop):
+                result[index] += partial[worker, index]
+    return result
 
 
 class TrajectoryNormalizationAccumulator:
@@ -187,7 +277,12 @@ class TrajectoryNormalizationAccumulator:
             self.partial.setflags(write=False)
             result.setflags(write=False)
             return result
-        result = np.sum(self.partial, axis=0)
+        previous = get_num_threads()
+        set_num_threads(self.workers)
+        try:
+            result = _merge_trajectory_partials(self.partial)
+        finally:
+            set_num_threads(previous)
         self.partial.setflags(write=False)
         return result
 

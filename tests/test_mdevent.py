@@ -1319,3 +1319,121 @@ def test_mdevent_peak_estimate_includes_private_normalization_grids(monkeypatch)
     bins = 464_011_821
     estimate = estimate_mdevent_peak_memory([bins], max_batch_bytes=1)
     assert estimate == mdevent.MDEVENT_FIXED_MEMORY_BYTES + 36 * bins * 8 + 1
+
+
+@pytest.mark.parametrize('dimensions', [2, 4])
+@pytest.mark.parametrize('supplied_variance', [False, True])
+@pytest.mark.parametrize('selection', [False, True])
+def test_fused_discrete_event_accumulation_matches_ordered_numpy(
+    monkeypatch, dimensions, supplied_variance, selection,
+):
+    from nfit import mdevent
+
+    if mdevent._MDEVENT_NUMBA is None:
+        pytest.skip('Numba event backend is unavailable')
+    backend = mdevent._MDEVENT_NUMBA
+    rng = np.random.default_rng(14)
+    edges = tuple(np.array([-2., -.7, 0., .2, 1., 3.]) for _ in range(dimensions))
+    shape = (5,) * dimensions
+    coordinates = rng.uniform(-4, 4, (1000, dimensions))
+    # Exact boundaries, nonfinite coordinates, and cancelling weights in one bin.
+    coordinates[:6] = np.array([-2., -.7, 0., .2, 1., 3.])[:, None]
+    coordinates[6:9, 0] = [np.nan, -np.inf, np.inf]
+    coordinates[9:13] = .5
+    table = rng.normal(size=(1000, 2))
+    weights = table[:, 0]  # exercise a strided source column
+    weights[9:13] = [1e16, 1., -1e16, 1.]
+    variances = rng.uniform(0, 5, 1000) if supplied_variance else None
+    enabled = rng.random(1000) > .2 if selection else None
+    expected = [np.zeros(shape) for _ in range(3)]
+    actual = [np.zeros(shape) for _ in range(3)]
+    monkeypatch.setattr(mdevent, '_MDEVENT_NUMBA', None)
+    mdevent._accumulate_discrete_event_coordinates(
+        coordinates, weights, variances, edges, shape, *expected, enabled=enabled,
+    )
+    monkeypatch.setattr(mdevent, '_MDEVENT_NUMBA', backend)
+    mdevent._accumulate_discrete_event_coordinates(
+        coordinates, weights, variances, edges, shape, *actual, enabled=enabled,
+    )
+    for left, right in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(left, right)
+
+
+@pytest.mark.parametrize('nonuniform', [False, True])
+def test_linear_trajectory_crossings_match_scalar_integrals(nonuniform):
+    kernels = mdevent._MDEVENT_NUMBA
+    if kernels is None:
+        pytest.skip('Numba MDEvent normalization is unavailable')
+    rng = np.random.default_rng(121)
+    theta = np.r_[0., np.pi/2, np.pi, rng.uniform(0, np.pi, 20)]
+    phi = np.r_[0., 0., np.pi/2, rng.uniform(-np.pi, np.pi, 20)]
+    # Stationary coordinates, both crossing directions, reflected axes, and
+    # overlapping crossings; include an energy grid extending past Ei.
+    inverse = np.array([np.eye(3), np.diag([-1., 1., -1.]),
+                        [[.4, .1, .3], [-.2, .5, .1], [.1, -.3, .4]]])
+    ei = np.array([12., 13., 14.])
+    limits = np.array([[-5., 12.], [-4., 12.], [-3., 13.]])
+    charges = np.array([.3, 1.1, 2.])
+    solid = rng.uniform(.1, 2, theta.size)
+    solid[3:6] = [0., -1., np.nan]
+    edges = (
+        tuple(np.array([-4., -1.4, -.1, 0., .4, 2., 4.]) for _ in range(3))
+        + (np.array([-5., -1., 0., .05, .4, 1., 3., 7., 11., 12., 13., 16.]),)
+        if nonuniform else
+        tuple(np.linspace(-4, 4, 9) for _ in range(3))+(np.linspace(-5, 16, 85),)
+    )
+    shape = np.array([len(edge)-1 for edge in edges], dtype=np.int64)
+    actual = kernels.run_trajectory_normalization(
+        theta, phi, solid, inverse, ei, limits, charges, *edges, shape, workers=2,
+    ).reshape(shape)
+    expected = np.zeros(shape)
+    direction = np.column_stack((np.sin(theta)*np.cos(phi), np.sin(theta)*np.sin(phi), np.cos(theta)))
+    for run in range(len(ei)):
+        for detector in range(len(theta)):
+            if not np.isfinite(solid[detector]) or solid[detector] <= 0:
+                continue
+            mdevent._accumulate_detector_trajectory(
+                expected, edges, inverse[run], direction[detector], ei[run],
+                limits[run], charges[run]*solid[detector],
+            )
+    np.testing.assert_allclose(actual, expected, rtol=1e-11, atol=1e-12)
+    np.testing.assert_array_equal(actual > 0, expected > 0)
+
+
+@pytest.mark.parametrize('size', [7, 2048, 2051, 10000])
+def test_parallel_trajectory_merge_retains_numpy_worker_order(size):
+    kernels = mdevent._MDEVENT_NUMBA
+    if kernels is None:
+        pytest.skip('Numba MDEvent normalization is unavailable')
+    rng = np.random.default_rng(719)
+    partial = rng.uniform(0, 5, (8, size))
+    partial[:, ::3] = 0
+    partial[:, ::7] *= 1e-14
+    # A reordered sum loses the unit contributions in these columns.
+    partial[:, 1] = [1e16, 1., 1., 1., 1., 1., 1., 1.]
+    np.testing.assert_array_equal(kernels._merge_trajectory_partials(partial), np.sum(partial, axis=0))
+
+
+@pytest.mark.parametrize('origin,step', [(-1., .03), (1e8, .03), (1e-12, 1e-15)])
+@pytest.mark.parametrize('perturbed', [False, True])
+def test_uniform_event_lookup_preserves_edges_and_adjacent_float_values(monkeypatch, origin, step, perturbed):
+    backend = mdevent._MDEVENT_NUMBA
+    if backend is None:
+        pytest.skip('Numba event backend is unavailable')
+    edge = origin + np.arange(101) * step
+    if perturbed:
+        edge[31] += step * .002  # nonuniform grids use the search fallback
+    values = np.concatenate([np.nextafter(edge, -np.inf), edge, np.nextafter(edge, np.inf)])
+    rng = np.random.default_rng(51)
+    coordinates = np.column_stack((values, rng.choice(values, values.size)))
+    coordinates = np.vstack([coordinates, [np.nan, values[1]], [np.inf, values[1]]])
+    weights = rng.uniform(.1, 3, len(coordinates))
+    shape = (100, 100)
+    expected = [np.zeros(shape) for _ in range(3)]
+    actual = [np.zeros(shape) for _ in range(3)]
+    monkeypatch.setattr(mdevent, '_MDEVENT_NUMBA', None)
+    mdevent._accumulate_discrete_event_coordinates(coordinates, weights, None, (edge, edge), shape, *expected)
+    monkeypatch.setattr(mdevent, '_MDEVENT_NUMBA', backend)
+    mdevent._accumulate_discrete_event_coordinates(coordinates, weights, None, (edge, edge), shape, *actual)
+    for left, right in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(left, right)
