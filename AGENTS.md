@@ -75,6 +75,8 @@ different Python.
   masks, and coordinate projection services.
 - `src/nfit/project_rebinning.py`: numerical grid configuration, symmetry-aware
   rebinning, and histogram construction.
+- `src/nfit/raw_dgs.py` and `raw_dgs_cache.py`: direct-geometry reduction and
+  streamed, dataset-owned reduced-event project caches.
 - `src/nfit/project_derived_grid.py`: shared output-grid planning for live
   derived dataset arithmetic.
 - `src/nfit/project_rebin_panels.py`: shared Qt controls for dataset and

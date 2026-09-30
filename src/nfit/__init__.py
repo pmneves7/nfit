@@ -542,6 +542,7 @@ from .raw_dgs import (
     is_raw_dgs_nexus_file,
     raw_dgs_dataset_group,
 )
+from .raw_dgs_cache import clear_reduced_event_cache, reduced_event_cache_info
 from .rebin import (
     ArrayRebinSource,
     NDRebin,
@@ -1258,6 +1259,8 @@ __all__ = [
     "inspect_raw_dgs_run",
     "is_raw_dgs_nexus_file",
     "raw_dgs_dataset_group",
+    "clear_reduced_event_cache",
+    "reduced_event_cache_info",
     "sample_problem_parameters",
     "save_project",
     "set_background_collection",

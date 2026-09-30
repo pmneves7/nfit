@@ -173,6 +173,9 @@ class DatasetEntry:
         repr=False,
         compare=False,
     )
+    _raw_dgs_reduction_cache: Any = field(
+        default=None, init=False, repr=False, compare=False,
+    )
 
     def __post_init__(self) -> None:
         self.data = _immutable_data(self.data)
@@ -195,12 +198,15 @@ class DatasetEntry:
         """Return an independent entry with a new stable identifier."""
 
         changes.pop("id", None)
+        if self._raw_dgs_reduction_cache is not None and "metadata" not in changes:
+            changes["metadata"] = copy.deepcopy(self.metadata)
         copied = replace(self, id=uuid4().hex, **changes)
         if "data" in changes:
             copied._data_matches_source = False
             copied._source_data_identity = None
         else:
             copied._data_matches_source = self.data_matches_source
+            copied._raw_dgs_reduction_cache = self._raw_dgs_reduction_cache
             copied._source_data_identity = (
                 id(copied.data)
                 if copied.data is not None and copied._data_matches_source

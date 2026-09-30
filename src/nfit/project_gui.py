@@ -6193,6 +6193,11 @@ def save_project(
     target = Path(path)
     if asset_source is None:
         asset_source = getattr(project, "_project_path", None)
+    from .raw_dgs_cache import (
+        bind_project_reduced_event_caches,
+        project_reduced_event_artifacts,
+    )
+
     missing_entries = object()
     previous_entries = project.settings.get(
         PROJECT_BINNING_CACHE_ENTRIES_KEY,
@@ -6213,6 +6218,7 @@ def save_project(
         with tempfile.TemporaryDirectory(prefix="nfit-binning-cache-") as temporary:
             artifacts, entries = _project_binning_artifacts(project, Path(temporary))
             project.settings[PROJECT_BINNING_CACHE_ENTRIES_KEY] = entries
+            reduced_artifacts = project_reduced_event_artifacts(project)
             try:
                 write_project_manifest(
                     target,
@@ -6220,6 +6226,7 @@ def save_project(
                     asset_source=asset_source,
                     preserve_existing=asset_source is not None,
                     binning_artifacts=artifacts,
+                    reduced_event_artifacts=reduced_artifacts,
                 )
             except Exception:
                 restore_previous_entries()
@@ -6227,6 +6234,7 @@ def save_project(
         _adopt_saved_project_binning_backing(project, target, entries)
     else:
         project.settings.pop(PROJECT_BINNING_CACHE_ENTRIES_KEY, None)
+        reduced_artifacts = project_reduced_event_artifacts(project)
         try:
             write_project_manifest(
                 target,
@@ -6234,6 +6242,7 @@ def save_project(
                 asset_source=asset_source,
                 preserve_existing=asset_source is not None,
                 binning_artifacts={},
+                reduced_event_artifacts=reduced_artifacts,
             )
         except Exception:
             restore_previous_entries()
@@ -6241,6 +6250,7 @@ def save_project(
         _COMPOSITE_DATA_CACHE.clear_project_backing(target)
         _VIEWER_VIEW_CACHE.clear_project_backing(target)
     project._project_path = target
+    bind_project_reduced_event_caches(project, target)
     _bind_project_analysis_sources(project, target, load_data=False)
 
 
@@ -6296,6 +6306,9 @@ def load_project(path: str | Path) -> NfitProject:
     project_path = Path(path)
     project = _project_from_dict(read_project_manifest(project_path))
     project._project_path = project_path
+    from .raw_dgs_cache import bind_project_reduced_event_caches
+
+    bind_project_reduced_event_caches(project, project_path)
     _bind_project_analysis_sources(project, project_path)
     _restore_project_binning_cache(project, project_path)
     return project

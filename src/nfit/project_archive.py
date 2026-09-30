@@ -17,6 +17,7 @@ PROJECT_MANIFEST = "project.json"
 ANALYSIS_ASSET_ROOT = PurePosixPath("assets", "analyses")
 DATASET_ASSET_ROOT = PurePosixPath("assets", "datasets")
 BINNING_ASSET_ROOT = PurePosixPath("assets", "binnings")
+REDUCED_EVENT_ASSET_ROOT = PurePosixPath("assets", "reduced_events")
 _ARCHIVE_COPY_BUFFER_BYTES = 8 * 1024**2
 
 @dataclass(frozen=True)
@@ -207,6 +208,7 @@ def write_project_manifest(
     asset_source: str | Path | None = None,
     preserve_existing: bool = True,
     binning_artifacts: Mapping[str, ArchiveContent] | None = None,
+    reduced_event_artifacts: Mapping[str, ArchiveContent] | None = None,
 ) -> None:
     """Atomically save a manifest while preserving internal project assets."""
 
@@ -220,6 +222,8 @@ def write_project_manifest(
     replacements = {PROJECT_MANIFEST: manifest}
     if binning_artifacts is not None:
         replacements.update(binning_artifacts)
+    if reduced_event_artifacts is not None:
+        replacements.update(reduced_event_artifacts)
     _rewrite_archive(
         target,
         source if source is not None and source.exists() else None,
@@ -228,6 +232,10 @@ def write_project_manifest(
             str(BINNING_ASSET_ROOT) + "/"
             if binning_artifacts is not None
             else None
+        ),
+        remove_members_prefixes=(
+            (str(REDUCED_EVENT_ASSET_ROOT) + "/",)
+            if reduced_event_artifacts is not None else ()
         ),
     )
 
@@ -281,6 +289,7 @@ def _rewrite_archive(
     replacements: Mapping[str, ArchiveContent],
     *,
     remove_prefix: str | None = None,
+    remove_members_prefixes: tuple[str, ...] = (),
 ) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
@@ -304,7 +313,7 @@ def _rewrite_archive(
                             seen.add(name)
                             if name in replacements or (
                                 remove_prefix is not None and name.startswith(remove_prefix)
-                            ):
+                            ) or name.startswith(remove_members_prefixes):
                                 continue
                             with existing.open(info, "r") as source_stream:
                                 with destination.open(info, "w") as target_stream:

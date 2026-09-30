@@ -10,11 +10,12 @@ reducer for every direct-geometry NeXus file.
 from __future__ import annotations
 
 import ast
+import json
 import math
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from functools import cached_property, lru_cache
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,12 @@ from .mdevent import (
 )
 from .mdhisto import MDHistoAxis, MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup
+from .raw_dgs_cache import (
+    cache_event_chunks,
+    cached_reduction,
+    iter_cached_event_chunks,
+    reduction_signature,
+)
 
 # A neutron with energy E(meV) travels one metre in 2286.4/sqrt(E)
 # microseconds.  This follows directly from v = 437.393 sqrt(E) m/s.
@@ -350,27 +357,49 @@ def bin_raw_dgs_group(
     # the same workspace to MDNorm as its SolidAngleWorkspace.  The event
     # numerator is therefore unscaled while the trajectory denominator carries
     # the positive processed-vanadium values.
-    normalization_path = config.get("normalization_file")
-    detector_norm = (
-        load_detector_normalization(normalization_path)
-        if normalization_path
-        else None
-    )
-    detector_mask = _combined_detector_mask(config)
+    detector_norm = None
+    detector_mask = None
+    calibration_loaded = False
     total = sum(int(dataset.metadata.get("event_count", 0)) for dataset in selected)
     processed = 0
     energy_bounds_by_dataset_id: dict[str, tuple[float, float]] = {}
     run_infos_by_dataset_id: dict[str, RawDGSRunInfo] = {}
     resolved_energy_windows = []
+    normalization_payloads_by_dataset_id = {}
+    cache_hits = 0
+    cache_misses = 0
     for dataset in selected:
         source = Path(dataset.metadata["source_file"])
-        info = inspect_raw_dgs_run(source)
+        use_cache = bool(config.get("cache_reduced_events", True))
+        signature = reduction_signature(dataset, config) if use_cache else None
+        cache = cached_reduction(dataset, signature) if use_cache else None
+        if cache is not None:
+            with cache.open() as archive:
+                header = json.loads(str(archive["header_json"].item()))
+                info = _run_info_from_cache(header["run_info"])
+                normalization_payload = {
+                    key: np.asarray(archive[key])
+                    for key in ("detector_ids", "direction", "solid", "charge")
+                }
+            cache_hits += 1
+        else:
+            if not calibration_loaded:
+                normalization_path = config.get("normalization_file")
+                detector_norm = (
+                    load_detector_normalization(normalization_path)
+                    if normalization_path else None
+                )
+                detector_mask = _combined_detector_mask(config)
+                calibration_loaded = True
+            info = inspect_raw_dgs_run(source)
+            geometry = _detector_geometry(source)
+            normalization_payload = _run_normalization_payload(
+                info, geometry, detector_norm, detector_mask, config
+            )
+            cache_misses += 1
         run_infos_by_dataset_id[dataset.id] = info
-        geometry = _masked_detector_geometry(
-            _detector_geometry(source), detector_norm, detector_mask
-        )
+        normalization_payloads_by_dataset_id[dataset.id] = normalization_payload
         ei = float(config.get("incident_energy_override") or info.incident_energy)
-        t0 = float(config.get("t0_override") if config.get("t0_override") is not None else info.t0)
         if ei <= 0.0 or info.l1 <= 0.0:
             raise ValueError(f"{source.name} has no usable incident energy or source distance")
         energy_bounds = _energy_transfer_bounds(config, ei)
@@ -384,127 +413,65 @@ def bin_raw_dgs_group(
                 "maximum_meV": energy_bounds[1],
             }
         )
-        if powder:
-            hkl_transform = None
-            gonio = None
-        else:
-            ub = np.asarray(config["ub_matrix"], dtype=float)
-            hkl_transform = np.linalg.inv(2.0 * np.pi * ub)
-            gonio = _goniometer(info.omega, info.phi, info.chi)
-        rows = max(1, int(max_batch_bytes) // 96)
-        import h5py
+        gonio = _goniometer(info.omega, info.phi, info.chi)
+        hkl_transform = None if powder else np.linalg.inv(
+            2.0 * np.pi * np.asarray(config["ub_matrix"], dtype=float)
+        )
 
-        with h5py.File(source, "r") as handle:
-            pulse_keep = _good_pulses(
-                handle["entry"], float(config.get("bad_pulse_threshold", 0.0))
+        def accumulate(chunks, *, gonio=gonio, hkl_transform=hkl_transform, cache=cache):
+            nonlocal processed
+            for events, raw_count in chunks:
+                q_lab, energy, weights = events[:, :3], events[:, 3], events[:, 4]
+                if powder:
+                    coordinate_blocks = (
+                        np.column_stack((np.linalg.norm(q_lab, axis=1), energy)),
+                    )
+                else:
+                    hkl = (q_lab @ gonio) @ hkl_transform.T
+                    coordinate_blocks = (
+                        np.column_stack((hkl @ operation.T, energy)) @ basis_inverse
+                        for operation in symmetry
+                    )
+                for coords in coordinate_blocks:
+                    flat = _flat_bin_indices(coords, edges, shape)
+                    keep = flat >= 0
+                    if np.any(keep):
+                        indices = flat[keep]
+                        accepted_weights = weights[keep]
+                        np.add.at(data_sum.ravel(), indices, accepted_weights)
+                        np.add.at(variance_sum.ravel(), indices, accepted_weights**2)
+                        np.add.at(event_count.ravel(), indices, 1)
+                processed += raw_count
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "stage": "raw_dgs_events",
+                            "iteration": processed,
+                            "total": total,
+                            "message": (
+                                f"binning cached events {processed:,}/{total:,}"
+                                if cache is not None else
+                                f"reducing raw events {processed:,}/{total:,}"
+                            ),
+                        }
+                    )
+
+        if cache is not None:
+            with cache.open() as archive:
+                accumulate(iter_cached_event_chunks(archive, max_batch_bytes))
+        else:
+            chunks = _iter_reduced_event_chunks(
+                info, config, _masked_detector_geometry(geometry, detector_norm, detector_mask),
+                ei, energy_bounds, max_batch_bytes,
             )
-            for bank_name, bank in handle["entry"].items():
-                if not (
-                    bank_name.startswith("bank")
-                    and bank_name.endswith("_events")
-                    and "event_id" in bank
-                ):
-                    continue
-                ids = bank["event_id"]
-                tofs = bank["event_time_offset"]
-                event_index = (
-                    np.asarray(bank["event_index"], dtype=np.int64)
-                    if pulse_keep is not None
-                    else None
+            if use_cache:
+                header = {"run_info": {
+                    **asdict(info), "path": str(info.path), "ub_matrix": info.ub_matrix.tolist(),
+                }}
+                chunks = cache_event_chunks(
+                    dataset, signature, header, normalization_payload, chunks
                 )
-                for start in range(0, ids.shape[0], rows):
-                    stop = min(start + rows, ids.shape[0])
-                    event_ids = np.asarray(ids[start:stop], dtype=np.int64)
-                    event_tof = np.asarray(tofs[start:stop], dtype=float) - t0
-                    positions, he3_exponents, valid = geometry.event_geometry_for_ids(event_ids)
-                    if pulse_keep is not None:
-                        pulse_index = (
-                            np.searchsorted(event_index, np.arange(start, stop), side="right") - 1
-                        )
-                        valid &= pulse_keep[np.clip(pulse_index, 0, pulse_keep.size - 1)]
-                    if np.any(valid):
-                        positions = positions[valid]
-                        he3_exponents = he3_exponents[valid]
-                        ids_valid = event_ids[valid]
-                        tof = event_tof[valid]
-                        l2 = np.linalg.norm(positions, axis=1)
-                        final_tof = tof - TOF_US_PER_M_SQRT_MEV * info.l1 / math.sqrt(ei)
-                        good = final_tof > 0.0
-                        positions = positions[good]
-                        ids_valid = ids_valid[good]
-                        l2 = l2[good]
-                        final_tof = final_tof[good]
-                        he3_exponents = he3_exponents[good]
-                        if final_tof.size:
-                            ef = (TOF_US_PER_M_SQRT_MEV * l2 / final_tof) ** 2
-                            energy = ei - ef
-                            kf = np.sqrt(np.maximum(ef, 0.0) / ENERGY_TO_K2)
-                            energy_keep = (
-                                (energy >= energy_bounds[0])
-                                & (energy <= energy_bounds[1])
-                            )
-                            positions = positions[energy_keep]
-                            ids_valid = ids_valid[energy_keep]
-                            energy = energy[energy_keep]
-                            kf = kf[energy_keep]
-                            l2 = l2[energy_keep]
-                            he3_exponents = he3_exponents[energy_keep]
-                            if not energy.size:
-                                processed += stop - start
-                                continue
-                            direction = positions / l2[:, None]
-                            q_lab = np.column_stack(
-                                (
-                                    -kf * direction[:, 0],
-                                    -kf * direction[:, 1],
-                                    math.sqrt(ei / ENERGY_TO_K2) - kf * direction[:, 2],
-                                )
-                            )
-                            if powder:
-                                coordinate_blocks = (
-                                    np.column_stack((np.linalg.norm(q_lab, axis=1), energy)),
-                                )
-                            else:
-                                q_sample = q_lab @ gonio
-                                hkl = q_sample @ hkl_transform.T
-                                # Consume one symmetry copy at a time; do not retain
-                                # a full coordinate batch for every operation.
-                                coordinate_blocks = (
-                                    np.column_stack((hkl @ operation.T, energy))
-                                    @ basis_inverse
-                                    for operation in symmetry
-                                )
-                            weights = np.ones(ids_valid.size)
-                            if config.get("he3_detector_efficiency_correction", True):
-                                weights *= _he3_tube_efficiency_correction(
-                                    kf, he3_exponents
-                                )
-                            if _use_ki_kf_correction(config):
-                                weights *= math.sqrt(ei / ENERGY_TO_K2) / kf
-                            for coords in coordinate_blocks:
-                                flat = _flat_bin_indices(coords, edges, shape)
-                                keep = flat >= 0
-                                if np.any(keep):
-                                    indices = flat[keep]
-                                    accepted_weights = weights[keep]
-                                    # A detector bank is sparse on a large 4D grid.
-                                    # Dense bincount temporaries would touch every
-                                    # output bin once for each bank.
-                                    np.add.at(data_sum.ravel(), indices, accepted_weights)
-                                    np.add.at(
-                                        variance_sum.ravel(), indices, accepted_weights**2
-                                    )
-                                    np.add.at(event_count.ravel(), indices, 1)
-                    processed += stop - start
-                    if progress_callback is not None:
-                        progress_callback(
-                            {
-                                "stage": "raw_dgs_events",
-                                "iteration": processed,
-                                "total": total,
-                                "message": f"reducing raw events {processed:,}/{total:,}",
-                            }
-                        )
+            accumulate(chunks)
     if powder:
         normalization = _powder_trajectory_normalization(
             group,
@@ -515,6 +482,7 @@ def bin_raw_dgs_group(
             detector_mask,
             energy_bounds_by_dataset_id,
             run_infos_by_dataset_id=run_infos_by_dataset_id,
+            normalization_payloads_by_dataset_id=normalization_payloads_by_dataset_id,
             **(
                 {"progress_callback": progress_callback}
                 if progress_callback is not None
@@ -533,6 +501,7 @@ def bin_raw_dgs_group(
             symmetry,
             energy_bounds_by_dataset_id,
             run_infos_by_dataset_id=run_infos_by_dataset_id,
+            normalization_payloads_by_dataset_id=normalization_payloads_by_dataset_id,
             **(
                 {"progress_callback": progress_callback}
                 if progress_callback is not None
@@ -572,6 +541,7 @@ def bin_raw_dgs_group(
         num_events=event_count,
         metadata={
             "raw_dgs": config,
+            "reduced_event_cache": {"hits": cache_hits, "misses": cache_misses},
             "raw_dgs_energy_windows_meV": resolved_energy_windows,
             "rebin": {
                 **({"vectors": basis.tolist()} if basis is not None else {}),
@@ -643,6 +613,78 @@ def bin_raw_dgs_powder_group(
     )
 
 
+def _run_info_from_cache(payload):
+    return RawDGSRunInfo(
+        **{**payload, "path": Path(payload["path"]), "ub_matrix": np.asarray(payload["ub_matrix"])},
+    )
+
+
+def _run_normalization_payload(info, geometry, detector_norm, detector_mask, config):
+    direction = geometry.positions / np.linalg.norm(geometry.positions, axis=1)[:, None]
+    solid = (
+        np.ones(geometry.detector_ids.size)
+        if detector_norm is None else detector_norm.value_for_ids(geometry.detector_ids)
+    )
+    if detector_mask is not None:
+        solid[detector_mask.value_for_ids(geometry.detector_ids) <= 0.0] = 0.0
+    import h5py
+
+    with h5py.File(info.path, "r") as handle:
+        charge = _retained_proton_charge_uah(
+            handle["entry"], float(config.get("bad_pulse_threshold", 95.0))
+        )
+    return {"detector_ids": geometry.detector_ids, "direction": direction,
+            "solid": solid, "charge": np.asarray(charge)}
+
+
+def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_batch_bytes):
+    """Yield Q_lab (inverse angstrom), DeltaE (meV), and corrected event weight."""
+    import h5py
+
+    t0 = float(config.get("t0_override") if config.get("t0_override") is not None else info.t0)
+    rows = max(1, int(max_batch_bytes) // 96)
+    with h5py.File(info.path, "r") as handle:
+        pulse_keep = _good_pulses(handle["entry"], float(config.get("bad_pulse_threshold", 0.0)))
+        for bank_name in handle["entry"]:
+            if not (bank_name.startswith("bank") and bank_name.endswith("_events")):
+                continue
+            bank = handle["entry"][bank_name]
+            if "event_id" not in bank:
+                continue
+            ids, tofs = bank["event_id"], bank["event_time_offset"]
+            event_index = np.asarray(bank["event_index"], dtype=np.int64) if pulse_keep is not None else None
+            for start in range(0, ids.shape[0], rows):
+                stop = min(start + rows, ids.shape[0])
+                event_ids = np.asarray(ids[start:stop], dtype=np.int64)
+                event_tof = np.asarray(tofs[start:stop], dtype=float) - t0
+                positions, exponents, valid = geometry.event_geometry_for_ids(event_ids)
+                if pulse_keep is not None:
+                    pulse_index = np.searchsorted(event_index, np.arange(start, stop), side="right") - 1
+                    valid &= pulse_keep[np.clip(pulse_index, 0, pulse_keep.size - 1)]
+                positions, exponents, tof = positions[valid], exponents[valid], event_tof[valid]
+                l2 = np.linalg.norm(positions, axis=1)
+                final_tof = tof - TOF_US_PER_M_SQRT_MEV * info.l1 / math.sqrt(ei)
+                good = final_tof > 0.0
+                positions, exponents = positions[good], exponents[good]
+                l2, final_tof = l2[good], final_tof[good]
+                ef = (TOF_US_PER_M_SQRT_MEV * l2 / final_tof) ** 2
+                energy = ei - ef
+                kf = np.sqrt(np.maximum(ef, 0.0) / ENERGY_TO_K2)
+                keep = (energy >= energy_bounds[0]) & (energy <= energy_bounds[1])
+                direction = positions[keep] / l2[keep, None]
+                kf, energy, exponents = kf[keep], energy[keep], exponents[keep]
+                q_lab = np.column_stack((
+                    -kf * direction[:, 0], -kf * direction[:, 1],
+                    math.sqrt(ei / ENERGY_TO_K2) - kf * direction[:, 2],
+                ))
+                weights = np.ones(energy.size)
+                if config.get("he3_detector_efficiency_correction", True):
+                    weights *= _he3_tube_efficiency_correction(kf, exponents)
+                if _use_ki_kf_correction(config):
+                    weights *= math.sqrt(ei / ENERGY_TO_K2) / kf
+                yield np.column_stack((q_lab, energy, weights)), stop - start
+
+
 def _trajectory_normalization(
     group,
     datasets,
@@ -656,6 +698,7 @@ def _trajectory_normalization(
     *,
     progress_callback=None,
     run_infos_by_dataset_id=None,
+    normalization_payloads_by_dataset_id=None,
 ):
     """Native MDNorm-style detector trajectories for compatible direct-geometry runs."""
     config = group.metadata["raw_dgs"]
@@ -670,15 +713,13 @@ def _trajectory_normalization(
             if run_infos_by_dataset_id is None
             else run_infos_by_dataset_id[dataset.id]
         )
-        geometry = _detector_geometry(info.path)
-        direction = geometry.positions / np.linalg.norm(geometry.positions, axis=1)[:, None]
-        solid = (
-            np.ones(geometry.detector_ids.size)
-            if detector_norm is None
-            else detector_norm.value_for_ids(geometry.detector_ids)
+        snapshot = (
+            _run_normalization_payload(info, _detector_geometry(info.path), detector_norm, detector_mask, config)
+            if normalization_payloads_by_dataset_id is None
+            else normalization_payloads_by_dataset_id[dataset.id]
         )
-        if detector_mask is not None:
-            solid[detector_mask.value_for_ids(geometry.detector_ids) <= 0.0] = 0.0
+        direction, solid = snapshot["direction"], snapshot["solid"]
+        charge = float(snapshot["charge"])
         ub = np.asarray(config["ub_matrix"], dtype=float)
         canonical_inverse = (
             np.linalg.inv(2.0 * np.pi * ub) @ _goniometer(info.omega, info.phi, info.chi).T
@@ -692,16 +733,9 @@ def _trajectory_normalization(
             if energy_bounds_by_dataset_id is None
             else energy_bounds_by_dataset_id[dataset.id]
         )
-        import h5py
-
-        with h5py.File(info.path, "r") as handle:
-            charge = _retained_proton_charge_uah(
-                handle["entry"],
-                float(config.get("bad_pulse_threshold", 95.0)),
-            )
         theta = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
         phi = np.arctan2(direction[:, 1], direction[:, 0])
-        current_detector_payload = (geometry.detector_ids, theta, phi, solid)
+        current_detector_payload = (snapshot["detector_ids"], theta, phi, solid)
         if detector_payload is None:
             detector_payload = current_detector_payload
         else:
@@ -803,6 +837,7 @@ def _powder_trajectory_normalization(
     *,
     progress_callback=None,
     run_infos_by_dataset_id=None,
+    normalization_payloads_by_dataset_id=None,
 ):
     """Accumulate the radial MDNorm-style denominator for raw runs."""
 
@@ -815,24 +850,13 @@ def _powder_trajectory_normalization(
             if run_infos_by_dataset_id is None
             else run_infos_by_dataset_id[dataset.id]
         )
-        geometry = _detector_geometry(info.path)
-        direction = geometry.positions / np.linalg.norm(
-            geometry.positions, axis=1
-        )[:, None]
-        solid = (
-            np.ones(geometry.detector_ids.size)
-            if detector_norm is None
-            else detector_norm.value_for_ids(geometry.detector_ids)
+        snapshot = (
+            _run_normalization_payload(info, _detector_geometry(info.path), detector_norm, detector_mask, config)
+            if normalization_payloads_by_dataset_id is None
+            else normalization_payloads_by_dataset_id[dataset.id]
         )
-        if detector_mask is not None:
-            solid[detector_mask.value_for_ids(geometry.detector_ids) <= 0.0] = 0.0
-        import h5py
-
-        with h5py.File(info.path, "r") as handle:
-            charge = _retained_proton_charge_uah(
-                handle["entry"],
-                float(config.get("bad_pulse_threshold", 95.0)),
-            )
+        direction, solid = snapshot["direction"], snapshot["solid"]
+        charge = float(snapshot["charge"])
         incident_energy = float(
             config.get("incident_energy_override") or info.incident_energy
         )

@@ -340,12 +340,57 @@ their own detector positions and efficiency parameters.
 Detector masks are applied to the geometry before event lookup, and sorted
 detector indices are reused across event chunks. Each reduction reads fresh run
 metadata once and uses that snapshot for both events and normalization.
+Unchanged runs reuse the saved snapshot on subsequent binnings.
 
 Use **Vanadium normalization** to select a processed vanadium workspace.
 Non-positive values exclude detectors, while positive values weight their
 normalization trajectories. **Detector mask** can supply an additional
 workspace whose non-positive or invalid values exclude detectors. Both fields
 have **Browse** buttons in the raw-reduction setup panel.
+
+### Reduced-event caches
+
+The first binning caches each direct-geometry run after TOF conversion, pulse
+and detector selection, and efficiency corrections. It retains float64 laboratory
+momentum transfer $\mathbf Q$ (in inverse ångströms), energy transfer $\Delta E$
+(in meV), dimensionless event weights, and detector-trajectory normalization
+inputs. All events in the reduction energy window are retained, including those
+outside the first histogram. Output bounds, steps, axis vectors, UB matrices,
+and symmetry operations can therefore change without rereading raw events.
+Trajectory normalization is evaluated again on each requested grid.
+
+Caches belong to individual dataset entries and are saved inside the same
+`.nfit` project. Removing a run drops its cache on the next save; adding a run
+reduces only that new run. Project opening binds cache references without reading
+any event arrays. Binning reads one run in bounded event chunks and releases
+those arrays as it proceeds. Saving streams existing cache members without
+loading the event table. Private staging files are used before the first save.
+Uncompressed event chunks favor repeated-binning speed and can substantially
+increase project size (40 bytes per retained event, plus small trajectory and
+archive metadata).
+
+The cache signature includes the raw, vanadium, and mask file paths, sizes, and
+nanosecond modification/change times, together with incident-energy/time-zero
+overrides, reduction energy bounds, pulse filtering, and efficiency settings.
+Changes to these inputs regenerate affected caches. If a source file is absent,
+its last saved signature is retained so the cached reduction remains usable.
+Changed reduction settings still require the original inputs for regeneration.
+Instrument geometry is
+contained in the raw file and is checked independently on a new reduction.
+Caches do not assume that different runs share an instrument definition.
+
+Scripts use the same automatic cache path as the GUI:
+
+```python
+from nfit import clear_reduced_event_cache, reduced_event_cache_info
+
+info = reduced_event_cache_info(run_dataset)  # metadata only
+clear_reduced_event_cache(run_dataset)        # regenerate on the next binning
+raw_group.metadata["raw_dgs"]["cache_reduced_events"] = False  # bypass caching
+```
+
+Clearing a reduced-event cache leaves already computed histograms valid. Force a
+new binning if its numerical result also needs to be recomputed.
 
 ### Raw TOF reduction sequence
 

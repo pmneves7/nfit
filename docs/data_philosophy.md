@@ -260,3 +260,12 @@ each stream must specify its data type and serialize the option that selects it.
 
 Unimplemented directions are listed separately in
 [Planned features](planned_features.md).
+
+## Raw direct-geometry event caches
+
+Reduced-event caches are owned by individual raw dataset entries. They retain
+streamed, float64 event chunks and trajectory inputs inside the project archive,
+independently of histogram caches. Opening a project binds lazy references; it
+does not load event tables. Removing entries removes their cached events at the
+next save. See [reduced-event caches](data_import.md#reduced-event-caches) for
+cache invalidation, storage costs, and the scripting API.
