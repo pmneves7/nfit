@@ -3258,3 +3258,66 @@ def test_qt_viewer_exports_box_profiles_and_slice_data_model_csv(
         "x,y,I,dI"
     )
     assert paths["Save displayed model"].read_text().splitlines()[0] == "x,y,I"
+
+
+@pytest.mark.parametrize("hold", [False, True])
+@pytest.mark.parametrize("point_list", [False, True])
+def test_qt_channel_switch_preserves_axis_limits_only_when_held(hold, point_list):
+    pytest.importorskip("PySide6")
+    from nfit.dataset import PointListData
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    if point_list:
+        data = PointListData(
+            columns={"x": np.arange(5.0), "first": np.arange(5.0), "second": np.arange(5.0) + 10},
+            coordinate_names=["x"],
+            channels=[{"label": name, "value": name, "error": None} for name in ("first", "second")],
+        )
+        viewer = QtMDHistoSliceViewer(data)
+        channel = "second"
+    else:
+        viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+        channel = "errors"
+    viewer.hold_view_settings_check.setChecked(hold)
+    viewer.ax_image.set_xlim(0.25, 0.75)
+    viewer.ax_image.set_ylim(0.1, 0.4)
+    viewer.channel_combo.setCurrentText(channel)
+    try:
+        assert viewer.model.channel == channel
+        if hold:
+            np.testing.assert_allclose(viewer.ax_image.get_xlim(), (0.25, 0.75))
+            np.testing.assert_allclose(viewer.ax_image.get_ylim(), (0.1, 0.4))
+            assert viewer.x_min_spin.value() == pytest.approx(0.25)
+            assert viewer.y_max_spin.value() == pytest.approx(0.4)
+        else:
+            assert not np.allclose(viewer.ax_image.get_xlim(), (0.25, 0.75))
+            assert not np.allclose(viewer.ax_image.get_ylim(), (0.1, 0.4))
+    finally:
+        viewer.window.close()
+
+
+def test_qt_held_limits_follow_channel_binning_and_dataset_changes():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    datasets = [
+        _tiny_mdhisto_data().with_updates(metadata={"source_dataset_name": source, "binning_name": binning})
+        for source, binning in (("first", "Default"), ("first", "Coarse"), ("second", "Default"))
+    ]
+    viewer = QtMDHistoSliceViewer(datasets, dataset_names=["first default", "first coarse", "second"], x_dim=3, y_dim=2)
+    viewer.hold_view_settings_check.setChecked(True)
+    viewer.ax_image.set_xlim(0.25, 0.75)
+    viewer.ax_image.set_ylim(0.1, 0.4)
+    try:
+        viewer.channel_combo.setCurrentText("errors")
+        viewer.binning_combo.setCurrentText("Coarse")
+        assert viewer.dataset_index == 1
+        np.testing.assert_allclose(viewer.ax_image.get_xlim(), (0.25, 0.75))
+        np.testing.assert_allclose(viewer.ax_image.get_ylim(), (0.1, 0.4))
+        viewer.dataset_combo.setCurrentText("second")
+        assert viewer.dataset_index == 2
+        assert viewer.model.channel == "errors"
+        np.testing.assert_allclose(viewer.ax_image.get_xlim(), (0.25, 0.75))
+        np.testing.assert_allclose(viewer.ax_image.get_ylim(), (0.1, 0.4))
+    finally:
+        viewer.window.close()

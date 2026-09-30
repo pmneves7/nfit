@@ -19,6 +19,12 @@ measured coordinate as usual.
 The data viewer displays point lists and gridded datasets without changing
 their stored values. It supports channel selection, masks, cuts, maps,
 waterfalls, model comparisons, and volumetric rendering.
+**Hold view settings** keeps compatible displayed axes, X/Y limits, display steps,
+hidden-axis ranges, and styling when changing channels, named binnings, or
+datasets. Channel changes preserve the current zoom when this option is checked.
+When it is unchecked, channel changes reset the displayed limits and each
+dataset or binning retains its independent view settings.
+
 Histogram slices process coverage only inside the selected region. Appearance
 changes in the ordinary slice view reuse the displayed numerical slice;
 changing axes, selections, masks, or coverage settings recomputes it. No

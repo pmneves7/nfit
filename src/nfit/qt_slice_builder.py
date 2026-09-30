@@ -331,7 +331,7 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.hold_view_settings_check.setChecked(False)
     viewer.hold_view_settings_check.setToolTip(
         "Carry compatible axes, ranges, zoom, color limits, smoothing, and figure styling "
-        "to another dataset or named binning. Off keeps independent settings for each view."
+        "across channel, dataset, or named binning changes. Off keeps independent settings for each view."
     )
     viewer.hold_view_settings_check.toggled.connect(viewer._set_hold_view_settings)
     dataset_layout.addWidget(viewer.hold_view_settings_check, 5, 2)
