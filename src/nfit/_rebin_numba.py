@@ -17,6 +17,14 @@ def sparse_accumulators():
 
 
 @njit(cache=True, fastmath=False, nogil=True)
+def merge_sparse_accumulator(source, target):
+    """Add touched bins without boxing each typed-map item in Python."""
+
+    for index, value in source.items():
+        target[index] += value
+
+
+@njit(cache=True, fastmath=False, nogil=True)
 def accumulate_batch(
     coords,
     data,

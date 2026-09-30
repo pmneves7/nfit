@@ -905,9 +905,9 @@ class NDRebin:
 
     @staticmethod
     def _merge_sparse_partial(partial, bd_sum, err_sum, norm_sum, ns_sum) -> None:
+        assert _NUMBA_REBIN is not None
         for source, target in zip(partial, (bd_sum, err_sum, norm_sum, ns_sum), strict=True):
-            for index, value in source.items():
-                target[index] += value
+            _NUMBA_REBIN.merge_sparse_accumulator(source, target)
 
     def _calculate_fractional_bins(self) -> None:
         assert self.Ndims is not None

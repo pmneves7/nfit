@@ -242,9 +242,10 @@ allocated once per run and reduced once at the end, and auto mode additionally
 caps the worker count against the number of source contributions per output
 bin, because each worker has to pay for zeroing and reducing its own copy of
 the grid. If dense copies do not fit, auto mode uses sparse touched-bin maps
-only when estimated occupancy is at most 5% and the maps fit the same budget;
-otherwise it runs the fused kernel on one
-worker. With `workers=None`, the shared `NFIT_NUM_THREADS` setting, Linux CPU
+only when estimated occupancy is at most 5% and the maps fit the same budget.
+Touched bins are merged by a compiled kernel, avoiding Python iteration over
+the worker maps. If neither strategy meets those limits, it runs the fused
+kernel on one worker. With `workers=None`, the shared `NFIT_NUM_THREADS` setting, Linux CPU
 affinity, cgroups, and SLURM allocations set the worker ceiling. Explicit worker
 counts and `parallel_strategy="serial"`, `"dense"`, or `"sparse"` are useful
 for controlled benchmarks. Results report `resolved_workers` and

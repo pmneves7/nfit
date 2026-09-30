@@ -441,7 +441,9 @@ def test_dense_threaded_rebin_matches_serial_and_respects_memory_budget():
     np.testing.assert_allclose(threaded.n_samples, serial.n_samples, rtol=1e-12, atol=1e-12)
 
 
-def test_sparse_threaded_rebin_matches_serial_for_large_sparse_grid():
+@pytest.mark.parametrize("fractional", [False, True])
+@pytest.mark.parametrize("mean_weighting", ["uniform", "inverse_variance"])
+def test_sparse_threaded_rebin_matches_serial_for_large_sparse_grid(fractional, mean_weighting):
     pytest.importorskip("numba")
     rng = np.random.default_rng(101)
     coords = rng.uniform(0.0, 0.02, size=(701, 3))
@@ -452,6 +454,8 @@ def test_sparse_threaded_rebin_matches_serial_for_large_sparse_grid():
         lower=[0.0, 0.0, 0.0],
         upper=[1.0, 1.0, 1.0],
         num_bins=[100, 100, 100],
+        fractional=fractional,
+        mean_weighting=mean_weighting,
         backend="numba",
         batch_size=173,
     )
