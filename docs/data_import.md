@@ -462,8 +462,25 @@ Each coordinate-axis row is an HKLE basis vector. The four rows must be linearly
 independent; momentum rows use only H, K, and L, while the energy row uses E.
 Bounds and resolution are expressed in that basis.
 
+Without an incident-energy override, each run's normalization trajectory uses
+that run's stored incident energy $E_i$ (meV), goniometer, detector geometry,
+and retained proton charge. Sharing identical detector geometry between runs
+does not share their incident energies. Combining runs or changing their order
+must give the same normalization as adding their separate normalization grids.
+
+Mantid 6.16's `MDNorm` initializes its direct-geometry trajectory energy from
+the first experiment in a merged workspace
+([implementation](https://github.com/mantidproject/mantid/blob/v6.16.0/Framework/MDAlgorithms/src/MDNorm.cpp)).
+Consequently, small differences from nfit can occur when nominally identical
+energy scans have different measured $E_i$. To isolate this assumption in a
+comparison, hold the events, axes, masks, calibration, and symmetry fixed and
+compare the normalization arrays using a common trajectory energy. This is a
+diagnostic comparison, not a reason to replace measured run energies.
+
 An incident-energy override changes normalization trajectories. A time-zero
 override cannot move coordinates already stored in an MDEvent workspace.
+Changing only the trajectory energy also does not reconstruct those stored
+events at the new energy.
 
 ### Measured-zero uncertainties
 

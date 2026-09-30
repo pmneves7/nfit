@@ -29,6 +29,35 @@ releases. Current behavior is documented in the workflow and API pages.
   machinery rather than the current label-and-position matching. Until then
   those models keep the correct but larger conventional cell.
 
+## Statistical binning and reduction recipes
+
+- Expose explicit measurement estimators: exposure pooling for count rates,
+  inverse-variance means for independent continuous measurements, and
+  coordinate-interval averages with sampling-width weights. Preserve existing
+  saved weighting settings through an explicit compatibility path. The current
+  inverse-variance option multiplies any physical exposure weight by
+  $1/\sigma^2$, where $\sigma$ is the stored signal uncertainty; it does not
+  implement all these distinct estimators.
+- Propagate dependencies from fractional assignment, repeated symmetry copies,
+  shared monitors/vanadium, backgrounds, and reconstruction hypotheses.
+  CORELLI's reconstructed energy channels and symmetrized copies are not
+  independent measurements. Current histogram errors retain diagonal
+  variances; pooled errors assume independent cells and known exposure.
+- Retain sufficient statistics and provenance for counts, exposure, variance,
+  and shared uncertainty sources through caches and subsequent reductions.
+  Low-count confidence intervals and count-space likelihoods should remain
+  distinguishable from a symmetric Gaussian uncertainty.
+- Make reduction, histogram, and display recipes separately inspectable and
+  reproducible. The SEQUOIA reduction examples separate run selection, UB,
+  calibration, filters, and background settings from axis/bound/symmetry recipes
+  and plot styling. Existing nfit named binnings provide a starting point;
+  future controls should show resolved per-run settings and uncertainty
+  assumptions through the same public scripting APIs.
+- For normalized count data, distinguish smoothing numerator and exposure
+  before division from smoothing the divided intensity. Propagate the
+  covariance introduced by smoothing and keep unsmoothed statistics available.
+  Changes here require scientific validation before altering existing plots.
+
 ## Electronic-response models
 
 Current tight-binding, Lindhard, and RPA capabilities are documented under

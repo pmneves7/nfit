@@ -948,6 +948,65 @@ def test_symmetry_trajectory_numba_matches_python_fallback(monkeypatch, tmp_path
     assert event_updates[-1]["iteration"] == 4
 
 
+@pytest.mark.parametrize("accelerated", [False, True])
+def test_trajectory_normalization_uses_each_runs_energy_and_is_additive(
+    monkeypatch, tmp_path, accelerated
+):
+    """A forward detector has an analytic energy span for a selected Q interval."""
+    if accelerated and mdevent._MDEVENT_NUMBA is None:
+        pytest.skip("Numba MDEvent normalization is unavailable")
+    if not accelerated:
+        monkeypatch.setattr(mdevent, "_MDEVENT_NUMBA", None)
+    monkeypatch.setattr(mdevent._parallel, "num_threads", lambda: 1)
+    source = tmp_path / "different_energies.nxs"
+    _write_mdevent(source)
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(source, "r+") as handle:
+        for index, ei in enumerate((10.0, 40.0)):
+            logs = handle[f"MDEventWorkspace/experiment{index}/logs"]
+            logs["Ei/value"][...] = [ei]
+            logs["processed_histogram_bins/value"][...] = [-3.0, 3.0]
+    group = mdevent_dataset_group(source)
+    edges = ([-0.01, 0.01], [-0.01, 0.01], [0.09, 0.11], [0.0, 3.0])
+    kwargs = dict(
+        lower=[0, 0, 0.1, 1.5], upper=[0, 0, 0.1, 1.5],
+        num_bins=[1, 1, 1, 1], bin_edges=edges,
+    )
+
+    # Q = ki - kf for this forward detector. With A = hbar²/(2mn),
+    # DeltaE(Q) = 2 sqrt(A Ei) Q - A Q² (meV for Q in Angstrom^-1).
+    def energy_span(ei):
+        coefficient = mdevent.ENERGY_TO_K2
+        low, high = edges[2]
+        return (
+            2 * np.sqrt(coefficient * ei) * (high - low)
+            - coefficient * (high**2 - low**2)
+        )
+
+    expected = energy_span(10.0) + 2 * energy_span(40.0)
+    merged = bin_mdevent_group(group, **kwargs)
+    reversed_runs = bin_mdevent_group(group, datasets=group.datasets[::-1], **kwargs)
+    separate = [
+        bin_mdevent_group(group, datasets=[run], **kwargs)
+        for run in group.datasets
+    ]
+    for result in (merged, reversed_runs):
+        np.testing.assert_allclose(
+            result.metadata["normalization_denominator"], expected, rtol=1e-12
+        )
+    np.testing.assert_allclose(
+        sum(result.metadata["normalization_denominator"] for result in separate),
+        expected, rtol=1e-12,
+    )
+    group.metadata["mdevent"]["incident_energy_override"] = 40.0
+    overridden = bin_mdevent_group(group, **kwargs)
+    np.testing.assert_allclose(
+        overridden.metadata["normalization_denominator"],
+        3 * energy_span(40.0), rtol=1e-12,
+    )
+    assert not np.isclose(3 * energy_span(40.0), expected)
+
+
 def test_persistent_trajectory_accumulator_matches_per_batch_wrapper():
     kernels = mdevent._MDEVENT_NUMBA
     if kernels is None:

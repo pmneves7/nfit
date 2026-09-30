@@ -240,6 +240,33 @@ upper endpoint for zero observed events and zero known background. See
 [Measured-zero uncertainties](data_import.md#measured-zero-uncertainties)
 for the calculation and [References](references.md) for the citation.
 
+## Measurement statistics and binning
+
+Instrument reduction determines coordinates, calibrated signals, exposure,
+and statistical dependencies. General binning then combines compatible
+measurements using those quantities. A DGS energy trajectory, a diffraction
+flux integral, a CW detector/monitor exposure, and a susceptibility measurement
+are different acquisition models; an instrument name alone does not determine
+their statistical combination.
+
+For normalized count histograms, keep the corrected count numerator, its
+variance, and the exposure denominator available for subsequent pooling.
+Preserve covered zero-count measurements. For continuous measurements with
+independent Gaussian uncertainties, an inverse-variance mean estimates a
+common response within the output bin. An average over a coordinate interval
+is a different target and may require sampling-width weights rather than
+precision weights. Bin widths, instrument resolution, and systematic
+calibration differences remain relevant even when the measurement units match.
+
+Exposure pooling and Gaussian precision weighting are not interchangeable.
+The current **Inverse variance** option adds inverse-variance weighting to any
+physical normalization weight already present; it is therefore not a pure
+Gaussian inverse-variance mean for data carrying an exposure denominator.
+See [Pooling normalized count histograms](physics_conventions.md#pooling-normalized-count-histograms)
+for the current histogram estimator and its uncertainty assumptions, and
+[Planned statistical binning work](planned_features.md#statistical-binning-and-reduction-recipes)
+for the remaining policy and covariance work.
+
 ## Adding an importer or operation
 
 An extension should:
