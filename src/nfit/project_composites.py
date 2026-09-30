@@ -1624,6 +1624,17 @@ def _composite_background_cache_key(group, background):
     )
 
 
+def _matching_composite_base_key(group, signature, binning_id=None):
+    """Reuse an identical numerical grid across named binnings of one owner."""
+    keys = [_composite_base_cache_key(group, binning_id), _composite_cache_key(group, binning_id)]
+    for binning in data_group_composite_binnings(group):
+        other_id = None if binning["fit"] else binning["id"]
+        keys.extend(
+            (_composite_base_cache_key(group, other_id), _composite_cache_key(group, other_id))
+        )
+    return next((key for key in keys if _COMPOSITE_DATA_CACHE.has_signature(key, signature)), None)
+
+
 def _composite_histograms_current(group, *, config_override=None, binning_id=None, trail=None):
     """Check numerical dependencies without loading saved histogram arrays."""
     trail = set() if trail is None else set(trail)
@@ -1638,10 +1649,7 @@ def _composite_histograms_current(group, *, config_override=None, binning_id=Non
         binning_id=binning_id,
         include_backgrounds=False,
     )
-    if not (
-        _COMPOSITE_DATA_CACHE.has_signature(key, signature)
-        or _COMPOSITE_DATA_CACHE.has_signature(_composite_cache_key(group, binning_id), signature)
-    ):
+    if _matching_composite_base_key(group, signature, binning_id) is None:
         return False
     for background in getattr(group, "backgrounds", []):
         if not background.enabled or background.scale == 0:
@@ -1924,6 +1932,7 @@ def _cached_composite_dataset_data(
     config_override: dict[str, Any] | None = None,
     binning_id: str | None = None,
     apply_spectral_channels: bool = True,
+    prepare_scaling_cache: bool = False,
 ) -> MDHistoData | PointListData | PointData4D | None:
     from .composite_spectral import apply_composite_spectral_channels
 
@@ -1942,10 +1951,28 @@ def _cached_composite_dataset_data(
         group, config_override=config_override, binning_id=binning_id
     )
     cache_key = _composite_cache_key(group, binning_id)
+    if progress_callback is not None and _COMPOSITE_DATA_CACHE.has_signature(cache_key, signature):
+        progress_callback({"stage": "cache_load", "message": f"Loading cached histogram: {group.name}"})
     cached = _COMPOSITE_DATA_CACHE.get(cache_key)
     if cached is not None and cached[0] == signature:
-        _COMPOSITE_DATA_CACHE.move_to_end(cache_key)
-        return finish(cached[1])
+        needs_scaling_base = (
+            prepare_scaling_cache
+            and bool(getattr(group, "backgrounds", []))
+            and _matching_composite_base_key(
+                group,
+                _composite_cache_signature(
+                    group,
+                    config_override=config_override,
+                    binning_id=binning_id,
+                    include_backgrounds=False,
+                ),
+                binning_id,
+            )
+            is None
+        )
+        if not needs_scaling_base:
+            _COMPOSITE_DATA_CACHE.move_to_end(cache_key)
+            return finish(cached[1])
     config = (
         data_group_composite_config(group)
         if config_override is None
@@ -1957,9 +1984,13 @@ def _cached_composite_dataset_data(
     base_signature = _composite_cache_signature(
         group, config_override=config, binning_id=binning_id, include_backgrounds=False
     )
+    if progress_callback is not None and _COMPOSITE_DATA_CACHE.has_signature(base_key, base_signature):
+        progress_callback({"stage": "cache_load", "message": f"Loading cached unsubtracted histogram: {group.name}"})
     base_cached = _COMPOSITE_DATA_CACHE.get(base_key)
-    if base_cached is None and cached is not None and cached[0] == base_signature:
-        base_cached = cached
+    if base_cached is None:
+        matching_key = _matching_composite_base_key(group, base_signature, binning_id)
+        if matching_key is not None:
+            base_cached = _COMPOSITE_DATA_CACHE.get(matching_key)
     base_current = base_cached is not None and base_cached[0] == base_signature
     deferred = bool(
         not force_rebin
@@ -1979,6 +2010,8 @@ def _cached_composite_dataset_data(
     if deferred:
         return None
     if base_current:
+        if progress_callback is not None:
+            progress_callback({"stage": "composite_scaling", "message": f"Updating scale and background subtraction from cached histograms: {group.name}"})
         base = base_cached[1]
     else:
         base = composite_dataset_data(
@@ -2858,5 +2891,9 @@ def refresh_composite_dataset(group, *, node=None, binning_id=None, progress_cal
         binning_id = None
     config = None if binning_id is None else data_group_composite_config_by_id(scope, binning_id)
     return _cached_composite_dataset_data(
-        scope, config_override=config, binning_id=binning_id, progress_callback=progress_callback
+        scope,
+        config_override=config,
+        binning_id=binning_id,
+        progress_callback=progress_callback,
+        prepare_scaling_cache=True,
     )

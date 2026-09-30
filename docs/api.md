@@ -21,12 +21,14 @@ When the container belongs to a `DatasetEntry`, finish an edit with
 `dataset.replace_data(...)` so dependent caches and fingerprints are
 invalidated.
 
-Use `configure_composite_scaling(workspace, node=collection, data_scale=2,
-result_scale=1, fit_weight=1)` for dimensionless collection calibration before
-background subtraction, final-result calibration, and fitting weight.
+Use `configure_composite_scaling(workspace, node=collection, result_scale=2,
+fit_weight=1)` for the collection header Scale and Fit weight. Scale applies
+to the complete background-subtracted result; Fit weight affects fitting only.
+The optional `data_scale` argument preserves pre-background calibration from
+existing scripts and saved projects.
 `refresh_composite_dataset(workspace, node=collection, binning_id=None)` returns
-the current result, reusing the cached unsubtracted histogram for scalar
-changes. A named binning ID selects its cached grid; `None` selects the fit
+the current result, preparing an unsubtracted cache once for older projects
+and reusing it for subsequent scalar changes. A named binning ID selects its cached grid; `None` selects the fit
 binning. `composite_dataset_data(...)` remains the explicit numerical rebuild
 API. Exported composite workflows preserve the three scalar coefficients.
 See [Fast composite scaling](data_import.md#fast-composite-scaling).

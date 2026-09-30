@@ -9309,6 +9309,7 @@ class NfitProjectExplorer:
                 return _cached_composite_dataset_data(
                     group,
                     force_rebin=True,
+                    prepare_scaling_cache=True,
                     progress_callback=progress_callback,
                     config_override=(None if selected["fit"] else config),
                     binning_id=cache_id,
@@ -9339,6 +9340,7 @@ class NfitProjectExplorer:
             data = _cached_composite_dataset_data(
                 group,
                 force_rebin=True,
+                prepare_scaling_cache=True,
                 progress_callback=progress,
                 config_override=(None if selected["fit"] else config),
                 binning_id=cache_id,
@@ -13034,11 +13036,37 @@ class NfitProjectExplorer:
         if not show:
             return
         datasets = self._group_bulk_datasets(role)
+        subgroup = self._dataset_group_for_item(self._current_item())
+        group = self._objects_for_item(self._current_item())[0]
+        scope = (
+            _composite_scope(group, subgroup)
+            if group is not None and subgroup is not None
+            else None
+        )
+        combined = scope is not None and any(
+            item["config"].get("enabled") for item in data_group_composite_binnings(scope)
+        )
+        from .composite_scaling import composite_scaling
+
+        settings = composite_scaling(scope) if combined else None
         for edit, attribute in (
             (self.group_fit_weight_edit, "fit_weight"),
             (self.group_scale_edit, "scale_factor"),
         ):
-            values = {float(getattr(dataset, attribute)) for dataset in datasets}
+            values = (
+                {settings["result_scale" if attribute == "scale_factor" else "fit_weight"]}
+                if combined
+                else {float(getattr(dataset, attribute)) for dataset in datasets}
+            )
+            edit.setToolTip(
+                (
+                    "Scale the complete background-subtracted collection using cached histograms."
+                    if attribute == "scale_factor"
+                    else "Weight this collection in fitting without changing its histogram."
+                )
+                if combined
+                else f"Bulk edit {attribute.replace('_', ' ')} for every descendant run. Blank means values differ."
+            )
             edit.blockSignals(True)
             try:
                 edit.setText(_format_number(next(iter(values))) if len(values) == 1 else "")
@@ -13049,11 +13077,11 @@ class NfitProjectExplorer:
             subgroup is not None
             and datasets
             and all(
-                dataset.scale_factor_vary
-                and dataset.scale_factor_group == subgroup.name
+                dataset.scale_factor_vary and dataset.scale_factor_group == subgroup.name
                 for dataset in datasets
             )
         )
+        self.group_scale_fit_check.setVisible(not combined)
         self.group_scale_fit_check.blockSignals(True)
         try:
             self.group_scale_fit_check.setChecked(tied)
@@ -13068,6 +13096,32 @@ class NfitProjectExplorer:
         try:
             value = float(text)
         except ValueError:
+            return
+        subgroup = self._dataset_group_for_item(self._current_item())
+        scope = (
+            _composite_scope(group, subgroup)
+            if group is not None and subgroup is not None
+            else None
+        )
+        combined = scope is not None and any(
+            item["config"].get("enabled") for item in data_group_composite_binnings(scope)
+        )
+        if combined:
+            from .composite_scaling import configure_composite_scaling
+
+            try:
+                configure_composite_scaling(
+                    scope,
+                    **{"result_scale" if attribute == "scale_factor" else "fit_weight": value},
+                )
+            except ValueError:
+                self._sync_group_bulk_controls(role)
+                return
+            self._record_data_group_state_change(group)
+            self._mark_dirty()
+            self._request_overlay_refresh(group)
+            self._refresh_cache_badges()
+            self._sync_details()
             return
         datasets = self._group_bulk_datasets(role)
         changed = False

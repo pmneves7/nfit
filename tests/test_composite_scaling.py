@@ -134,30 +134,31 @@ def test_background_projection_is_reused_for_link_scale(monkeypatch):
     np.testing.assert_allclose(nfit.refresh_composite_dataset(group).signal, 6)
 
 
-def test_composite_controls_use_public_scalar_api(monkeypatch):
-    from types import SimpleNamespace
-
+def test_existing_group_controls_scale_composite_without_editing_runs(monkeypatch):
     from PySide6 import QtWidgets
 
-    from nfit.project_rebin_panels import add_composite_scaling_controls
-
-    application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    assert application is not None
-    group = sample_group()
-    first = nfit.refresh_composite_dataset(group)
-    layout = QtWidgets.QHBoxLayout()
-    explorer = SimpleNamespace(
-        _record_data_group_state_change=lambda root: None,
-        _mark_dirty=lambda: None,
-        _request_overlay_refresh=lambda root: None,
-        _refresh_cache_badges=lambda: None,
-    )
-    add_composite_scaling_controls(explorer, layout, group, group)
-    controls = [layout.itemAt(i).widget() for i in range(layout.count())]
-    assert all(widget.toolTip() for widget in controls)
-    scale = next(widget for widget in controls if widget.objectName() == "composite_data_scale")
-    scale.setValue(2)
-    np.testing.assert_allclose(nfit.refresh_composite_dataset(group).signal, first.signal + 10)
+    from nfit.pipeline import DatasetGroup
+    source = sample_group()
+    node = DatasetGroup("sample", datasets=source.datasets, metadata=source.metadata, backgrounds=source.backgrounds)
+    root = DataGroup("workspace", subgroups=[node])
+    scope = comp._composite_scope(root, node)
+    first = nfit.refresh_composite_dataset(root, node=node)
+    explorer = nfit.NfitProjectExplorer(nfit.NfitProject([root]))
+    item = explorer.tree.topLevelItem(0).child(0).child(0)
+    explorer.tree.setCurrentItem(item)
+    assert item.text(0) == "sample"
+    assert explorer.window.findChild(QtWidgets.QDoubleSpinBox, "composite_data_scale") is None
+    assert explorer.window.findChild(QtWidgets.QDoubleSpinBox, "composite_result_scale") is None
+    assert explorer.window.findChild(QtWidgets.QDoubleSpinBox, "composite_fit_weight") is None
+    monkeypatch.setattr(comp, "composite_dataset_data", lambda *a, **k: pytest.fail("event rebin"))
+    explorer._set_group_bulk_value("scale_factor", "2")
+    np.testing.assert_allclose(nfit.refresh_composite_dataset(root, node=node).signal, first.signal * 2)
+    assert all(run.scale_factor == 1 for run in node.datasets)
+    explorer._set_group_bulk_value("fit_weight", "7")
+    assert comp.composite_dataset_entry(scope).fit_weight == 7
+    assert all(run.fit_weight == 1 for run in node.datasets)
+    assert explorer.group_scale_edit.text() == "2"
+    assert explorer.group_fit_weight_edit.text() == "7"
 
 
 def test_direct_background_calibration_reuses_projection(monkeypatch):
@@ -189,3 +190,41 @@ def test_zero_composite_fit_weight_is_visualization_only():
     nfit.configure_composite_scaling(group, fit_weight=0)
     inputs, _ = fit_dataset_inputs(group, purpose="fit")
     assert inputs == []
+
+
+def test_refresh_prepares_scaling_base_for_legacy_corrected_cache(monkeypatch):
+    group = sample_group()
+    first = nfit.refresh_composite_dataset(group)
+    comp._COMPOSITE_DATA_CACHE.pop(comp._composite_base_cache_key(group), None)
+    calls = []
+    original = comp.composite_dataset_data
+    def count(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(comp, "composite_dataset_data", count)
+    np.testing.assert_allclose(nfit.refresh_composite_dataset(group).signal, first.signal)
+    assert len(calls) == 1
+    group.backgrounds[0].scale = .25
+    np.testing.assert_allclose(nfit.refresh_composite_dataset(group).signal, 9.5)
+    assert len(calls) == 1
+
+
+def test_identical_named_grid_reuses_unsubtracted_histogram(monkeypatch):
+    group = sample_group()
+    first = nfit.refresh_composite_dataset(group)
+    named_id = nfit.add_data_group_composite_binning(group, name="same grid", duplicate_from="fit")
+    monkeypatch.setattr(comp, "composite_dataset_data", lambda *a, **k: pytest.fail("duplicate grid rebin"))
+    np.testing.assert_allclose(nfit.refresh_composite_dataset(group, binning_id=named_id).signal, first.signal)
+    group.backgrounds[0].scale = .25
+    np.testing.assert_allclose(nfit.refresh_composite_dataset(group, binning_id=named_id).signal, 9.5)
+
+
+def test_scalar_progress_identifies_cached_arithmetic(monkeypatch):
+    group = sample_group()
+    nfit.refresh_composite_dataset(group)
+    group.backgrounds[0].scale = .25
+    monkeypatch.setattr(comp, "composite_dataset_data", lambda *a, **k: pytest.fail("event rebin"))
+    progress = []
+    nfit.refresh_composite_dataset(group, progress_callback=progress.append)
+    assert any(event["stage"] == "composite_scaling" for event in progress)
+    assert all(event["stage"] not in {"raw_dgs_events", "raw_dgs_normalization"} for event in progress)

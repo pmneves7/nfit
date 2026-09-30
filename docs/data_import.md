@@ -958,21 +958,23 @@ nonzero bins at window edges; nearest interpolation gives a binwise boundary.
 
 ### Fast composite scaling
 
-A collection's **Dataset scale** multiplies its combined signal before its
-backgrounds are subtracted. **Result scale** multiplies the corrected result
-and its uncertainty. **Fit weight** changes its relative contribution to the
-fit objective without changing signal or uncertainty. These dimensionless
-coefficients are independent of the bulk controls that change individual runs.
+For a combined collection, the existing header **Scale** multiplies the complete
+background-subtracted result and its uncertainty. Header **Fit weight** changes
+its contribution to fitting without changing intensity or uncertainty. These
+controls do not overwrite individual run calibration or weights. Individual run
+edits still require rebinning. For a collection without an enabled composite,
+the header controls retain their bulk-edit behavior for descendant runs.
 
 For independent sample and background histograms, the corrected intensity is
-$R = r(dS - aB)$ and its one-sigma uncertainty is
-$\sigma_R = r\sqrt{d^2\sigma_S^2 + a^2\sigma_B^2}$, where $d$ is Dataset
-scale, $a$ is the background-link scale, and $r$ is Result scale. Multiple
-backgrounds contribute separate squared uncertainty terms. Coefficient
-uncertainties are not propagated. Dataset scale, Result scale, and Fit weight
-must be finite and nonnegative; zero is supported.
+$R = c(S - aB)$ and its one-sigma uncertainty is
+$\sigma_R = c\sqrt{\sigma_S^2 + a^2\sigma_B^2}$, where $c$ is header Scale
+and $a$ is the background-link scale. Both coefficients are dimensionless;
+$S$, $B$, and their one-sigma uncertainties use the same intensity unit.
+Multiple backgrounds contribute separate squared uncertainty terms.
+Coefficient uncertainties are not propagated. Scale and Fit weight must be
+finite and nonnegative; zero is supported.
 
-Once the sample and background histograms are cached, changing these scalar
+Once sample and background histograms are cached, changing their scalar
 coefficients recalculates array arithmetic without reducing or rebinning
 source events. Background projections are reused in memory while their
 sources and output grid remain current. Scalar updates also work with
@@ -984,12 +986,14 @@ result until **Rebin now**.
 Saved composite caches contain the unsubtracted sample histogram instead of
 a second corrected histogram. Background collections retain their own caches.
 They use the existing histogram compression and load lazily. Reduced-event
-caches are unchanged. The active corrected result requires temporary signal
-and uncertainty arrays; all numerical caches share the existing memory budget.
-An older project containing only a corrected cube needs one rebin to establish
-the reusable unsubtracted cache. A saved projected background may need its
-projection prepared again after reopening; subsequent scalar edits reuse it.
+caches are unchanged. The active corrected result requires additional signal
+and uncertainty arrays within the existing shared cache budget.
 
+An older project containing only a corrected cube needs its sample histogram
+prepared once. **Rebin now** and `refresh_composite_dataset(...)` prepare this
+cache even when the old corrected cube is current. Save with cached binnings
+to retain it across sessions. A projected background may need its projection
+prepared again after reopening; subsequent scalar edits reuse it.
 
 **Powder through sample trajectories** is available for a background owned by an
 MDEvent dataset group. It treats the measured powder map as the intensity that

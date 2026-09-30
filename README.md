@@ -60,7 +60,7 @@ A few of its main capabilities are:
   and binnings for faster switching;
 - construct and inspect crystal, tight-binding, Lindhard, and RPA models;
 - rescale cached composite data and backgrounds without rebinning events, with
-  separate collection calibration, corrected-result scale, and fitting weight;
+  the existing collection Scale and Fit weight controls;
 - save complete `.nfit` projects, load cached binnings on demand, reuse unchanged
   compressed artifacts when saving, and manage cached results through shared
   CPU/RAM preferences, memory estimates, automatic disk-backed loading of large
