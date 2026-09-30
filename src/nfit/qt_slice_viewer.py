@@ -73,6 +73,7 @@ from .slice_viewer_state import (
     _coerce_datasets,
     _cursor_axis_hkle_vector,
     _cursor_matrix_includes_2pi,  # noqa: F401 - compatibility re-export
+    _cursor_q_matrix_from_lattice_parameters,
     _cursor_q_matrix_from_metadata,
     _cursor_q_matrix_from_oriented_lattice,
     _DatasetViewState,
@@ -5235,7 +5236,6 @@ class QtMDHistoSliceViewer:
             from .fitting import (
                 _as_3x3_matrix,
                 _metadata_coordinate_units_are_inv_angstrom,
-                _resolve_q_transform,
             )
 
             if _metadata_coordinate_units_are_inv_angstrom(self.data.metadata):
@@ -5249,10 +5249,15 @@ class QtMDHistoSliceViewer:
                 q_vector = _cursor_q_matrix_from_metadata(self.data.metadata, "ub_matrix") @ hkl
             elif "orientation_matrix" in self.data.metadata:
                 q_vector = _cursor_q_matrix_from_metadata(self.data.metadata, "orientation_matrix") @ hkl
-            elif isinstance(self.data.metadata.get("oriented_lattice"), dict):
+            elif isinstance(self.data.metadata.get("oriented_lattice"), dict) and any(
+                key in self.data.metadata["oriented_lattice"]
+                for key in ("rlu_to_inv_angstrom_matrix", "ub_matrix", "orientation_matrix")
+            ):
                 q_vector = _cursor_q_matrix_from_oriented_lattice(self.data.metadata["oriented_lattice"]) @ hkl
             else:
-                q_vector = _resolve_q_transform(self.data) @ hkl
+                q_vector = _cursor_q_matrix_from_lattice_parameters(
+                    self.data.metadata, self.crystal_contexts[self.dataset_index]
+                ) @ hkl
         except (KeyError, TypeError, ValueError):
             return None
         return float(np.linalg.norm(q_vector))

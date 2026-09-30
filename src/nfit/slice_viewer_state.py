@@ -170,6 +170,22 @@ def _cursor_q_matrix_from_metadata(metadata: dict[str, Any], key: str) -> np.nda
     return 2.0 * np.pi * matrix
 
 
+def _cursor_q_matrix_from_lattice_parameters(
+    metadata: dict[str, Any], crystal_context: dict[str, Any]
+) -> np.ndarray:
+    """Resolve the physical reciprocal metric from dataset or project lattice."""
+    from .analysis.coordinates import rlu_to_q_matrix
+
+    lattice = metadata.get("lattice_parameters")
+    if not isinstance(lattice, dict):
+        oriented = metadata.get("oriented_lattice")
+        if isinstance(oriented, dict):
+            lattice = oriented.get("lattice_parameters")
+    if not isinstance(lattice, dict):
+        lattice = crystal_context.get("lattice_parameters")
+    return rlu_to_q_matrix({"lattice_parameters": lattice})
+
+
 def _cursor_q_matrix_from_oriented_lattice(oriented_lattice: dict[str, Any]) -> np.ndarray:
     from .fitting import _as_3x3_matrix
 

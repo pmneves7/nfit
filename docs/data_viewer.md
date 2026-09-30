@@ -313,6 +313,10 @@ are presentation layers only; they do not alter data, masks, integration, or
 fitting.
 
 The reciprocal metric comes from the dataset's UB matrix or lattice parameters.
+The cursor's **|Q|** readout also uses the project's crystal lattice when a
+rebinned dataset has no attached conversion matrix or lattice. Dataset-specific
+matrices and lattice parameters take priority. The displayed magnitude is in
+inverse angstroms, including the factor of 2π in the reciprocal basis.
 The space-group symbol supplies the conventional-cell centering (`P`, `I`, `F`,
 `A`, `B`, `C`, or `R`). A complete Hermann--Mauguin symbol is accepted, but
 point symmetry does not otherwise change the Wigner--Seitz boundary. Set this

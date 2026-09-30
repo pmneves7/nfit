@@ -2531,6 +2531,73 @@ def test_qt_cursor_readout_formats_q_modulus_when_lattice_matrix_is_available():
     assert viewer.cursor_q_label.text() == "|Q| = 2.25 Å⁻¹"
 
 
+def test_qt_cursor_q_modulus_uses_project_lattice_and_tracks_dataset_selection():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    hkl = {"H": 0.42, "K": 0.58, "L": 0.5, "E": 0.0}
+    first_lattice = {
+        "a": 4.17, "b": 4.17, "c": 4.17,
+        "alpha": 90.0, "beta": 90.0, "gamma": 90.0,
+    }
+    second_lattice = {
+        "a": 8.34, "b": 8.34, "c": 8.34,
+        "alpha": 90.0, "beta": 90.0, "gamma": 90.0,
+    }
+    viewer = QtMDHistoSliceViewer(
+        [_tiny_mdhisto_data(), _tiny_mdhisto_data()],
+        dataset_names=["scan A", "scan B"],
+        crystal_contexts=[
+            {"lattice_parameters": first_lattice},
+            {"lattice_parameters": second_lattice},
+        ],
+        x_dim=3,
+        y_dim=2,
+    )
+
+    magnitude = np.linalg.norm([hkl["H"], hkl["K"], hkl["L"]])
+    assert viewer._q_modulus_inv_angstrom(hkl) == pytest.approx(
+        2.0 * np.pi / first_lattice["a"] * magnitude
+    )
+
+    viewer.dataset_combo.setCurrentIndex(1)
+
+    assert viewer.dataset_index == 1
+    assert viewer._q_modulus_inv_angstrom(hkl) == pytest.approx(
+        2.0 * np.pi / second_lattice["a"] * magnitude
+    )
+
+
+def test_qt_cursor_q_modulus_prefers_dataset_lattice_and_explicit_ub():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    hkl = {"H": 0.42, "K": 0.58, "L": 0.5, "E": 0.0}
+    project_lattice = {"a": 4.17, "b": 4.17, "c": 4.17}
+    dataset_lattice = {"a": 6.0, "b": 6.0, "c": 6.0}
+    magnitude = np.linalg.norm([hkl["H"], hkl["K"], hkl["L"]])
+    data = _tiny_mdhisto_data().with_updates(
+        metadata={"lattice_parameters": dataset_lattice}
+    )
+    viewer = QtMDHistoSliceViewer(
+        data,
+        crystal_contexts=[{"lattice_parameters": project_lattice}],
+        x_dim=3,
+        y_dim=2,
+    )
+
+    assert viewer._q_modulus_inv_angstrom(hkl) == pytest.approx(
+        2.0 * np.pi / dataset_lattice["a"] * magnitude
+    )
+
+    data.metadata["ub_matrix"] = np.diag([0.1, 0.2, 0.3]).tolist()
+    data.metadata["ub_matrix_includes_2pi"] = True
+
+    assert viewer._q_modulus_inv_angstrom(hkl) == pytest.approx(
+        np.linalg.norm(np.diag([0.1, 0.2, 0.3]) @ np.array([hkl["H"], hkl["K"], hkl["L"]]))
+    )
+
+
 def test_qt_powder_cursor_readout_tracks_q_and_energy_axes():
     pytest.importorskip("PySide6")
     from types import SimpleNamespace
