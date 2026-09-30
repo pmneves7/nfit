@@ -21,6 +21,16 @@ When the container belongs to a `DatasetEntry`, finish an edit with
 `dataset.replace_data(...)` so dependent caches and fingerprints are
 invalidated.
 
+Use `configure_composite_scaling(workspace, node=collection, data_scale=2,
+result_scale=1, fit_weight=1)` for dimensionless collection calibration before
+background subtraction, final-result calibration, and fitting weight.
+`refresh_composite_dataset(workspace, node=collection, binning_id=None)` returns
+the current result, reusing the cached unsubtracted histogram for scalar
+changes. A named binning ID selects its cached grid; `None` selects the fit
+binning. `composite_dataset_data(...)` remains the explicit numerical rebuild
+API. Exported composite workflows preserve the three scalar coefficients.
+See [Fast composite scaling](data_import.md#fast-composite-scaling).
+
 `MetadataDimension` defines an axis from a selected numeric metadata
 channel, with optional nominal coordinates and an assignment tolerance in the
 axis units. Use `set_metadata_dimensions(collection, dimensions)` and

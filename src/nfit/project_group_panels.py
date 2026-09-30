@@ -192,6 +192,10 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             lambda _checked=False: self._navigate_to_binning_owner(root, policy.owner)
         )
         layout.addWidget(navigate)
+        from .project_rebin_panels import add_composite_scaling_controls
+        scaling_row = QtWidgets.QHBoxLayout()
+        add_composite_scaling_controls(self, scaling_row, group, root)
+        layout.addLayout(scaling_row)
         return box
     selection_key = getattr(selection, "id", f"root:{id(selection)}")
     expanded_ids = getattr(self, "_expanded_inactive_composite_ids", set())
@@ -737,6 +741,10 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     self._add_rebin_performance_controls(quality_row, group=group, composite=True)
     quality_row.addStretch(1)
     controls_layout.addLayout(quality_row, footer_row + 1, 0, 1, len(headers))
+    from .project_rebin_panels import add_composite_scaling_controls
+    scaling_row = QtWidgets.QHBoxLayout()
+    add_composite_scaling_controls(self, scaling_row, group, root)
+    controls_layout.addLayout(scaling_row, footer_row + 6, 0, 1, len(headers))
     symmetry_row = QtWidgets.QHBoxLayout()
     symmetry_row.addWidget(symmetry_check)
     symmetry_row.addWidget(symmetry_mode)

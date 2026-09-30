@@ -314,6 +314,12 @@ def bin_raw_dgs_group(
             metadata_dimensions=metadata_dimensions,
         )
     selected = list(group.datasets if datasets is None else datasets)
+    for run in selected:
+        if not np.isfinite(run.scale_factor) or not np.isfinite(run.fit_weight) or run.fit_weight < 0:
+            raise ValueError("raw-DGS scales must be finite and fit weights finite and nonnegative")
+    selected = [run for run in selected if run.enabled and run.fit_weight > 0]
+    if not selected:
+        raise ValueError("raw-DGS binning requires an enabled run with positive fit weight")
     if coordinate_mode not in {"hkle", "powder"}:
         raise ValueError("raw direct-geometry coordinate mode must be 'hkle' or 'powder'")
     powder = coordinate_mode == "powder"
@@ -405,7 +411,11 @@ def bin_raw_dgs_group(
                 )
                 cache_misses += 1
             run_infos_by_dataset_id[dataset.id] = info
-            normalization_payloads_by_dataset_id[dataset.id] = normalization_payload
+            # Cache unweighted reduction; apply run weights only to this binning.
+            normalization_payloads_by_dataset_id[dataset.id] = {
+                **normalization_payload,
+                "charge": np.asarray(normalization_payload["charge"]) * dataset.fit_weight,
+            }
             ei = float(config.get("incident_energy_override") or info.incident_energy)
             if ei <= 0.0 or info.l1 <= 0.0:
                 raise ValueError(f"{source.name} has no usable incident energy or source distance")
@@ -425,10 +435,12 @@ def bin_raw_dgs_group(
                 2.0 * np.pi * np.asarray(config["ub_matrix"], dtype=float)
             )
 
-            def accumulate(chunks, *, gonio=gonio, hkl_transform=hkl_transform, cache=cache):
+            signal_factor = float(dataset.scale_factor) * float(dataset.fit_weight)
+
+            def accumulate(chunks, *, gonio=gonio, hkl_transform=hkl_transform, cache=cache, signal_factor=signal_factor):
                 nonlocal processed
                 for events, raw_count in chunks:
-                    q_lab, energy, weights = events[:, :3], events[:, 3], events[:, 4]
+                    q_lab, energy, weights = events[:, :3], events[:, 3], events[:, 4] * signal_factor
                     if powder:
                         coordinate_blocks = (
                             np.column_stack((np.linalg.norm(q_lab, axis=1), energy)),

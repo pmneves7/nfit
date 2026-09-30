@@ -36,6 +36,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "rebin_cache.py",
     PACKAGE_ROOT / "slice_viewer_cache.py",
     PACKAGE_ROOT / "project_composites.py",
+    PACKAGE_ROOT / "composite_scaling.py",
     PACKAGE_ROOT / "project_cache_compat.py",
     PACKAGE_ROOT / "project_clipboard.py",
     PACKAGE_ROOT / "project_data.py",
@@ -199,6 +200,8 @@ from nfit import project_composites, project_data
 
 assert project_data.composite_dataset_data is project_composites.composite_dataset_data
 assert project_data._COMPOSITE_DATA_CACHE is project_composites._COMPOSITE_DATA_CACHE
+assert project_data.refresh_composite_dataset is project_composites.refresh_composite_dataset
+assert project_data._composite_histograms_current is project_composites._composite_histograms_current
 """
     subprocess.run([sys.executable, "-c", code], check=True)
 

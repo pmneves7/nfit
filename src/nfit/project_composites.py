@@ -37,6 +37,7 @@ from .cache_utils import (
 from .cache_utils import (
     lru_store as _lru_store,
 )
+from .composite_scaling import composite_scaling, scale_composite_data
 from .dataset import PointData4D, PointListData
 from .mdevent import (
     bin_mdevent_group,
@@ -245,6 +246,11 @@ def _composite_cache_key(
 ) -> Any:
     owner_id = id(group.node) if isinstance(group, _CompositeScope) else id(group)
     return owner_id if binning_id is None else (owner_id, str(binning_id))
+
+
+def _composite_base_cache_key(group, binning_id=None):
+    owner_id = id(group.node) if isinstance(group, _CompositeScope) else id(group)
+    return (owner_id, "unsubtracted", binning_id)
 
 
 def _composite_rebin_registry(group: DataGroup | _CompositeScope) -> dict[str, Any]:
@@ -876,6 +882,7 @@ def _composite_cache_signature(
     *,
     config_override: Mapping[str, Any] | None = None,
     binning_id: str | None = None,
+    include_backgrounds: bool = True,
 ) -> str:
     cache_key = _composite_cache_key(group, binning_id)
     if cache_key in _trail:
@@ -898,14 +905,21 @@ def _composite_cache_signature(
             for recipe in dimensions
         )
     )
+    numerical = _composite_numerical_config(group, config)
+    if include_backgrounds:
+        scalars = {key: value for key, value in composite_scaling(group).items() if key != "fit_weight"}
+        if any(value != 1 for value in scalars.values()):
+            numerical["composite_scaling"] = scalars
+    calibration_rule = ({"run_calibration_and_weight_version": 1}
+        if any(run.scale_factor != 1 or run.fit_weight != 1 for run in _composite_candidates(group)) else {})
     payload = [
         COMPOSITE_CACHE_SIGNATURE_TAG,
         node.metadata.get("mdevent"),
-        {**raw_config, "native_reduction_version": RAW_DGS_REDUCTION_VERSION}
+        {**raw_config, "native_reduction_version": RAW_DGS_REDUCTION_VERSION, **calibration_rule}
         if raw_config.get("format") == "raw-direct-geometry-nexus"
         else node.metadata.get("raw_dgs"),
         getattr(_composite_root(group), "lattice_parameters", {}),
-        json.dumps(_composite_numerical_config(group, config), sort_keys=True, default=str),
+        json.dumps(numerical, sort_keys=True, default=str),
         dimensions,
         # Raw CORELLI event metadata are evaluated directly from the NeXus
         # timestamp log during rebinning. They are not scalar DatasetEntry
@@ -951,9 +965,16 @@ def _composite_cache_signature(
                 background.interpolation,
                 background.projection,
                 (
-                    _viewer_view_signature(
-                        background.source_entry,
-                        effective_dataset_masks(_composite_root(group), background.source_entry),
+                    (
+                        _viewer_view_signature(
+                            background.source_entry,
+                            effective_dataset_masks(_composite_root(group), background.source_entry),
+                        )
+                        if background.source_entry.scale_factor == 1.0 else
+                        json.dumps([
+                            _viewer_view_signature(background.source_entry, effective_dataset_masks(_composite_root(group), background.source_entry)),
+                            background.source_entry.scale_factor,
+                        ], default=str)
                     )
                     if background.source_entry is not None
                     else None
@@ -967,7 +988,7 @@ def _composite_cache_signature(
                     else None
                 ),
             ]
-            for background in getattr(group, "backgrounds", [])
+            for background in (getattr(group, "backgrounds", []) if include_backgrounds else [])
         ],
     ]
     return json.dumps(payload, sort_keys=True, default=str)
@@ -982,6 +1003,7 @@ def composite_dataset_data(
     config_override: Mapping[str, Any] | None = None,
     include_source_masks: bool = True,
     apply_spectral_channels: bool = True,
+    apply_backgrounds: bool = True,
 ) -> MDHistoData | PointListData | PointData4D:
     """Build a composite using its saved recipe and central CPU allocation.
 
@@ -996,13 +1018,18 @@ def composite_dataset_data(
     composite_builder = _backend_value(
         "_composite_dataset_data", _composite_dataset_data
     )
+    builder_options = {} if apply_backgrounds else {"apply_backgrounds": False}
     result = composite_builder(
         group,
         progress_callback=progress_callback,
         config_override=config_override,
         include_source_masks=include_source_masks,
         metadata_dimensions_override=metadata_dimensions_override,
+        **builder_options,
     )
+    if apply_backgrounds:
+        settings = composite_scaling(group)
+        result = scale_composite_data(result, settings["result_scale"], _apply_dataset_scale)
     if not apply_spectral_channels:
         return result
     from .composite_spectral import apply_composite_spectral_channels
@@ -1141,7 +1168,7 @@ def set_metadata_dimensions(group, dimensions) -> None:
     config["stale"] = True
 
 
-def _metadata_composite_data(group, config, dimensions, *, include_source_masks, progress_callback):
+def _metadata_composite_data(group, config, dimensions, *, include_source_masks, progress_callback, apply_backgrounds=True):
     from .metadata_dimensions import (
         MetadataDimension,
         metadata_rebin_axis_config,
@@ -1235,6 +1262,9 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
         metadata_dimensions=specs,
         progress_callback=progress_callback,
     )
+    if not apply_backgrounds:
+        return data
+    data = scale_composite_data(data, composite_scaling(group)["data_scale"], _apply_dataset_scale)
     return _apply_composite_backgrounds(
         group,
         data,
@@ -1250,6 +1280,7 @@ def _composite_dataset_data(
     config_override: Mapping[str, Any] | None = None,
     include_source_masks: bool = True,
     metadata_dimensions_override: Sequence[dict[str, Any]] | None = None,
+    apply_backgrounds: bool = True,
 ) -> MDHistoData | PointListData | PointData4D:
     """Build a composite from underlying sources on the requested output grid.
 
@@ -1282,6 +1313,7 @@ def _composite_dataset_data(
             dimensions,
             include_source_masks=include_source_masks,
             progress_callback=progress_callback,
+            apply_backgrounds=apply_backgrounds,
         )
     child_scopes = _hierarchical_composite_scopes(group)
     child_entries: list[DatasetEntry] | None = None
@@ -1491,6 +1523,9 @@ def _composite_dataset_data(
         raise ValueError(f"unsupported composite dataset kind {kind!r}")
     if isinstance(result, MDHistoData):
         result = _apply_mdhisto_coverage_threshold(result, config)
+    if not apply_backgrounds:
+        return result
+    result = scale_composite_data(result, composite_scaling(group)["data_scale"], _apply_dataset_scale)
     return _apply_composite_backgrounds(
         group,
         result,
@@ -1579,6 +1614,215 @@ def _metadata_reference_slice(
     return (slice(None),) * first_metadata + tuple(indices)
 
 
+def _composite_background_cache_key(group, background):
+    return (
+        _composite_base_cache_key(group)[0],
+        "background",
+        background.source_dataset_id,
+        background.source_group_id,
+        background.name,
+    )
+
+
+def _composite_histograms_current(group, *, config_override=None, binning_id=None, trail=None):
+    """Check numerical dependencies without loading saved histogram arrays."""
+    trail = set() if trail is None else set(trail)
+    key = _composite_base_cache_key(group, binning_id)
+    if key in trail:
+        return False
+    trail.add(key)
+    config = data_group_composite_config(group) if config_override is None else config_override
+    signature = _composite_cache_signature(
+        group,
+        config_override=config,
+        binning_id=binning_id,
+        include_backgrounds=False,
+    )
+    if not (
+        _COMPOSITE_DATA_CACHE.has_signature(key, signature)
+        or _COMPOSITE_DATA_CACHE.has_signature(_composite_cache_key(group, binning_id), signature)
+    ):
+        return False
+    for background in getattr(group, "backgrounds", []):
+        if not background.enabled or background.scale == 0:
+            continue
+        if background.projection == "center" and background.source_group is not None:
+            scope = _CompositeScope(_composite_root(group), background.source_group)
+            if not _composite_histograms_current(scope, trail=trail):
+                return False
+        elif background.projection != "center" or (
+            background.source_entry is not None and background.source_entry.kind != "mdhisto"
+        ):
+            if not _COMPOSITE_DATA_CACHE.has_signature(
+                _composite_background_cache_key(group, background),
+                _composite_background_signature(group, background, config),
+            ):
+                return False
+    return True
+
+
+def _background_source_content_signature(group, source, trail=frozenset()):
+    """Identify a background source without resolving its private viewer grid."""
+    if source.id in trail:
+        return ["cycle", source.id]
+    trail = trail | {source.id}
+    return [
+        dataset_content_signature(source),
+        source.data_type,
+        source.kind,
+        _mask_signature(source.masks),
+        _mask_signature(effective_dataset_masks(_composite_root(group), source)),
+        [
+            [
+                item.source_dataset_id,
+                item.enabled,
+                item.scale,
+                item.interpolation,
+                item.projection,
+                None
+                if item.source_entry is None
+                else [
+                    _background_source_content_signature(group, item.source_entry, trail),
+                    item.source_entry.scale_factor,
+                ],
+            ]
+            for item in source.backgrounds
+        ],
+    ]
+
+
+def _background_membership_unchanged(previous, current):
+    try:
+        old, new = json.loads(previous)[-1], json.loads(current)[-1]
+        return [item[:3] + item[4:6] for item in old] == [item[:3] + item[4:6] for item in new]
+    except (ValueError, TypeError, IndexError):
+        return False
+
+
+def _composite_background_signature(group, background, config):
+    root = _composite_root(group)
+    source = background.source_entry
+    return json.dumps(
+        [
+            _composite_cache_signature(group, config_override=config, include_backgrounds=False),
+            background.projection,
+            background.interpolation,
+            None if source is None else _background_source_content_signature(group, source),
+            None
+            if background.source_group is None
+            else _composite_cache_signature(_CompositeScope(root, background.source_group)),
+        ],
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _composite_background_data(group, background, data, *, config, progress_callback):
+    """Prepare a unit-link background once on the sample grid."""
+    root = _composite_root(group)
+    source = background.source_entry
+    source_group = background.source_group
+    if source is None and source_group is None:
+        raise ValueError(f"background {background.name!r} refers to a missing dataset or group")
+    if background.projection == "measured_events":
+        from .mdevent_background import project_measured_background_mdevent
+
+        node = group.node if isinstance(group, _CompositeScope) else group
+        if not isinstance(node, DatasetGroup) or source_group is None:
+            raise ValueError(
+                "measured-event replay requires sample and referenced background dataset groups"
+            )
+
+        def with_inherited_masks(scope):
+            return [
+                replace(run, masks=[*effective_dataset_masks(root, run), *run.masks])
+                for run in _composite_candidates(scope)
+            ]
+
+        projected = project_measured_background_mdevent(
+            node,
+            source_group,
+            data,
+            datasets=with_inherited_masks(group),
+            background_datasets=with_inherited_masks(_CompositeScope(root, source_group)),
+            inherited_masks=[],
+            background_inherited_masks=[],
+            max_batch_bytes=_rebin_max_batch_bytes(
+                data_group_composite_config(group) if config is None else config
+            ),
+            progress_callback=progress_callback,
+        )
+        return projected
+    if source_group is not None:
+        source_data = _cached_composite_dataset_data(
+            _CompositeScope(root, source_group),
+            apply_spectral_channels=False,
+            force_rebin=True,
+            progress_callback=progress_callback,
+        )
+    else:
+        # A raw point-data background belongs on the composite's resolved
+        # output grid.  Do not honor the background dataset's private
+        # viewer-rebin recipe here: that recipe may describe an older or
+        # otherwise unrelated grid and aligned subtraction would then fail.
+        source_data = _source_data_for_group_composite(
+            group,
+            source,
+        )
+        if isinstance(source_data, PointData4D):
+            # The neutron reference follows the resolved sample grid. Work
+            # on copies so its own viewing recipe stays intact.
+            aligned_config = copy.deepcopy(
+                dict(data_group_composite_config(group) if config is None else config)
+            )
+            if len(data.axes) < 4 or len(aligned_config.get("axes", [])) < 4:
+                raise ValueError("point-data group backgrounds require four HKLE axes")
+            aligned_config["axes"] = aligned_config["axes"][:4]
+            for settings, axis in zip(aligned_config["axes"], data.axes[:4], strict=True):
+                settings.update(
+                    name=axis.name,
+                    units=axis.units,
+                    bin_edges=axis.values.tolist(),
+                    mode="edges",
+                    auto_lower=False,
+                    auto_upper=False,
+                    auto_step_size=False,
+                )
+            source_metadata = dict(source_data.metadata)
+            if root.lattice_parameters:
+                source_metadata.setdefault("lattice_parameters", dict(root.lattice_parameters))
+            source_data = _rebin_point_data(
+                source_data.with_updates(metadata=source_metadata),
+                aligned_config,
+                progress_callback=progress_callback,
+            )
+            if source.backgrounds:
+                source_data = _apply_dataset_backgrounds(source, source_data)
+    if not isinstance(source_data, MDHistoData):
+        raise TypeError(f"background {background.name!r} must refer to gridded histogram data")
+    if background.projection not in {"center", "sample_trajectories"}:
+        raise ValueError(
+            f"background {background.name!r} has unknown projection mode {background.projection!r}"
+        )
+    if background.projection == "sample_trajectories":
+        node = group.node if isinstance(group, _CompositeScope) else group
+        if not isinstance(node, DatasetGroup) or "mdevent" not in node.metadata:
+            raise ValueError(
+                "sample-trajectory powder projection requires a background "
+                "owned by an MDEvent dataset group"
+            )
+        source_data = project_powder_background_mdevent(
+            node,
+            source_data,
+            data,
+            datasets=_composite_candidates(group),
+            interpolation=background.interpolation,
+            progress_callback=progress_callback,
+        )
+    source_data = _broadcast_background_over_metadata(source_data, data)
+    return source_data
+
+
 def _apply_composite_backgrounds(
     group: DataGroup | _CompositeScope,
     data: MDHistoData | PointListData | PointData4D,
@@ -1603,108 +1847,22 @@ def _apply_composite_backgrounds(
         if not background.enabled or float(background.scale) == 0.0:
             continue
         source = background.source_entry
-        source_group = background.source_group
-        if source is None and source_group is None:
-            raise ValueError(f"background {background.name!r} refers to a missing dataset or group")
-        if background.projection == "measured_events":
-            from .mdevent_background import project_measured_background_mdevent
-
-            node = group.node if isinstance(group, _CompositeScope) else group
-            if not isinstance(node, DatasetGroup) or source_group is None:
-                raise ValueError("measured-event replay requires sample and referenced background dataset groups")
-
-            def with_inherited_masks(scope):
-                return [
-                    replace(run, masks=[*effective_dataset_masks(root, run), *run.masks])
-                    for run in _composite_candidates(scope)
-                ]
-
-            projected = project_measured_background_mdevent(
-                node, source_group, result,
-                datasets=with_inherited_masks(group),
-                background_datasets=with_inherited_masks(_CompositeScope(root, source_group)),
-                inherited_masks=[], background_inherited_masks=[],
-                max_batch_bytes=_rebin_max_batch_bytes(
-                    data_group_composite_config(group) if config is None else config
-                ),
-                progress_callback=progress_callback,
-            )
-            result = subtract_background(result, projected, scale=background.scale)
-            continue
-        if source_group is not None:
-            source_data = _cached_composite_dataset_data(
-                _CompositeScope(root, source_group),
-                apply_spectral_channels=False,
-                force_rebin=True,
-                progress_callback=progress_callback,
-            )
+        projection_key = _composite_background_cache_key(group, background)
+        projection_signature = _composite_background_signature(group, background, config)
+        projected_cache = _COMPOSITE_DATA_CACHE.get(projection_key)
+        if projected_cache is not None and projected_cache[0] == projection_signature:
+            source_data = projected_cache[1]
         else:
-            # A raw point-data background belongs on the composite's resolved
-            # output grid.  Do not honor the background dataset's private
-            # viewer-rebin recipe here: that recipe may describe an older or
-            # otherwise unrelated grid and aligned subtraction would then fail.
-            source_data = _source_data_for_group_composite(
+            source_data = _composite_background_data(
                 group,
-                source,
-            )
-            if isinstance(source_data, PointData4D):
-                # The neutron reference follows the resolved sample grid. Work
-                # on copies so its own viewing recipe stays intact.
-                aligned_config = copy.deepcopy(
-                    dict(data_group_composite_config(group) if config is None else config)
-                )
-                if len(data.axes) < 4 or len(aligned_config.get("axes", [])) < 4:
-                    raise ValueError("point-data group backgrounds require four HKLE axes")
-                aligned_config["axes"] = aligned_config["axes"][:4]
-                for settings, axis in zip(
-                    aligned_config["axes"], data.axes[:4], strict=True
-                ):
-                    settings.update(
-                        name=axis.name,
-                        units=axis.units,
-                        bin_edges=axis.values.tolist(),
-                        mode="edges",
-                        auto_lower=False,
-                        auto_upper=False,
-                        auto_step_size=False,
-                    )
-                source_metadata = dict(source_data.metadata)
-                if root.lattice_parameters:
-                    source_metadata.setdefault("lattice_parameters", dict(root.lattice_parameters))
-                source_data = _rebin_point_data(
-                    source_data.with_updates(metadata=source_metadata),
-                    aligned_config,
-                    progress_callback=progress_callback,
-                )
-                if source.backgrounds:
-                    source_data = _apply_dataset_backgrounds(source, source_data)
-            # A direct background reference retains its own calibration just
-            # like the same dataset does when viewed or composited. The link
-            # scale below is an additional subtraction coefficient.
-            source_data = _apply_dataset_scale(source, source_data)
-        if not isinstance(source_data, MDHistoData):
-            raise TypeError(f"background {background.name!r} must refer to gridded histogram data")
-        if background.projection not in {"center", "sample_trajectories"}:
-            raise ValueError(
-                f"background {background.name!r} has unknown projection mode "
-                f"{background.projection!r}"
-            )
-        if background.projection == "sample_trajectories":
-            node = group.node if isinstance(group, _CompositeScope) else group
-            if not isinstance(node, DatasetGroup) or "mdevent" not in node.metadata:
-                raise ValueError(
-                    "sample-trajectory powder projection requires a background "
-                    "owned by an MDEvent dataset group"
-                )
-            source_data = project_powder_background_mdevent(
-                node,
-                source_data,
+                background,
                 result,
-                datasets=_composite_candidates(group),
-                interpolation=background.interpolation,
+                config=config,
                 progress_callback=progress_callback,
             )
-        source_data = _broadcast_background_over_metadata(source_data, result)
+            _COMPOSITE_DATA_CACHE[projection_key] = (projection_signature, source_data)
+        if source is not None:
+            source_data = _apply_dataset_scale(source, source_data)
         before_subtraction = result
         cancels_self = (
             reference_entry is not None
@@ -1733,9 +1891,7 @@ def _apply_composite_backgrounds(
                 signal=np.where(result.mask, np.nan, 0.0),
                 errors=np.where(result.mask, np.nan, 0.0),
             )
-            result = record_background_original_exceptions(
-                result, before_subtraction, ~result.mask
-            )
+            result = record_background_original_exceptions(result, before_subtraction, ~result.mask)
         elif (
             source is not None
             and background.scale == 1.0
@@ -1756,9 +1912,7 @@ def _apply_composite_backgrounds(
             result = result.with_updates(signal=signal, errors=errors)
             affected = np.zeros(result.shape, dtype=bool)
             affected[selection] = correlated
-            result = record_background_original_exceptions(
-                result, before_subtraction, affected
-            )
+            result = record_background_original_exceptions(result, before_subtraction, affected)
     return result
 
 
@@ -1777,8 +1931,11 @@ def _cached_composite_dataset_data(
         if not apply_spectral_channels:
             return data
         return apply_composite_spectral_channels(
-            data, config_override if config_override is not None else data_group_composite_config(group),
-            _composite_candidates(group, include_backgrounds=bool(group.metadata.get("metadata_dimensions"))),
+            data,
+            config_override if config_override is not None else data_group_composite_config(group),
+            _composite_candidates(
+                group, include_backgrounds=bool(group.metadata.get("metadata_dimensions"))
+            ),
         )
 
     signature = _composite_cache_signature(
@@ -1796,24 +1953,58 @@ def _cached_composite_dataset_data(
     )
     if cached is not None and cached[0] != signature:
         config["stale"] = True
+    base_key = _composite_base_cache_key(group, binning_id)
+    base_signature = _composite_cache_signature(
+        group, config_override=config, binning_id=binning_id, include_backgrounds=False
+    )
+    base_cached = _COMPOSITE_DATA_CACHE.get(base_key)
+    if base_cached is None and cached is not None and cached[0] == base_signature:
+        base_cached = cached
+    base_current = base_cached is not None and base_cached[0] == base_signature
     deferred = bool(
         not force_rebin
         and not config.get("auto_rebin", True)
+        and not (
+            base_current
+            and _composite_histograms_current(
+                group,
+                config_override=config,
+                binning_id=binning_id,
+            )
+            and (cached is None or _background_membership_unchanged(cached[0], signature))
+        )
     )
     if cached is not None and deferred:
         return finish(cached[1])
     if deferred:
         return None
-    result = composite_dataset_data(
-        group,
-        progress_callback=progress_callback,
-        config_override=config,
-        apply_spectral_channels=False,
+    if base_current:
+        base = base_cached[1]
+    else:
+        base = composite_dataset_data(
+            group,
+            progress_callback=progress_callback,
+            config_override=config,
+            apply_spectral_channels=False,
+            apply_backgrounds=False,
+        )
+        base_signature = _composite_cache_signature(
+            group, config_override=config, binning_id=binning_id, include_backgrounds=False
+        )
+    settings = composite_scaling(group)
+    if (
+        getattr(group, "backgrounds", [])
+        or settings["data_scale"] != 1
+        or settings["result_scale"] != 1
+    ):
+        _COMPOSITE_DATA_CACHE[base_key] = (base_signature, base)
+    result = scale_composite_data(base, settings["data_scale"], _apply_dataset_scale)
+    result = _apply_composite_backgrounds(
+        group, result, config=config, progress_callback=progress_callback
     )
+    result = scale_composite_data(result, settings["result_scale"], _apply_dataset_scale)
     config["stale"] = False
-    signature = _composite_cache_signature(
-        group, config_override=config, binning_id=binning_id
-    )
+    signature = _composite_cache_signature(group, config_override=config, binning_id=binning_id)
     binning_names = data_group_composite_binnings(group)
     name = next(
         (item["name"] for item in binning_names if item["id"] == binning_id),
@@ -1909,7 +2100,7 @@ def composite_dataset_entry(
             else {}
         ),
         enabled=True,
-        fit_weight=1.0,
+        fit_weight=composite_scaling(group)["fit_weight"],
         scale_factor=1.0,
     )
 
@@ -2657,4 +2848,15 @@ def _composite_point_list_data(
             for name in columns
             if name in point_lists[0].columns
         },
+    )
+
+
+def refresh_composite_dataset(group, *, node=None, binning_id=None, progress_callback=None):
+    """Refresh a composite, reusing binned data for scalar-only updates."""
+    scope = _composite_scope(group, node)
+    if binning_id == "fit":
+        binning_id = None
+    config = None if binning_id is None else data_group_composite_config_by_id(scope, binning_id)
+    return _cached_composite_dataset_data(
+        scope, config_override=config, binning_id=binning_id, progress_callback=progress_callback
     )

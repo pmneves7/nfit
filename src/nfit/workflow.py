@@ -255,6 +255,8 @@ def composite_workflow_script(
     )
     config = copy.deepcopy(data_group_composite_config(_composite_scope(group, node)))
     dimensions = copy.deepcopy(node.metadata.get("metadata_dimensions", []))
+    from .composite_scaling import composite_scaling
+    scaling = composite_scaling(node)
     return f'''"""Rebuild a discrete metadata composite from a saved nfit project.
 
 Save source membership, import options, masks, scales, and backgrounds in the
@@ -262,19 +264,21 @@ project before running. Edit the coordinate recipes, spatial grid, and
 spectral_channels INS settings in REBIN_CONFIG below.
 """
 from pathlib import Path
-from nfit import load_project, composite_dataset_data, set_metadata_dimensions
+from nfit import load_project, composite_dataset_data, set_metadata_dimensions, configure_composite_scaling
 
 PROJECT_PATH = Path({str(path)!r})
 GROUP_NAME = {group_name!r}
 NODE_ID = {node_id!r}
 METADATA_DIMENSIONS = {pformat(dimensions, sort_dicts=False)}
 REBIN_CONFIG = {pformat(config, sort_dicts=False)}
+SCALING = {pformat(scaling, sort_dicts=False)}
 
 def run():
     project = load_project(PROJECT_PATH)
     group = next(item for item in project.data_groups if item.name == GROUP_NAME)
     node = next(item for item in group.iter_subgroups() if item.id == NODE_ID) if NODE_ID else None
     set_metadata_dimensions(node if node is not None else group, METADATA_DIMENSIONS)
+    configure_composite_scaling(group, node=node, **SCALING)
     return composite_dataset_data(group, node=node, config_override=REBIN_CONFIG)
 
 if __name__ == "__main__":

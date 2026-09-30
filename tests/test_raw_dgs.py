@@ -189,6 +189,51 @@ def test_raw_dgs_metadata_and_streamed_hkle_binning(tmp_path):
     assert not result.mask.item()
 
 
+def test_raw_dgs_run_scale_and_weight_reuse_unscaled_events(tmp_path):
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    options = dict(lower=[-10, -10, -10, -100], upper=[10, 10, 10, 20], num_bins=[1]*4)
+    baseline = bin_raw_dgs_group(group, **options)
+    run = group.datasets[0]
+    run.scale_factor = 3
+    run.fit_weight = 4
+    scaled = bin_raw_dgs_group(group, **options)
+    np.testing.assert_allclose(scaled.signal, baseline.signal * 3)
+    np.testing.assert_allclose(scaled.errors, baseline.errors * 3)
+    np.testing.assert_allclose(scaled.metadata["normalization_denominator"], baseline.metadata["normalization_denominator"] * 4)
+    assert scaled.metadata["reduced_event_cache"] == {"hits": 1, "misses": 0}
+    run.scale_factor = 1
+    run.fit_weight = 1
+    restored = bin_raw_dgs_group(group, **options)
+    np.testing.assert_allclose(restored.signal, baseline.signal)
+    np.testing.assert_allclose(restored.errors, baseline.errors)
+    run.fit_weight = 0
+    with pytest.raises(ValueError, match="positive fit weight"):
+        bin_raw_dgs_group(group, **options)
+
+
+
+def test_raw_dgs_relative_run_weights_and_disabled_runs(tmp_path):
+    paths = [tmp_path / f"SEQ_{number}.nxs.h5" for number in (42, 43)]
+    for path in paths:
+        _write_raw_dgs(path)
+    group = raw_dgs_dataset_group(paths)
+    options = dict(lower=[-10, -10, -10, -100], upper=[10, 10, 10, 20], num_bins=[1] * 4)
+    baseline = bin_raw_dgs_group(group, datasets=[group.datasets[0]], **options)
+    group.datasets[1].scale_factor = 3
+    group.datasets[1].fit_weight = 2
+    result = bin_raw_dgs_group(group, **options)
+    np.testing.assert_allclose(result.signal, baseline.signal * 7 / 3)
+    np.testing.assert_allclose(result.errors, baseline.errors * np.sqrt(37) / 3)
+    group.datasets[1].enabled = False
+    result = bin_raw_dgs_group(group, **options)
+    np.testing.assert_allclose(result.signal, baseline.signal)
+    np.testing.assert_allclose(result.errors, baseline.errors)
+    group.datasets[0].fit_weight = -1
+    with pytest.raises(ValueError, match="nonnegative"):
+        bin_raw_dgs_group(group, **options)
+
 def test_raw_dgs_accumulates_repeated_events_in_one_sparse_bin(tmp_path):
     h5py = pytest.importorskip("h5py")
     source = tmp_path / "SEQ_42.nxs.h5"

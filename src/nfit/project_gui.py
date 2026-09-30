@@ -273,6 +273,7 @@ effective_dataset_masks = _project_data.effective_dataset_masks
 _CompositeScope = _project_data._CompositeScope
 _composite_scope = _project_data._composite_scope
 _composite_root = _project_data._composite_root
+_composite_base_cache_key = _project_data._composite_base_cache_key
 _composite_cache_key = _project_data._composite_cache_key
 _fit_data_group_composite_config = _project_data.data_group_composite_config
 data_group_composite_binnings = _project_data.data_group_composite_binnings
@@ -3110,10 +3111,10 @@ def fit_dataset_inputs(
         if disabled and purpose not in {"visualization", "overlay"}:
             continue
         is_composite = bool(dataset.metadata.get("composite"))
-        fit_weight = 1.0 if is_composite else float(dataset.fit_weight)
+        fit_weight = float(dataset.fit_weight)
         if not np.isfinite(fit_weight) or fit_weight < 0.0:
             raise ValueError(f"dataset {dataset.name!r} fit weight must be finite and non-negative")
-        visualization_only = disabled or (not is_composite and fit_weight == 0.0)
+        visualization_only = disabled or fit_weight == 0.0
         if purpose == "fit" and visualization_only:
             continue
         if purpose == "visualization" and not visualization_only:
@@ -3853,14 +3854,14 @@ def current_model_channel(
         return None
     is_composite = bool(dataset.metadata.get("composite"))
     disabled = not _dataset_is_effectively_enabled(group, dataset)
-    fit_weight = 1.0 if is_composite else float(dataset.fit_weight)
+    fit_weight = float(dataset.fit_weight)
     if not np.isfinite(fit_weight) or fit_weight < 0.0:
         errors[dataset.name] = "ValueError: fit weight must be finite and non-negative"
         return None
     input_data = FitDatasetInput(
         name=dataset.name,
         data=bundle.points,
-        weight=0.0 if disabled or (not is_composite and fit_weight == 0.0) else fit_weight,
+        weight=0.0 if disabled or fit_weight == 0.0 else fit_weight,
         data_type=dataset.data_type or DEFAULT_DATA_TYPE,
         scale_value=1.0 if is_composite else float(dataset.scale_factor),
         scale_vary=False if is_composite else bool(dataset.scale_factor_vary),
@@ -5556,6 +5557,11 @@ def _project_binning_is_current(
             ),
         )
         if not current:
+            current = _project_data._composite_histograms_current(
+                target, config_override=None if fit else config,
+                binning_id=None if fit else binning_id,
+            )
+        if not current:
             config["stale"] = True
         return current
     return _peek_cached_composite_dataset_data(
@@ -5898,6 +5904,11 @@ def _project_binning_artifacts(
                 owner = node_id if node_id is not None else f"root-{group_index}"
                 cache_id = f"composite-{owner}-{binning['id']}"
                 member = binning_artifact_member(cache_id)
+                base_key = _composite_base_cache_key(scope, None if is_fit else binning["id"])
+                base_signature = _composite_cache_signature(scope, config_override=config, binning_id=None if is_fit else binning["id"], include_backgrounds=False)
+                stage = "final"
+                if _COMPOSITE_DATA_CACHE.has_signature(base_key, base_signature):
+                    key, signature, stage = base_key, base_signature, "unsubtracted"
                 backing = (
                     _COMPOSITE_DATA_CACHE.project_backing(key, signature)
                     if hasattr(_COMPOSITE_DATA_CACHE, "project_backing")
@@ -5906,11 +5917,11 @@ def _project_binning_artifacts(
                 if backing is not None:
                     artifacts[member] = ArchiveMember(*backing)
                 else:
-                    data = _peek_cached_composite_dataset_data(
-                        scope,
-                        config_override=(None if is_fit else config),
-                        binning_id=(None if is_fit else binning["id"]),
-                    )
+                    data = (_COMPOSITE_DATA_CACHE.get(key)[1] if stage == "unsubtracted" else
+                        _peek_cached_composite_dataset_data(
+                            scope, config_override=(None if is_fit else config),
+                            binning_id=(None if is_fit else binning["id"]),
+                        ))
                     if not isinstance(data, (MDHistoData, PointListData)):
                         continue
                     artifact_path = directory / f"{cache_id}.npz"
@@ -5919,6 +5930,7 @@ def _project_binning_artifacts(
                 entries.append(
                     {
                         "type": "composite",
+                        "stage": stage,
                         "format_version": PROJECT_BINNING_CACHE_FORMAT_VERSION,
                         "signature": signature,
                         "group_index": group_index,
@@ -5982,6 +5994,8 @@ def _adopt_saved_project_binning_backing(
                     if config is _fit_data_group_composite_config(scope)
                     else binning_id,
                 )
+                if entry.get("stage") == "unsubtracted":
+                    key = _composite_base_cache_key(scope, None if config is _fit_data_group_composite_config(scope) else binning_id)
                 _COMPOSITE_DATA_CACHE.set_project_backing(
                     key,
                     signature=signature,
@@ -6000,6 +6014,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
     entries = project.settings.get(PROJECT_BINNING_CACHE_ENTRIES_KEY, [])
     if not isinstance(entries, list):
         return
+    base_members = {str(e.get("member")) for e in entries if isinstance(e, dict) and e.get("stage") == "unsubtracted"}
     resolved: list[
         tuple[
             str,
@@ -6108,12 +6123,12 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
             )
         else:
             if is_fit:
-                _composite_cache_signature(target)
+                (_composite_cache_signature(target, include_backgrounds=False) if _member in base_members else _composite_cache_signature(target))
             else:
                 _composite_cache_signature(
                     target,
                     config_override=config,
-                    binning_id=binning_id,
+                    binning_id=binning_id, include_backgrounds=_member not in base_members,
                 )
     for (
         kind,
@@ -6154,17 +6169,17 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                 )
         else:
             signature = (
-                _composite_cache_signature(target)
+                (_composite_cache_signature(target, include_backgrounds=False) if member in base_members else _composite_cache_signature(target))
                 if is_fit
                 else _composite_cache_signature(
                     target,
                     config_override=config,
-                    binning_id=binning_id,
+                    binning_id=binning_id, include_backgrounds=member not in base_members,
                 )
             )
             if version >= 6 and not _binning_signatures_match(saved, signature):
                 continue
-            key = _composite_cache_key(target, None if is_fit else binning_id)
+            key = (_composite_base_cache_key(target, None if is_fit else binning_id) if member in base_members else _composite_cache_key(target, None if is_fit else binning_id))
             if version >= 6:
                 _COMPOSITE_DATA_CACHE.set_project_backing(
                     key,

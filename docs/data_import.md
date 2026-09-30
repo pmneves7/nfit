@@ -956,13 +956,40 @@ Detector gaps and unmeasured bins within the allowed region remain unavailable
 and mask the affected sample bins. Linear interpolation blends the zero and
 nonzero bins at window edges; nearest interpolation gives a binwise boundary.
 
-Changing a background scale, mask, or live source recipe invalidates dependent
-composite caches. Each target's **Automatic rebinning** setting controls its
-refresh: with it off, the viewer retains the previous cached result until
-**Rebin now**; with it on, updates report numerical work in a cancellable
-progress dialog. Rebuilding a target also resolves its live background sources
-to their current settings. The green cache indicator disappears while a
-cached result is out of date.
+### Fast composite scaling
+
+A collection's **Dataset scale** multiplies its combined signal before its
+backgrounds are subtracted. **Result scale** multiplies the corrected result
+and its uncertainty. **Fit weight** changes its relative contribution to the
+fit objective without changing signal or uncertainty. These dimensionless
+coefficients are independent of the bulk controls that change individual runs.
+
+For independent sample and background histograms, the corrected intensity is
+$R = r(dS - aB)$ and its one-sigma uncertainty is
+$\sigma_R = r\sqrt{d^2\sigma_S^2 + a^2\sigma_B^2}$, where $d$ is Dataset
+scale, $a$ is the background-link scale, and $r$ is Result scale. Multiple
+backgrounds contribute separate squared uncertainty terms. Coefficient
+uncertainties are not propagated. Dataset scale, Result scale, and Fit weight
+must be finite and nonnegative; zero is supported.
+
+Once the sample and background histograms are cached, changing these scalar
+coefficients recalculates array arithmetic without reducing or rebinning
+source events. Background projections are reused in memory while their
+sources and output grid remain current. Scalar updates also work with
+**Automatic rebinning** off. Changing individual run scales or relative run
+weights, masks, symmetry, UB, or grid settings requires rebinning. With
+Automatic rebinning off, numerical recipe changes retain the previous cached
+result until **Rebin now**.
+
+Saved composite caches contain the unsubtracted sample histogram instead of
+a second corrected histogram. Background collections retain their own caches.
+They use the existing histogram compression and load lazily. Reduced-event
+caches are unchanged. The active corrected result requires temporary signal
+and uncertainty arrays; all numerical caches share the existing memory budget.
+An older project containing only a corrected cube needs one rebin to establish
+the reusable unsubtracted cache. A saved projected background may need its
+projection prepared again after reopening; subsequent scalar edits reuse it.
+
 
 **Powder through sample trajectories** is available for a background owned by an
 MDEvent dataset group. It treats the measured powder map as the intensity that

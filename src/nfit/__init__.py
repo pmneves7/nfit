@@ -53,6 +53,7 @@ from .brillouin_zone import (
     set_tight_binding_standard_path,
     standard_band_path,
 )
+from .composite_scaling import configure_composite_scaling
 from .corelli import (
     CorelliRunInfo,
     bin_corelli_group,
@@ -509,6 +510,7 @@ from .project_data import (
     materialize_composite_dataset,
     metadata_dimension_preview,
     rebinned_dataset_data,
+    refresh_composite_dataset,
     remove_data_group_composite_binning,
     remove_dataset_rebin_binning,
     rename_data_group_composite_binning,
@@ -717,6 +719,8 @@ __all__ = [
     "metadata_channels",
     "metadata_dimension_preview",
     "set_metadata_dimensions",
+    "configure_composite_scaling",
+    "refresh_composite_dataset",
     "composite_dataset_data",
     "composite_workflow_script",
     "AnalysisContext",
