@@ -19,6 +19,11 @@ measured coordinate as usual.
 The data viewer displays point lists and gridded datasets without changing
 their stored values. It supports channel selection, masks, cuts, maps,
 waterfalls, model comparisons, and volumetric rendering.
+Set the default figure font size and axes linewidth under **File → Preferences →
+Data viewer**. New viewers and newly selected dataset views use these defaults;
+saved plot recipes and existing views retain their own styling. Figure font size
+applies to every plot and cut-axis label, tick label, and scientific-notation offset.
+Box-tool toggles and size edits retain this styling and the selected cut-panel proportions.
 **Hold view settings** keeps compatible displayed axes, X/Y limits, display steps,
 hidden-axis ranges, and styling when changing channels, named binnings, or
 datasets. Channel changes preserve the current zoom when this option is checked.

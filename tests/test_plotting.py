@@ -3321,3 +3321,62 @@ def test_qt_held_limits_follow_channel_binning_and_dataset_changes():
         np.testing.assert_allclose(viewer.ax_image.get_ylim(), (0.1, 0.4))
     finally:
         viewer.window.close()
+
+
+@pytest.mark.parametrize("angle", [0.0, 25.0])
+def test_qt_box_cut_updates_keep_font_linewidth_and_layout(angle):
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=0, y_dim=3)
+    viewer.font_size_spin.setValue(18.0)
+    viewer.line_width_spin.setValue(2.5)
+    viewer.show_box_check.setChecked(True)
+    viewer.roi_angle_spin.setValue(angle)
+    viewer._set_roi_extents(viewer._default_roi_extents(), update_cuts=True, draw=False)
+    viewer.canvas.draw()
+    initial_width = viewer.ax_image.get_position().width
+    try:
+        initial_limits = viewer.ax_image.get_xlim()
+        initial_box_width = viewer.roi_x_width_spin.value()
+        for iteration in range(6):
+            viewer.show_box_check.setChecked(False)
+            viewer.show_box_check.setChecked(True)
+            viewer.roi_x_width_spin.setValue(
+                initial_box_width * (1.0 if iteration % 2 else 1.2)
+            )
+            viewer._set_roi_extents(viewer._roi_extents, update_cuts=True, draw=False)
+            viewer.canvas.draw()
+            assert viewer.ax_image.get_position().width >= 0.95 * initial_width
+            if angle == 0.0:
+                np.testing.assert_allclose(viewer.ax_image.get_xlim(), initial_limits)
+            np.testing.assert_allclose(
+                viewer.ax_xcut.get_position().bounds[::2],
+                viewer.ax_image.get_position().bounds[::2],
+                atol=1e-6,
+            )
+            for axis in (viewer.ax_image, viewer.ax_xcut, viewer.ax_ycut):
+                assert axis.xaxis.label.get_fontsize() == pytest.approx(18)
+                assert axis.yaxis.label.get_fontsize() == pytest.approx(18)
+                assert axis.yaxis.get_offset_text().get_fontsize() == pytest.approx(18)
+                assert axis.spines['bottom'].get_linewidth() == pytest.approx(2.5)
+            assert viewer.roi_sum_text.get_fontsize() == pytest.approx(18)
+    finally:
+        viewer.window.close()
+
+
+def test_qt_new_viewers_and_datasets_use_preferred_figure_defaults(monkeypatch):
+    pytest.importorskip("PySide6")
+    import nfit.qt_slice_viewer as module
+
+    monkeypatch.setattr(module, 'default_viewer_font_size', lambda: 16.0)
+    monkeypatch.setattr(module, 'default_viewer_axis_linewidth', lambda: 2.25)
+    viewer = module.QtMDHistoSliceViewer([_tiny_mdhisto_data(), _tiny_mdhisto_data()], dataset_names=['first', 'second'])
+    try:
+        assert viewer.font_size == pytest.approx(16)
+        assert viewer.axis_linewidth == pytest.approx(2.25)
+        viewer.dataset_combo.setCurrentIndex(1)
+        assert viewer.font_size == pytest.approx(16)
+        assert viewer.axis_linewidth == pytest.approx(2.25)
+    finally:
+        viewer.window.close()

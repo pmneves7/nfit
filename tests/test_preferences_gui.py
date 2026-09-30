@@ -97,6 +97,68 @@ def test_viewer_preload_preference_defaults_off_and_persists(qt_app, tmp_path):
     assert preload_viewer_data(restored) is False
 
 
+def test_viewer_figure_defaults_validate_and_persist(tmp_path):
+    from PySide6 import QtCore
+
+    from nfit.application_preferences import (
+        default_viewer_axis_linewidth,
+        default_viewer_font_size,
+        set_default_viewer_axis_linewidth,
+        set_default_viewer_font_size,
+    )
+
+    settings_path = str(tmp_path / "preferences.ini")
+    settings = QtCore.QSettings(settings_path, QtCore.QSettings.Format.IniFormat)
+    assert default_viewer_font_size(settings) == 12.0
+    assert default_viewer_axis_linewidth(settings) == 1.5
+    set_default_viewer_font_size(16.5, settings)
+    set_default_viewer_axis_linewidth(2.25, settings)
+    settings.sync()
+
+    restored = QtCore.QSettings(settings_path, QtCore.QSettings.Format.IniFormat)
+    assert default_viewer_font_size(restored) == 16.5
+    assert default_viewer_axis_linewidth(restored) == 2.25
+
+    for invalid in (0, -1, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="positive finite"):
+            set_default_viewer_font_size(invalid, restored)
+        with pytest.raises(ValueError, match="positive finite"):
+            set_default_viewer_axis_linewidth(invalid, restored)
+
+    restored.setValue("viewer/font_size", float("nan"))
+    restored.setValue("viewer/axis_linewidth", 0)
+    assert default_viewer_font_size(restored) == 12.0
+    assert default_viewer_axis_linewidth(restored) == 1.5
+
+
+def test_preferences_viewer_figure_controls(qt_app, tmp_path):
+    from PySide6 import QtCore
+
+    from nfit.application_preferences import (
+        default_viewer_axis_linewidth,
+        default_viewer_font_size,
+    )
+    from nfit.preferences_gui import PreferencesDialog
+
+    settings = QtCore.QSettings(
+        str(tmp_path / "preferences.ini"), QtCore.QSettings.Format.IniFormat
+    )
+    dialog = PreferencesDialog(settings=settings)
+    try:
+        assert dialog.tabs.tabText(1) == "Data viewer"
+        assert dialog.viewer_font_size.value() == 12.0
+        assert dialog.viewer_axis_linewidth.value() == 1.5
+        assert "newly opened data viewers" in dialog.viewer_font_size.toolTip()
+        assert "axes and tick marks" in dialog.viewer_axis_linewidth.toolTip()
+
+        dialog.viewer_font_size.setValue(15.0)
+        dialog.viewer_axis_linewidth.setValue(2.5)
+        assert default_viewer_font_size(settings) == 15.0
+        assert default_viewer_axis_linewidth(settings) == 2.5
+    finally:
+        dialog.close()
+
+
 def test_preferences_viewer_preload_control(qt_app, tmp_path):
     from PySide6 import QtCore
 

@@ -7,6 +7,8 @@ import numpy as np
 
 from .application_preferences import (
     default_continuous_colormap,
+    default_viewer_axis_linewidth,
+    default_viewer_font_size,
     default_waterfall_colormap,
 )
 from .axes_ratio import mdhisto_axes_aspect
@@ -350,9 +352,9 @@ class QtMDHistoSliceViewer:
         self.waterfall_trace_label_color_combo = None
         self.xcut_percent = 20
         self.ycut_percent = 16
-        self.font_size = 12.0
+        self.font_size = default_viewer_font_size()
         self.show_binning_title = False
-        self.axis_linewidth = 1.5
+        self.axis_linewidth = default_viewer_axis_linewidth()
         self.smoothing_x = 0.0
         self.smoothing_y = 0.0
         self.smoothing_fill_nans = False
@@ -465,6 +467,8 @@ class QtMDHistoSliceViewer:
         self._dataset_states: list[_DatasetViewState | None] = [None] * len(self.datasets)
         self._dataset_states[self.dataset_index] = _DatasetViewState(
             model=self.model,
+            font_size=self.font_size,
+            axis_linewidth=self.axis_linewidth,
             show_fit=self.show_fit,
             tile_dim=self.tile_dim,
             tile_range=self.tile_range,
@@ -2409,6 +2413,8 @@ class QtMDHistoSliceViewer:
             tile_step = default_tiled_slice_step(data, tile_dim, tile_range)
         return _DatasetViewState(
             model=model,
+            font_size=default_viewer_font_size(),
+            axis_linewidth=default_viewer_axis_linewidth(),
             apply_masks=bool(model.masked),
             show_fit=bool(data.metadata.get("viewer_show_fit", False)),
             tile_dim=tile_dim,
@@ -3704,43 +3710,15 @@ class QtMDHistoSliceViewer:
             return
         self._apply_binning_title()
         size = float(self.font_size)
-        for axis in (
-            self.ax_image,
-            self.ax_xcut,
-            self.ax_ycut,
-            self.ax_colorbar,
-            self.ax_residual,
-            self.ax_fit_cut,
-            self.ax_residual_cut,
-            self.ax_residual_ycut,
-        ):
-            if axis is None:
-                continue
+        for axis in self.figure.axes:
             axis.title.set_fontsize(size + 1.0)
             axis.xaxis.label.set_fontsize(size)
             axis.yaxis.label.set_fontsize(size)
             axis.tick_params(axis="both", labelsize=size)
-        for axis in self._compare_axes:
-            axis.title.set_fontsize(size + 1.0)
-            axis.xaxis.label.set_fontsize(size)
-            axis.yaxis.label.set_fontsize(size)
-            axis.tick_params(axis="both", labelsize=size)
-        for axis in self._tile_axes[1:]:
-            axis.title.set_fontsize(size + 1.0)
-            axis.xaxis.label.set_fontsize(size)
-            axis.yaxis.label.set_fontsize(size)
-            axis.tick_params(axis="both", labelsize=size)
-        if self.colorbar is not None:
-            self.colorbar.ax.yaxis.label.set_fontsize(size)
-            self.colorbar.ax.tick_params(labelsize=size)
-        for colorbar in self._tile_colorbars:
-            if colorbar is self.colorbar:
-                continue
-            colorbar.ax.yaxis.label.set_fontsize(size)
-            colorbar.ax.tick_params(labelsize=size)
-        for colorbar in self._compare_colorbars:
-            colorbar.ax.yaxis.label.set_fontsize(size)
-            colorbar.ax.tick_params(labelsize=size)
+            axis.xaxis.get_offset_text().set_fontsize(size)
+            axis.yaxis.get_offset_text().set_fontsize(size)
+        if self.roi_sum_text is not None:
+            self.roi_sum_text.set_fontsize(size)
 
     def _apply_axis_linewidth(self) -> None:
         width = float(self.axis_linewidth)
@@ -4839,6 +4817,11 @@ class QtMDHistoSliceViewer:
         y_ratio = self._panel_ratio(self.ycut_percent) if visible else 0.001
         self.grid.set_height_ratios([1.0, x_ratio])
         self.grid.set_width_ratios([1.0, y_ratio, 0.045])
+        # Start each layout pass from its grid cells, rather than positions
+        # modified by the previous draw's constrained-layout/axes locators.
+        for axis in (self.ax_image, self.ax_xcut, self.ax_ycut, self.ax_colorbar):
+            if axis is not None:
+                axis.set_subplotspec(axis.get_subplotspec())
         self.ax_xcut.set_visible(visible)
         self.ax_ycut.set_visible(visible)
         if draw:
@@ -4936,6 +4919,8 @@ class QtMDHistoSliceViewer:
         self._sync_export_controls()
         if self._fit_cuts_active():
             self._update_fit_compare_cuts(extents)
+            self._apply_figure_font_size()
+            self._apply_axis_linewidth()
             self._sync_cut_viewers()
             self.canvas.draw_idle()
             return
@@ -4967,6 +4952,8 @@ class QtMDHistoSliceViewer:
             self.ax_ycut.set_xlabel("Weighted mean")
             self.ax_ycut.set_ylabel(f"Box y · {self.model._axis_label(self.model.y_dim)}")
             self._apply_histogram_axes_layout(draw=False)
+            self._apply_figure_font_size()
+            self._apply_axis_linewidth()
             self._sync_export_controls()
             self._sync_cut_viewers()
             return
@@ -5020,6 +5007,8 @@ class QtMDHistoSliceViewer:
         self.ax_ycut.set_xlabel("Weighted mean")
         self.ax_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
         self._apply_histogram_axes_layout(draw=False)
+        self._apply_figure_font_size()
+        self._apply_axis_linewidth()
         self._sync_export_controls()
         self._sync_cut_viewers()
 

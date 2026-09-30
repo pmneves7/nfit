@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import threading
@@ -16,8 +17,12 @@ from .colormaps import IMAGE_COLORMAPS, WATERFALL_COLORMAPS
 CONTINUOUS_COLORMAP_KEY = "colormaps/continuous_default"
 WATERFALL_COLORMAP_KEY = "colormaps/waterfall_default"
 PRELOAD_VIEWER_DATA_KEY = "viewer/preload_all_data"
+VIEWER_FONT_SIZE_KEY = "viewer/font_size"
+VIEWER_AXIS_LINEWIDTH_KEY = "viewer/axis_linewidth"
 DEFAULT_CONTINUOUS_COLORMAP = "viridis"
 DEFAULT_WATERFALL_COLORMAP = "viridis"
+DEFAULT_VIEWER_FONT_SIZE = 12.0
+DEFAULT_VIEWER_AXIS_LINEWIDTH = 1.5
 
 
 class _LinuxApplicationSettings:
@@ -166,6 +171,37 @@ def preload_viewer_data(
     return bool(store.value(PRELOAD_VIEWER_DATA_KEY, False, type=bool))
 
 
+def _positive_finite_setting(
+    key: str,
+    fallback: float,
+    settings: QtCore.QSettings | _LinuxApplicationSettings | None,
+) -> float:
+    store = application_settings() if settings is None else settings
+    try:
+        value = float(store.value(key, fallback))
+    except (TypeError, ValueError, OverflowError):
+        return fallback
+    return value if value > 0.0 and math.isfinite(value) else fallback
+
+
+def default_viewer_font_size(
+    settings: QtCore.QSettings | _LinuxApplicationSettings | None = None,
+) -> float:
+    """Return the local default font size for newly opened data viewers, in points."""
+
+    return _positive_finite_setting(VIEWER_FONT_SIZE_KEY, DEFAULT_VIEWER_FONT_SIZE, settings)
+
+
+def default_viewer_axis_linewidth(
+    settings: QtCore.QSettings | _LinuxApplicationSettings | None = None,
+) -> float:
+    """Return the local default axes and tick line width for new data viewers."""
+
+    return _positive_finite_setting(
+        VIEWER_AXIS_LINEWIDTH_KEY, DEFAULT_VIEWER_AXIS_LINEWIDTH, settings
+    )
+
+
 def set_default_continuous_colormap(
     name: str,
     settings: QtCore.QSettings | _LinuxApplicationSettings | None = None,
@@ -203,4 +239,39 @@ def set_preload_viewer_data(
     (application_settings() if settings is None else settings).setValue(
         PRELOAD_VIEWER_DATA_KEY,
         bool(enabled),
+    )
+
+
+def _set_positive_finite_setting(
+    key: str,
+    value: float,
+    settings: QtCore.QSettings | _LinuxApplicationSettings | None,
+    name: str,
+) -> None:
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name} must be a positive finite number") from exc
+    if normalized <= 0.0 or not math.isfinite(normalized):
+        raise ValueError(f"{name} must be a positive finite number")
+    (application_settings() if settings is None else settings).setValue(key, normalized)
+
+
+def set_default_viewer_font_size(
+    value: float,
+    settings: QtCore.QSettings | _LinuxApplicationSettings | None = None,
+) -> None:
+    """Persist the local default font size for new data viewers, in points."""
+
+    _set_positive_finite_setting(VIEWER_FONT_SIZE_KEY, value, settings, "Font size")
+
+
+def set_default_viewer_axis_linewidth(
+    value: float,
+    settings: QtCore.QSettings | _LinuxApplicationSettings | None = None,
+) -> None:
+    """Persist the local default axes and tick line width for new data viewers."""
+
+    _set_positive_finite_setting(
+        VIEWER_AXIS_LINEWIDTH_KEY, value, settings, "Axes line width"
     )

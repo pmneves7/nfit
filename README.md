@@ -37,6 +37,7 @@ provides double-click startup and a Dock icon using your existing environment.
 A few of its main capabilities are:
 
 - monitor nfit and system CPU and RAM usage live in the project toolbar;
+- set installation-wide figure font size and axes linewidth defaults in Preferences;
 - import, combine, mask, rebin, and visualize multidimensional neutron data,
   with confirmed project-wide clearing of computed data and model caches,
   with parent-owned hierarchical binning and explicit background recipe context,

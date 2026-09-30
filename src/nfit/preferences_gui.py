@@ -10,9 +10,13 @@ from .app_distribution import application_version
 from .application_preferences import (
     application_settings,
     default_continuous_colormap,
+    default_viewer_axis_linewidth,
+    default_viewer_font_size,
     default_waterfall_colormap,
     preload_viewer_data,
     set_default_continuous_colormap,
+    set_default_viewer_axis_linewidth,
+    set_default_viewer_font_size,
     set_default_waterfall_colormap,
     set_preload_viewer_data,
 )
@@ -137,9 +141,39 @@ class PreferencesDialog(QtWidgets.QDialog):
             lambda enabled: set_preload_viewer_data(enabled, self.settings)
         )
         viewer_body.addWidget(self.preload_viewer_data_checkbox)
+        viewer_appearance = QtWidgets.QFormLayout()
+        self.viewer_font_size = QtWidgets.QDoubleSpinBox()
+        self.viewer_font_size.setObjectName("preferences_viewer_font_size")
+        self.viewer_font_size.setRange(4.0, 48.0)
+        self.viewer_font_size.setDecimals(1)
+        self.viewer_font_size.setSuffix(" pt")
+        self.viewer_font_size.setValue(default_viewer_font_size(self.settings))
+        self.viewer_font_size.setToolTip(
+            "Default font size for labels, tick numbers, and titles in newly opened data viewers."
+        )
+        viewer_appearance.addRow("Figure font size", self.viewer_font_size)
+
+        self.viewer_axis_linewidth = QtWidgets.QDoubleSpinBox()
+        self.viewer_axis_linewidth.setObjectName("preferences_viewer_axis_linewidth")
+        self.viewer_axis_linewidth.setRange(0.1, 10.0)
+        self.viewer_axis_linewidth.setDecimals(2)
+        self.viewer_axis_linewidth.setSingleStep(0.25)
+        self.viewer_axis_linewidth.setSuffix(" pt")
+        self.viewer_axis_linewidth.setValue(default_viewer_axis_linewidth(self.settings))
+        self.viewer_axis_linewidth.setToolTip(
+            "Default thickness of plot axes and tick marks in newly opened data viewers."
+        )
+        viewer_appearance.addRow("Axes line width", self.viewer_axis_linewidth)
+        viewer_body.addLayout(viewer_appearance)
+        self.viewer_font_size.valueChanged.connect(
+            lambda value: set_default_viewer_font_size(value, self.settings)
+        )
+        self.viewer_axis_linewidth.valueChanged.connect(
+            lambda value: set_default_viewer_axis_linewidth(value, self.settings)
+        )
         viewer_note = QtWidgets.QLabel(
-            "Preloading can make switching faster, but opening a viewer may take longer "
-            "and use more memory."
+            "These figure defaults apply to newly opened viewers. Preloading can make "
+            "switching faster, but opening a viewer may take longer and use more memory."
         )
         viewer_note.setWordWrap(True)
         viewer_body.addWidget(viewer_note)
