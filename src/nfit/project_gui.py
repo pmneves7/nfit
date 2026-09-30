@@ -9785,6 +9785,16 @@ class NfitProjectExplorer:
                 if on_settled is not None:
                     on_settled()
 
+            def report_failure(self, message: str) -> None:
+                progress.fail(message)
+                # The rebin dialog already presents the error. A second modal
+                # warning can sit behind its Linux stays-on-top window and
+                # prevent the user from dismissing either window.
+                if not isinstance(progress, _RebinProgressDialog):
+                    QtWidgets.QMessageBox.warning(
+                        self._parent_window, failure_title, message
+                    )
+
             @QtCore.Slot(object)
             def handle_success(self, result: Any) -> None:
                 try:
@@ -9797,8 +9807,7 @@ class NfitProjectExplorer:
                         if close_on_success:
                             progress.close()
                 except Exception as exc:
-                    progress.fail(str(exc))
-                    QtWidgets.QMessageBox.warning(self._parent_window, failure_title, str(exc))
+                    self.report_failure(str(exc))
                 finally:
                     try:
                         self.settle()
@@ -9815,8 +9824,7 @@ class NfitProjectExplorer:
                         summary_lines=lines,
                     )
                 except Exception as exc:
-                    progress.fail(str(exc))
-                    QtWidgets.QMessageBox.warning(self._parent_window, failure_title, str(exc))
+                    self.report_failure(str(exc))
                 finally:
                     try:
                         self.settle()
@@ -9825,9 +9833,8 @@ class NfitProjectExplorer:
 
             @QtCore.Slot(str)
             def handle_failure(self, message: str) -> None:
-                progress.fail(message)
                 try:
-                    QtWidgets.QMessageBox.warning(self._parent_window, failure_title, message)
+                    self.report_failure(message)
                 finally:
                     try:
                         self.settle()

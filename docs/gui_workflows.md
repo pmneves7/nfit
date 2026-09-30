@@ -118,6 +118,8 @@ each viewer-ready output, and final window construction. An internal detail stag
 stays just short of a full bar until its corresponding overall work item advances.
 Use **Cancel** to stop a rebin cooperatively at the next processing checkpoint;
 already completed binnings remain available.
+If a rebin fails, its progress window displays the error. Dismiss it with
+**Close** or the window's **X** button.
 Selecting a collection with a complete saved grid is metadata-only: it neither
 loads a raw source nor materializes a child composite merely to display the
 settings panel. Explicit data, rebin, and UB actions perform any required source

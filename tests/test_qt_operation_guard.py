@@ -196,3 +196,102 @@ def test_background_guard_covers_completion_and_releases_on_all_paths(app, monke
     assert combo.currentIndex() == 1
     window.close()
     explorer.window.close()
+
+
+@pytest.mark.parametrize("failure_path", ["task", "refresh"])
+@pytest.mark.parametrize("dismissal", ["close_button", "window_close"])
+def test_failed_rebin_progress_can_be_dismissed_without_blocking_warning(
+    app, monkeypatch, failure_path, dismissal
+):
+    from nfit import project_gui as gui
+
+    explorer = gui.NfitProjectExplorer(gui.NfitProject())
+    explorer.window.show()
+    existing_windows = set(app.topLevelWidgets())
+    warnings = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda *args: warnings.append(args),
+    )
+
+    def task(_progress):
+        if failure_path == "task":
+            raise ValueError("rebin failed")
+        return 1
+
+    def refresh(_result):
+        if failure_path == "refresh":
+            raise ValueError("viewer refresh failed")
+
+    assert explorer._start_background_task(
+        title="Test rebin",
+        failure_title="Rebin failed",
+        task=task,
+        on_success=refresh,
+        success_message="Done",
+        progress_window_title="Rebin progress",
+    )
+    deadline = time.monotonic() + 5
+    while explorer._fit_worker_thread is not None and time.monotonic() < deadline:
+        app.processEvents()
+    assert explorer._fit_worker_thread is None
+    app.processEvents()
+
+    assert warnings == []
+    dialog = next(
+        widget
+        for widget in app.topLevelWidgets()
+        if (
+            widget.objectName() == "rebin_progress_dialog"
+            and widget not in existing_windows
+        )
+    )
+    assert dialog.isVisible()
+    assert dialog.findChild(QtWidgets.QLabel, "rebin_progress_label").text().startswith(
+        "Rebin failed:"
+    )
+
+    if dismissal == "close_button":
+        close_button = next(
+            button
+            for button in dialog.findChildren(QtWidgets.QPushButton)
+            if button.text() == "Close"
+        )
+        QtTest.QTest.mouseClick(close_button, QtCore.Qt.MouseButton.LeftButton)
+    else:
+        dialog.close()
+    app.processEvents()
+    assert not dialog.isVisible()
+    explorer.window.close()
+
+
+def test_non_rebin_background_failure_still_shows_warning(app, monkeypatch):
+    from nfit import project_gui as gui
+
+    explorer = gui.NfitProjectExplorer(gui.NfitProject())
+    warnings = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda *args: warnings.append(args),
+    )
+
+    def task(_progress):
+        raise ValueError("fit failed")
+
+    assert explorer._start_background_task(
+        title="Test fit",
+        failure_title="Fit failed",
+        task=task,
+        on_success=lambda _result: None,
+        success_message="Done",
+        progress_window_title="Fit progress",
+    )
+    deadline = time.monotonic() + 5
+    while explorer._fit_worker_thread is not None and time.monotonic() < deadline:
+        app.processEvents()
+    assert explorer._fit_worker_thread is None
+    assert len(warnings) == 1
+    assert warnings[0][1:] == ("Fit failed", "fit failed")
+    explorer.window.close()
