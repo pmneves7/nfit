@@ -240,3 +240,19 @@ def test_copied_run_has_an_independent_project_cache_reference(tmp_path):
     save_project(project, path)
     result = bin_raw_dgs_group(load_project(path).data_groups[0].subgroups[0], **OPTIONS)
     assert result.metadata['reduced_event_cache']['hits'] == 1
+
+
+
+def test_reduction_version_invalidates_event_and_histogram_caches(tmp_path, monkeypatch):
+    from nfit import project_composites, raw_dgs_cache
+
+    source = tmp_path / 'SEQ_42.nxs.h5'
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    bin_raw_dgs_group(group, **OPTIONS)
+    signature = project_composites._composite_cache_signature(group)
+    monkeypatch.setattr(raw_dgs_cache, 'RAW_DGS_REDUCTION_VERSION', raw_dgs_cache.RAW_DGS_REDUCTION_VERSION + 1)
+    monkeypatch.setattr(project_composites, 'RAW_DGS_REDUCTION_VERSION', raw_dgs_cache.RAW_DGS_REDUCTION_VERSION)
+    assert project_composites._composite_cache_signature(group) != signature
+    result = bin_raw_dgs_group(group, **OPTIONS)
+    assert result.metadata['reduced_event_cache']['misses'] == 1

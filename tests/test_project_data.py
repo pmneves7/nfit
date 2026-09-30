@@ -2372,7 +2372,8 @@ def test_point_data_rebin_automatically_uses_normalization_denominator():
     ] is True
 
 
-def test_mdhisto_rebin_automatically_uses_normalization_denominator():
+@pytest.mark.parametrize("storage", ["auxiliary", "metadata"])
+def test_mdhisto_rebin_automatically_uses_normalization_denominator(storage):
     data = MDHistoData(
         axes=(
             MDHistoAxis("|Q|", [0.5, 1.5, 2.5], "1/angstrom", "momentum"),
@@ -2388,6 +2389,11 @@ def test_mdhisto_rebin_automatically_uses_normalization_denominator():
             )
         },
     )
+    if storage == "metadata":
+        data = data.with_updates(
+            metadata={"normalization_denominator": data.auxiliary_channels["normalization_denominator"].values},
+            auxiliary_channels={},
+        )
     dataset = DatasetEntry("histogram", data, data_type="powder_inelastic")
     config = dataset_rebin_config(dataset)
     config.update(

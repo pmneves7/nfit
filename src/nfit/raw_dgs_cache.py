@@ -25,7 +25,7 @@ from .project_archive import (
 )
 
 _CACHE_KEY = "raw_dgs_reduction_cache"
-_CACHE_VERSION = 1
+RAW_DGS_REDUCTION_VERSION = 2
 _EVENT_ROW_BYTES = 5 * 8
 _EVENT_BLOCK_ROWS = (32 * 1024**2 + _EVENT_ROW_BYTES - 1) // _EVENT_ROW_BYTES
 _REDUCTION_DEFAULTS = {
@@ -62,7 +62,7 @@ def reduction_signature(dataset, config):
     previous_files = previous[1:4] if len(previous) >= 4 else [None] * 3
     return json.dumps(
         [
-            _CACHE_VERSION,
+            RAW_DGS_REDUCTION_VERSION,
             _file_signature(dataset.metadata["source_file"], previous_files[0]),
             _file_signature(config.get("normalization_file"), previous_files[1]),
             _file_signature(config.get("mask_file"), previous_files[2]),
@@ -138,7 +138,7 @@ def cache_event_chunks(dataset, signature, header, normalization, chunks):
             write("header_json", json.dumps({**header, "chunk_count": chunk_count}))
         dataset._raw_dgs_reduction_cache = _ReducedEventCache(signature, path, staging)
         dataset.metadata[_CACHE_KEY] = {
-            "version": _CACHE_VERSION,
+            "version": RAW_DGS_REDUCTION_VERSION,
             "signature": signature,
             "member": _cache_member(dataset),
         }
@@ -199,7 +199,7 @@ def bind_project_reduced_event_caches(project, path):
     for group in project.data_groups:
         for dataset in group.iter_datasets():
             payload = dataset.metadata.get(_CACHE_KEY)
-            if isinstance(payload, dict) and payload.get("version") == _CACHE_VERSION:
+            if isinstance(payload, dict) and payload.get("version") == RAW_DGS_REDUCTION_VERSION:
                 dataset._raw_dgs_reduction_cache = _ReducedEventCache(
                     str(payload["signature"]),
                     ArchiveMember(Path(path), str(payload["member"])),

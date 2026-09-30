@@ -11,6 +11,7 @@ from .axes_ratio import mdhisto_axes_aspect
 from .background_channels import available_background_channels, background_channel
 from .colormaps import IMAGE_COLORMAPS
 from .dataset import PointData4D, PointListData
+from .histogram_reduction import normalization_denominator, pool_normalized_histogram
 from .mdhisto import (
     MDHistoData,
     mdhisto_coverage_fraction,
@@ -2722,6 +2723,11 @@ class MDHistoSliceViewer:
             variance = np.where(mask, np.nan, variance)
             events = np.where(mask, 0.0, events)
             coverage = np.where(mask, 0.0, coverage)
+        denominator = normalization_denominator(self.data, tuple(index))
+        if denominator is not None:
+            signal, variance, _ = pool_normalized_histogram(
+                signal, variance, denominator, reduce_axes, mask=mask if self.masked else None,
+            )
         coverage_weight = np.ones(coverage.shape, dtype=float)
         for axis, dim, start, stop in integrated_dims:
             widths = np.diff(self._axis_edges(dim))[start : stop + 1]
@@ -2731,13 +2737,15 @@ class MDHistoSliceViewer:
         coverage_numerator = coverage * coverage_weight
         coverage_denominator = coverage_weight
         for axis in sorted(reduce_axes, reverse=True):
-            signal = np.nansum(signal, axis=axis)
-            variance = np.nansum(variance, axis=axis)
+            if denominator is None:
+                signal = np.nansum(signal, axis=axis)
+                variance = np.nansum(variance, axis=axis)
             events = np.nansum(events, axis=axis)
             mask = np.all(mask, axis=axis)
             coverage_numerator = np.sum(coverage_numerator, axis=axis)
             coverage_denominator = np.sum(coverage_denominator, axis=axis)
-            signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
+            if denominator is None:
+                signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
         coverage = np.zeros(np.asarray(coverage_numerator).shape, dtype=float)
         np.divide(
             coverage_numerator,
@@ -2747,7 +2755,7 @@ class MDHistoSliceViewer:
         )
         coverage = np.clip(coverage, 0.0, 1.0)
         coverage_mask = coverage < self.coverage_threshold
-        mask = np.asarray(mask, dtype=bool) | coverage_mask
+        mask = np.asarray(mask, dtype=bool) | coverage_mask | ~np.isfinite(signal)
         signal = np.where(coverage_mask, np.nan, signal)
         variance = np.where(coverage_mask, np.nan, variance)
         signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
@@ -2808,10 +2816,17 @@ class MDHistoSliceViewer:
             values = np.where(diagnostic_mask, np.nan, values)
             if variance is not None:
                 variance = np.where(diagnostic_mask, np.nan, variance)
+        denominator = normalization_denominator(self.data, tuple(index))
+        if denominator is not None:
+            values, variance, _ = pool_normalized_histogram(
+                values, variance, denominator, reduce_axes,
+                mask=diagnostic_mask if self.masked else None,
+            )
         for axis in sorted(reduce_axes, reverse=True):
-            values = np.nansum(values, axis=axis)
+            if denominator is None:
+                values = np.nansum(values, axis=axis)
             diagnostic_mask = np.all(diagnostic_mask, axis=axis)
-            if variance is not None:
+            if variance is not None and denominator is None:
                 variance = np.nansum(variance, axis=axis)
         remaining = [
             dim for dim in range(self.data.signal.ndim)
@@ -2889,8 +2904,9 @@ class MDHistoSliceViewer:
     ) -> np.ndarray:
         """Slice a grid-shaped metadata channel like the signal channel.
 
-        Integrated axes are reduced with ``nansum`` to match how the signal
-        channel accumulates over an integration range.
+        Physical channels use exposure pooling when normalization is stored.
+        Otherwise auxiliary channels use their existing mean, and metadata
+        channels use their existing sum.
         """
 
         auxiliary = self.data.auxiliary_channels.get(name)
@@ -2915,12 +2931,19 @@ class MDHistoSliceViewer:
                 else:
                     index.append(selection)
         out = values[tuple(index)]
-        for axis in sorted(reduce_axes, reverse=True):
-            out = (
-                _nanmean_axis(out, axis=axis)
-                if auxiliary is not None
-                else np.nansum(out, axis=axis)
+        denominator = normalization_denominator(self.data, tuple(index))
+        if denominator is not None and name not in {"normalization_denominator", "coverage_fraction", "residual"}:
+            out, _, _ = pool_normalized_histogram(
+                out, None, denominator, reduce_axes,
+                mask=self.data.mask[tuple(index)] if self.masked else None,
             )
+        else:
+            for axis in sorted(reduce_axes, reverse=True):
+                out = (
+                    _nanmean_axis(out, axis=axis)
+                    if auxiliary is not None and name != "normalization_denominator"
+                    else np.nansum(out, axis=axis)
+                )
         remaining = [dim for dim in range(self.data.signal.ndim) if dim in (self.x_dim, self.y_dim)]
         y_pos = remaining.index(self.y_dim)
         x_pos = remaining.index(self.x_dim)
@@ -2954,11 +2977,19 @@ class MDHistoSliceViewer:
                 else:
                     index.append(selection)
         out = errors[tuple(index)]
-        for axis in sorted(reduce_axes, reverse=True):
-            count = np.sum(np.isfinite(out), axis=axis)
-            variance = np.nansum(np.square(out), axis=axis)
-            out = np.full(variance.shape, np.nan, dtype=float)
-            np.divide(np.sqrt(variance), count, out=out, where=count > 0)
+        denominator = normalization_denominator(self.data, tuple(index))
+        if denominator is not None and name not in {"normalization_denominator", "coverage_fraction", "residual"}:
+            _, variance, _ = pool_normalized_histogram(
+                auxiliary.values[tuple(index)], np.square(out), denominator, reduce_axes,
+                mask=self.data.mask[tuple(index)] if self.masked else None,
+            )
+            out = np.sqrt(variance)
+        else:
+            for axis in sorted(reduce_axes, reverse=True):
+                count = np.sum(np.isfinite(out), axis=axis)
+                variance = np.nansum(np.square(out), axis=axis)
+                out = np.full(variance.shape, np.nan, dtype=float)
+                np.divide(np.sqrt(variance), count, out=out, where=count > 0)
         remaining = [
             dim
             for dim in range(self.data.signal.ndim)

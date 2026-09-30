@@ -24,6 +24,7 @@ from .background_channels import (
 )
 from .background_channels import background_channel as _background_channel
 from .dataset import PointData4D, PointListData
+from .histogram_reduction import normalization_denominator
 from .mdhisto import (
     MDHistoAxis,
     MDHistoChannel,
@@ -1573,10 +1574,7 @@ def _rebin_mdhisto_data(
         physical_transform = np.vstack(source_vectors)
         output_axes = _validate_mdhisto_rebin_basis(axes_config, ndim)
     use_stream = _mdhisto_streaming_supported(data, config, axes_config)
-    normalization_channel = data.auxiliary_channels.get("normalization_denominator")
-    normalization_values = None
-    if normalization_channel is not None:
-        normalization_values = np.asarray(normalization_channel.values, dtype=float)
+    normalization_values = normalization_denominator(data)
     background_channel = (
         data.auxiliary_channels.get("background")
         if data.metadata.get(BACKGROUND_PROVENANCE_KEY)

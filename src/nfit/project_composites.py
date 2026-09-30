@@ -67,6 +67,7 @@ from .project_masks import _mdhisto_with_nfit_masks, _point_data_with_nfit_masks
 from .project_point_lists import prepared_point_list_data
 from .project_rebinning import _rebin_axis_bound_is_auto
 from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group
+from .raw_dgs_cache import RAW_DGS_REDUCTION_VERSION
 from .rebin import rebin_nd
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET, RebinCache
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
@@ -900,7 +901,9 @@ def _composite_cache_signature(
     payload = [
         COMPOSITE_CACHE_SIGNATURE_TAG,
         node.metadata.get("mdevent"),
-        node.metadata.get("raw_dgs"),
+        {**raw_config, "native_reduction_version": RAW_DGS_REDUCTION_VERSION}
+        if raw_config.get("format") == "raw-direct-geometry-nexus"
+        else node.metadata.get("raw_dgs"),
         getattr(_composite_root(group), "lattice_parameters", {}),
         json.dumps(_composite_numerical_config(group, config), sort_keys=True, default=str),
         dimensions,

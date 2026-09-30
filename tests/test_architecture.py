@@ -18,6 +18,9 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "analysis" / "artifacts.py",
     PACKAGE_ROOT / "corelli.py",
     PACKAGE_ROOT / "raw_dgs_cache.py",
+    PACKAGE_ROOT / "raw_dgs_monitors.py",
+    PACKAGE_ROOT / "raw_dgs_pulses.py",
+    PACKAGE_ROOT / "histogram_reduction.py",
     PACKAGE_ROOT / "composite_spectral.py",
     PACKAGE_ROOT / "rebin_cache.py",
     PACKAGE_ROOT / "slice_viewer_cache.py",
@@ -234,3 +237,17 @@ def test_project_data_services_do_not_import_qt(module_name: str) -> None:
         if isinstance(node, ast.ImportFrom)
     )
     assert not any("PySide" in module or module.startswith("qt_") for module in imported_modules)
+
+
+@pytest.mark.parametrize("module", ["raw_dgs_monitors", "raw_dgs_pulses", "histogram_reduction"])
+def test_reduction_services_do_not_import_their_coordinators(module):
+    tree = ast.parse((PACKAGE_ROOT / f"{module}.py").read_text())
+    imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    assert not imported.intersection({"raw_dgs", "plotting_core", "project_rebinning"})
+
+
+def test_raw_dgs_preserves_monitor_helper_import_identity():
+    from nfit import raw_dgs, raw_dgs_monitors
+
+    for name in ["TOF_US_PER_M_SQRT_MEV", "_mantid_getei_peak_region", "_mantid_getei_v2_peak"]:
+        assert getattr(raw_dgs, name) is getattr(raw_dgs_monitors, name)

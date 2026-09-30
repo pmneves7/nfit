@@ -728,3 +728,46 @@ def test_raw_trajectory_accumulator_reuses_worker_grids_across_batches(
     assert len(accumulated) == 3
     assert [len(theta) for theta in accumulated] == ([1, 2, 1] if mixed_geometry else [1, 1, 1])
     np.testing.assert_allclose(actual, expected, rtol=1e-13, atol=1e-13)
+
+
+@pytest.mark.parametrize("pause", [False, True])
+def test_pulse_intervals_remove_deadtime_from_events_and_charge(tmp_path, pause):
+    from nfit.raw_dgs_pulses import select_pulses
+
+    h5py = pytest.importorskip("h5py")
+    source = tmp_path / "pulses.nxs.h5"
+    with h5py.File(source, "w") as f:
+        entry = f.create_group("entry")
+        logs = entry.create_group("DASlogs")
+        charge = logs.create_group("proton_charge")
+        charge.create_dataset("value", data=[100, 100, 0, 100, 100, 100])
+        t = charge.create_dataset("time", data=np.arange(6.0))
+        t.attrs.update(offset="2026-01-01T00:00:00Z", units="second")
+        if pause:
+            log = logs.create_group("pause")
+            log.create_dataset("value", data=[0, 1, 0])
+            t = log.create_dataset("time", data=[0, 3, 4])
+            t.attrs.update(start="2026-01-01T00:00:00Z", units="second")
+        bank = entry.create_group("bank1_events")
+        t = bank.create_dataset("event_time_zero", data=np.arange(6.0) * 1e6)
+        t.attrs.update(offset="2026-01-01T00:00:00Z", units="microsecond")
+        selection = select_pulses(entry, 95)
+        expected = [True, False, False, not pause, True, False]
+        # Centred zero-tolerance intervals exclude the last good pulse in
+        # each uninterrupted charge interval, plus the half-open run endpoint.
+        np.testing.assert_array_equal(selection.charge_keep, expected)
+        np.testing.assert_array_equal(selection.bank_keep(bank), expected)
+        assert _retained_proton_charge_uah(entry, 95) == pytest.approx(sum(expected) * 100 / 3.6e9)
+
+
+def test_monitor_half_height_width_and_histogram_rebin_conserve_counts():
+    from nfit.raw_dgs_monitors import _mantid_getei_peak_region, _rebin_monitor_histogram
+
+    x = np.arange(-50., 51.)
+    y = 10000 * np.exp(-x**2 / (2 * 5**2)) + 10
+    _, _, width = _mantid_getei_peak_region(x, y, np.sqrt(y))
+    assert width == pytest.approx(2 * np.sqrt(2 * np.log(2)) * 5, rel=0.003)
+    counts, errors = _rebin_monitor_histogram(np.array([4., 16.]),
+        np.array([0., 1., 2.]), np.array([0., .5, 1.5, 2.]))
+    np.testing.assert_allclose(counts, [2, 10, 8])
+    np.testing.assert_allclose(errors**2, counts)

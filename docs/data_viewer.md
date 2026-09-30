@@ -240,6 +240,27 @@ waterfall-axis coordinate, or the zero-based trace index for a group of
 one-dimensional datasets. The public `save_grid_csv` and
 `save_waterfall_csv` functions provide the same export without Qt.
 
+### Integrating normalized histogram slices
+
+Histograms with a `normalization_denominator` pool their exposure when hidden
+axes are integrated. nfit sums the count numerators and normalization
+denominators separately, then divides once. Covered zero-count cells contribute
+exposure; masked cells and non-positive or non-finite denominators do not.
+The same weights apply to physical auxiliary channels, fitted intensities, and
+background intensity diagnostics. Counts and normalization denominators remain
+sums. Only the selected slab is loaded; integration does not change source or
+cached histogram arrays. GUI slices and `plot_mdhisto_slice` use this rule.
+
+This rule follows the data's normalization metadata and applies to normalized
+single-crystal and powder histograms. It does not depend on the instrument name.
+Histograms without a denominator retain their existing hidden-axis sum.
+Uniform histogram rebinning uses the denominator as its exposure weight,
+including older histograms that store it in metadata. Inverse-variance rebinning
+is a different estimator and does not retain a physical exposure denominator.
+See [Data representations and normalization](physics_conventions.md#data-representations-and-normalization)
+for the equations and statistical assumptions. Box profiles and optional
+displayed-axis coarsening retain their documented inverse-variance weighting.
+
 ### Histogram box cuts
 
 Enable **Box tool** to draw and resize a rectangular selection. Drag the round

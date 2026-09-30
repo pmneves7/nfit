@@ -45,10 +45,15 @@ from .raw_dgs_cache import (
     iter_cached_event_chunks,
     reduction_signature,
 )
+from .raw_dgs_monitors import (
+    TOF_US_PER_M_SQRT_MEV,
+    _mantid_getei_v2_peak,
+)
+from .raw_dgs_monitors import (
+    _mantid_getei_peak_region as _mantid_getei_peak_region,
+)
+from .raw_dgs_pulses import select_pulses
 
-# A neutron with energy E(meV) travels one metre in 2286.4/sqrt(E)
-# microseconds.  This follows directly from v = 437.393 sqrt(E) m/s.
-TOF_US_PER_M_SQRT_MEV = 2286.4
 # Mantid He3TubeEfficiency's exponential constant in K / (m Angstrom atm).
 HE3_EFFICIENCY_EXPONENTIAL_CONSTANT = 2175.486863864
 # Mantid's parameter files select these formula-driven GetEi v2 paths instead
@@ -641,13 +646,14 @@ def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_ba
     t0 = float(config.get("t0_override") if config.get("t0_override") is not None else info.t0)
     rows = max(1, int(max_batch_bytes) // 96)
     with h5py.File(info.path, "r") as handle:
-        pulse_keep = _good_pulses(handle["entry"], float(config.get("bad_pulse_threshold", 0.0)))
+        pulse_selection = select_pulses(handle["entry"], float(config.get("bad_pulse_threshold", 95.0)))
         for bank_name in handle["entry"]:
             if not (bank_name.startswith("bank") and bank_name.endswith("_events")):
                 continue
             bank = handle["entry"][bank_name]
             if "event_id" not in bank:
                 continue
+            pulse_keep = pulse_selection.bank_keep(bank)
             ids, tofs = bank["event_id"], bank["event_time_offset"]
             event_index = np.asarray(bank["event_index"], dtype=np.int64) if pulse_keep is not None else None
             for start in range(0, ids.shape[0], rows):
@@ -958,17 +964,7 @@ def _energy_transfer_bounds(config, incident_energy):
 
 
 def _good_pulses(entry, threshold):
-    logs = entry.get("DASlogs")
-    if threshold <= 0.0 or logs is None or "proton_charge" not in logs:
-        return None
-    charge_log = logs["proton_charge"]
-    if "value" not in charge_log:
-        return None
-    values = np.asarray(charge_log["value"], dtype=float).reshape(-1)
-    if values.size == 0:
-        return None
-    cutoff = float(threshold) / 100.0 * float(np.mean(values))
-    return values >= cutoff
+    return select_pulses(entry, threshold).charge_keep
 
 
 def _pulse_charge_values(entry):
@@ -1332,9 +1328,10 @@ def _monitor_ei_t0(entry, energy_guess):
         if len(monitor_data) < 2:
             return float(energy_guess), 0.0
 
+        grid_start = min(float(np.min(values)) for _, values, _ in monitor_data)
         peaks = []
         for name, values, distance in monitor_data:
-            peak_centre = _mantid_getei_v2_peak(values, distance, energy_guess)
+            peak_centre = _mantid_getei_v2_peak(values, distance, energy_guess, grid_start=grid_start)
             if peak_centre is None:
                 continue
             peaks.append((name, distance, peak_centre))
@@ -1345,7 +1342,7 @@ def _monitor_ei_t0(entry, energy_guess):
         velocity = (right_distance - left_distance) * 1.0e6 / (right_time - left_time)
         if not np.isfinite(velocity) or velocity <= 0.0:
             return float(energy_guess), 0.0
-        energy = (velocity / 437.393) ** 2
+        energy = (velocity * TOF_US_PER_M_SQRT_MEV / 1.0e6) ** 2
         if not np.isfinite(energy) or energy <= 0.0:
             return float(energy_guess), 0.0
         t0 = left_time - left_distance * 1.0e6 / velocity
@@ -1405,117 +1402,6 @@ def _evaluate_mantid_t0_formula(formula, incident_energy):
     )
 
 
-def _mantid_getei_v2_peak(values, distance, energy_guess):
-    """Reproduce Mantid GetEi v2's monitor peak estimate without Mantid."""
-
-    expected = TOF_US_PER_M_SQRT_MEV * distance / math.sqrt(energy_guess)
-    lower, upper = 0.9 * expected, 1.1 * expected
-    initial_edges = np.arange(lower, upper + 1.0, 1.0)
-    counts, edges = np.histogram(values, bins=initial_edges)
-    if not np.any(counts):
-        return None
-    centres = 0.5 * (edges[:-1] + edges[1:])
-    region = _mantid_getei_peak_region(centres, counts.astype(float), np.sqrt(counts))
-    if region is None:
-        return None
-    _, _, width = region
-    if width <= 0.0:
-        return None
-    width /= 12.0
-    rebinned_edges = np.arange(lower, upper + width, width)
-    rebinned, rebinned_edges = np.histogram(values, bins=rebinned_edges)
-    rebinned_centres = 0.5 * (rebinned_edges[:-1] + rebinned_edges[1:])
-    region = _mantid_getei_peak_region(
-        rebinned_centres,
-        rebinned.astype(float) / width,
-        np.sqrt(rebinned) / width,
-    )
-    if region is None:
-        return None
-    x, y, _ = region
-    area = np.trapezoid(y, x)
-    return None if not np.isfinite(area) or area <= 0.0 else float(np.trapezoid(x * y, x) / area)
-
-
-def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
-    """Port of Mantid GetEi2::calculatePeakWidthAtHalfHeight's peak region."""
-
-    if x.size < 3:
-        return None
-    peak = int(np.argmax(y))
-    background_floor = float(np.min(y))
-    peak_height = float(y[peak] - background_floor)
-    if peak_height <= 0.0:
-        return None
-    peak_error = float(errors[peak])
-    left = peak - 1
-    while left >= 0:
-        ratio = (y[left] - background_floor) / peak_height
-        ratio_error = math.sqrt(errors[left] ** 2 + (ratio * peak_error) ** 2) / peak_height
-        if ratio < 1.0 / prominence - 2.0 * ratio_error:
-            break
-        left -= 1
-    right = peak + 1
-    while right < x.size:
-        ratio = (y[right] - background_floor) / peak_height
-        ratio_error = math.sqrt(errors[right] ** 2 + (ratio * peak_error) ** 2) / peak_height
-        if ratio < 1.0 / prominence - 2.0 * ratio_error:
-            break
-        right += 1
-    if left < 0 or right >= x.size:
-        return None
-
-    # Match GetEi2's derivative extension of the initially prominent region.
-    derivative, uncertainty = -1000.0, 0.0
-    while right < x.size - 1 and derivative < -uncertainty:
-        forward, backward = x[right + 1] - x[right], x[right] - x[right - 1]
-        derivative = 0.5 * (
-            (y[right + 1] - y[right]) / forward + (y[right] - y[right - 1]) / backward
-        )
-        uncertainty = 0.5 * math.sqrt(
-            (errors[right + 1] ** 2 + errors[right] ** 2) / forward**2
-            + (errors[right] ** 2 + errors[right - 1] ** 2) / backward**2
-            - 2.0 * errors[right] ** 2 / (forward * backward)
-        )
-        right += 1
-    right -= 1
-    if derivative < -uncertainty:
-        right = x.size - 1
-
-    derivative, uncertainty = 1000.0, 0.0
-    while left > 0 and derivative > uncertainty:
-        forward, backward = x[left + 1] - x[left], x[left] - x[left - 1]
-        derivative = 0.5 * ((y[left + 1] - y[left]) / forward + (y[left] - y[left - 1]) / backward)
-        uncertainty = 0.5 * math.sqrt(
-            (errors[left + 1] ** 2 + errors[left] ** 2) / forward**2
-            + (errors[left] ** 2 + errors[left - 1] ** 2) / backward**2
-            - 2.0 * errors[left] ** 2 / (forward * backward)
-        )
-        left -= 1
-    left += 1
-    if derivative > uncertainty:
-        left = 0
-
-    peak_width = x[right] - x[left]
-    if peak_width <= 0.0:
-        return None
-    background_start = max(x[0], x[left] - 0.5 * peak_width)
-    background_stop = min(x[-1], x[right] + 0.5 * peak_width)
-    background_parts = []
-    if left > 0:
-        keep = (x >= background_start) & (x <= x[left])
-        if keep.sum() > 1:
-            background_parts.append((np.trapezoid(y[keep], x[keep]), x[keep][-1] - x[keep][0]))
-    if right < x.size - 1:
-        keep = (x >= x[right]) & (x <= background_stop)
-        if keep.sum() > 1:
-            background_parts.append((np.trapezoid(y[keep], x[keep]), x[keep][-1] - x[keep][0]))
-    background = (
-        sum(area for area, _ in background_parts) / sum(span for _, span in background_parts)
-        if background_parts
-        else 0.0
-    )
-    return x[left : right + 1], y[left : right + 1] - background, peak_width
 
 
 def _idf_location(entry, location):

@@ -383,7 +383,7 @@ binning. Small bank chunks are combined into approximately 32 MiB blocks in
 their original event order; each block is loaded independently. Column storage
 keeps coordinate and weight arrays contiguous. The complete event cache stays
 on disk rather than occupying RAM when the project opens. Each retained event
-uses 40 bytes, plus small trajectory and archive metadata. Previously saved
+uses 40 bytes, plus small trajectory and archive metadata. Compatible
 compressed event caches remain readable; saved histogram rebins retain their
 lossless NPZ compression.
 
@@ -418,13 +418,31 @@ For each enabled run, nfit:
 2. resolves $E_i$ and $T_0$ from explicit overrides, monitor analysis, or an
    instrument time-zero formula;
 3. combines detector-mask and processed-vanadium exclusions;
-4. rejects bad pulses using the configured charge threshold;
+4. excludes paused acquisition intervals (`pause` outside −1 to 0.5), then
+   applies the configured bad-pulse charge threshold with Mantid's centred,
+   zero-tolerance time intervals;
 5. converts accepted event TOF to final energy, $\Delta E$, and sample-frame
    momentum, then applies the configured $\Delta E/E_i$ limits;
 6. applies detector-efficiency and optional $k_i/k_f$ corrections;
 7. bins corrected events and their variances; and
 8. divides by independently accumulated trajectory coverage, weighted by the
    positive processed-vanadium values when a normalization file is supplied.
+
+The SNS monitor route uses a common 1 µs histogram, background-subtracted
+full width at half maximum for adaptive histogram rebinning, and the first
+moment of each peak. The TOF-to-energy conversion uses the same neutron mass
+and meV conversion as Mantid. $E_i$ is in meV and $T_0$ is in µs. Explicit
+incident-energy and time-zero overrides remain available.
+
+Beam filtering uses half-open time intervals for both detector events and
+integrated proton charge. This removes dead beam periods and excludes the last
+pulse of each accepted centred charge interval, matching the Shiver
+`FilterBadPulses` route. Pause filtering precedes calculation of the charge
+threshold. Files without timestamp logs retain value-based charge filtering.
+These are acquisition-time filters, not an electronic detector dead-time
+correction or an intensity rescaling. Saved reduced-event and raw-DGS histogram
+caches made with the earlier reduction are stale and require regeneration from
+the raw files.
 
 Bins without detector coverage are masked. Covered bins with no events are
 measured zeros and retain a finite uncertainty.

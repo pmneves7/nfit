@@ -800,3 +800,53 @@ def test_mdhisto_slice_viewer_blanks_empty_bins_when_integrating_ranges():
     assert np.isnan(view["errors"][2, 3])
     assert view["combined_mask"][2, 3]
     assert view["mask"][2, 3]
+
+
+@pytest.mark.parametrize("storage", ["metadata", "auxiliary"])
+def test_slice_pools_exposure_and_errors_including_measured_zeros(storage):
+    data = _tiny_mdhisto_data()
+    signal = np.zeros(data.shape)
+    errors = np.zeros(data.shape)
+    exposure = np.ones(data.shape)
+    signal[0, 0] = 100.0
+    errors[0, 0] = 10.0
+    exposure[0, 0] = 0.01
+    # One very bright, poorly exposed cell among five well exposed zeros.
+    metadata = {"zero_event_bins_are_measured": True}
+    channels = {}
+    if storage == "metadata":
+        metadata["normalization_denominator"] = exposure
+    else:
+        channels["normalization_denominator"] = MDHistoChannel(exposure)
+    channels["cross_section"] = MDHistoChannel(signal * 2, errors * 2)
+    metadata["fit"] = signal * 3
+    data = data.with_updates(signal=signal, errors=errors,
+                             num_events=np.zeros(data.shape), metadata=metadata,
+                             auxiliary_channels=channels)
+    viewer = MDHistoSliceViewer(data, x_dim=3, y_dim=2, integrate=True)
+    viewer.selections = {0: (0.25, 0.75), 1: (0.5, 2.5)}
+    view = viewer.slice_arrays()
+    np.testing.assert_allclose(view["signal"], 1 / 5.01)
+    np.testing.assert_allclose(view["errors"], 0.1 / 5.01)
+    np.testing.assert_allclose(view["cross_section"], 2 / 5.01)
+    np.testing.assert_allclose(view["cross_section_errors"], 0.2 / 5.01)
+    np.testing.assert_allclose(view["fit"], 3 / 5.01)
+    assert not view["mask"].any()
+    np.testing.assert_array_equal(data.signal, signal)
+
+
+def test_slice_pooling_excludes_masked_and_unexposed_cells():
+    data = _tiny_mdhisto_data()
+    signal = np.ones(data.shape)
+    signal[0, 0] = 1000
+    mask = np.zeros(data.shape, dtype=bool)
+    mask[0, 0] = True
+    exposure = np.ones(data.shape)
+    exposure[1, 2] = 0
+    data = data.with_updates(signal=signal, errors=np.ones(data.shape), mask=mask,
+        auxiliary_channels={"normalization_denominator": MDHistoChannel(exposure)})
+    viewer = MDHistoSliceViewer(data, x_dim=3, y_dim=2, integrate=True)
+    viewer.selections = {0: (0.25, 0.75), 1: (0.5, 2.5)}
+    view = viewer.slice_arrays()
+    np.testing.assert_allclose(view["signal"], 1)
+    np.testing.assert_allclose(view["errors"], 0.5)

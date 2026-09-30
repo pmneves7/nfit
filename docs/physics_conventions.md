@@ -696,6 +696,36 @@ $S(\mathbf Q,E)$ as a separate response function
 ([Mantid MDNorm](https://docs.mantidproject.org/v6.1.0/concepts/MDNorm.html);
 [ORNL introduction to neutron spin echo](https://neutrons.ornl.gov/sites/default/files/LS_Introduction_to_NSE_2019NXS-R.pdf)).
 
+### Pooling normalized count histograms
+
+Let $C_i$ be the corrected count numerator in cell $i$, $N_i>0$ its known
+exposure denominator (charge times detector-trajectory normalization in the
+native direct-geometry path), and $I_i=C_i/N_i$ its normalized intensity.
+Integration of these measured cells reports
+
+$$
+I_{\mathrm{pool}}=\frac{\sum_i C_i}{\sum_i N_i}
+=\frac{\sum_i N_i I_i}{\sum_i N_i},\qquad
+\sigma_{\mathrm{pool}}^2=\frac{\sum_i N_i^2\sigma_i^2}{(\sum_i N_i)^2}.
+$$
+
+$N_i$ has units of count numerator divided by intensity; its absolute scale
+cancels from the pooled intensity. $\sigma_i$ is the stored one-sigma intensity
+uncertainty. The variance formula propagates independent stored diagonal
+variances and treats exposure as known. It does not reconstruct covariance
+from fractional event sharing or repeated symmetry copies. Measured zero-count
+cells contribute their exposure and stored uncertainty; unmeasured or masked
+cells do not contribute.
+
+Uniform weighting coincides with exposure pooling only for equal exposure.
+For uncorrected Poisson counts with a common underlying intensity $I$,
+$\operatorname{Var}(I_i)=I/N_i$, so weights based on the *expected* inverse
+variance are proportional to $N_i$. Weights estimated from observed counts
+fluctuate with the counts, can suppress zero-count measurements, and need not
+produce the pooled estimator. Event corrections and non-Poisson uncertainties
+also break that simple equivalence. Summing normalized intensities,
+$\sum_i I_i$, is a different quantity and overweights weakly exposed cells.
+
 ### Derived channels, calibration, and normalization
 
 For count data, `Signal units / mbarn` gives the imported signal units per
