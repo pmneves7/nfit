@@ -123,6 +123,7 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
         "Reload from Disk": "reload_project_from_disk",
         "Cache binnings": "_set_cache_binnings_enabled",
         "Rebin stale binnings": "rebin_stale_project_binnings",
+        "Clear all caches in project": "clear_all_project_caches",
         "Save": "save",
         "Save As": "save_as",
         "Preferences…": "show_preferences",
@@ -177,6 +178,7 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
             "Reload from Disk",
             "Cache binnings",
             "Rebin stale binnings",
+            "Clear all caches in project",
             "Save",
             "Save As",
             "Preferences…",
@@ -208,6 +210,7 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
         ) != QtGui.QKeySequence.SequenceMatch.NoMatch
         assert all_actions["Check for updates…"].toolTip()
         assert all_actions["Update settings…"].toolTip()
+        assert all_actions["Clear all caches in project"].toolTip()
         assert explorer._external_change_timer.parent() is explorer.window
         assert explorer._external_change_timer.interval() == 1500
     finally:

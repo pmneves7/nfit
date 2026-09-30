@@ -490,6 +490,7 @@ from .powder import (
     is_powder_dataset,
     powder_convergence_scan,
 )
+from .project_caches import clear_project_caches
 from .project_data import (
     add_data_group_composite_binning,
     add_dataset_rebin_binning,
@@ -612,6 +613,7 @@ from .workflow import (
     dataset_workflow_script,
     fit_workflow_plan,
     fit_workflow_script,
+    project_cache_clear_script,
     render_workflow_script,
 )
 
@@ -701,6 +703,8 @@ def __dir__() -> list[str]:
     )
 
 __all__ = [
+    "project_cache_clear_script",
+    "clear_project_caches",
     "save_figure",
     "available_background_channels",
     "background_channel",

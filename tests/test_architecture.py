@@ -9,7 +9,18 @@ from pathlib import Path
 import pytest
 
 PACKAGE_ROOT = Path(__file__).parents[1] / "src" / "nfit"
+
+
+def test_project_cache_facade_shares_authoritative_stores():
+    from nfit import project_caches, project_gui
+
+    assert project_gui._MODEL_OVERLAY_CACHE is project_caches.MODEL_OVERLAY_CACHE
+    assert project_gui._MODEL_OVERLAY_ERRORS is project_caches.MODEL_OVERLAY_ERRORS
+    assert project_gui.clear_project_caches is project_caches.clear_project_caches
+
+
 GUI_INDEPENDENT_MODULES = (
+    PACKAGE_ROOT / "project_caches.py",
     PACKAGE_ROOT / "figure_export.py",
     PACKAGE_ROOT / "resource_usage.py",
     PACKAGE_ROOT / "axes_ratio.py",

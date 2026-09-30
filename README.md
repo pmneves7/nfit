@@ -38,6 +38,7 @@ A few of its main capabilities are:
 
 - monitor nfit and system CPU and RAM usage live in the project toolbar;
 - import, combine, mask, rebin, and visualize multidimensional neutron data,
+  with confirmed project-wide clearing of computed data and model caches,
   with parent-owned hierarchical binning and explicit background recipe context,
   including raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data
   with SNS monitor and beam-interval reduction, lazy per-run reduced-event caches

@@ -23,6 +23,19 @@ from .pipeline import BackgroundSpec, DataGroup, DatasetEntry, DatasetGroup, Mas
 from .project_io import NfitProject
 
 WORKFLOW_SCHEMA_VERSION = 1
+
+
+def project_cache_clear_script(project_path: str | Path) -> str:
+    """Export an editable script to clear and save one project's computed caches."""
+    return (
+        "from nfit import clear_project_caches, load_project, save_project\n\n"
+        f"project_path = {str(project_path)!r}\n"
+        "project = load_project(project_path)\n"
+        "clear_project_caches(project)\n"
+        "save_project(project, project_path)\n"
+    )
+
+
 _NODE_STAGES = {
     "source_dataset": "load_sources",
     "prepared_dataset": "prepare_datasets",

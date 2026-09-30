@@ -711,3 +711,32 @@ def test_fit_workflow_rebuilds_and_fits_live_state(tmp_path):
     assert outcome["goodness"]["status"] == "converged"
     assert outcome["goodness"]["parameters"]["Model1.constant"] == pytest.approx(2.5)
     assert "load_project" not in script
+
+
+def test_project_cache_clear_script_removes_saved_cache_artifacts(tmp_path):
+    import zipfile
+
+    from nfit import project_cache_clear_script, save_project
+    from nfit.project_data import dataset_rebin_config
+
+    source = _grid(2.0)
+    source_path = tmp_path / "measured.npz"
+    save_dataset_file(DatasetEntry("Measured", source, kind="mdhisto"), source_path, use_view=False)
+    dataset = dataset_entry_from_path(source_path, data_type="single_crystal_inelastic")
+    config = dataset_rebin_config(dataset)
+    config.update(enabled=True, minimum_coverage=0.0)
+    project = NfitProject([DataGroup("Experiment", datasets=[dataset])])
+    project.settings["cache_binnings"] = True
+    path = tmp_path / "project's caches.nfit"
+    save_project(project, path)
+    with zipfile.ZipFile(path) as archive:
+        assert any(name.startswith("assets/binnings/") for name in archive.namelist())
+    exec(compile(project_cache_clear_script(path), "clear_caches.py", "exec"), {})
+    with zipfile.ZipFile(path) as archive:
+        assert not any(name.startswith("assets/binnings/") for name in archive.namelist())
+    restored = project_gui.load_project(path)
+    assert restored.settings["cache_binnings"] is False
+    restored_data = dataset_for_slice_viewer(
+        restored.data_groups[0].datasets[0], rebin_config={"enabled": False}
+    )
+    np.testing.assert_array_equal(restored_data.signal, source.signal)

@@ -119,6 +119,14 @@ plots use `axis_step`, and waterfall plots use `x_step` for the trace axis.
 Exported scripts from the GUI call the matching slice, line, waterfall, or
 tiled-slice backend and include the current display settings.
 
+`clear_project_caches(project)` discards computed project caches without Qt,
+preserving source data, stored plots, analysis outputs, and fit results. It also
+turns off embedded binning caching; call `save_project(project, path)` to remove
+the cached artifacts from a saved archive. Shared electronic geometry and
+fingerprint memoization is flushed too. Other projects' rebinned data remains
+cached. `project_cache_clear_script(path)` generates an editable script that
+loads, clears, and saves a project using these same public APIs.
+
 `save_figure(figure, path, dpi=600)` exports a Matplotlib figure to a raster
 or vector file, using the filename extension to select the format. A filename
 without an extension defaults to PNG. Raster exports default to 600 dots per

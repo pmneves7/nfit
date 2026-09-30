@@ -607,3 +607,23 @@ class RebinCache(OrderedDict):
             self.clear_disk_cache()
             self._project_backings.clear()
             self._labels.clear()
+
+    def discard_matching(self, predicate) -> None:
+        """Discard matching keys from every tier without decoding or spilling them."""
+        with self._decode_lock:
+            keys = (set(self) | set(self._compressed) | set(self._disk)
+                    | set(self._project_backings) | set(self._decoded))
+            for key in keys:
+                if not predicate(key):
+                    continue
+                if OrderedDict.__contains__(self, key):
+                    OrderedDict.__delitem__(self, key)
+                compressed = self._compressed.pop(key, None)
+                if compressed is not None:
+                    self._compressed_bytes -= compressed[1].nbytes
+                self._drop_disk(key)
+                self._project_backings.pop(key, None)
+                self._decoded.pop(key, None)
+                self._resident_ticks.pop(key, None)
+                self._compressed_ticks.pop(key, None)
+                self._labels.pop(key, None)

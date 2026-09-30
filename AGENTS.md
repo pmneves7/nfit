@@ -104,6 +104,7 @@ different Python.
 - `src/nfit/viewer_export.py`: GUI-independent profile, map, and waterfall CSV export.
 - `src/nfit/figure_export.py` and `qt_figure_export.py`: GUI-independent figure
   file export and its Qt destination chooser.
+- `src/nfit/project_caches.py`: project cache eviction and model-overlay cache ownership.
 - `src/nfit/app_distribution.py`, `app_updates.py`, `app_updates_gui.py`, and
   `tools/distribution/`: desktop packaging metadata, verified updates, installers,
   and startup presentation.

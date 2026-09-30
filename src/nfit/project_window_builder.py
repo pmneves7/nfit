@@ -151,6 +151,17 @@ def _build_window_shell(
     self.rebin_stale_binnings_action.setStatusTip(
         self.rebin_stale_binnings_action.toolTip()
     )
+    self.clear_project_caches_action = menu.addAction(
+        "Clear all caches in project", self.clear_all_project_caches
+    )
+    self.clear_project_caches_action.setObjectName("clear_project_caches_action")
+    self.clear_project_caches_action.setToolTip(
+        "Discard rebinned, reduced-data, and evaluated-model caches after confirmation. "
+        "Closes data/model viewers and turns off Cache binnings."
+    )
+    self.clear_project_caches_action.setStatusTip(
+        self.clear_project_caches_action.toolTip()
+    )
     save_action = menu.addAction("Save", self.save)
     save_action.setShortcut(QtGui.QKeySequence.StandardKey.Save)
     save_action.setToolTip("Save the current project to its existing project file.")

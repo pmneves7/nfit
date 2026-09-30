@@ -10,7 +10,6 @@ import signal
 import subprocess
 import tempfile
 import time
-from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -151,6 +150,11 @@ from .project_archive import (
     read_project_manifest,
     write_project_manifest,
 )
+from .project_caches import MODEL_OVERLAY_CACHE as _MODEL_OVERLAY_CACHE
+from .project_caches import MODEL_OVERLAY_ERRORS as _MODEL_OVERLAY_ERRORS
+from .project_caches import PROJECT_BINNING_CACHE_ENTRIES_KEY as PROJECT_BINNING_CACHE_ENTRIES_KEY
+from .project_caches import PROJECT_CACHE_BINNINGS_KEY as PROJECT_CACHE_BINNINGS_KEY
+from .project_caches import clear_project_caches as clear_project_caches
 from .project_history import (
     _dataset_group_paths,
     _timestamp_now,
@@ -514,8 +518,6 @@ _COMPOSITE_DATA_CACHE = _project_data._COMPOSITE_DATA_CACHE
 _COMPOSITE_DATA_CACHE_LIMIT = _project_data._COMPOSITE_DATA_CACHE_LIMIT
 _COMPOSITE_DATA_CACHE_MAX_BYTES = _project_data._COMPOSITE_DATA_CACHE_MAX_BYTES
 
-PROJECT_CACHE_BINNINGS_KEY = "cache_binnings"
-PROJECT_BINNING_CACHE_ENTRIES_KEY = "binning_cache_entries"
 PROJECT_BINNING_CACHE_FORMAT_VERSION = 6
 PROJECT_BINNING_CACHE_COMPATIBLE_FORMATS = frozenset({4, 5, 6})
 
@@ -3679,10 +3681,10 @@ def _fit_limit_warning_text(limit_hits: Any) -> str:
 # parameter changes -- turning an O(10 s) rebuild on every edit into an O(0.1 s)
 # re-evaluation. The cache is keyed on a structural signature that excludes
 # parameter values (see _overlay_cache_signature).
-_MODEL_OVERLAY_CACHE: OrderedDict[int, dict[str, Any]] = OrderedDict()
+
 _MODEL_OVERLAY_CACHE_LIMIT = 6
 _MODEL_OVERLAY_CACHE_MAX_BYTES = 256 * 1024**2
-_MODEL_OVERLAY_ERRORS: OrderedDict[int, dict[str, str]] = OrderedDict()
+
 
 
 def _overlay_cache_signature(group: DataGroup) -> str:
@@ -7246,6 +7248,7 @@ class NfitProjectExplorer:
         self.reload_project_action = None
         self.cache_binnings_action = None
         self.rebin_stale_binnings_action = None
+        self.clear_project_caches_action = None
         self.tree = None
         self.title_label = None
         self.enabled_check = None
@@ -8913,6 +8916,35 @@ class NfitProjectExplorer:
             self._refresh_cache_badges()
         on_success(completed)
         return bool(completed)
+
+    def clear_all_project_caches(self) -> bool:
+        """Confirm and discard cached data and model computations."""
+        from PySide6 import QtWidgets
+
+        if QtWidgets.QMessageBox.question(
+            self.window,
+            "Clear all caches in project",
+            "Clear all rebinned, reduced-data, and evaluated-model caches in this project?\n\n"
+            "Data and model viewers will close, and Cache binnings will be turned off. "
+            "The next rebin or model evaluation may take a while. "
+            "Save the project to remove embedded cache files.\n\n"
+            "Source data, stored plots, and fit results will be preserved. "
+            "Do you really want to continue?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        ) != QtWidgets.QMessageBox.StandardButton.Yes:
+            return False
+        self._close_all_slice_viewers()
+        for window in tuple(self._plot_windows.values()):
+            close_operation_window(window)
+        self._plot_windows.clear()
+        clear_project_caches(self.project)
+        if self.cache_binnings_action is not None:
+            self.cache_binnings_action.setChecked(False)
+        self._mark_dirty()
+        self._refresh_cache_badges()
+        self._sync_details()
+        return True
 
     def rebin_stale_project_binnings(self) -> bool:
         """Recompute every enabled project binning without a current cache."""

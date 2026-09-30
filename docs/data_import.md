@@ -771,7 +771,17 @@ refresh open data viewers so newly computed named binnings appear immediately.
 From anywhere in the Project Explorer, choose **File → Rebin stale binnings**
 or press **Ctrl+U** (**Command+U** on macOS) to recompute only enabled dataset
 and composite binnings whose caches no longer match their sources, masks,
-backgrounds, or numerical settings. For composites, **Create dataset from
+backgrounds, or numerical settings. **File → Clear all caches in project**,
+immediately below that action, asks for confirmation before discarding rebinned
+datasets and composites, reduced-event caches, prepared data, and evaluated-model
+intermediates. It closes data and model viewers and turns off **Cache binnings**
+so the next save removes embedded caches instead of rebuilding them. Source data,
+stored plots, analysis outputs, and fit results remain intact. Subsequent rebinning
+or model evaluation recomputes the needed results and may take a while. Save the
+project to remove embedded cache files from disk; closing without saving leaves
+the saved project's caches intact. You can turn **Cache binnings** back on when
+you want future saves to rebuild and embed binnings.
+For composites, **Create dataset from
 composite** is placed at the right side of the action row.
 Resource allocation comes from the single **CPU limit** and
 **RAM limit** in **File → Preferences → Performance**. Batch sizes are automatic;
