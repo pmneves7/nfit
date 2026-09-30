@@ -2258,8 +2258,10 @@ def test_stored_plots_snapshot_independent_rebin_bases(monkeypatch):
 
     for axis, vector in zip(config["axes"][1:], second_basis, strict=True):
         axis["vector"] = vector
-    viewer._nfit_editing_plot_id = None
     second_plot = explorer.save_plot_from_viewer(group, viewer)
+    assert second_plot is not first_plot
+    assert second_plot.id != first_plot.id
+    assert len(group.plots) == 2
 
     key = project_gui.PLOT_SOURCE_REBIN_CONFIGS_KEY
     assert [axis["vector"] for axis in first_plot.settings[key][dataset.id]["axes"][1:]] == list(first_basis)
@@ -2306,13 +2308,13 @@ def test_stored_plots_snapshot_independent_rebin_bases(monkeypatch):
     assert copied.settings[key] == first_plot.settings[key]
     assert copied.settings[key] is not first_plot.settings[key]
     assert first_plot.settings == original_settings
-    assert editor._nfit_editing_plot_id == copied.id
+    assert editor._nfit_editing_plot_id == first_plot.id
     count = len(group.plots)
     editor.cmap_combo.setCurrentText("magma")
     editor.save_plot_button.click()
     assert len(group.plots) == count
-    assert copied.settings["cmap"] == "magma"
-    assert first_plot.settings == original_settings
+    assert copied.settings["cmap"] == "plasma"
+    assert first_plot.settings["cmap"] == "magma"
     fresh = editor.open_new_viewer()
     assert fresh.save_plot_button.text() == "Store plot"
     assert fresh.save_new_plot_button.isHidden()

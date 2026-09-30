@@ -10378,7 +10378,10 @@ class NfitProjectExplorer:
             if dataset is None:
                 return None
             return self.open_slice_viewer(
-                group, selected_dataset_name=dataset.name, use_composite=False
+                group,
+                selected_dataset_name=dataset.name,
+                selected_binning_name=self._selected_dataset_binning(dataset)["name"],
+                use_composite=False,
             )
         allowed = {
             "group", "datasets", "dataset", "masks", "mask", "backgrounds",
@@ -10391,9 +10394,11 @@ class NfitProjectExplorer:
         if isinstance(selection, (DatasetEntry, DatasetGroup, DataGroup)):
             owner = controlling_composite(group, selection)
             if owner is not None:
+                scope = _composite_scope(group, owner)
                 return self.open_slice_viewer(
                     group,
-                    selected_dataset_name=_composite_dataset_name(_composite_scope(group, owner)),
+                    selected_dataset_name=_composite_dataset_name(scope),
+                    selected_binning_name=self._selected_composite_binning(scope)["name"],
                     use_composite=True,
                 )
         # For a mask or the Masks node, entry is the owning dataset.
@@ -10418,7 +10423,29 @@ class NfitProjectExplorer:
                 return next((name for child in node.subgroups if (name := first_name(child))), None)
 
             selected_name = first_name(node)
-        return self.open_slice_viewer(group, selected_dataset_name=selected_name, use_composite=use_composite)
+        if selected_name is None and use_composite and data_group_composite_enabled(group):
+            selected_name = _composite_dataset_name(group)
+        selected_binning_name = None
+        scope = next(
+            (scope for scope in _composite_scopes(group)
+             if use_composite and _composite_dataset_name(scope) == selected_name),
+            None,
+        )
+        if scope is not None:
+            selected_binning_name = self._selected_composite_binning(scope)["name"]
+        else:
+            dataset = next(
+                (dataset for dataset in group.iter_datasets() if dataset.name == selected_name),
+                None,
+            )
+            if dataset is not None:
+                selected_binning_name = self._selected_dataset_binning(dataset)["name"]
+        return self.open_slice_viewer(
+            group,
+            selected_dataset_name=selected_name,
+            selected_binning_name=selected_binning_name,
+            use_composite=use_composite,
+        )
 
     def _deferred_viewer_data(
         self, group, *, use_composite=True, selected_dataset_name=None,
@@ -10742,7 +10769,6 @@ class NfitProjectExplorer:
                 dataset_ids=dataset_ids,
             )
             group.plots.append(plot)
-            viewer._nfit_editing_plot_id = plot.id
         else:
             existing.type = plot_type
             existing.settings = settings

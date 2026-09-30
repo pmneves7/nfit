@@ -26,7 +26,9 @@ performance settings are needed in the viewer.
 
 Every **View in data viewer** action opens a new window. When opened from a
 dataset collection, the initial selection is that collection's
-composite or its first effective descendant dataset. Duplicate composite names
+composite or its first effective descendant dataset. The initial binning matches
+the rebin selected in the project panel's dropdown, including when all viewer
+datasets are preloaded. Duplicate composite names
 include their collection path to distinguish the series. Multiple viewers may
 display the same workspace or different workspaces at once; dataset selection,
 axes, ranges, visualization mode, styling, and other controls are independent
@@ -635,10 +637,11 @@ and surface exports use unsmoothed channel values.
 
 When editing a stored plot in the viewer, **Save plot** updates that recipe;
 **Save new plot** creates an independently named copy, preserving the original
-and its rebin settings. The viewer then edits the new copy, so subsequent
-**Save plot** actions update it. Fresh data viewers retain **Store plot** rather
-than these two editing actions. Plot recipes are saved to disk with the project;
-these actions do not export an image file.
+and its rebin settings. The viewer remains attached to the stored plot it was
+opened from, so subsequent **Save plot** actions update that original recipe.
+Fresh data viewers retain **Store plot** rather than these two editing actions;
+each **Store plot** action creates a new recipe. Plot recipes are saved to disk
+with the project; these actions do not export an image file.
 
 Each workspace has a **Plots** branch. In the viewer, **Store plot** stores the
 current figure as an editable recipe and selects the resulting tree entry. Each

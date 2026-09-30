@@ -419,3 +419,71 @@ def test_viewer_loading_services_remain_gui_independent():
                 imports.append(node.module)
         assert not any(name.startswith(("PySide", "PyQt")) for name in imports)
         assert not any(name.rsplit(".", 1)[-1] in forbidden_modules for name in imports)
+
+
+@pytest.mark.parametrize("preload", [False, True])
+@pytest.mark.parametrize("selection", ["dataset", "root_composite", "nested_composite", "owned_dataset"])
+def test_show_selected_rebin_opens_dropdown_binning(monkeypatch, preload, selection):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+
+    from nfit.project_gui import NfitProject, NfitProjectExplorer
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    dataset = DatasetEntry("scan", _tiny_mdhisto_data(1.0), kind="mdhisto")
+    if selection == "nested_composite":
+        node = DatasetGroup("Collection", datasets=[dataset])
+        group = DataGroup("Workspace", subgroups=[node])
+    else:
+        group = DataGroup("Workspace", datasets=[dataset])
+        node = group
+    if selection == "dataset":
+        binning_id = project_data.add_dataset_rebin_binning(dataset, name="Chosen view")
+        project_data.dataset_rebin_config_by_id(dataset, binning_id)["enabled"] = True
+    else:
+        scope = project_gui._composite_scope(group, node)
+        project_data.data_group_composite_config(scope).update(enabled=True, minimum_coverage=0.0)
+        binning_id = project_data.add_data_group_composite_binning(scope, name="Chosen view")
+        project_data.data_group_composite_config_by_id(scope, binning_id).update(
+            enabled=True, minimum_coverage=0.0
+        )
+    monkeypatch.setattr(project_gui, "preload_viewer_data", lambda: preload)
+    monkeypatch.setattr(project_gui, "current_model_channel", lambda *_args, **_kwargs: None)
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    viewer = None
+
+    def find_item(target):
+        iterator = QtWidgets.QTreeWidgetItemIterator(explorer.tree)
+        while item := iterator.value():
+            item_group, entry, _mask, _model, role = explorer._objects_for_item(item)
+            if target is dataset and role == "dataset" and entry is dataset:
+                return item
+            if target is group and role == "datasets" and item_group is group:
+                return item
+            if target is node and role == "dataset_group" and explorer._dataset_group_for_item(item) is node:
+                return item
+            iterator += 1
+        raise AssertionError("missing tree selection")
+
+    try:
+        explorer.tree.setCurrentItem(find_item(dataset if selection == "dataset" else node))
+        selector = explorer.window.findChild(
+            QtWidgets.QComboBox,
+            "dataset_rebin_binning" if selection == "dataset" else "group_composite_binning",
+        )
+        assert selector is not None
+        selector.setCurrentIndex(selector.findData(binning_id))
+        app.processEvents()
+        if selection == "owned_dataset":
+            explorer.tree.setCurrentItem(find_item(dataset))
+        viewer = explorer.open_slice_viewer_for_selection()
+        assert viewer is not None
+        assert viewer.binning_combo.currentText() == "Chosen view"
+        assert viewer.data.metadata["binning_id"] == binning_id
+        if not preload:
+            assert viewer.datasets.cached_indices == (viewer.datasets.initial_index,)
+    finally:
+        if viewer is not None:
+            viewer.window.close()
+        explorer.has_unsaved_changes = False
+        explorer.window.close()
