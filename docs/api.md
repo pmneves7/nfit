@@ -119,6 +119,11 @@ plots use `axis_step`, and waterfall plots use `x_step` for the trace axis.
 Exported scripts from the GUI call the matching slice, line, waterfall, or
 tiled-slice backend and include the current display settings.
 
+`save_figure(figure, path, dpi=600)` exports a Matplotlib figure to a raster
+or vector file, using the filename extension to select the format. A filename
+without an extension defaults to PNG. Raster exports default to 600 dots per
+inch; use a different `dpi` value to choose the raster resolution.
+
 `save_profile_csv(path, coordinate, intensity, uncertainty,
 coordinate_name="x")` writes a one-dimensional viewer cut.
 `save_grid_csv(path, x, y, intensity, uncertainty=None)` writes a rectangular

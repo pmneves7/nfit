@@ -102,6 +102,8 @@ different Python.
 - `src/nfit/box_cuts.py`, `qt_rotated_box.py`, and `qt_box_cut_viewers.py`:
   box-profile arithmetic, rotated selection interaction, and live cut viewers.
 - `src/nfit/viewer_export.py`: GUI-independent profile, map, and waterfall CSV export.
+- `src/nfit/figure_export.py` and `qt_figure_export.py`: GUI-independent figure
+  file export and its Qt destination chooser.
 - `src/nfit/app_distribution.py`, `app_updates.py`, `app_updates_gui.py`, and
   `tools/distribution/`: desktop packaging metadata, verified updates, installers,
   and startup presentation.

@@ -1278,12 +1278,15 @@ def _build_figure_controls(viewer: Any, controls_layout: Any) -> None:
     label_layout.addWidget(QtWidgets.QLabel("SI prefix"), 1, 2)
     label_layout.addWidget(viewer.tile_label_si_prefix_combo, 1, 3)
     viewer.copy_figure_button = QtWidgets.QPushButton("Copy figure")
+    viewer.save_figure_button = QtWidgets.QPushButton("Save figure")
+    viewer.save_figure_button.setObjectName("save_figure_button")
     viewer.save_data_button = QtWidgets.QPushButton("Save data")
     viewer.save_model_button = QtWidgets.QPushButton("Save model")
     viewer.copy_script_button = QtWidgets.QPushButton("Copy script")
     viewer.save_script_button = QtWidgets.QPushButton("Save script")
     for button in (
         viewer.copy_figure_button,
+        viewer.save_figure_button,
         viewer.save_data_button,
         viewer.save_model_button,
         viewer.copy_script_button,
@@ -1294,6 +1297,12 @@ def _build_figure_controls(viewer: Any, controls_layout: Any) -> None:
             QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed
         )
     viewer.copy_figure_button.setToolTip("Copy the current figure image to the clipboard.")
+    from .figure_export import DEFAULT_FIGURE_DPI
+
+    viewer.save_figure_button.setToolTip(
+        f"Save the current figure to an image file at {DEFAULT_FIGURE_DPI} DPI "
+        "or as vector EPS, SVG, or PDF. Choose the file format and destination."
+    )
     viewer.save_data_button.setToolTip(
         "Save the displayed 2D slice or unshifted waterfall data as x, y, I, and dI CSV columns."
     )
@@ -1307,6 +1316,7 @@ def _build_figure_controls(viewer: Any, controls_layout: Any) -> None:
         "Save a Python script that recreates the current viewer plot."
     )
     viewer.copy_figure_button.clicked.connect(viewer.copy_figure_to_clipboard)
+    viewer.save_figure_button.clicked.connect(viewer.save_figure)
     viewer.save_data_button.clicked.connect(viewer.save_displayed_data)
     viewer.save_model_button.clicked.connect(viewer.save_displayed_model)
     viewer.copy_script_button.clicked.connect(viewer.copy_script_to_clipboard)
@@ -1321,7 +1331,8 @@ def _build_figure_controls(viewer: Any, controls_layout: Any) -> None:
     figure_layout.addWidget(viewer.tile_label_options, 3, 0, 1, 4)
     figure_layout.addWidget(viewer.save_data_button, 4, 0, 1, 2)
     figure_layout.addWidget(viewer.save_model_button, 4, 2, 1, 2)
-    figure_layout.addWidget(viewer.copy_figure_button, 5, 0, 1, 4)
+    figure_layout.addWidget(viewer.copy_figure_button, 5, 0, 1, 2)
+    figure_layout.addWidget(viewer.save_figure_button, 5, 2, 1, 2)
     figure_layout.addWidget(viewer.copy_script_button, 6, 0, 1, 2)
     figure_layout.addWidget(viewer.save_script_button, 6, 2, 1, 2)
     controls_layout.addWidget(figure_group)

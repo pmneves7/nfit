@@ -256,6 +256,7 @@ from .electronic_structure import (
     set_electronic_energy_unit,
     tight_binding_structure_script,
 )
+from .figure_export import save_figure
 from .fit_config import (
     ISOTROPIC_POLARIZATION,
     CompiledFitProblem,
@@ -700,6 +701,7 @@ def __dir__() -> list[str]:
     )
 
 __all__ = [
+    "save_figure",
     "available_background_channels",
     "background_channel",
     "DeferredViewerDatasets",

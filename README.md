@@ -49,7 +49,8 @@ A few of its main capabilities are:
   replay at sample angles with bounded compiled parallel acceleration, reversible displayed-axis
   coarsening, held cross-dataset viewer settings, symmetric color limits, and
   rotatable histogram box cuts with one-dimensional pop-out viewers, selectable
-  two-dimensional axes ratios, x/y axis swapping, and CSV export of maps and cuts;
+  two-dimensional axes ratios, x/y axis swapping, CSV export of maps and cuts,
+  and high-resolution raster and vector figure exports;
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
 - inspect the subtracted signal, retained background, and on-demand unsubtracted
   slices through a grouped channel menu without adding visualization channels to fits;

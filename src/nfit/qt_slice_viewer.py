@@ -294,6 +294,8 @@ class QtMDHistoSliceViewer:
         self.show_errorbar_caps_check = None
         self.errorbar_cap_size_spin = None
         self.copy_figure_button = None
+        self.save_figure_button = None
+        self._figure_export_path = None
         self.save_data_button = None
         self.save_model_button = None
         self.save_plot_button = None
@@ -692,6 +694,15 @@ class QtMDHistoSliceViewer:
         from PySide6 import QtWidgets
 
         QtWidgets.QApplication.clipboard().setPixmap(self.canvas.grab())
+
+    def save_figure(self):
+        """Choose a destination and export the current Matplotlib figure."""
+        from .qt_figure_export import prompt_save_figure
+
+        destination = prompt_save_figure(self.window, self.figure)
+        if destination is not None:
+            self._figure_export_path = destination
+        return destination
 
     def copy_script_to_clipboard(self) -> None:
         from PySide6 import QtWidgets
@@ -1393,6 +1404,12 @@ class QtMDHistoSliceViewer:
         Path(path).write_text(self.figure_script(), encoding="utf-8")
 
     def figure_script(self) -> str:
+        """Recreate the current plot and its most recent figure-file export."""
+        from .figure_export import figure_export_script
+
+        return figure_export_script(self._figure_script(), self._figure_export_path)
+
+    def _figure_script(self) -> str:
         if self._waterfall_mode_active():
             return self._waterfall_figure_script()
         if self._tiled_mode_active():

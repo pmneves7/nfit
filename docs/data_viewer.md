@@ -39,6 +39,23 @@ an independent viewer initialized from the current dataset and view settings.
 branch and reports the stored recipe name in the viewer.
 Closing one viewer does not affect the others.
 
+**Save figure**, beside **Copy figure** in the figure controls, exports the
+current slice, line, waterfall, or tiled figure to a chosen file. Raster formats
+such as PNG, TIFF, and JPEG use 600 DPI; EPS, SVG, and PDF preserve vector
+graphics. The file dialog lists the formats supported by the plotting backend.
+Choose a format and filename; if the filename has no extension, the selected
+format supplies it. After a figure export, **Copy script** and **Save script**
+include that destination and resolution so the export can be reproduced.
+
+The same export is available without Qt through the public Python API:
+
+```python
+from nfit import save_figure
+
+save_figure(fig, "figure.png", dpi=600)  # fig is a Matplotlib Figure
+save_figure(fig, "figure.svg")
+```
+
 By default, a new viewer loads only the initially selected dataset and binning.
 All available choices still appear in the menus; selecting another loads its
 data, and revisiting a loaded choice reuses it. Valid saved bins are reused;

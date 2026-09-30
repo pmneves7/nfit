@@ -24,6 +24,7 @@ def smoke_test() -> dict:
         from tools.distribution.startup_splash import StartupSplash
 
     from .app_distribution import application_version, local_help_index, platform_key
+    from .figure_export import save_figure
     from .project_gui import _qt_app
     from .rebin import rebin_nd
     from .resource_usage import ResourceUsageSampler
@@ -45,6 +46,13 @@ def smoke_test() -> dict:
     assert index is not None and index.is_file()
     assert (index.parent / "_static/mathjax/tex-svg-full.js").is_file()
     with tempfile.TemporaryDirectory() as directory:
+        from matplotlib.figure import Figure
+
+        figure = Figure(figsize=(1, 1))
+        figure.add_subplot().plot([0, 1], [0, 1])
+        for suffix in ("png", "eps", "tiff", "svg", "jpg", "pdf"):
+            destination = save_figure(figure, Path(directory) / f"figure.{suffix}", dpi=72)
+            assert destination.stat().st_size > 0
         with h5py.File(Path(directory) / "smoke.h5", "w") as stream:
             stream["signal"] = np.arange(8.0)
         with h5py.File(Path(directory) / "smoke.h5", "r") as stream:
@@ -66,6 +74,7 @@ def smoke_test() -> dict:
         "help": str(index),
         "splash": "ok",
         "resource_monitor": "ok",
+        "figure_export": "ok",
         "status": "ok",
     }
 
