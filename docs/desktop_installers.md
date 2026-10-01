@@ -184,6 +184,11 @@ exercise Qt/X11, numerical and archive operations, figure exports, and an
 actual VTK 3D render. Linux releases retain one tarball filename for the
 built-in updater.
 
+Linux release validation runs the embedded 3D viewer under Xvfb with software
+OpenGL and waits up to five seconds for a rendered scene. Failed captures and
+OpenGL capabilities are retained for diagnosing rendering problems. Validation
+containers include Fontconfig and DejaVu fonts for desktop text rendering.
+
 The release is public immediately and is discoverable by installed beta copies.
 
 Published beta releases are listed under **Releases** on the repository page.

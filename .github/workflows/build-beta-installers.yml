@@ -76,9 +76,9 @@ jobs:
         run: |
           if command -v apt-get >/dev/null; then
             apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install --yes python3 binutils tar gzip xvfb libegl1 libgl1 libgl1-mesa-dri libopengl0 libxkbcommon0 libxcb-cursor0 libwayland-cursor0 libwayland-egl1
+            DEBIAN_FRONTEND=noninteractive apt-get install --yes python3 binutils tar gzip fontconfig fonts-dejavu-core xvfb libegl1 libgl1 libgl1-mesa-dri libopengl0 libxkbcommon0 libxcb-cursor0 libwayland-cursor0 libwayland-egl1
           else
-            dnf install --assumeyes python3 binutils tar gzip xorg-x11-server-Xvfb mesa-libEGL mesa-libGL mesa-dri-drivers libglvnd-opengl libxkbcommon xcb-util-cursor libwayland-cursor libwayland-egl
+            dnf install --assumeyes python3 binutils tar gzip fontconfig dejavu-sans-fonts xorg-x11-server-Xvfb mesa-libEGL mesa-libGL mesa-dri-drivers libglvnd-opengl libxkbcommon xcb-util-cursor libwayland-cursor libwayland-egl
           fi
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
@@ -95,6 +95,7 @@ jobs:
       - name: Exercise Qt, scientific libraries and 3D rendering
         shell: bash
         env:
+          LANG: C.UTF-8
           QT_QPA_PLATFORM: xcb
           DISPLAY: :99
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -108,6 +109,14 @@ jobs:
           done
           test -S /tmp/.X11-unix/X99
           build/linux-validation/nfit/nfit --run-script tools/distribution/linux_runtime_smoke.py
+
+      - name: Preserve failed rendering image
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-render-failure-${{ strategy.job-index }}
+          path: vtk-smoke-failure.png
+          if-no-files-found: ignore
 
   beta-release:
     name: Publish experimental beta release
