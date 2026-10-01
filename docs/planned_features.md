@@ -31,6 +31,9 @@ releases. Current behavior is documented in the workflow and API pages.
 
 ## Statistical binning and reduction recipes
 
+The temporary [Measurement pipeline implementation plan](measurement_pipeline_plan.md)
+tracks the staged implementation and review checkpoints for these changes.
+
 - Expose explicit measurement estimators: exposure pooling for count rates,
   inverse-variance means for independent continuous measurements, and
   coordinate-interval averages with sampling-width weights. Preserve existing

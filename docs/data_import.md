@@ -510,6 +510,12 @@ for zero observed events and zero known background. Uncovered bins remain
 masked. This fitting convention avoids assigning infinite weight to a measured
 zero; it does not make the underlying Poisson interval symmetric.
 
+Current pooling subsequently treats these upper endpoints as ordinary standard
+errors. Fine-then-coarse pooling can therefore inflate errors relative to direct
+coarse binning. This is a known statistical limitation; see
+[covered empty cells](physics_conventions.md#covered-empty-cells-current-limitation).
+Event variance and final-bin confidence intervals need separate propagation.
+
 ## UB matrices
 
 **Crystal orientation** displays the active UB matrix directly. **UB setup**

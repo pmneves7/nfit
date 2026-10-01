@@ -726,6 +726,21 @@ produce the pooled estimator. Event corrections and non-Poisson uncertainties
 also break that simple equivalence. Summing normalized intensities,
 $\sum_i I_i$, is a different quantity and overweights weakly exposed cells.
 
+#### Covered empty cells: current limitation
+
+The DGS and MDE histogram paths currently substitute a Feldman–Cousins upper
+limit for the stored error of a covered empty cell. Subsequent pooling treats
+that value as a standard deviation. This can inflate errors and make them
+depend on the intermediate grid. A confidence-interval endpoint is not a
+summable variance. For independent events, the observed numerator variance
+is the sum of squared event weights, including zero for an empty cell; zero
+observed variance alone does not imply certainty about the unknown rate.
+
+The diagnostic `benchmarks/benchmark_histogram_uncertainty.py` compares these
+quantities without changing production behavior. Separating event variance
+from low-count intervals and retaining source statistics through cuts are
+tracked in the [measurement pipeline plan](measurement_pipeline_plan.md).
+
 ### Derived channels, calibration, and normalization
 
 For count data, `Signal units / mbarn` gives the imported signal units per

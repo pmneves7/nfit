@@ -79,3 +79,45 @@ The default million-event workload uses a 64 × 64 × 64 × 48 grid and several
 hundred MiB of arrays. Use `--events` and `--shape` to reduce it for smaller
 machines. This measures event accumulation, excluding reduction, coordinate
 projection, normalization, and archive reading.
+
+## Histogram uncertainty diagnostics
+
+`benchmark_histogram_uncertainty.py` compares nfit pooling against independent
+Poisson count/exposure references. It reports unequal exposure, covered empty
+versus unmeasured cells, independent background subtraction, and seeded sampling
+variance/coverage. It separately models the current DGS empty-cell confidence
+limit substitution; this is not a validation of that policy.
+
+```bash
+PYTHONPATH=src /Users/pmneves/anaconda3/envs/nfit/bin/python \
+  benchmarks/benchmark_histogram_uncertainty.py \
+  --output /tmp/nfit_uncertainty_reference.json
+```
+
+The reference assumes known exposure and independent unit-weight events. It does
+not establish low-count Gaussian coverage or shared-source covariance. The
+[temporary implementation plan](../docs/measurement_pipeline_plan.md) records
+review gates and the subsequent production work.
+
+For matched 4D diagnostic slabs, supply all three paths:
+
+```bash
+PYTHONPATH=src /Users/pmneves/anaconda3/envs/nfit/bin/python \
+  benchmarks/benchmark_histogram_uncertainty.py \
+  --nfit-slab /path/to/nfit.npz --mantid-slab /path/to/mantid.npz \
+  --mantid-data /path/to/mantid-numerator.npz \
+  --output /tmp/nfit_matched_uncertainty.json
+```
+
+Both normalized slabs require `signal`, `norm`, `counts`, `errors`, `numerator`,
+and `edges0` through `edges3`. The Mantid count-space slab requires `numerator`
+and `variance`. Arrays must have identical 4D shape and edges must match within
+the reported float32 rounding tolerance. The default aggregation collapses axes
+0 and 2; `--aggregation-axes` changes this. The central-region diagnostic assumes
+axis 1 is [K,-K,0] in r.l.u. and axis 3 is energy transfer in meV.
+
+The supplied-slab report compares `(nfit_error * nfit_norm)**2` with Mantid's
+count-space variance, isolating exposure differences before comparing errors.
+It records SHA256 checksums and grid differences and does not run Mantid.
+[The historical NiO baseline](results/histogram-uncertainty-baseline.json)
+contains aggregate statistics only; source slabs remain outside the repository.
