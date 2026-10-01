@@ -99,6 +99,26 @@ def test_auxiliary_storage_is_explicit_and_preserves_hidden_pooling(benchmark, s
     np.testing.assert_equal(auxiliary["maps"]["current_error"], metadata["maps"]["current_error"])
 
 
+def test_explicit_event_statistics_replays_current_display_pooling(benchmark, slabs):
+    paths, (source, _, reference) = slabs
+    report = benchmark.diagnose_paths(*paths, event_statistics=True)
+    assert report["event_statistics_contract"] is True
+    assert report["viewer_has_normalization_channel"] is True
+    assert "C/V/N pooling" in report["path_semantics"]["display_coarsening"]
+    valid = source["norm"] > 0
+
+    def coarse_sum(values):
+        values = np.where(valid, values, 0).sum(axis=(1, 2)).T
+        return values.reshape(2, 2, 2, 2).sum(axis=(1, 3))
+
+    numerator = coarse_sum(source["numerator"])
+    variance = coarse_sum(reference["variance"])
+    exposure = coarse_sum(source["norm"])
+    coarse = report["display_coarsened"]["reference_same_exposure"]
+    np.testing.assert_allclose(coarse["signal"], numerator / exposure)
+    np.testing.assert_allclose(coarse["error"], np.sqrt(variance) / exposure)
+
+
 def test_fringe_uses_real_gaps_and_never_crop_exterior(benchmark):
     full = np.ones((7, 7), dtype=bool)
     assert not np.any(benchmark.fringe_mask(full))

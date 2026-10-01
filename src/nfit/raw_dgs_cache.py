@@ -25,7 +25,7 @@ from .project_archive import (
 )
 
 _CACHE_KEY = "raw_dgs_reduction_cache"
-RAW_DGS_REDUCTION_VERSION = 2
+RAW_DGS_REDUCTION_VERSION = 3
 _EVENT_ROW_BYTES = 5 * 8
 _EVENT_BLOCK_ROWS = (32 * 1024**2 + _EVENT_ROW_BYTES - 1) // _EVENT_ROW_BYTES
 _REDUCTION_DEFAULTS = {

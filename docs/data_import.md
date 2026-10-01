@@ -434,6 +434,16 @@ moment of each peak. The TOF-to-energy conversion uses the same neutron mass
 and meV conversion as Mantid. $E_i$ is in meV and $T_0$ is in µs. Explicit
 incident-energy and time-zero overrides remain available.
 
+Monitor derivative uncertainties retain the squared coefficient of the shared
+central measurement. This avoids cancellation producing a negative variance in
+sparse peak tails. Peak-tail selection can differ slightly from Mantid where
+its expanded expression is sensitive to floating-point cancellation.
+Run metadata records the calibration source. If usable monitors fail calibration,
+nfit warns and records the reason before falling back to requested $E_i$ and
+$T_0=0$; check these runs and supply explicit overrides as appropriate. Missing
+monitor data also has an explicit provenance marker. Reduced-event caches made
+with an earlier monitor-calibration implementation regenerate on the next binning.
+
 Beam filtering uses half-open time intervals for both detector events and
 integrated proton charge. This removes dead beam periods and excludes the last
 pulse of each accepted centred charge interval, matching the Shiver
@@ -522,6 +532,8 @@ weight cannot establish the weight distribution of an empty fringe cell.
 Old saved histograms retain their recorded errors when loaded directly. Updated
 native binning cache signatures require recomputation before old histograms are
 reused as current native results; the reduced raw-event caches remain reusable.
+Changes to the reduction implementation, including monitor calibration, separately
+invalidate reduced-event caches through their reduction-version signature.
 
 ## UB matrices
 

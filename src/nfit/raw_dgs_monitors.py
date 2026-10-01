@@ -123,10 +123,8 @@ def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
         derivative = 0.5 * (
             (y[right + 1] - y[right]) / forward + (y[right] - y[right - 1]) / backward
         )
-        uncertainty = 0.5 * math.sqrt(
-            (errors[right + 1] ** 2 + errors[right] ** 2) / forward**2
-            + (errors[right] ** 2 + errors[right - 1] ** 2) / backward**2
-            - 2.0 * errors[right] ** 2 / (forward * backward)
+        uncertainty = _peak_derivative_uncertainty(
+            errors[right - 1], errors[right], errors[right + 1], backward, forward,
         )
         right += 1
     right -= 1
@@ -137,10 +135,8 @@ def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
     while left > 0 and derivative > uncertainty:
         forward, backward = x[left + 1] - x[left], x[left] - x[left - 1]
         derivative = 0.5 * ((y[left + 1] - y[left]) / forward + (y[left] - y[left - 1]) / backward)
-        uncertainty = 0.5 * math.sqrt(
-            (errors[left + 1] ** 2 + errors[left] ** 2) / forward**2
-            + (errors[left] ** 2 + errors[left - 1] ** 2) / backward**2
-            - 2.0 * errors[left] ** 2 / (forward * backward)
+        uncertainty = _peak_derivative_uncertainty(
+            errors[left - 1], errors[left], errors[left + 1], backward, forward,
         )
         left -= 1
     left += 1
@@ -193,6 +189,22 @@ def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
     else:
         xmax = px[-1]
     return px, py, xmax - xmin
+
+
+def _peak_derivative_uncertainty(previous_error, centre_error, next_error, backward, forward):
+    """Propagate the centred derivative's shared central measurement once.
+
+    Expanding the central coefficient into separate positive terms and a
+    subtraction can produce negative roundoff in sparse monitor tails. Keeping
+    its squared coefficient intact preserves the nonnegative variance, including
+    unequal spacing and a central error that cancels on a uniform grid.
+    """
+
+    return 0.5 * math.sqrt(
+        (next_error / forward) ** 2
+        + (previous_error / backward) ** 2
+        + (centre_error * (1.0 / forward - 1.0 / backward)) ** 2
+    )
 
 
 def _mantid_point_integral(x, y, lower, upper):

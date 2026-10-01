@@ -85,8 +85,10 @@ projection, normalization, and archive reading.
 `benchmark_histogram_uncertainty.py` compares nfit pooling against independent
 Poisson count/exposure references. It reports unequal exposure, covered empty
 versus unmeasured cells, independent background subtraction, and seeded sampling
-variance/coverage. It separately models the current DGS empty-cell confidence
-limit substitution; this is not a validation of that policy.
+variance/coverage. It separately models the historical nfit 0.105.7 DGS empty-cell confidence
+limit substitution. nfit 0.106.0 stores accumulated event variance separately
+from confidence intervals; the baseline diagnostic does not validate the old
+substitution policy.
 
 ```bash
 PYTHONPATH=src /Users/pmneves/anaconda3/envs/nfit/bin/python \
@@ -138,11 +140,24 @@ PYTHONPATH=src /Users/pmneves/anaconda3/envs/nfit/bin/python \
   --output /tmp/nfit_uncertainty_paths.json
 ```
 
-Use `metadata` storage for raw DGS histograms and `auxiliary` for MDE histograms
-with a normalization channel. The helper holds nfit exposure and intensity
+Use `metadata` for historical raw DGS histograms that lacked a normalization
+channel, and `auxiliary` for current event histograms and historical MDE
+histograms with that channel. The helper holds nfit exposure and intensity
 fixed while changing only the variance prescription. Its floor-removal variant
 is a diagnostic for unsubtracted event histograms, not a general correction.
 Its JSON contains full maps and profiles and can include private derived data;
 the committed [NiO fringe report](results/nio-uncertainty-fringes.md) retains
 aggregate metrics only. Neither diagnostic nor its unit tests imports or runs
 Mantid or Shiver. External engine measurements are separate manual runs.
+
+For nfit 0.106.0 and later event-statistics slabs, add `--event-statistics`
+to the path diagnostic. It preserves the additive numerator, variance, and
+normalization contract through viewer coarsening. Omitting the flag traces
+the historical histogram behavior. Ordinary inverse-variance box cuts and
+covariance between different output bins remain separate diagnostic limits.
+
+See [current DGS reference measurements](results/dgs-reference-current.md)
+for manual matched-MDE thin/cube binning, final fresh native reduction,
+standard sequential Mantid/Shiver reduction estimates, calibration audits,
+and fringe uncertainty diagnostics. The report separates measured phase times
+from extrapolations and incomplete converter/covariance parity.

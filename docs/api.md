@@ -488,7 +488,13 @@ Compatible direct-geometry spectrometer event NeXus files are supported through
 `nfit.raw_dgs`. This adapter expects compatible event banks and run logs plus an
 embedded Mantid instrument definition; it is not a generic importer for every
 direct-geometry instrument.
-`inspect_raw_dgs_run(path)` reads run metadata without reading event arrays;
+`inspect_raw_dgs_run(path)` reads run metadata and monitor events without loading
+detector-event arrays. Its `RawDGSRunInfo` includes resolved incident energy in
+meV, time zero in µs, `calibration_source`, and an optional
+`calibration_warning`. Available monitors that fail fitting issue a warning
+before the requested-energy/zero-time fallback. The same provenance is retained
+in imported dataset metadata and histogram `raw_dgs_calibration` metadata.
+
 `raw_dgs_dataset_group(paths, ...)` creates lightweight entries sharing one raw
 reduction setup; `bin_raw_dgs_group(...)` resolves detector positions from the
 embedded IDF and streams banks into an HKLE histogram; and

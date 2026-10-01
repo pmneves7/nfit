@@ -7,7 +7,7 @@ Run with the nfit environment from the repository root::
 The reference assumes independent unit-weight Poisson events and exactly known
 exposure. Its observed numerator variance is the sum of counts, including zero
 for a covered empty cell. That observed variance is not a confidence interval
-for the unknown rate. The cell-floor diagnostic models the current DGS
+for the unknown rate. The cell-floor diagnostic models the historical DGS
 finalization rule before calling nfit's actual histogram pooling function.
 It is a diagnostic of that policy, not an assertion that the policy is correct.
 Shared background/calibration covariance and fractional events are outside
@@ -102,7 +102,7 @@ def diagnostic_report(*, trials=20_000, seed=37189):
         "assumptions": {
             "events": "independent unit-weight Poisson counts",
             "exposure": "known exactly; arbitrary consistent exposure units",
-            "cell_floor": "modeled DGS covered-zero Feldman-Cousins upper limit used as a standard error",
+            "cell_floor": "historical pre-0.106 DGS covered-zero Feldman-Cousins upper limit used as a standard error",
             "confidence_limit_is_variance": False,
             "mantid_measured": False,
         },

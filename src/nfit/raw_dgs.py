@@ -13,6 +13,7 @@ import ast
 import json
 import math
 import re
+import warnings
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
 from contextlib import nullcontext
@@ -88,6 +89,8 @@ class RawDGSRunInfo:
     l1: float
     t0: float
     ub_matrix: np.ndarray
+    calibration_source: str = "unspecified"
+    calibration_warning: str | None = None
 
 
 def is_raw_dgs_nexus_file(path: str | Path) -> bool:
@@ -117,7 +120,10 @@ def inspect_raw_dgs_run(path: str | Path) -> RawDGSRunInfo:
             if name.startswith("bank") and name.endswith("_events") and "event_id" in group
         )
         requested_ei = _log_value(entry, ("EnergyRequest", "Ei", "BL17:Det:TH:BL:Ei"), 0.0)
-        calibrated_ei, calibrated_t0 = _monitor_ei_t0(entry, requested_ei)
+        calibration = {}
+        calibrated_ei, calibrated_t0 = _monitor_ei_t0(
+            entry, requested_ei, diagnostics=calibration,
+        )
         return RawDGSRunInfo(
             path=source,
             run_number=_text_scalar(entry.get("run_number"), source.stem),
@@ -130,6 +136,8 @@ def inspect_raw_dgs_run(path: str | Path) -> RawDGSRunInfo:
             l1=_source_distance(entry),
             t0=calibrated_t0,
             ub_matrix=_ub_from_logs(entry),
+            calibration_source=calibration["source"],
+            calibration_warning=calibration.get("warning"),
         )
 
 
@@ -250,6 +258,8 @@ def raw_dgs_dataset_group(
                     "run_number": info.run_number,
                     "event_count": info.event_count,
                     "incident_energy": info.incident_energy,
+                    "calibration_source": info.calibration_source,
+                    "calibration_warning": info.calibration_warning,
                     "proton_charge": info.proton_charge,
                     "omega": info.omega,
                     "phi": info.phi,
@@ -577,6 +587,15 @@ def bin_raw_dgs_group(
             "raw_dgs": config,
             "reduced_event_cache": {"hits": cache_hits, "misses": cache_misses},
             "raw_dgs_energy_windows_meV": resolved_energy_windows,
+            "raw_dgs_calibration": {
+                dataset_id: {
+                    "source": info.calibration_source,
+                    "warning": info.calibration_warning,
+                    "incident_energy_meV": info.incident_energy,
+                    "t0_microseconds": info.t0,
+                }
+                for dataset_id, info in run_infos_by_dataset_id.items()
+            },
             "rebin": {
                 **({"vectors": basis.tolist()} if basis is not None else {}),
                 "bin_edges": [edge.tolist() for edge in edges],
@@ -1317,7 +1336,7 @@ def _source_distance(entry):
     return 0.0
 
 
-def _monitor_ei_t0(entry, energy_guess):
+def _monitor_ei_t0(entry, energy_guess, *, diagnostics=None):
     """Estimate Ei/T0 from an embedded-IDF direct-geometry monitor layout.
 
     This follows Shiver's Mantid ``GetEi`` route. The two monitor groups are
@@ -1326,6 +1345,20 @@ def _monitor_ei_t0(entry, energy_guess):
     The first two usable monitor spectra in IDF order are used, matching
     Mantid's standard spectrum ordering.
     """
+    diagnostics = {} if diagnostics is None else diagnostics
+    diagnostics["source"] = "requested_energy_no_usable_monitors"
+    has_monitor_data = False
+
+    def failed_calibration(reason):
+        message = (
+            f"Monitor Ei/T0 calibration failed for {entry.file.filename}: {reason}; "
+            f"using requested Ei={energy_guess:g} meV and T0=0 microseconds. "
+            "Set explicit Ei/T0 overrides before reducing this run."
+        )
+        diagnostics.update(source="requested_energy_failed_monitor_calibration", warning=message)
+        warnings.warn(message, RuntimeWarning, stacklevel=3)
+        return float(energy_guess), 0.0
+
     try:
         if energy_guess <= 0.0:
             return float(energy_guess), 0.0
@@ -1334,6 +1367,7 @@ def _monitor_ei_t0(entry, energy_guess):
         instrument_name = str(root.get("name", "")).upper()
         formula = _mantid_t0_formula(root, instrument_name)
         if formula is not None:
+            diagnostics["source"] = "instrument_t0_formula"
             return float(energy_guess), _evaluate_mantid_t0_formula(formula, energy_guess)
         locations = []
         for component in root.findall(".//{*}component[@type='monitor']"):
@@ -1368,6 +1402,7 @@ def _monitor_ei_t0(entry, energy_guess):
                 monitor_data.append((name, values, float(source_to_monitor)))
         if len(monitor_data) < 2:
             return float(energy_guess), 0.0
+        has_monitor_data = True
 
         grid_start = min(float(np.min(values)) for _, values, _ in monitor_data)
         peaks = []
@@ -1377,18 +1412,24 @@ def _monitor_ei_t0(entry, energy_guess):
                 continue
             peaks.append((name, distance, peak_centre))
         if len(peaks) < 2:
-            return float(energy_guess), 0.0
+            return failed_calibration("fewer than two monitor peaks were found")
         _, left_distance, left_time = peaks[0]
         _, right_distance, right_time = peaks[1]
-        velocity = (right_distance - left_distance) * 1.0e6 / (right_time - left_time)
+        elapsed = right_time - left_time
+        if elapsed == 0.0:
+            return failed_calibration("monitor peaks have coincident flight times")
+        velocity = (right_distance - left_distance) * 1.0e6 / elapsed
         if not np.isfinite(velocity) or velocity <= 0.0:
-            return float(energy_guess), 0.0
+            return failed_calibration("monitor peak positions imply an invalid incident velocity")
         energy = (velocity * TOF_US_PER_M_SQRT_MEV / 1.0e6) ** 2
         if not np.isfinite(energy) or energy <= 0.0:
-            return float(energy_guess), 0.0
+            return failed_calibration("monitor peak positions imply an invalid incident energy")
         t0 = left_time - left_distance * 1.0e6 / velocity
+        diagnostics["source"] = "monitor_peak_calibration"
         return float(energy), float(t0)
-    except (KeyError, TypeError, ValueError, ET.ParseError):
+    except (KeyError, TypeError, ValueError, ET.ParseError) as error:
+        if has_monitor_data:
+            return failed_calibration(str(error))
         return float(energy_guess), 0.0
 
 

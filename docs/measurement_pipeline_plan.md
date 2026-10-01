@@ -23,6 +23,9 @@ temperature. Instrument names alone must not determine the statistical estimator
 - Record changed scientific assumptions and invalidate affected caches explicitly.
   Preserve provenance when migrating existing projects; do not silently retain
   known incorrect math for compatibility.
+- Keep the main NiO project unchanged during this refactor. Use separate test
+  projects beside it when project-level validation needs persisted changes;
+  a pared-down selection is appropriate for interactive checks.
 - Check speed, peak memory, lazy loading, and reuse when changing numerical payloads
   or caching. Reject small speed gains that require disproportionate complexity.
 - Remove this page and its navigation links after all checkpoints are accepted.
@@ -36,6 +39,9 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 1B | Trace the unsubtracted NiO uncertainty example through histogram, slice, and cut | Complete |
 | 1C | Separate accumulated event variance from low-count confidence intervals | Complete |
 | 1D | Validate DGS reference statistics and covariance boundaries | Needs subdivision |
+| 1D1 | Audit converter; validate matched histograms and same-bin copy covariance | Complete |
+| 1D2 | Propagate cross-bin source dependencies through pooling | Pending review |
+| 1D3 | Resolve remaining monitor peak-fit differences against the reference | Pending review |
 | 2A | Define explicit measurement and estimator contracts | Pending |
 | 2B | Apply the contracts consistently to reductions, cuts, and exports | Pending |
 | 3A | Persist complete source and reduction recipes | Pending |
@@ -47,7 +53,8 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 6A | Validate instrument families and continuous measurements | Pending |
 | 6B | Migrate projects, verify performance, and remove this plan | Pending |
 
-Statuses are **Pending**, **In progress**, **Complete**, or **Needs subdivision**.
+Statuses are **Pending**, **Pending review**, **In progress**, **Complete**, or
+**Needs subdivision**.
 Completion means the stated deliverables have passed their checks and have been
 committed, pushed, and synchronized. It does not mean the next checkpoint may
 start automatically.
@@ -220,8 +227,58 @@ and which remain outside the current model. Add source/per-bin sparse or low-ran
 representations where justified; avoid a dense covariance matrix for a large 4D
 histogram. Split implementation from validation if needed.
 
-**Subdivision:** 1D reference conversion and marginal same-bin covariance are
-validated in this change. Transformed copies of a measured event now contribute
+**Reference evidence before the monitor stability correction:** fresh NiO runs
+392985, 393089, and 393387 match
+Mantid's accepted event counts and detector sequence exactly. Resolved Ei, T0,
+retained charge, and detector geometry agree to float64 roundoff; the maximum
+energy-transfer difference is below $6.5\times10^{-13}$ meV. Corrected event
+weight/variance differences are consistent with Mantid's float32 weighted-event
+storage. The saved MDE comparison identifies observed-extrema endpoint drops
+outside the requested 0–50 meV grid, rather than missing in-grid events.
+
+An audit of all 617 runs exposed four silent monitor-calibration failures that
+substituted nominal $E_i=60$ meV and $T_0=0$. A cancellation-sensitive derivative
+variance was the cause. The nonnegative equivalent now avoids these failures;
+calibration failures are warned and recorded, and reduction-version signatures
+invalidate affected caches. In the final implementation, 26 runs still have small
+peak-tail differences from Mantid, up to 0.01104 meV in $E_i$ and 0.82705 µs in
+$T_0$. Full converter
+parity is therefore not claimed. This reference discrepancy is tracked as 1D3,
+separately from the earlier representative-run comparison and shared-MDE
+statistics. The earlier float64 converter agreement is not claimed for runs
+whose monitor fit changed with the stability correction.
+With the correction, fresh reduction and 3bar cube binning of all 617 runs takes
+418.88 s on the recorded benchmark host. Its total count differs from native
+saved-MDE binning by −708 out of approximately 352 million contributions
+(2.0 parts per million), compared with +21,506 before the correction. This
+remaining raw-versus-saved discrepancy is not classified as resolved parity.
+
+The final fresh-raw thin grid contains 86,498 contributions versus Mantid's
+86,499. Fringe, low-exposure, and selected-ROI counts agree exactly; fringe
+standard-error ratios at the same exposure lie between 0.99999948 and
+1.00000213. All 9,700 covered fine cells have matching coverage, with no events
+in unexposed cells. Four interior fine cells differ by one count. These local
+checks establish that the remaining reference discrepancy is not producing the
+earlier fringe error-floor inflation in this slice.
+
+On the common 617-run MDE input, the thin 3bar map has identical pooled counts,
+numerators, and numerator variances; four one-event fine-cell boundary
+redistributions cancel in the map. Fringe and selected-ROI fine-cell statistics
+match exactly. The full cube differs by 26 contributions out of approximately
+352 million. Same-bin copy covariance adds a separately reported variance term;
+matching Mantid's assumption of independent transformed copies is not the
+acceptance criterion for those correlated events.
+
+Current measurements and their hardware, grids, phase boundaries, precision
+checks, and conventional single-job estimates are recorded in
+`benchmarks/results/dgs-reference-current.md` and its aggregate JSON. Manual
+Mantid comparisons remain outside pytest; no nfit unit tests import or execute
+Mantid/Shiver. Low-count interval coverage also passes seeded repeated-sampling
+checks at expected counts 0.2, 1, 5, and 20.
+
+**Subdivision:** 1D1 reference audit and marginal same-bin covariance are
+validated in this change. Complete converter agreement remains in 1D3.
+Transformed copies of a measured event now contribute
 the covariance cross terms when they land in the same output bin. The histogram
 records how many copy pairs land in different bins; their cross-bin covariance
 cannot be recovered from its diagonal variances alone.
@@ -236,7 +293,17 @@ that final grid instead of integrating an intermediate grid. This restriction is
 also documented in the permanent physics and viewer pages.
 
 **Review gate:** stop after reporting the current reference and performance
-evidence. Paul should review this subdivision before 1D2 or checkpoint 2A starts.
+evidence. Paul should review this subdivision before 1D2, 1D3, or checkpoint 2A
+starts. Checkpoint 1D3 should compare peak selection, fitting, and final fringe
+statistics while retaining nonnegative uncertainty arithmetic; reproducing an
+unstable intermediate expression is not an acceptance criterion.
+
+**Validation record:** version 0.106.1. The full suite passes 2,343 tests with
+one unavailable-backend skip; 89 focused reduction, cache, statistics, diagnostic,
+and packaging tests also pass. Ruff, byte-compilation, whitespace checks, and
+Sphinx with warnings treated as errors pass. The reference report retains
+measured timings separately from estimates. The main NiO project remains
+unchanged; only source, documentation, and external diagnostic artifacts change.
 
 ## 2. Measurement and estimator contracts
 

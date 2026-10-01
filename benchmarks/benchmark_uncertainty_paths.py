@@ -17,6 +17,11 @@ from pathlib import Path
 import numpy as np
 
 from nfit.box_cuts import box_membership, rotated_box_profiles
+from nfit.histogram_statistics import (
+    EVENT_STATISTICS_KEY,
+    EVENT_STATISTICS_METADATA,
+    event_statistics_channels,
+)
 from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from nfit.plotting_core import (
     MDHistoSliceViewer,
@@ -153,7 +158,7 @@ def _coverage_stats(nfit, mantid):
     return statistics
 
 
-def _viewer(nfit, variance, common, storage):
+def _viewer(nfit, variance, common, storage, event_statistics=False):
     names = ("[H,H,H]", "[K,-K,0]", "[L,L,-2L]", "DeltaE")
     axes = tuple(MDHistoAxis(name, nfit[f"edges{i}"], "meV" if i == 3 else "r.l.u.", "energy" if i == 3 else "momentum") for i, name in enumerate(names))
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -162,6 +167,9 @@ def _viewer(nfit, variance, common, storage):
     channels = {}
     if storage == "auxiliary":
         channels["normalization_denominator"] = MDHistoChannel(nfit["norm"], label="Detector-trajectory normalization")
+    if event_statistics:
+        metadata[EVENT_STATISTICS_KEY] = dict(EVENT_STATISTICS_METADATA)
+        channels.update(event_statistics_channels(nfit["numerator"], variance, nfit["norm"]))
     data = MDHistoData(axes, nfit["signal"], errors, ~common, nfit["counts"], metadata=metadata, auxiliary_channels=channels)
     model = MDHistoSliceViewer(data, x_dim=0, y_dim=3, integrate=True)
     for dim in (1, 2):
@@ -186,7 +194,7 @@ def _profile(view, roi):
     }
 
 
-def diagnose_paths(nfit_path, mantid_path, mantid_data_path, *, roi=(0.13, 0.23, 3.5, 25.0), normalization_storage="metadata"):
+def diagnose_paths(nfit_path, mantid_path, mantid_data_path, *, roi=(0.13, 0.23, 3.5, 25.0), normalization_storage="metadata", event_statistics=False):
     """Trace actual native viewer services and compare independent reference sums."""
     if normalization_storage not in {"metadata", "auxiliary"}:
         raise ValueError("normalization storage must be metadata or auxiliary")
@@ -208,7 +216,7 @@ def diagnose_paths(nfit_path, mantid_path, mantid_data_path, *, roi=(0.13, 0.23,
     common &= np.isfinite(current_v)
     removed_v = np.where(nfit["counts"] == 0, 0.0, current_v)
     variants = {"current": current_v, "reference_same_exposure": reference["variance"], "floor_removed_diagnostic": removed_v}
-    views = {name: _viewer(nfit, variance, common, normalization_storage) for name, variance in variants.items()}
+    views = {name: _viewer(nfit, variance, common, normalization_storage, event_statistics) for name, variance in variants.items()}
     base = views["current"]
     h, energy = base["x_centers"], base["y_centers"]
     selection = box_membership(h, energy, roi)
@@ -304,6 +312,7 @@ def diagnose_paths(nfit_path, mantid_path, mantid_data_path, *, roi=(0.13, 0.23,
         "source": "supplied HKLE slabs; no fresh Mantid run; native numerical viewer services executed",
         "assumptions": "independent diagonal variances; exactly known exposure; empty-cell removal only diagnoses unsubtracted event histograms",
         "shape": list(shape), "roi": list(roi), "normalization_storage": normalization_storage,
+        "event_statistics_contract": bool(event_statistics),
         "viewer_has_normalization_channel": "normalization_denominator" in base,
         "edge_max_abs_differences": edge_differences,
         "hidden_axis_ranges": {
@@ -321,7 +330,10 @@ def diagnose_paths(nfit_path, mantid_path, mantid_data_path, *, roi=(0.13, 0.23,
         "path_semantics": {
             "hidden_axes": "actual native exposure pooling over both supplied hidden-axis extents",
             "regular_and_rotated_cuts": "actual pure inverse-variance means; nonpositive errors are excluded, including measured zero-error cells",
-            "display_coarsening": "actual inverse-variance means over 2x native H and E steps",
+            "display_coarsening": (
+                "actual C/V/N pooling over 2x native H and E steps"
+                if event_statistics else "actual inverse-variance means over 2x native H and E steps"
+            ),
             "roi_sum": "actual sum of normalized map intensities and diagonal errors; not a count numerator/exposure pooled estimate or bin-width integral",
             "floor_removed_diagnostic": "zero inferred variance only where unsubtracted source event count is zero; not a generic production correction",
         },
@@ -349,12 +361,13 @@ def main():
     parser.add_argument("--mantid-slab", required=True, type=Path)
     parser.add_argument("--mantid-data", required=True, type=Path)
     parser.add_argument("--normalization-storage", choices=("metadata", "auxiliary"), default="metadata")
+    parser.add_argument("--event-statistics", action="store_true", help="Replay the explicit C/V/N contract of nfit 0.106+ event histograms; omit for historical slabs")
     parser.add_argument("--roi", default="0.13,0.23,3.5,25", help="Hmin,Hmax,Emin,Emax")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
         roi = tuple(float(item) for item in args.roi.split(","))
-        report = diagnose_paths(args.nfit_slab, args.mantid_slab, args.mantid_data, roi=roi, normalization_storage=args.normalization_storage)
+        report = diagnose_paths(args.nfit_slab, args.mantid_slab, args.mantid_data, roi=roi, normalization_storage=args.normalization_storage, event_statistics=args.event_statistics)
     except (ValueError, OSError) as error:
         parser.error(str(error))
     rendered = json.dumps(_json_safe(report), indent=2, allow_nan=False)

@@ -861,3 +861,57 @@ def test_backdated_pulse_logs_preserve_charge_pairing_and_event_intervals(
         np.testing.assert_array_equal(actual.charge_keep, ordered.charge_keep[charge_order])
         np.testing.assert_array_equal(actual.bank_keep(bank), ordered.bank_keep(bank))
         assert _retained_proton_charge_uah(entry, 95) == pytest.approx(expected_charge)
+
+
+def test_monitor_derivative_error_cancels_shared_central_measurement():
+    from nfit.raw_dgs_monitors import _peak_derivative_uncertainty
+
+    # On a uniform grid, a centred difference is (next-previous)/(2*step).
+    # A noisy central measurement does not contribute, even in an empty tail.
+    assert _peak_derivative_uncertainty(0., np.sqrt(19. / .711234), 0., .711234, .711234) == 0.
+    assert _peak_derivative_uncertainty(3., 1e12, 4., 2., 2.) == pytest.approx(1.25)
+    # Unequal spacing gives a central coefficient: derivative coefficients are
+    # (-1/2, 1/4, 1/4) for distances 1 and 2. Independent variances add.
+    expected = np.sqrt((.5 * 2)**2 + (.25 * 3)**2 + (.25 * 4)**2)
+    assert _peak_derivative_uncertainty(2., 3., 4., 1., 2.) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("peak, reason", [
+    (None, "fewer than two monitor peaks"),
+    (100., "coincident flight times"),
+])
+def test_monitor_failed_peak_is_warned_and_recorded(tmp_path, monkeypatch, peak, reason):
+    h5py = pytest.importorskip("h5py")
+    source = tmp_path / "monitor_failure.nxs.h5"
+    _write_raw_dgs(source)
+    with h5py.File(source, "r+") as handle:
+        group = handle["entry/instrument/instrument_xml"]
+        xml = group["data"][()].tobytes().decode().replace(
+            '<component type="moderator">',
+            '<component type="monitor"><location name="monitor1" z="-2"/>'
+            '<location name="monitor2" z="2"/></component><component type="moderator">',
+        )
+        del group["data"]
+        group.create_dataset("data", data=np.frombuffer(xml.encode(), dtype="u1"))
+        for name in ("monitor1", "monitor2"):
+            handle["entry"].create_group(name).create_dataset("event_time_offset", data=[100.])
+    monkeypatch.setattr(raw_dgs, "_mantid_getei_v2_peak", lambda *args, **kwargs: peak)
+    with pytest.warns(RuntimeWarning, match="Set explicit Ei/T0 overrides"):
+        info = inspect_raw_dgs_run(source)
+    assert info.calibration_source == "requested_energy_failed_monitor_calibration"
+    assert info.calibration_warning and reason in info.calibration_warning
+    assert info.incident_energy == 20.
+    assert info.t0 == 0.
+
+
+def test_monitor_unavailable_calibration_has_explicit_provenance(tmp_path):
+    source = tmp_path / "no_monitors.nxs.h5"
+    _write_raw_dgs(source)
+    info = inspect_raw_dgs_run(source)
+    assert info.calibration_source == "requested_energy_no_usable_monitors"
+    assert info.calibration_warning is None
+    group = raw_dgs_dataset_group([source])
+    assert group.datasets[0].metadata["calibration_source"] == info.calibration_source
+    result = bin_raw_dgs_group(group, lower=[-10, -10, -10, -100],
+        upper=[10, 10, 10, 20], num_bins=[2, 2, 2, 3])
+    assert result.metadata["raw_dgs_calibration"][group.datasets[0].id]["source"] == info.calibration_source

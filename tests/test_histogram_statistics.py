@@ -66,6 +66,22 @@ def test_empty_cells_keep_exposure_and_zero_accumulated_variance():
         assert upper == pytest.approx(1.8410216450089925, rel=1e-10)
 
 
+@pytest.mark.parametrize("expected_counts", [0.2, 1.0, 5.0, 20.0])
+def test_final_poisson_intervals_cover_rates_under_repeated_sampling(expected_counts):
+    rng = np.random.default_rng(17041)
+    counts = rng.poisson(expected_counts, size=30_000)
+    exposure, weight, confidence = 7.0, 2.5, 0.9
+    true_rate = weight * expected_counts / exposure
+    lower, upper = poisson_rate_interval(
+        counts, exposure, confidence=confidence, constant_weight=weight,
+    )
+    coverage = np.mean((lower <= true_rate) & (true_rate <= upper))
+    # Discrete central intervals are conservative. Allow four sampling standard
+    # errors around nominal coverage, without requiring Gaussian count errors.
+    tolerance = 4 * np.sqrt(confidence * (1 - confidence) / counts.size)
+    assert coverage >= confidence - tolerance
+
+
 def test_pooling_excludes_invalid_and_masked_statistics_together():
     result = pool_event_statistics(
         [4.0, 0.0, 100.0, 5.0],
