@@ -108,8 +108,13 @@ def select_pulses(entry, threshold):
     if times is None or len(times) != len(values):
         keep = values >= float(threshold) * 0.01 * np.mean(values) if threshold > 0 else None
         return PulseSelection(keep, None)
+    # Time-series logs can contain backdated records. Build intervals from
+    # stable, chronological time/value pairs, while returning the charge mask
+    # in file order so normalization still selects the matching values.
+    charge_times = times
     if np.any(np.diff(times) < 0):
-        raise ValueError("proton-charge timestamps must be ordered")
+        order = np.argsort(times, kind="stable")
+        times, values = times[order], values[order]
     start, stop = times[0], times[-1]
     intervals = np.asarray([(start, stop)], dtype=np.int64) if start < stop else np.empty((0, 2), dtype=np.int64)
     pause = logs.get("pause")
@@ -118,7 +123,8 @@ def select_pulses(entry, threshold):
         pause_values = np.asarray(pause["value"], dtype=float).reshape(-1)
         if pause_times is not None and len(pause_times) == len(pause_values) and len(pause_times):
             if np.any(np.diff(pause_times) < 0):
-                raise ValueError("pause timestamps must be ordered")
+                order = np.argsort(pause_times, kind="stable")
+                pause_times, pause_values = pause_times[order], pause_values[order]
             intervals = _intersect(intervals, _value_intervals(
                 pause_times, (pause_values >= -1) & (pause_values <= 0.5), start, stop, centre=False,
             ))
@@ -136,4 +142,4 @@ def select_pulses(entry, threshold):
         intervals = _intersect(intervals, _value_intervals(
             filtered_times, good, start, stop, centre=True,
         ))
-    return PulseSelection(_inside(times, intervals), intervals)
+    return PulseSelection(_inside(charge_times, intervals), intervals)

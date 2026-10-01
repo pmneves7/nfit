@@ -1127,3 +1127,8 @@ For single-crystal subtraction, each sample binning caches a background histogra
 on its own grid using the source group's UB and symmetry. The background group's
 standalone viewing grid is not required. Source symmetry changes require rebuilding
 affected background histograms; background scale changes reuse existing caches.
+
+Raw SNS proton-charge and pause logs may contain backdated records. nfit
+stably orders timestamp/value pairs when constructing pulse-filter intervals,
+while retaining the original charge-record indexing for normalization. Detector
+events and integrated charge use the same accepted time intervals.

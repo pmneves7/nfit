@@ -816,3 +816,44 @@ def test_monitor_half_height_width_and_histogram_rebin_conserve_counts():
         np.array([0., 1., 2.]), np.array([0., .5, 1.5, 2.]))
     np.testing.assert_allclose(counts, [2, 10, 8])
     np.testing.assert_allclose(errors**2, counts)
+
+
+@pytest.mark.parametrize("unordered_charge", [False, True])
+@pytest.mark.parametrize("unordered_pause", [False, True])
+def test_backdated_pulse_logs_preserve_charge_pairing_and_event_intervals(
+    tmp_path, unordered_charge, unordered_pause
+):
+    from nfit.raw_dgs_pulses import select_pulses
+
+    h5py = pytest.importorskip("h5py")
+    # Different good charges expose accidental pairing of sorted timestamps
+    # with the file-order charge values. Equal timestamps retain file order.
+    charge_times = np.array([0., 1., 2., 2., 3., 4., 5., 6.])
+    charge_values = np.array([100., 99., 0., 98., 97., 101., 102., 100.])
+    charge_order = np.array([0, 1, 4, 5, 2, 3, 6, 7]) if unordered_charge else np.arange(8)
+    pause_order = np.array([0, 2, 1]) if unordered_pause else np.arange(3)
+    with h5py.File(tmp_path / "backdated.nxs.h5", "w") as f:
+        entry = f.create_group("entry")
+        logs = entry.create_group("DASlogs")
+        charge = logs.create_group("proton_charge")
+        times = charge.create_dataset("time", data=charge_times)
+        times.attrs.update(offset="2026-01-01T00:00:00Z", units="second")
+        charge.create_dataset("value", data=charge_values)
+        pause = logs.create_group("pause")
+        times = pause.create_dataset("time", data=[0., 3., 4.])
+        times.attrs.update(offset="2026-01-01T00:00:00Z", units="second")
+        pause.create_dataset("value", data=[0., 1., 0.])
+        bank = entry.create_group("bank1_events")
+        times = bank.create_dataset("event_time_zero", data=np.arange(7.))
+        times.attrs.update(offset="2026-01-01T00:00:00Z", units="second")
+        ordered = select_pulses(entry, 95)
+        expected_charge = _retained_proton_charge_uah(entry, 95)
+        charge["time"][:] = charge_times[charge_order]
+        charge["value"][:] = charge_values[charge_order]
+        pause["time"][:] = np.array([0., 3., 4.])[pause_order]
+        pause["value"][:] = np.array([0., 1., 0.])[pause_order]
+        actual = select_pulses(entry, 95)
+        np.testing.assert_array_equal(actual.intervals, ordered.intervals)
+        np.testing.assert_array_equal(actual.charge_keep, ordered.charge_keep[charge_order])
+        np.testing.assert_array_equal(actual.bank_keep(bank), ordered.bank_keep(bank))
+        assert _retained_proton_charge_uah(entry, 95) == pytest.approx(expected_charge)
