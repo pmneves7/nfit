@@ -1114,3 +1114,16 @@ how a source contributes to a live composite but never acts as a signal scale.
 Use **Spherical
 average** in the [Analysis Window](data_playground.md) to create a powder
 background from single-crystal data.
+
+### Background source and symmetry controls
+
+Select a background link under the sample group's **Backgrounds** node to choose
+its **Source** dataset or dataset group and edit its scale. Dataset groups remain
+available as sources when their standalone binning is disabled. A group source
+includes all its enabled runs.
+
+**Source symmetry (shared)** displays and edits the linked group's symmetry.
+For single-crystal subtraction, each sample binning caches a background histogram
+on its own grid using the source group's UB and symmetry. The background group's
+standalone viewing grid is not required. Source symmetry changes require rebuilding
+affected background histograms; background scale changes reuse existing caches.

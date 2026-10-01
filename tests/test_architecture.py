@@ -266,3 +266,12 @@ def test_raw_dgs_preserves_monitor_helper_import_identity():
 
     for name in ["TOF_US_PER_M_SQRT_MEV", "_mantid_getei_peak_region", "_mantid_getei_v2_peak"]:
         assert getattr(raw_dgs, name) is getattr(raw_dgs_monitors, name)
+
+
+def test_background_panel_builder_has_no_reverse_coordinator_import():
+    tree = ast.parse((PACKAGE_ROOT / "project_background_panels.py").read_text())
+    imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    assert "project_gui" not in imported
+    coordinator = ast.parse((PACKAGE_ROOT / "project_gui.py").read_text())
+    method = next(node for node in ast.walk(coordinator) if isinstance(node, ast.FunctionDef) and node.name == "_set_background_details")
+    assert any(isinstance(node, ast.ImportFrom) and node.module == "project_background_panels" for node in ast.walk(method))

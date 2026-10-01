@@ -210,8 +210,10 @@ def background_rebin_explanation(
         )
     if background.source_group is not None or bool(background.source_group_id):
         return (
-            "This collection background uses the linked collection's composite rebin recipe "
-            "before center or sample-trajectory projection."
+            "Single-crystal group backgrounds use the source runs, UB and symmetry on each "
+            "sample binning's output grid; the sample binning owns the cached background histogram. "
+            "The source's standalone viewing grid is not used. Powder projection uses the linked "
+            "collection's composite rebin recipe."
         )
     if background.source_entry is not None or bool(background.source_dataset_id):
         return (

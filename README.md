@@ -40,7 +40,8 @@ A few of its main capabilities are:
 - set installation-wide figure font size and axes linewidth defaults in Preferences;
 - import, combine, mask, rebin, and visualize multidimensional neutron data,
   with confirmed project-wide clearing of computed data and model caches,
-  with parent-owned hierarchical binning and explicit background recipe context,
+  with parent-owned hierarchical binning, explicit background recipe context,
+  and shared source-group symmetry controls in the background editor,
   including raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data
   with SNS monitor and beam-interval reduction, lazy per-run reduced-event caches
   for repeated binnings, and exposure-pooled normalized histogram slices,

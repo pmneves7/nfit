@@ -510,3 +510,60 @@ def test_project_tree_exposes_group_background_controls_with_tooltips(monkeypatc
     assert interpolation is not None and not interpolation.isEnabled()
     projection.setCurrentIndex(projection.findData("center"))
     assert interpolation.isEnabled()
+
+
+def test_disabled_group_source_displays_shared_symmetry(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from nfit.project_composites import _composite_scope, data_group_composite_config
+    from nfit.project_gui import NfitProjectExplorer
+
+    sample = DatasetGroup("NiO", datasets=[DatasetEntry("run 392985", None, data_type="single_crystal_inelastic")])
+    source = DatasetGroup("Al2O3", datasets=[DatasetEntry("run 409259", None, data_type="single_crystal_inelastic")])
+    background = BackgroundSpec("Al2O3 background", source_group_id=source.id, source_group=source)
+    sample.backgrounds.append(background)
+    root = DataGroup("Workspace", subgroups=[sample, source])
+    config = data_group_composite_config(_composite_scope(root, source))
+    expression = "rotate(order=3, axis=[1,1,1]); mirror(plane=(1,1,-2)); rotate(order=2, axis=[1,1,-2])"
+    config.update(enabled=False, symmetry={"mode": "generators", "expression": expression})
+    explorer = NfitProjectExplorer(NfitProject([root]))
+    # Keep the edited panel in place while exercising the scientific setter.
+    monkeypatch.setattr(explorer, "_sync_details", lambda: None)
+    explorer._set_background_details(root, sample, background)
+    combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "background_source_dataset")
+    assert combo.currentData() == f"group:{source.id}"
+    assert combo.currentText() == "Al2O3 [dataset group]"
+    editor = explorer.details_widget.findChild(QtWidgets.QLineEdit, "background_source_symmetry_expression")
+    mode = explorer.details_widget.findChild(QtWidgets.QComboBox, "background_source_symmetry_mode")
+    enabled = explorer.details_widget.findChild(QtWidgets.QCheckBox, "background_source_symmetry_enabled")
+    assert editor.text() == expression
+    assert mode.currentData() == "generators"
+    assert enabled.isChecked()
+    assert all(widget.toolTip() for widget in (combo, editor, mode, enabled))
+    sample_symmetry = dict(data_group_composite_config(_composite_scope(root, sample))["symmetry"])
+    editor.setText("x,y,z; -x,-y,-z")
+    editor.editingFinished.emit()
+    assert config["symmetry"]["expression"] == "x,y,z; -x,-y,-z"
+    assert config["enabled"] is False
+    assert data_group_composite_config(_composite_scope(root, sample))["symmetry"] == sample_symmetry
+    assert background.source_group_id == source.id
+    # Changing the source refreshes the editor's scope instead of retaining Al2O3.
+    combo.setCurrentIndex(combo.findData(sample.datasets[0].id))
+    assert background.source_dataset_id == sample.datasets[0].id
+    assert background.source_group is None
+    assert explorer.details_widget.findChild(QtWidgets.QLineEdit, "background_source_symmetry_expression") is None
+
+
+def test_unresolved_background_source_does_not_display_unrelated_run(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from nfit.project_gui import NfitProjectExplorer
+
+    root = DataGroup("Workspace", datasets=[DatasetEntry("run 392985", None, data_type="single_crystal_inelastic")])
+    background = BackgroundSpec("Missing background", source_group_id="missing")
+    explorer = NfitProjectExplorer(NfitProject([root]))
+    explorer._set_background_details(root, root, background)
+    combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "background_source_dataset")
+    assert combo.currentData() == "group:missing"
+    assert "Unresolved" in combo.currentText()
+    assert background.source_group_id == "missing"
