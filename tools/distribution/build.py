@@ -214,7 +214,7 @@ def build(
             f"Package: nfit\nVersion: {version}\nArchitecture: {architecture}\n"
             "Maintainer: Paul M. Neves <pneves1@jhu.edu>\n"
             "Depends: libc6 (>= 2.34), libgl1, libegl1, libopengl0, "
-            "libxkbcommon0, libxcb-cursor0\n"
+            "libxkbcommon0, libxcb-cursor0, libwayland-cursor0, libwayland-egl1\n"
             "Recommends: zenity\n"
             "Section: science\nPriority: optional\nDescription: Magnetic-scattering analysis and fitting\n")
         desktop = staging / "usr/share/applications/nfit.desktop"

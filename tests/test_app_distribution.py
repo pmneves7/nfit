@@ -204,6 +204,8 @@ def test_linux_smoke_runner_installs_debian_runtime_dependencies():
         "libopengl0",
         "libxkbcommon0",
         "libxcb-cursor0",
+        "libwayland-cursor0",
+        "libwayland-egl1",
     ):
         assert package in workflow
         assert package in build_script
@@ -216,7 +218,9 @@ def test_linux_releases_gate_one_tarball_on_ubuntu_and_rhel9():
     assert "container: ubuntu:22.04" in workflow
     assert "container: rockylinux:9" in workflow
     assert "needs: [build, linux-compatibility]" in workflow
+    assert "xcb-util-cursor libwayland-cursor libwayland-egl" in workflow
     assert "--check-libraries" in workflow
+    assert 'micromamba-version: "2.8.1-1"' in workflow
     assert "CONDA_OVERRIDE_GLIBC:" in workflow
     assert "cache-environment-key: nfit-portable-glibc-2.34" in workflow
     assert "nfit-*-linux-x86_64.tar.gz" in workflow

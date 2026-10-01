@@ -125,15 +125,17 @@ offline after installation.
 | Linux `.tar.gz` | Linux x86-64 with glibc 2.34 or newer; tested on RHEL 9-compatible systems and Ubuntu 22.04 |
 
 The Debian package declares `libc6 (>= 2.34)`, `libgl1`, `libegl1`,
-`libopengl0`, `libxkbcommon0`, and `libxcb-cursor0`; `apt install` resolves
-these automatically. It also recommends Zenity for a reliable native open-file
+`libopengl0`, `libxkbcommon0`, `libxcb-cursor0`, `libwayland-cursor0`, and
+`libwayland-egl1`; `apt install` resolves these automatically. It also recommends Zenity for a reliable native open-file
 chooser, especially in remote Linux desktop sessions. Tar installations use
 Zenity or Yad when either is already available and otherwise use nfit's Qt
 fallback for opening files.
-Tarball installations need the host's X11 desktop and OpenGL/EGL libraries.
+Tarball installations need the host's X11 desktop, OpenGL/EGL libraries, and
+Wayland cursor/EGL libraries used by the bundled Qt platform plugins.
 On RHEL 9 these are provided by `mesa-libGL`, `mesa-libEGL`,
-`libglvnd-opengl`, `libxkbcommon`, and `xcb-util-cursor`; a graphical
-workstation or remote desktop typically already supplies them. If a required
+`libglvnd-opengl`, `libxkbcommon`, `xcb-util-cursor`, `libwayland-cursor`,
+and `libwayland-egl`; a graphical workstation or remote desktop typically
+already supplies them. If a required
 system library is missing, ask the system administrator to install it.
 
 For a source installation, nfit requires Python 3.12 or newer. The supplied
