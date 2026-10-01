@@ -39,6 +39,14 @@ from .cache_utils import (
 )
 from .composite_scaling import composite_scaling, scale_composite_data
 from .dataset import PointData4D, PointListData
+from .dgs_normalization import trajectory_normalization_signature
+from .histogram_statistics import (
+    EVENT_STATISTICS_KEY,
+    EVENT_STATISTICS_METADATA,
+    EVENT_STATISTICS_VERSION,
+    event_statistics_channels,
+    has_event_statistics,
+)
 from .mdevent import (
     bin_mdevent_group,
     bin_mdevent_powder_group,
@@ -912,10 +920,19 @@ def _composite_cache_signature(
             numerical["composite_scaling"] = scalars
     calibration_rule = ({"run_calibration_and_weight_version": 1}
         if any(run.scale_factor != 1 or run.fit_weight != 1 for run in _composite_candidates(group)) else {})
+    mdevent_config = node.metadata.get("mdevent")
     payload = [
         COMPOSITE_CACHE_SIGNATURE_TAG,
-        node.metadata.get("mdevent"),
-        {**raw_config, "native_reduction_version": RAW_DGS_REDUCTION_VERSION, **calibration_rule}
+        {
+            **trajectory_normalization_signature(mdevent_config),
+            "histogram_statistics_version": EVENT_STATISTICS_VERSION,
+        } if isinstance(mdevent_config, dict) else mdevent_config,
+        {
+            **trajectory_normalization_signature(raw_config),
+            "native_reduction_version": RAW_DGS_REDUCTION_VERSION,
+            "histogram_statistics_version": EVENT_STATISTICS_VERSION,
+            **calibration_rule,
+        }
         if raw_config.get("format") == "raw-direct-geometry-nexus"
         else node.metadata.get("raw_dgs"),
         getattr(_composite_root(group), "lattice_parameters", {}),
@@ -2325,6 +2342,7 @@ def _composite_mdhisto_data(
     first_data: MDHistoData | None = None
     weighting_mode = _rebin_mean_weighting(config)
     normalization_weighted = False
+    all_event_statistics = True
     source_datasets = datasets if datasets is not None else _composite_candidates(group)
     report_sources = datasets is None
     for dataset_index, dataset in enumerate(source_datasets):
@@ -2346,6 +2364,7 @@ def _composite_mdhisto_data(
             )
         if not isinstance(data, MDHistoData):
             continue
+        all_event_statistics &= has_event_statistics(data)
         if any("metadata_dimension" in axis.metadata for axis in data.axes):
             raise ValueError(
                 "Rebin the original collection to preserve its discrete metadata dimensions."
@@ -2658,6 +2677,16 @@ def _composite_mdhisto_data(
             label="Combined detector-trajectory normalization",
             unit="arbitrary normalization units",
         )
+        denominator = auxiliary_channels["normalization_denominator"].values
+        metadata["normalization_denominator"] = denominator
+        if all_event_statistics and background_result is None:
+            metadata[EVENT_STATISTICS_KEY] = dict(EVENT_STATISTICS_METADATA)
+            metadata["num_events_semantics"] = "contributing_histogram_cells"
+            metadata["zero_event_bins_are_measured"] = True
+            with np.errstate(invalid="ignore"):
+                numerator = np.where(denominator > 0, result.binned_data * denominator, 0.0)
+                variance = np.where(denominator > 0, np.square(result.binned_data_errs * denominator), 0.0)
+            auxiliary_channels.update(event_statistics_channels(numerator, variance, denominator))
     if background_result is not None and background_result.binned_data is not None:
         background_values = np.asarray(background_result.binned_data, dtype=float)
         background_values.setflags(write=False)

@@ -735,28 +735,60 @@ produce the pooled estimator. Event corrections and non-Poisson uncertainties
 also break that simple equivalence. Summing normalized intensities,
 $\sum_i I_i$, is a different quantity and overweights weakly exposed cells.
 
-#### Covered empty cells: current limitation
+#### Covered empty cells and confidence intervals
 
-The DGS and MDE histogram paths currently substitute a Feldman–Cousins upper
-limit for the stored error of a covered empty cell. Subsequent pooling treats
-that value as a standard deviation. This can inflate errors and make them
-depend on the intermediate grid. A confidence-interval endpoint is not a
-summable variance. For independent events, the observed numerator variance
-is the sum of squared event weights, including zero for an empty cell; zero
-observed variance alone does not imply certainty about the unknown rate.
-In particular, a barely exposed empty fringe cell can have a large upper limit
-without any intermediate pooling. Its large limit alone does not demonstrate
-an error. The demonstrated propagation defect is treating such endpoints as
-independent symmetric errors; both the interval construction and the target
-of a spatial cut need separate validation.
+Native DGS and MDE histograms store additive count numerator $C$, numerator
+variance $V$, and known exposure $N$ as immutable channels. For independent
+corrected events, $C=\sum_j w_j$ and $V=\sum_j w_j^2$; $w_j$ is dimensionless.
+The observed event standard error is $\sqrt{V}/N$. A covered empty cell has
+$C=V=0$ and positive $N$. Zero observed variance does not establish certainty
+about its unknown intensity. A barely exposed empty fringe cell can have a
+large confidence upper endpoint even without pooling.
 
-The diagnostic `benchmarks/benchmark_histogram_uncertainty.py` compares these
-quantities without changing production behavior. Separating event variance
-from low-count intervals and retaining source statistics through cuts are
+Confidence endpoints are separate from standard errors. For independent
+integer counts $n$, a known constant positive weight $w$, and known exposure
+$N$, `nfit.histogram_statistics.poisson_rate_interval` returns the central
+Garwood interval at confidence $c$. Let $\alpha=1-c$ and $\chi^2_{\nu,p}$ be the
+$p$ quantile of a chi-squared distribution with $\nu$ degrees of freedom:
+
+$$
+I_{\mathrm{lower}}=\frac{w}{2N}\chi^2_{2n,\alpha/2},\qquad
+I_{\mathrm{upper}}=\frac{w}{2N}\chi^2_{2(n+1),1-\alpha/2}.
+$$
+
+The lower endpoint is zero for $n=0$. At $c=0.682689492137$, the zero-count
+upper endpoint is approximately $1.841w/N$. This is an equal-tailed interval,
+not the previous Feldman–Cousins endpoint convention. Compute it once from the
+final pooled observation. Heterogeneous correction weights, correlated copies,
+signed backgrounds, and uncertain exposure require a different likelihood;
+this API does not infer that they satisfy the Poisson model.
+See [Garwood's original construction](https://doi.org/10.1093/biomet/28.3-4.437).
+
+#### Event copies and covariance
+
+Copies of one event are perfectly correlated. If copies with coefficients
+$a_j$ fall in one output bin, their contribution to its variance is
+$V_{\mathrm{source}}(\sum_j a_j)^2$, including the cross terms
+$2a_ja_kV_{\mathrm{source}}$. Native raw-DGS and MDE symmetry binning adds these
+within-bin terms using the exact signal-kernel bin assignments. Two identical
+unit copies contribute $4V_{\mathrm{source}}$, not $2V_{\mathrm{source}}$.
+Event contributions are counted separately and are not independent observations.
+
+The diagonal histogram does **not** retain covariance between different bins.
+If symmetry copies land in separate bins that are later integrated together,
+adding stored diagonal variances misses those cross terms. Fractional histogram
+assignment, shared monitors/vanadium, reused backgrounds, and CORELLI
+reconstruction also require dependencies beyond this representation. Metadata
+records corrected within-bin pairs and unrepresented cross-bin pairs. Do not
+interpret diagonal pooling as exact uncertainty for correlated cells.
+Rebinning cached original events directly onto the final requested grid
+recovers same-event covariance within those final bins without a dense matrix.
+
+The diagnostics `benchmarks/benchmark_histogram_uncertainty.py` and
+`benchmarks/benchmark_uncertainty_paths.py` separate event variance, exposure,
+confidence inference, and estimator behavior. Their unit tests neither import
+nor execute Mantid or Shiver. Full estimator and dependency propagation is
 tracked in the [measurement pipeline plan](measurement_pipeline_plan.md).
-`benchmarks/benchmark_uncertainty_paths.py` traces supplied matched slabs through
-the actual slice, box-cut, display-coarsening, and ROI-sum services. These
-diagnostics and their unit tests neither import nor execute Mantid or Shiver.
 
 ### Derived channels, calibration, and normalization
 

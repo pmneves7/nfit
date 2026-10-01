@@ -17,6 +17,7 @@ import numpy as np
 
 from .analysis.artifacts import read_project_dataset_artifact
 from .dataset import PointData4D, PointListData
+from .dgs_normalization import DEFAULT_TRAJECTORY_ENERGY_POLICY
 from .importers import IMPORTERS, import_with, importers_for_data_type, probe_importers
 from .mdevent import (
     is_mdevent_file,
@@ -199,6 +200,7 @@ def import_mdevent_dataset_group(
     *,
     normalization_path: str | Path | None = None,
     mask_path: str | Path | None = None,
+    trajectory_energy_policy: str = DEFAULT_TRAJECTORY_ENERGY_POLICY,
     into: DatasetGroup | None = None,
     progress_callback: Any | None = None,
 ) -> DatasetGroup:
@@ -213,6 +215,7 @@ def import_mdevent_dataset_group(
         path,
         normalization_path=normalization_path,
         mask_path=mask_path,
+        trajectory_energy_policy=trajectory_energy_policy,
         progress_callback=progress_callback,
     )
     subgroup.metadata[GROUP_COMPOSITE_KEY] = _mdevent_composite_defaults()

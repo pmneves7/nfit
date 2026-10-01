@@ -51,9 +51,13 @@ def scale_composite_data(data, factor, scale_callback):
 
         if isinstance(data, MDHistoData):
             from .background_channels import scale_background_channels
+            from .histogram_statistics import scaled_event_statistics_channels
 
             result = scale_background_channels(data, 0)
-            return result.with_updates(signal=data.signal * 0, errors=data.errors * 0)
+            return result.with_updates(
+                signal=data.signal * 0, errors=data.errors * 0,
+                auxiliary_channels=scaled_event_statistics_channels(result, 0),
+            )
         from .dataset import PointData4D, PointListData
 
         if isinstance(data, PointData4D):

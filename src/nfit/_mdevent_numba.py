@@ -12,6 +12,7 @@ ENERGY_TO_K2 = 2.072124855
 def accumulate_discrete_event_coordinates(
     coordinates, weights, variances, enabled, edges, shape,
     data_sum, variance_sum, event_count,
+    bin_indices=None,
 ):
     """Find a bin and update all three sums in one ordered event pass."""
     reciprocal_steps = np.zeros(coordinates.shape[1])
@@ -53,6 +54,8 @@ def accumulate_discrete_event_coordinates(
                 break
             flat = flat * shape[dim] + index
         if valid:
+            if bin_indices is not None:
+                bin_indices[row] = flat
             weight = weights[row]
             variance = weight * weight if variances is None else variances[row]
             data_sum[flat] += weight

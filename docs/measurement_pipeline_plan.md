@@ -34,8 +34,8 @@ temperature. Instrument names alone must not determine the statistical estimator
 | --- | --- | --- |
 | 1A | Reproducible uncertainty diagnostic baseline | Complete |
 | 1B | Trace the unsubtracted NiO uncertainty example through histogram, slice, and cut | Complete |
-| 1C | Separate accumulated event variance from low-count confidence intervals | Pending |
-| 1D | Validate DGS reference statistics and covariance boundaries | Pending |
+| 1C | Separate accumulated event variance from low-count confidence intervals | Complete |
+| 1D | Validate DGS reference statistics and covariance boundaries | Needs subdivision |
 | 2A | Define explicit measurement and estimator contracts | Pending |
 | 2B | Apply the contracts consistently to reductions, cuts, and exports | Pending |
 | 3A | Persist complete source and reduction recipes | Pending |
@@ -158,9 +158,9 @@ The old native cube has reduction-cache version 1; current native reduction is
 version 2. Fresh raw-reduction validation remains in 1D. Exact screenshot
 recreation remains limited by its unavailable source recipe.
 
-**Review gate:** checkpoint 1B is complete. Stop before 1C until Paul authorizes
-it. Evaluate whether 1C needs subdivision into statistics persistence and final
-interval inference before changing production behavior.
+**Review gate:** checkpoint 1B is complete. Paul authorized 1C and 1D on
+2026-10-01, including a Mantid-compatible default trajectory energy convention
+and current-build performance measurements.
 
 ### 1C — Event variance and low-count inference
 
@@ -182,6 +182,29 @@ numerator, variance, and exposure under the same independence assumptions.
 Empty-bin confidence intervals are constructed for the final requested estimate.
 Serialization, lazy loading, cache invalidation, units, and script replay agree.
 
+**Implementation record:** version 0.106.0 retains explicit $C$, $V$, and $N$
+channels in native and MDE histograms, compressed caches, and lazy project loading.
+Covered empty cells retain zero observed event variance rather than a confidence
+limit substituted into that variance. Marked histogram slices and coarsening pool
+these statistics; generic continuous measurements retain their existing estimator.
+A separate public Poisson-rate interval helper requires independent integer counts,
+a known exposure, and a known constant event weight. It is not automatically
+applied to heterogeneous weighted events or symmetry-expanded counts.
+
+Trajectory normalization defaults to the first participating run's full-precision
+incident energy, matching MDNorm. Each-run normalization remains selectable in the
+GUI and public API. Raw event reconstruction still uses each run's resolved Ei/T0.
+Affected histogram signatures invalidate old results; the normalization convention
+does not invalidate reduced-event caches. Viewer channels expose the numerator,
+variance numerator, exposure, and observed standard error, with explicit semantics
+for event contributions versus contributing histogram cells.
+
+The full suite passed 2,321 tests with one skip; subsequent focused tests cover
+mask partitions, same-bin covariance through both event backends, Qt labels, and
+lazy cached-project round trips. Complete grouped event workflow script generation
+remains a pre-existing gap tracked in `planned_features.md`; the scientific APIs
+and saved settings are Qt-independent. Regular and rotated box cuts remain in 2B.
+
 ### 1D — DGS reference and dependency validation
 
 Test native reduction and shared-MDE binning against Mantid at the statistics
@@ -196,6 +219,24 @@ not acquire artificial independence. Document which dependencies are represented
 and which remain outside the current model. Add source/per-bin sparse or low-rank
 representations where justified; avoid a dense covariance matrix for a large 4D
 histogram. Split implementation from validation if needed.
+
+**Subdivision:** 1D reference conversion and marginal same-bin covariance are
+validated in this change. Transformed copies of a measured event now contribute
+the covariance cross terms when they land in the same output bin. The histogram
+records how many copy pairs land in different bins; their cross-bin covariance
+cannot be recovered from its diagonal variances alone.
+
+A remaining **1D2 — Cross-bin dependency propagation** must preserve or replay
+source contributions when a slice, coarsening, or cut reunites those copies. This
+requires a bounded source-aware representation or exact cached-event replay, not a
+dense 4D covariance matrix. Fractional assignments, repeated sources, shared
+calibration, and background dependencies require separate validation. For an exact
+symmetrized final estimate today, bin the original cached events directly onto
+that final grid instead of integrating an intermediate grid. This restriction is
+also documented in the permanent physics and viewer pages.
+
+**Review gate:** stop after reporting the current reference and performance
+evidence. Paul should review this subdivision before 1D2 or checkpoint 2A starts.
 
 ## 2. Measurement and estimator contracts
 

@@ -16,7 +16,18 @@ import numpy as np
 from . import _parallel
 from .backgrounds import background_with_user_mask_zeros
 from .dataset import PointData4D
+from .dgs_normalization import (
+    DEFAULT_TRAJECTORY_ENERGY_POLICY,
+    trajectory_incident_energies,
+    validated_trajectory_energy_policy,
+)
+from .event_covariance import accumulate_copy_covariance
 from .event_masks import reduce_masked_event_runs
+from .histogram_statistics import (
+    EVENT_STATISTICS_KEY,
+    EVENT_STATISTICS_METADATA,
+    event_statistics_channels,
+)
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, mdhisto_measured_bins
 from .pipeline import DatasetEntry, DatasetGroup, MaskSpec
 
@@ -161,10 +172,12 @@ def mdevent_dataset_group(
     normalization_path: str | Path | None = None,
     mask_path: str | Path | None = None,
     name: str | None = None,
+    trajectory_energy_policy: str = DEFAULT_TRAJECTORY_ENERGY_POLICY,
     progress_callback: Any | None = None,
 ) -> DatasetGroup:
     """Create lightweight run entries sharing one MDEvent source and setup."""
 
+    trajectory_energy_policy = validated_trajectory_energy_policy(trajectory_energy_policy)
     info = inspect_mdevent_workspace(path, progress_callback=progress_callback)
     shared = {
         "format": "mantid-mdevent",
@@ -178,6 +191,7 @@ def mdevent_dataset_group(
         "normalization_file": None if normalization_path is None else str(normalization_path),
         "mask_file": None if mask_path is None else str(mask_path),
         "incident_energy_override": None,
+        "trajectory_energy_policy": trajectory_energy_policy,
         "t0_override": None,
         "coordinate_frame": "HKL",
         "normalization": "proton_charge_and_detector_trajectory",
@@ -359,6 +373,7 @@ def bin_mdevent_group(
     symmetry_operations: Iterable[np.ndarray] | None = None,
     inherited_masks: Iterable[MaskSpec] | None = None,
     include_source_masks: bool = True,
+    _trajectory_reference_energy: float | None = None,
 ) -> MDHistoData:
     """Locally bin event data and a detector-trajectory MDNorm denominator.
 
@@ -377,6 +392,13 @@ def bin_mdevent_group(
         datasets if datasets is not None
         else (group.datasets if run_indices is None else (group.datasets[i] for i in run_indices))
     )
+    # Choose the common Ei before partitioning runs by user masks. A partition
+    # is only an accumulation detail, not a new first experiment.
+    if _trajectory_reference_energy is None:
+        energies = trajectory_incident_energies(
+            config, (run.metadata["incident_energy"] for run in selected_runs)
+        )
+        _trajectory_reference_energy = energies[0] if energies else None
     masks = list(group.masks if inherited_masks is None else inherited_masks)
     if include_source_masks and any(
         mask.enabled for mask in [*masks, *(mask for run in selected_runs for mask in run.masks)]
@@ -399,6 +421,7 @@ def bin_mdevent_group(
                 max_batch_bytes=max_batch_bytes, enforce_memory_limit=enforce_memory_limit,
                 progress_callback=progress_callback, symmetry_operations=symmetry,
                 include_source_masks=False,
+                _trajectory_reference_energy=_trajectory_reference_energy,
             ),
             minimum_samples=_validated_minimum_samples(minimum_samples),
             zero_count_upper=FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
@@ -458,6 +481,7 @@ def bin_mdevent_group(
     data_sum_flat = data_sum.ravel()
     variance_sum_flat = variance_sum.ravel()
     event_count_flat = event_count.ravel()
+    copy_covariance = {"within_bin_pairs_corrected": 0, "cross_bin_pairs_unrepresented": 0, "cross_terms_added": 0.0}
     for source_text in sources:
         source = Path(source_text)
         source_runs = [dataset for dataset in selected_runs if str(dataset.metadata["source_file"]) == source_text]
@@ -482,14 +506,20 @@ def bin_mdevent_group(
                         hkl = chosen[:, 5:8] @ transform.T
                         weights = chosen[:, 0] * signal_factors
                         variances = chosen[:, 1] * np.square(signal_factors)
-                        for operation in symmetry:
+                        copy_bins = np.full((len(symmetry), len(chosen)), -1, dtype=np.int64) if len(symmetry) > 1 else None
+                        for copy_index, operation in enumerate(symmetry):
                             transformed_hkl = hkl @ operation.T
                             coords = np.column_stack((transformed_hkl, chosen[:, 8])) @ basis_inverse
                             _accumulate_discrete_event_coordinates(
                                 coords, weights, variances, edges, shape,
                                 data_sum_flat, variance_sum_flat, event_count_flat,
                                 enabled=active_runs,
+                                bin_indices=None if copy_bins is None else copy_bins[copy_index],
                             )
+                        if copy_bins is not None:
+                            terms = accumulate_copy_covariance(copy_bins, variances, variance_sum_flat)
+                            for key in copy_covariance:
+                                copy_covariance[key] += terms[key]
                 processed += (stop - start) * len(symmetry)
                 if progress_callback is not None:
                     progress_callback(
@@ -513,6 +543,7 @@ def bin_mdevent_group(
         basis_inverse,
         symmetry,
         progress_callback=progress_callback,
+        reference_energy=_trajectory_reference_energy,
     )
     if progress_callback is not None:
         progress_callback(
@@ -525,23 +556,13 @@ def bin_mdevent_group(
         )
     total_events = float(np.sum(event_count))
     event_weight_rms = (
-        float(np.sqrt(np.sum(variance_sum) / total_events)) if total_events > 0.0 else 1.0
+        float(np.sqrt(max(0.0, np.sum(variance_sum) - copy_covariance["cross_terms_added"]) / total_events)) if total_events > 0.0 else 1.0
     )
-    # The accumulation arrays are no longer needed after this point.  Reuse
-    # their storage for the normalized result so a large reduction does not
-    # retain the sums while allocating equally large signal and error arrays.
+    # Retain the independent additive statistics. Confidence endpoints must
+    # never replace numerator variance or be propagated as standard errors.
     with np.errstate(divide="ignore", invalid="ignore"):
-        np.divide(data_sum, normalization, out=data_sum)
-        np.sqrt(variance_sum, out=variance_sum)
-        np.divide(variance_sum, normalization, out=variance_sum)
-    signal = data_sum
-    errors = variance_sum
-    covered_zero = (normalization > 0.0) & (event_count == 0.0)
-    errors[covered_zero] = (
-        FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER
-        * event_weight_rms
-        / normalization[covered_zero]
-    )
+        signal = data_sum / normalization
+        errors = np.sqrt(variance_sum) / normalization
     if progress_callback is not None:
         progress_callback(
             {
@@ -551,9 +572,7 @@ def bin_mdevent_group(
                 "message": "building MDEvent masks and output channels",
             }
         )
-    # ``covered_zero`` has served its purpose; reuse its boolean storage for
-    # the output mask rather than retaining two full-grid boolean arrays.
-    mask = covered_zero
+    mask = np.empty(shape, dtype=bool)
     np.isfinite(signal, out=mask)
     np.logical_and(mask, np.isfinite(errors), out=mask)
     np.logical_and(mask, normalization > 0.0, out=mask)
@@ -571,7 +590,7 @@ def bin_mdevent_group(
     # the immutable data containers adopt their storage instead of copying
     # every output grid.  The metadata and auxiliary channel deliberately
     # share the same immutable normalization denominator.
-    for output in (signal, errors, mask, event_count, normalization):
+    for output in (signal, errors, mask, event_count, normalization, data_sum, variance_sum):
         output.setflags(write=False)
     result = MDHistoData(
         axes=axes, signal=signal, errors=errors, mask=mask, num_events=event_count,
@@ -588,17 +607,13 @@ def bin_mdevent_group(
             "signal_semantics_source": "nfit_mdevent_reduction",
             "normalization_denominator": normalization,
             "zero_event_bins_are_measured": True,
-            "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
+            "zero_count_error_model": "observed_event_variance",
+            EVENT_STATISTICS_KEY: dict(EVENT_STATISTICS_METADATA),
+            "symmetry_covariance": copy_covariance,
             "event_weight_rms": event_weight_rms,
             "symmetry_operations_hkl": [operation.tolist() for operation in symmetry],
         },
-        auxiliary_channels={
-            "normalization_denominator": MDHistoChannel(
-                normalization,
-                label="Detector-trajectory normalization",
-                unit="arbitrary normalization units",
-            )
-        },
+        auxiliary_channels=event_statistics_channels(data_sum, variance_sum, normalization),
     )
     if progress_callback is not None:
         progress_callback(
@@ -742,6 +757,7 @@ def bin_mdevent_powder_group(
     progress_callback: Any | None = None,
     inherited_masks: Iterable[MaskSpec] | None = None,
     include_source_masks: bool = True,
+    _trajectory_reference_energy: float | None = None,
 ) -> MDHistoData:
     """Reduce MDEvents directly onto a powder ``|Q|, DeltaE`` grid.
 
@@ -763,6 +779,11 @@ def bin_mdevent_powder_group(
             else (group.datasets[index] for index in run_indices)
         )
     )
+    if _trajectory_reference_energy is None:
+        energies = trajectory_incident_energies(
+            config, (run.metadata["incident_energy"] for run in selected_runs)
+        )
+        _trajectory_reference_energy = energies[0] if energies else None
     masks = list(group.masks if inherited_masks is None else inherited_masks)
     if include_source_masks and any(
         mask.enabled for mask in [*masks, *(mask for run in selected_runs for mask in run.masks)]
@@ -779,6 +800,7 @@ def bin_mdevent_powder_group(
                 bin_edges=explicit_edges, minimum_samples=0.0,
                 datasets=subset, max_batch_bytes=max_batch_bytes,
                 progress_callback=progress_callback, include_source_masks=False,
+                _trajectory_reference_energy=_trajectory_reference_energy,
             ),
             minimum_samples=_validated_minimum_samples(minimum_samples),
             zero_count_upper=FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
@@ -902,6 +924,7 @@ def bin_mdevent_powder_group(
         edges,
         shape,
         progress_callback=progress_callback,
+        reference_energy=_trajectory_reference_energy,
     )
     total_events = float(np.sum(event_count))
     event_weight_rms = (
@@ -910,18 +933,9 @@ def bin_mdevent_powder_group(
         else 1.0
     )
     with np.errstate(divide="ignore", invalid="ignore"):
-        np.divide(data_sum, normalization, out=data_sum)
-        np.sqrt(variance_sum, out=variance_sum)
-        np.divide(variance_sum, normalization, out=variance_sum)
-    signal = data_sum
-    errors = variance_sum
-    covered_zero = (normalization > 0.0) & (event_count == 0.0)
-    errors[covered_zero] = (
-        FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER
-        * event_weight_rms
-        / normalization[covered_zero]
-    )
-    mask = covered_zero
+        signal = data_sum / normalization
+        errors = np.sqrt(variance_sum) / normalization
+    mask = np.empty(shape, dtype=bool)
     np.isfinite(signal, out=mask)
     np.logical_and(mask, np.isfinite(errors), out=mask)
     np.logical_and(mask, normalization > 0.0, out=mask)
@@ -940,7 +954,7 @@ def bin_mdevent_powder_group(
                 "message": "MDEvent powder reduction complete",
             }
         )
-    for output in (signal, errors, mask, event_count, normalization):
+    for output in (signal, errors, mask, event_count, normalization, data_sum, variance_sum):
         output.setflags(write=False)
     return MDHistoData(
         axes=axes,
@@ -956,7 +970,8 @@ def bin_mdevent_powder_group(
             "signal_semantics_source": "nfit_mdevent_powder_reduction",
             "normalization_denominator": normalization,
             "zero_event_bins_are_measured": True,
-            "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
+            "zero_count_error_model": "observed_event_variance",
+            EVENT_STATISTICS_KEY: dict(EVENT_STATISTICS_METADATA),
             "event_weight_rms": event_weight_rms,
             "powder_reduction": {
                 "coordinates": "|Q|,DeltaE",
@@ -967,13 +982,7 @@ def bin_mdevent_powder_group(
                 "minimum_samples": minimum_samples,
             },
         },
-        auxiliary_channels={
-            "normalization_denominator": MDHistoChannel(
-                normalization,
-                label="Detector-trajectory normalization",
-                unit="arbitrary normalization units",
-            )
-        },
+        auxiliary_channels=event_statistics_channels(data_sum, variance_sum, normalization),
     )
 
 
@@ -1229,6 +1238,7 @@ def _trajectory_payloads(
     symmetry_operations=None,
     *,
     progress_callback=None,
+    reference_energy=None,
 ):
     """Prepare the shared run and detector geometry used by trajectory reducers."""
 
@@ -1241,6 +1251,14 @@ def _trajectory_payloads(
     run_payloads = []
     detector_payloads = []
     datasets = list(datasets)
+    trajectory_energies = dict(zip(
+        (dataset.id for dataset in datasets),
+        trajectory_incident_energies(
+            config, (dataset.metadata["incident_energy"] for dataset in datasets),
+            reference_energy=reference_energy,
+        ),
+        strict=True,
+    ))
     dataset_total = len(datasets)
     if progress_callback is not None:
         progress_callback(
@@ -1270,7 +1288,7 @@ def _trajectory_payloads(
                     float(dataset.metadata["proton_charge"])
                     * float(dataset.fit_weight)
                 )
-                ei = config.get("incident_energy_override") or float(dataset.metadata["incident_energy"])
+                ei = trajectory_energies[dataset.id]
                 original_bounds = np.asarray(experiment["logs/processed_histogram_bins/value"][()], dtype=float)
                 gonio = _read_goniometer_matrix(experiment)
                 ub = np.asarray(config["ub_matrix"], dtype=float)
@@ -1327,6 +1345,7 @@ def _trajectory_normalization(
     symmetry_operations=None,
     *,
     progress_callback=None,
+    reference_energy=None,
 ):
     detector_payloads, run_payloads = _trajectory_payloads(
         group,
@@ -1334,6 +1353,7 @@ def _trajectory_normalization(
         basis_inverse,
         symmetry_operations,
         progress_callback=progress_callback,
+        reference_energy=reference_energy,
     )
     return _trajectory_normalization_from_payloads(
         detector_payloads, run_payloads, edges, shape,
@@ -1647,6 +1667,7 @@ def _powder_trajectory_normalization(
     shape,
     *,
     progress_callback: Any | None = None,
+    reference_energy=None,
 ):
     """Accumulate the radial detector-trajectory denominator."""
 
@@ -1665,6 +1686,15 @@ def _powder_trajectory_normalization(
     )
     result = np.zeros(shape)
     payloads = []
+    datasets = list(datasets)
+    trajectory_energies = dict(zip(
+        (dataset.id for dataset in datasets),
+        trajectory_incident_energies(
+            config, (dataset.metadata["incident_energy"] for dataset in datasets),
+            reference_energy=reference_energy,
+        ),
+        strict=True,
+    ))
     for source_text in sorted(
         {str(dataset.metadata["source_file"]) for dataset in datasets}
     ):
@@ -1699,9 +1729,7 @@ def _powder_trajectory_normalization(
                     float(dataset.metadata["proton_charge"])
                     * float(dataset.fit_weight)
                 )
-                incident_energy = config.get("incident_energy_override") or float(
-                    dataset.metadata["incident_energy"]
-                )
+                incident_energy = trajectory_energies[dataset.id]
                 energy_bounds = np.asarray(
                     experiment["logs/processed_histogram_bins/value"][()], dtype=float
                 )
@@ -2079,22 +2107,25 @@ def _accumulate_powder_detector_trajectory(
 
 def _accumulate_discrete_event_coordinates(
     coordinates, weights, variances, edges, shape,
-    data_sum, variance_sum, event_count, *, enabled=None,
+    data_sum, variance_sum, event_count, *, enabled=None, bin_indices=None,
 ):
     """Shared ordered accumulation for already projected neutron events."""
     compiled = getattr(_MDEVENT_NUMBA, "accumulate_discrete_event_coordinates", None)
     if compiled is not None:
-        compiled(
+        arguments = (
             coordinates, weights, variances, enabled,
             tuple(np.asarray(edge, dtype=float) for edge in edges),
             np.asarray(shape, dtype=np.int64),
             data_sum.ravel(), variance_sum.ravel(), event_count.ravel(),
         )
+        compiled(*arguments) if bin_indices is None else compiled(*arguments, bin_indices)
         return
     flat = _flat_bin_indices(coordinates, edges, shape)
     valid = flat >= 0
     if enabled is not None:
         valid &= enabled
+    if bin_indices is not None:
+        bin_indices[:] = np.where(valid, flat, -1)
     indices = flat[valid]
     values = weights[valid]
     np.add.at(data_sum.ravel(), indices, values)

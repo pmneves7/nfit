@@ -611,7 +611,7 @@ def test_raw_dgs_integrates_retained_pulse_charge_in_microampere_hours(tmp_path)
     assert charge == pytest.approx(200.0 / 3.6e9)
 
 
-def test_raw_dgs_feldman_cousins_zero_error_is_normalized(monkeypatch, tmp_path):
+def test_raw_dgs_empty_observation_retains_zero_variance_and_exposure(monkeypatch, tmp_path):
     source = tmp_path / "SEQ_42.nxs.h5"
     _write_raw_dgs(source)
     group = raw_dgs_dataset_group([source])
@@ -626,7 +626,11 @@ def test_raw_dgs_feldman_cousins_zero_error_is_normalized(monkeypatch, tmp_path)
 
     assert result.num_events.item() == 0.0
     assert result.signal.item() == 0.0
-    assert result.errors.item() == pytest.approx(1.29 / 2.0)
+    assert result.errors.item() == 0.0
+    assert result.auxiliary_channels["event_signal_numerator"].values.item() == 0.0
+    assert result.auxiliary_channels["event_variance_numerator"].values.item() == 0.0
+    assert result.auxiliary_channels["normalization_denominator"].values.item() == 2.0
+    assert not result.mask.item()
 
 
 def test_monitor_fit_discovers_non_sequoia_monitor_names(tmp_path):

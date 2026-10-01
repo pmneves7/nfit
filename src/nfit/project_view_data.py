@@ -9,6 +9,7 @@ import numpy as np
 
 from .background_channels import scale_background_channels
 from .dataset import PointData4D, PointListData
+from .histogram_statistics import scaled_event_statistics_channels
 from .mdhisto import MDHistoData
 from .pipeline import DatasetEntry
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY, with_paired_spectral_channels
@@ -157,10 +158,10 @@ def _apply_kinematic_normalization_to_view(
     metadata = dict(data.metadata)
     metadata["nfit_kinematic_kf_ki_normalized"] = True
     metadata["nfit_kinematic_kf_ki_source"] = "Ei" if incident is not None else "Ef"
-    return replace(
-        data,
+    return data.with_updates(
         signal=np.asarray(data.signal, dtype=float) * factor,
         errors=np.asarray(data.errors, dtype=float) * np.abs(factor),
+        auxiliary_channels=scaled_event_statistics_channels(data, factor),
         metadata=metadata,
     )
 
@@ -221,10 +222,10 @@ def _apply_dataset_scale(
         return data
     if isinstance(data, MDHistoData):
         data = scale_background_channels(data, scale)
-        return replace(
-            data,
+        return data.with_updates(
             signal=np.asarray(data.signal, dtype=float) * scale,
             errors=np.asarray(data.errors, dtype=float) * abs(scale),
+            auxiliary_channels=scaled_event_statistics_channels(data, scale),
         )
     if isinstance(data, PointListData):
         columns = {name: np.array(values, dtype=float) for name, values in data.columns.items()}

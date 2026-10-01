@@ -100,6 +100,7 @@ from .crystal import (
     validate_crystal,
 )
 from .dataset import PointData4D, PointListData, from_arrays
+from .dgs_normalization import set_dgs_trajectory_energy_policy
 from .electronic_backends import (
     ElectronicBackendValidation,
     ElectronicEigensystem,
@@ -1252,6 +1253,7 @@ __all__ = [
     "load_detector_normalization",
     "load_mdevent_run_points",
     "mdevent_dataset_group",
+    "set_dgs_trajectory_energy_policy",
     "bin_mdevent_group",
     "bin_mdevent_powder_group",
     "project_powder_background_mdevent",

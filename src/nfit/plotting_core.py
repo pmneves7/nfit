@@ -12,6 +12,16 @@ from .background_channels import available_background_channels, background_chann
 from .colormaps import IMAGE_COLORMAPS
 from .dataset import PointData4D, PointListData
 from .histogram_reduction import normalization_denominator, pool_normalized_histogram
+from .histogram_statistics import (
+    EVENT_STATISTICS_CHANNELS,
+    EVENT_STATISTICS_KEY,
+    EVENT_STATISTICS_METADATA,
+    NORMALIZATION_DENOMINATOR,
+    has_event_statistics,
+    normalized_event_statistics,
+    pool_event_statistics,
+    selected_event_statistics,
+)
 from .mdhisto import (
     MDHistoData,
     mdhisto_coverage_fraction,
@@ -2603,7 +2613,7 @@ class MDHistoSliceViewer:
         if getattr(self, "is_point_list", False):
             return self._point_slice_arrays()
         selections = self._normalized_selections()
-        signal, variance, events, mask, coverage, coverage_mask = self._reduce_arrays(
+        signal, variance, events, mask, coverage, coverage_mask, event_statistics = self._reduce_arrays(
             selections
         )
 
@@ -2637,6 +2647,16 @@ class MDHistoSliceViewer:
                 coverage_mask, (y_pos, x_pos), (0, 1)
             ),
         }
+        if event_statistics is not None:
+            view[EVENT_STATISTICS_KEY] = dict(EVENT_STATISTICS_METADATA)
+            for name, values in zip(
+                (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR), event_statistics, strict=True,
+            ):
+                view[name] = np.moveaxis(values, (y_pos, x_pos), (0, 1))
+        else:
+            self.CHANNELS = tuple(name for name in self.CHANNELS if name not in EVENT_STATISTICS_CHANNELS)
+            if self.channel in EVENT_STATISTICS_CHANNELS:
+                self.channel = "signal"
         if self.channel in available_background_channels(self.data):
             values2d, errors2d = self._slice_background_channel(
                 self.channel,
@@ -2647,7 +2667,9 @@ class MDHistoSliceViewer:
             if errors2d is not None:
                 view[f"{self.channel}_errors"] = errors2d
         for name in self._metadata_channel_names():
-            if name == "coverage_fraction":
+            if name == "coverage_fraction" or name in EVENT_STATISTICS_CHANNELS:
+                continue
+            if name == NORMALIZATION_DENOMINATOR and event_statistics is not None:
                 continue
             values2d = self._slice_metadata_channel(name, selections)
             if self.masked:
@@ -2724,7 +2746,13 @@ class MDHistoSliceViewer:
             events = np.where(mask, 0.0, events)
             coverage = np.where(mask, 0.0, coverage)
         denominator = normalization_denominator(self.data, tuple(index))
-        if denominator is not None:
+        event_statistics = selected_event_statistics(self.data, tuple(index))
+        if event_statistics is not None:
+            event_statistics = pool_event_statistics(
+                *event_statistics, reduce_axes, mask=mask if self.masked else None,
+            )
+            signal, variance = normalized_event_statistics(*event_statistics)
+        elif denominator is not None:
             signal, variance, _ = pool_normalized_histogram(
                 signal, variance, denominator, reduce_axes, mask=mask if self.masked else None,
             )
@@ -2759,7 +2787,7 @@ class MDHistoSliceViewer:
         signal = np.where(coverage_mask, np.nan, signal)
         variance = np.where(coverage_mask, np.nan, variance)
         signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
-        return signal, variance, events, mask, coverage, coverage_mask
+        return signal, variance, events, mask, coverage, coverage_mask, event_statistics
 
     def _metadata_channel_names(self) -> tuple[str, ...]:
         """Return grid-shaped float channels stored in metadata (fit results)."""
@@ -2777,6 +2805,7 @@ class MDHistoSliceViewer:
             for name in self.data.auxiliary_channels
             if name not in type(self).CHANNELS
             and name not in diagnostic_names
+            and (name not in EVENT_STATISTICS_CHANNELS or has_event_statistics(self.data))
         )
         return tuple(names)
 
@@ -2861,6 +2890,15 @@ class MDHistoSliceViewer:
         self.CHANNELS = (*type(self).CHANNELS, *extra_channels)
         self.CHANNEL_LABELS = {
             **type(self).CHANNEL_LABELS,
+            **({
+                "errors": "Observed event standard error",
+                "num_events": (
+                    "Contributing histogram cells"
+                    if self.data.metadata.get("num_events_semantics") == "contributing_histogram_cells"
+                    else "Event contributions"
+                ),
+                "normalization_denominator": "Exposure",
+            } if has_event_statistics(self.data) else {}),
             **(
                 {"signal": str(self.data.metadata["signal_label"])}
                 if self.data.metadata.get("signal_label")
@@ -3684,7 +3722,32 @@ def _coarsen_mdhisto_view_axis(
         },
     }
     handled: set[str] = set()
+    if (
+        isinstance(view.get(EVENT_STATISTICS_KEY), dict)
+        and all(name in view for name in (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR))
+    ):
+        statistics = pool_event_statistics(
+            *(
+                _block_view(np.asarray(view[name], dtype=float), factor, array_axis, 0.)
+                for name in (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR)
+            ),
+            (-1,),
+            mask=_block_view(
+                np.asarray(view.get("mask", np.zeros(reference_shape, dtype=bool))),
+                factor, array_axis, True,
+            ),
+        )
+        signal, variance = normalized_event_statistics(*statistics)
+        result["signal"] = np.moveaxis(signal, -1, array_axis)
+        result["errors"] = np.moveaxis(np.sqrt(variance), -1, array_axis)
+        for name, values in zip(
+            (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR), statistics, strict=True,
+        ):
+            result[name] = np.moveaxis(values, -1, array_axis)
+        handled.update(("signal", "errors", *EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR))
     for value_name, error_name in paired_errors.items():
+        if value_name in handled:
+            continue
         if value_name not in view or error_name not in view:
             continue
         values = np.asarray(view[value_name])
@@ -3728,8 +3791,9 @@ def coarsen_mdhisto_view(
 ) -> dict[str, np.ndarray]:
     """Combine displayed bins into integer multiples of their native spacing.
 
-    Values with uncertainties use inverse-variance weighting. Event and
-    normalization counts are summed, coverage-like values are averaged, and a
+    Explicit count histograms pool their event numerators, variances, and
+    exposures. Other values with uncertainties use inverse-variance weighting.
+    Event and normalization counts are summed, coverage-like values are averaged, and a
     coarse mask is set only when all contributing native bins are masked. The
     input mapping and its arrays are never modified.
     """
@@ -3766,6 +3830,9 @@ def smooth_mdhisto_view(
         return result
     if not any(value > 0.0 for value in sigma):
         return result
+    result.pop(EVENT_STATISTICS_KEY, None)
+    for name in EVENT_STATISTICS_CHANNELS:
+        result.pop(name, None)
     excluded = {
         "combined_mask",
         "mask",
@@ -3776,7 +3843,7 @@ def smooth_mdhisto_view(
     }
     for name, values in view.items():
         array = np.asarray(values)
-        if name in excluded or array.shape != reference.shape or array.dtype == bool:
+        if name in excluded or name in EVENT_STATISTICS_CHANNELS or array.shape != reference.shape or array.dtype == bool:
             continue
         if name == "errors":
             smoothed = gaussian_smooth_uncertainty(array, sigma)

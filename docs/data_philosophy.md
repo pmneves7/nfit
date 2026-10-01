@@ -233,12 +233,14 @@ momentum magnitude and integrates the same detector trajectories through
 powder bins; sample-goniometer rotations do not affect $|\mathbf Q|$.
 
 Detector coverage and event count are distinct. A covered bin with no events
-is a measured zero; a bin without detector coverage is masked. Because an empty
-bin has no event variance, nfit assigns it 1.29 times the estimated uncertainty
-of one representative event in that bin. This is the 68.27% Feldman–Cousins
-upper endpoint for zero observed events and zero known background. See
-[Measured-zero uncertainties](data_import.md#measured-zero-uncertainties)
-for the calculation and [References](references.md) for the citation.
+is a measured zero; a bin without detector coverage is masked. Empty bins retain zero observed event variance and positive exposure;
+uncertainty about their unknown intensity is a separate confidence or likelihood
+statement. Native count histograms preserve additive numerator, variance, and
+exposure as immutable channels through lazy archives and exposure pooling.
+Primary-data replacements discard inherited source statistics unless explicitly
+updated; unsupported background transformations must not silently inherit a count
+likelihood. See [Measured-zero uncertainties](data_import.md#measured-zero-uncertainties)
+and [event dependencies](physics_conventions.md#event-copies-and-covariance).
 
 ## Measurement statistics and binning
 

@@ -812,13 +812,10 @@ def test_native_mdevent_covered_zero_bins_are_finite_measured_zeros(
     assert np.count_nonzero(covered_zero) == 1
     assert np.all(result.signal[covered_zero] == 0.0)
     assert np.all(np.isfinite(result.errors[covered_zero]))
-    assert np.all(result.errors[covered_zero] > 0.0)
-    np.testing.assert_allclose(
-        result.errors[covered_zero],
-        1.29 * result.metadata["event_weight_rms"] / result.metadata["normalization_denominator"][covered_zero],
-    )
+    assert np.all(result.errors[covered_zero] == 0.0)
+    assert np.all(result.auxiliary_channels["event_variance_numerator"].values[covered_zero] == 0.0)
     assert result.metadata["zero_count_error_model"] == (
-        "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight"
+        "observed_event_variance"
     )
     assert not np.any(result.mask[covered_zero])
     assert np.all(_mdhisto_channel_array(result, "signal")[covered_zero] == 0.0)
@@ -830,7 +827,9 @@ def test_native_mdevent_covered_zero_bins_are_finite_measured_zeros(
     assert result.mask is container_inputs["mask"]
     assert result.num_events is container_inputs["num_events"]
     fit_points = _point_data_from_mdhisto_view(result)
-    assert np.count_nonzero(fit_points.valid_mask()) == 2
+    # Gaussian weighted fits exclude zero observed standard errors; a Poisson
+    # interval is separate and does not turn this observation into certainty.
+    assert np.count_nonzero(fit_points.valid_mask()) == 1
 
 
 def test_native_mdevent_powder_shares_immutable_normalization_storage(tmp_path):
@@ -966,7 +965,7 @@ def test_trajectory_normalization_uses_each_runs_energy_and_is_additive(
             logs = handle[f"MDEventWorkspace/experiment{index}/logs"]
             logs["Ei/value"][...] = [ei]
             logs["processed_histogram_bins/value"][...] = [-3.0, 3.0]
-    group = mdevent_dataset_group(source)
+    group = mdevent_dataset_group(source, trajectory_energy_policy="per_run")
     edges = ([-0.01, 0.01], [-0.01, 0.01], [0.09, 0.11], [0.0, 3.0])
     kwargs = dict(
         lower=[0, 0, 0.1, 1.5], upper=[0, 0, 0.1, 1.5],

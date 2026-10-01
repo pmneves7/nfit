@@ -2992,11 +2992,25 @@ class QtMDHistoSliceViewer:
             items = list(self.model.point_channels)
         else:
             items = list(self.model.CHANNELS)
+        from .histogram_statistics import EVENT_STATISTICS_CHANNELS, has_event_statistics
         from .qt_channel_menu import populate_channel_combo
 
+        point_list = getattr(self.model, "is_point_list", False)
+        event_statistics = (
+            not point_list and has_event_statistics(self.data)
+            and all(name in items for name in EVENT_STATISTICS_CHANNELS)
+        )
         populate_channel_combo(
             self.channel_combo, items, self.model.channel,
-            point_list=getattr(self.model, "is_point_list", False),
+            point_list=point_list,
+            labels={**self.model.CHANNEL_LABELS, "normalization_denominator": "Exposure"} if event_statistics else None,
+            event_statistics=event_statistics,
+            tooltips={
+                "num_events": (
+                    "Number of source histogram cells contributing to this bin; "
+                    "this is not the number of independent neutron events."
+                ),
+            } if event_statistics and self.data.metadata.get("num_events_semantics") == "contributing_histogram_cells" else None,
         )
 
     def _non_singleton_dims(self) -> list[int]:

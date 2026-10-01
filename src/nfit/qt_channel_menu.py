@@ -2,12 +2,26 @@
 
 from PySide6 import QtCore, QtWidgets
 
+from .histogram_statistics import EVENT_SIGNAL_NUMERATOR, EVENT_VARIANCE_NUMERATOR
+
 _GROUPS = (
-    ("Signal channels", ("signal", "unsubtracted", "background", "errors",
-                "imported_signal", "scattering_cross_section")),
+    (
+        "Signal channels",
+        (
+            "signal",
+            "unsubtracted",
+            "background",
+            "errors",
+            "imported_signal",
+            "scattering_cross_section",
+        ),
+    ),
+    ("Event statistics", (EVENT_SIGNAL_NUMERATOR, EVENT_VARIANCE_NUMERATOR)),
     ("Fit diagnostics", ("fit", "residual")),
-    ("Coverage and normalization", ("num_events", "coverage_fraction",
-                                    "normalization_denominator")),
+    (
+        "Coverage and normalization",
+        ("num_events", "coverage_fraction", "normalization_denominator"),
+    ),
     ("Masks", ("combined_mask", "file_mask", "nfit_mask", "coverage_mask")),
 )
 _LABELS = {
@@ -29,6 +43,35 @@ _LABELS = {
 }
 
 
+_EVENT_LABELS = {
+    "errors": "Observed event standard error",
+    "num_events": "Event contributions",
+    "normalization_denominator": "Exposure",
+    EVENT_SIGNAL_NUMERATOR: "Event signal numerator",
+    EVENT_VARIANCE_NUMERATOR: "Event numerator variance",
+}
+_EVENT_TOOLTIPS = {
+    "errors": (
+        "Square root of the accumulated event variance divided by known exposure. "
+        "A measured zero has zero observed event variance; this is not a confidence "
+        "interval for its unknown rate."
+    ),
+    "num_events": (
+        "Number of event contributions in the bin. Symmetry copies can share an "
+        "original event and do not create independent measurements."
+    ),
+    "normalization_denominator": (
+        "Known normalization exposure. Covered zero-count measurements contribute "
+        "exposure. Uncertainty in the exposure or calibration is not included."
+    ),
+    EVENT_SIGNAL_NUMERATOR: "Sum of corrected event weights before division by exposure.",
+    EVENT_VARIANCE_NUMERATOR: (
+        "Accumulated event numerator variance before division by exposure squared. "
+        "The diagonal variance excludes covariance between reused event contributions."
+    ),
+}
+
+
 class ChannelComboBox(QtWidgets.QComboBox):
     """Keep identifier-based selection compatible with earlier viewer widgets."""
 
@@ -40,8 +83,24 @@ class ChannelComboBox(QtWidgets.QComboBox):
             super().setCurrentText(text)
 
 
-def populate_channel_combo(combo, channels, selected, *, point_list=False):
+def populate_channel_combo(
+    combo,
+    channels,
+    selected,
+    *,
+    point_list=False,
+    labels=None,
+    tooltips=None,
+    event_statistics=False,
+):
     """Group histogram diagnostics without reading any numerical payloads."""
+    channel_labels = dict(_LABELS)
+    channel_tooltips = {}
+    if event_statistics and not point_list:
+        channel_labels.update(_EVENT_LABELS)
+        channel_tooltips.update(_EVENT_TOOLTIPS)
+    channel_labels.update(labels or {})
+    channel_tooltips.update(tooltips or {})
     blocker = QtCore.QSignalBlocker(combo)
     try:
         combo.clear()
@@ -67,9 +126,10 @@ def populate_channel_combo(combo, channels, selected, *, point_list=False):
                 font.setBold(True)
                 item.setFont(font)
             for name in names:
-                label = name if point_list else _LABELS.get(name, name)
+                label = name if point_list else channel_labels.get(name, name)
                 combo.addItem(label, name)
-                combo.setItemData(combo.count() - 1, name, QtCore.Qt.ItemDataRole.ToolTipRole)
+                tooltip = name if point_list else channel_tooltips.get(name, name)
+                combo.setItemData(combo.count() - 1, tooltip, QtCore.Qt.ItemDataRole.ToolTipRole)
         combo.setCurrentIndex(combo.findData(selected))
     finally:
         del blocker

@@ -7,6 +7,14 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 
+from .histogram_statistics import (
+    EVENT_SIGNAL_NUMERATOR,
+    EVENT_STATISTICS_KEY,
+    EVENT_STATISTICS_METADATA,
+    EVENT_VARIANCE_NUMERATOR,
+    event_statistics_channels,
+    selected_event_statistics,
+)
 from .mdhisto import MDHistoChannel, MDHistoData, mdhisto_measured_bins
 from .pipeline import DatasetEntry, MaskSpec
 from .project_masks import _mdhisto_with_nfit_masks
@@ -45,6 +53,7 @@ def reduce_masked_event_runs(
         return finish(reduce(list(runs)))
 
     first = None
+    have_statistics = True
     for subset, masks in partitions.values():
         data = reduce(subset)
         masked = _mdhisto_with_nfit_masks(DatasetEntry("Event masks", None, masks=masks), data=data)
@@ -59,8 +68,15 @@ def reduce_masked_event_runs(
             all_excluded = np.ones(data.shape, dtype=bool)
         valid = mdhisto_measured_bins(masked)
         exposure = np.where(valid, data.metadata["normalization_denominator"], 0.0)
-        numerator += np.where(valid, data.signal, 0.0) * exposure
-        variance += np.square(np.where(valid & (data.num_events > 0), data.errors, 0.0) * exposure)
+        statistics = selected_event_statistics(data)
+        if statistics is not None:
+            count_sum, variance_sum, _ = statistics
+            numerator += np.where(valid, count_sum, 0.0)
+            variance += np.where(valid, variance_sum, 0.0)
+        else:
+            have_statistics = False
+            numerator += np.where(valid, data.signal, 0.0) * exposure
+            variance += np.square(np.where(valid & (data.num_events > 0), data.errors, 0.0) * exposure)
         denominator += exposure
         events += np.where(valid, data.num_events, 0.0)
         all_excluded &= masked.metadata.get("nfit_mask", False)
@@ -72,7 +88,8 @@ def reduce_masked_event_runs(
     total_events = float(np.sum(events))
     event_weight_rms = float(np.sqrt(np.sum(variance) / total_events)) if total_events else 1.0
     covered_zero = measured & (events == 0)
-    errors[covered_zero] = zero_count_upper * event_weight_rms / denominator[covered_zero]
+    if not have_statistics:
+        errors[covered_zero] = zero_count_upper * event_weight_rms / denominator[covered_zero]
     metadata = dict(first.metadata)
     metadata.update(
         normalization_denominator=denominator,
@@ -86,6 +103,14 @@ def reduce_masked_event_runs(
     channels["normalization_denominator"] = MDHistoChannel(
         denominator, label="Detector-trajectory normalization", unit="arbitrary normalization units"
     )
+    if have_statistics:
+        metadata[EVENT_STATISTICS_KEY] = dict(EVENT_STATISTICS_METADATA)
+        metadata["zero_count_error_model"] = "observed_event_variance"
+        channels.update(event_statistics_channels(numerator, variance, denominator))
+    else:
+        metadata.pop(EVENT_STATISTICS_KEY, None)
+        channels.pop(EVENT_SIGNAL_NUMERATOR, None)
+        channels.pop(EVENT_VARIANCE_NUMERATOR, None)
     return finish(first.with_updates(
         signal=signal, errors=errors, mask=~measured, num_events=events,
         metadata=metadata, auxiliary_channels=channels,

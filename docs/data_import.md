@@ -445,7 +445,7 @@ caches made with the earlier reduction are stale and require regeneration from
 the raw files.
 
 Bins without detector coverage are masked. Covered bins with no events are
-measured zeros and retain a finite uncertainty.
+measured zeros and retain their exposure and observed event variance.
 
 ## MDEvent data
 
@@ -462,20 +462,22 @@ Each coordinate-axis row is an HKLE basis vector. The four rows must be linearly
 independent; momentum rows use only H, K, and L, while the energy row uses E.
 Bounds and resolution are expressed in that basis.
 
-Without an incident-energy override, each run's normalization trajectory uses
-that run's stored incident energy $E_i$ (meV), goniometer, detector geometry,
-and retained proton charge. Sharing identical detector geometry between runs
-does not share their incident energies. Combining runs or changing their order
-must give the same normalization as adding their separate normalization grids.
+**Trajectory Ei** controls the incident energy $E_i$ (meV) used for normalization.
+The default **First run Ei (Mantid MDNorm)** uses the first participating run's
+full-precision resolved energy for all trajectories. **Each run Ei** uses each
+run's resolved energy. An explicit positive shared Ei override takes precedence.
+The choice is saved, remains editable after import, and invalidates affected
+histograms while retaining reusable raw-event caches. Each run retains its own
+goniometer, detector geometry, charge, and accepted energy bounds. Geometry
+sharing does not change these run settings.
 
-Mantid 6.16's `MDNorm` initializes its direct-geometry trajectory energy from
-the first experiment in a merged workspace
+This follows Mantid 6.16's first-experiment trajectory convention
 ([implementation](https://github.com/mantidproject/mantid/blob/v6.16.0/Framework/MDAlgorithms/src/MDNorm.cpp)).
-Consequently, small differences from nfit can occur when nominally identical
-energy scans have different measured $E_i$. To isolate this assumption in a
-comparison, hold the events, axes, masks, calibration, and symmetry fixed and
-compare the normalization arrays using a common trajectory energy. This is a
-diagnostic comparison, not a reason to replace measured run energies.
+Reordering participating runs can change the default reference; use an override
+when an explicit reference energy is required. The per-run choice is available
+when physical differences between measured energies should enter normalization.
+Neither choice changes stored MDE coordinates or the per-run Ei/T0 used to
+reconstruct raw events. Pulse-resolved Ei is not available in this importer.
 
 An incident-energy override changes normalization trajectories. A time-zero
 override cannot move coordinates already stored in an MDEvent workspace.
@@ -490,39 +492,36 @@ Event histograms distinguish:
 - covered bins with zero accepted events; and
 - bins with no detector coverage.
 
-For nonempty bins, nfit stores
+For independent events, the corrected count numerator is $C=\sum_j w_j$ and
+its observed variance is $V=\sum_j w_j^2$, where $w_j$ is a dimensionless corrected
+event weight. With known normalization exposure $N>0$, intensity is $C/N$ and
+the observed event standard error is $\sqrt{V}/N$. Same-event symmetry copies
+landing in one bin include their covariance cross terms in $V$.
 
-```text
-signal = sum(signal_i) / D
-sigma  = sqrt(sum(errorSquared_i)) / D
-```
+Covered empty bins retain $C=V=0$, their exposure, and zero **observed event
+standard error**. They remain measured cells. This zero is not a confidence
+statement about the unknown intensity. Uncovered bins remain masked and do not
+contribute exposure. Gaussian weighted fits exclude zero standard errors;
+count likelihoods and confidence intervals are separate statistical models.
 
-where $D$ is the normalization denominator. An empty covered bin has no event
-variance, so nfit uses
+Native raw-DGS and MDE histograms retain immutable numerator, numerator variance,
+and exposure channels in the project archive. These load with their histogram,
+not when opening the project or enumerating its viewer catalog. Hidden-axis
+slicing and display coarsening pool their statistics before division. A general
+inverse-variance rebin remains a different estimator and does not retain this
+count-statistics contract. See
+[confidence intervals and dependencies](physics_conventions.md#covered-empty-cells-and-confidence-intervals).
 
-```text
-sigma_zero = 1.29 * representative_event_scale / D
-```
+`nfit.histogram_statistics.poisson_rate_interval` supplies a separate exact
+Garwood interval for independent integer counts with known exposure and a known
+constant positive event weight. Compute it after pooling the final estimate.
+It is not automatically applied to heterogeneous event corrections, reused
+symmetry events, signed backgrounds, or uncertain normalization. A global RMS
+weight cannot establish the weight distribution of an empty fringe cell.
 
-The representative scale is the root-mean-square corrected event uncertainty
-over contributions landing inside the requested output histogram, including
-accepted symmetry copies. Changing the histogram extent can therefore change
-this scale. It is not a locally measured weight scale for an empty cell.
-Multiplying an ordinary Poisson interval by this scale is a heuristic for
-weighted events; its interval coverage has not been established.
-The factor 1.29 is the 68.27% Feldman--Cousins upper endpoint
-for zero observed events and zero known background. Uncovered bins remain
-masked. This fitting convention avoids assigning infinite weight to a measured
-zero; it does not make the underlying Poisson interval symmetric.
-
-Current pooling subsequently treats these upper endpoints as ordinary standard
-errors. Fine-then-coarse pooling can therefore inflate errors relative to direct
-coarse binning. This is a known statistical limitation; see
-[covered empty cells](physics_conventions.md#covered-empty-cells-current-limitation).
-Event variance and final-bin confidence intervals need separate propagation.
-A weakly exposed cell with no events can legitimately have a large upper limit
-for its unknown intensity. Mantid's zero accumulated event variance for that
-cell does not establish zero uncertainty about the unknown intensity.
+Old saved histograms retain their recorded errors when loaded directly. Updated
+native binning cache signatures require recomputation before old histograms are
+reused as current native results; the reduced raw-event caches remain reusable.
 
 ## UB matrices
 

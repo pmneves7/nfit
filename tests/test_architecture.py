@@ -32,6 +32,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "raw_dgs_monitors.py",
     PACKAGE_ROOT / "raw_dgs_pulses.py",
     PACKAGE_ROOT / "histogram_reduction.py",
+    PACKAGE_ROOT / "dgs_normalization.py",
     PACKAGE_ROOT / "composite_spectral.py",
     PACKAGE_ROOT / "rebin_cache.py",
     PACKAGE_ROOT / "slice_viewer_cache.py",
@@ -254,7 +255,7 @@ def test_project_data_services_do_not_import_qt(module_name: str) -> None:
     assert not any("PySide" in module or module.startswith("qt_") for module in imported_modules)
 
 
-@pytest.mark.parametrize("module", ["raw_dgs_monitors", "raw_dgs_pulses", "histogram_reduction"])
+@pytest.mark.parametrize("module", ["raw_dgs_monitors", "raw_dgs_pulses", "histogram_reduction", "dgs_normalization"])
 def test_reduction_services_do_not_import_their_coordinators(module):
     tree = ast.parse((PACKAGE_ROOT / f"{module}.py").read_text())
     imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}

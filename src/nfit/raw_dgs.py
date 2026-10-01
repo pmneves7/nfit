@@ -23,10 +23,20 @@ from typing import Any
 
 import numpy as np
 
+from .dgs_normalization import (
+    DEFAULT_TRAJECTORY_ENERGY_POLICY,
+    trajectory_incident_energies,
+    validated_trajectory_energy_policy,
+)
+from .event_covariance import accumulate_copy_covariance
+from .histogram_statistics import (
+    EVENT_STATISTICS_KEY,
+    EVENT_STATISTICS_METADATA,
+    event_statistics_channels,
+)
 from .mdevent import (
     _MDEVENT_NUMBA,
     ENERGY_TO_K2,
-    FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
     MDEVENT_TRAJECTORY_BATCH_TASKS,
     _accumulate_detector_trajectory,
     _accumulate_discrete_event_coordinates,
@@ -129,10 +139,12 @@ def raw_dgs_dataset_group(
     normalization_path: str | Path | None = None,
     mask_path: str | Path | None = None,
     name: str | None = None,
+    trajectory_energy_policy: str = DEFAULT_TRAJECTORY_ENERGY_POLICY,
     progress_callback: Any | None = None,
 ) -> DatasetGroup:
     """Create lightweight raw-run entries sharing reduction and sample setup."""
 
+    trajectory_energy_policy = validated_trajectory_energy_policy(trajectory_energy_policy)
     resolved_paths = [Path(path) for path in paths]
     if resolved_paths:
         from .corelli import (
@@ -206,6 +218,7 @@ def raw_dgs_dataset_group(
         "normalization_file": None if normalization_path is None else str(normalization_path),
         "mask_file": None if mask_path is None else str(mask_path),
         "incident_energy_override": None,
+        "trajectory_energy_policy": trajectory_energy_policy,
         "t0_override": None,
         "energy_min_fraction": -0.95,
         "energy_max_fraction": 0.95,
@@ -381,6 +394,7 @@ def bin_raw_dgs_group(
     normalization_payloads_by_dataset_id = {}
     cache_hits = 0
     cache_misses = 0
+    copy_covariance = {"within_bin_pairs_corrected": 0, "cross_bin_pairs_unrepresented": 0, "cross_terms_added": 0.0}
     for dataset in selected:
         source = Path(dataset.metadata["source_file"])
         use_cache = bool(config.get("cache_reduced_events", True))
@@ -451,11 +465,17 @@ def bin_raw_dgs_group(
                             np.column_stack((hkl @ operation.T, energy)) @ basis_inverse
                             for operation in symmetry
                         )
-                    for coords in coordinate_blocks:
+                    copy_bins = np.full((len(symmetry), len(weights)), -1, dtype=np.int64) if not powder and len(symmetry) > 1 else None
+                    for copy_index, coords in enumerate(coordinate_blocks):
                         _accumulate_discrete_event_coordinates(
                             coords, weights, None, edges, shape,
                             data_sum, variance_sum, event_count,
+                            bin_indices=None if copy_bins is None else copy_bins[copy_index],
                         )
+                    if copy_bins is not None:
+                        terms = accumulate_copy_covariance(copy_bins, weights**2, variance_sum)
+                        for key in copy_covariance:
+                            copy_covariance[key] += terms[key]
                     processed += raw_count
                     if progress_callback is not None:
                         progress_callback(
@@ -527,9 +547,7 @@ def bin_raw_dgs_group(
         signal = data_sum / normalization
         errors = np.sqrt(variance_sum) / normalization
     total_events = float(event_count.sum())
-    rms = float(np.sqrt(variance_sum.sum() / total_events)) if total_events else 1.0
-    zeros = covered & (event_count == 0)
-    errors[zeros] = FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER * rms / normalization[zeros]
+    rms = float(np.sqrt(max(0.0, variance_sum.sum() - copy_covariance["cross_terms_added"]) / total_events)) if total_events else 1.0
     mask = ~covered | (event_count < minimum_samples)
     if powder:
         axes = (
@@ -547,6 +565,8 @@ def bin_raw_dgs_group(
             )
             for index, (name, edge) in enumerate(zip(names, edges, strict=True))
         )
+    for output in (signal, errors, mask, event_count, normalization, data_sum, variance_sum):
+        output.setflags(write=False)
     return MDHistoData(
         axes=axes,
         signal=signal,
@@ -570,7 +590,9 @@ def bin_raw_dgs_group(
             ),
             "normalization_denominator": normalization,
             "zero_event_bins_are_measured": True,
-            "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
+            "zero_count_error_model": "observed_event_variance",
+            EVENT_STATISTICS_KEY: dict(EVENT_STATISTICS_METADATA),
+            "symmetry_covariance": copy_covariance,
             "event_weight_rms": rms,
             **(
                 {
@@ -592,6 +614,7 @@ def bin_raw_dgs_group(
             ),
             "proton_charge_units": "microampere-hour (retained raw pulse charge in picocoulombs divided by 3.6e9)",
         },
+        auxiliary_channels=event_statistics_channels(data_sum, variance_sum, normalization),
     )
 
 
@@ -722,12 +745,16 @@ def _trajectory_normalization(
     payloads = []
     detector_payload = None
     shared_detector_geometry = True
-    for dataset in datasets:
-        info = (
-            inspect_raw_dgs_run(dataset.metadata["source_file"])
-            if run_infos_by_dataset_id is None
-            else run_infos_by_dataset_id[dataset.id]
-        )
+    datasets = list(datasets)
+    infos = run_infos_by_dataset_id if run_infos_by_dataset_id is not None else {
+        dataset.id: inspect_raw_dgs_run(dataset.metadata["source_file"])
+        for dataset in datasets
+    }
+    trajectory_energies = trajectory_incident_energies(
+        config, (infos[dataset.id].incident_energy for dataset in datasets)
+    )
+    for dataset, ei in zip(datasets, trajectory_energies, strict=True):
+        info = infos[dataset.id]
         snapshot = (
             _run_normalization_payload(info, _detector_geometry(info.path), detector_norm, detector_mask, config)
             if normalization_payloads_by_dataset_id is None
@@ -742,9 +769,10 @@ def _trajectory_normalization(
         inverses = [
             basis_inverse[:3, :3].T @ operation @ canonical_inverse for operation in symmetry
         ]
-        ei = float(config.get("incident_energy_override") or info.incident_energy)
         energy_bounds = (
-            _energy_transfer_bounds(config, ei)
+            _energy_transfer_bounds(config, float(
+                config.get("incident_energy_override") or info.incident_energy
+            ))
             if energy_bounds_by_dataset_id is None
             else energy_bounds_by_dataset_id[dataset.id]
         )
@@ -862,12 +890,16 @@ def _powder_trajectory_normalization(
     config = group.metadata["raw_dgs"]
     result = np.zeros(shape)
     payloads = []
-    for dataset in datasets:
-        info = (
-            inspect_raw_dgs_run(dataset.metadata["source_file"])
-            if run_infos_by_dataset_id is None
-            else run_infos_by_dataset_id[dataset.id]
-        )
+    datasets = list(datasets)
+    infos = run_infos_by_dataset_id if run_infos_by_dataset_id is not None else {
+        dataset.id: inspect_raw_dgs_run(dataset.metadata["source_file"])
+        for dataset in datasets
+    }
+    trajectory_energies = trajectory_incident_energies(
+        config, (infos[dataset.id].incident_energy for dataset in datasets)
+    )
+    for dataset, incident_energy in zip(datasets, trajectory_energies, strict=True):
+        info = infos[dataset.id]
         snapshot = (
             _run_normalization_payload(info, _detector_geometry(info.path), detector_norm, detector_mask, config)
             if normalization_payloads_by_dataset_id is None
@@ -875,9 +907,6 @@ def _powder_trajectory_normalization(
         )
         direction, solid = snapshot["direction"], snapshot["solid"]
         charge = float(snapshot["charge"])
-        incident_energy = float(
-            config.get("incident_energy_override") or info.incident_energy
-        )
         energy_bounds = energy_bounds_by_dataset_id[dataset.id]
         scattering_angles = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
         payloads.append(

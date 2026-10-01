@@ -69,20 +69,19 @@ MDEvent NeXus files are supported without Mantid through `nfit.mdevent`:
 
 This pathway requires `h5py`. Numba accelerates detector trajectories when
 available and has a NumPy fallback; Mantid is neither imported nor launched.
-The returned `MDHistoData` carries `normalization_denominator` and
-`zero_event_bins_are_measured` metadata. Covered zero-event bins have signal
-zero and a finite 68.27% Feldman--Cousins upper-limit uncertainty; uncovered
-bins remain masked and non-finite. A zero-count bin has no event row and
-therefore has no stored `errorSquared` value of its own. nfit uses `1.29` times
-the uncertainty that one representative event would have in that bin. This is
-the `[0, 1.29]` Feldman--Cousins interval for zero observed counts and zero
-known background (Table II of [Feldman and Cousins](https://arxiv.org/pdf/physics/9711021)). It
-estimates the representative one-event scale from the nonzero accepted events
-in the requested volume as `sqrt(sum(errorSquared_i) / N)`, then divides by the
-bin's normalization. This scale is not an nfit fit weight or dataset scale
-factor. See
-[Measured-zero uncertainties](data_import.md#measured-zero-uncertainties) for
-the three coverage/count cases and a numerical example.
+The returned `MDHistoData` carries immutable `event_signal_numerator`,
+`event_variance_numerator`, and `normalization_denominator` channels, with an
+explicit event-statistics contract. Covered zero-event bins retain zero signal,
+zero observed event variance, and positive exposure; uncovered bins remain masked.
+A separate `nfit.histogram_statistics.poisson_rate_interval(counts, exposure)`
+returns a Garwood rate interval for independent constant-weight counts. It is not
+automatically applied to corrected weighted events or correlated copies. See
+[Measured-zero uncertainties](data_import.md#measured-zero-uncertainties).
+
+The public `set_dgs_trajectory_energy_policy(group, "first_run" | "per_run")`
+changes the saved normalization convention. Raw/MDE group import functions also
+accept `trajectory_energy_policy`. The default first-run Ei matches Mantid MDNorm;
+event reconstruction remains per run. A positive Ei override takes precedence.
 
 The GUI module also provides `read_isaw_ub`, `write_isaw_ub`, and
 `ub_from_lattice_orientation` for scripting the same UB workflow. ISAW matrices
@@ -511,9 +510,9 @@ T0 follow Mantid GetEi v2 for each run from monitor locations in its embedded
 instrument definition. For parameter-defined paths such as CNCS and HYSPEC,
 nfit applies Mantid's published `t0_formula` using the requested incident
 energy; it does not use empirical per-instrument timing offsets.
-Covered bins with zero accepted events retain a zero signal and use nfit's
-normalization-scaled 68% Feldman-Cousins upper-limit uncertainty. It does not
-invoke Mantid. The full ordered raw-event reduction, including detector masking,
+Covered bins with zero accepted events retain zero signal and observed event
+variance, with positive exposure. Confidence intervals are separate outputs.
+The reducer does not invoke Mantid. The full ordered raw-event reduction, including detector masking,
 bad-pulse charge selection, TOF-to-HKLE conversion, He-3 and `ki/kf` event
 weights, trajectory normalization, and measured-zero handling, is documented
 in [Raw TOF reduction sequence](data_import.md#raw-tof-reduction-sequence).

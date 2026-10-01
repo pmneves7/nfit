@@ -14275,6 +14275,8 @@ class NfitProjectExplorer:
     def _mdevent_group_box(self, node: DatasetGroup) -> Any:
         from PySide6 import QtWidgets
 
+        from .dgs_normalization_gui import trajectory_energy_selector
+
         config = node.metadata["mdevent"]
         box = QtWidgets.QGroupBox("MDEvent shared setup")
         box.setToolTip(
@@ -14337,11 +14339,21 @@ class NfitProjectExplorer:
         )
         ub.editingFinished.connect(lambda: self._set_mdevent_group_ub(node, ub))
         layout.addWidget(ub, 3, 1, 1, 3)
+        layout.addWidget(QtWidgets.QLabel("Normalization Ei"), 4, 0)
+        layout.addWidget(trajectory_energy_selector(
+            config,
+            object_name="mdevent_trajectory_energy_policy",
+            on_changed=lambda value: self._set_mdevent_group_value(
+                node, "trajectory_energy_policy", value
+            ),
+        ), 4, 1, 1, 3)
         return box
 
     def _raw_dgs_group_box(self, node: DatasetGroup) -> Any:
         """Shared controls for streamed native raw TOF reduction."""
         from PySide6 import QtWidgets
+
+        from .dgs_normalization_gui import trajectory_energy_selector
 
         config = node.metadata["raw_dgs"]
         if config.get("format") == "corelli-correlation-nexus":
@@ -14410,6 +14422,14 @@ class NfitProjectExplorer:
         ub.setToolTip("Shared Mantid/SNS-frame UB matrix. Raw Q is rotated into the sample frame and converted with (2*pi*UB)^-1 before binning.")
         ub.editingFinished.connect(lambda: self._set_raw_dgs_group_ub(node, ub))
         layout.addWidget(ub, 5, 1, 1, 3)
+        layout.addWidget(QtWidgets.QLabel("Normalization Ei"), 6, 0)
+        layout.addWidget(trajectory_energy_selector(
+            config,
+            object_name="raw_dgs_trajectory_energy_policy",
+            on_changed=lambda value: self._set_raw_dgs_group_value(
+                node, "trajectory_energy_policy", value
+            ),
+        ), 6, 1, 1, 3)
         return box
 
     def _corelli_group_box(self, node: DatasetGroup) -> Any:
@@ -14727,7 +14747,12 @@ class NfitProjectExplorer:
         config = node.metadata["mdevent"]
         if config.get(key) == value:
             return
-        config[key] = value
+        if key == "trajectory_energy_policy":
+            from .dgs_normalization import set_dgs_trajectory_energy_policy
+
+            set_dgs_trajectory_energy_policy(node, value)
+        else:
+            config[key] = value
         composite = data_group_composite_config(_composite_scope(self._objects_for_item(self._current_item())[0], node))
         composite["stale"] = True
         self._mark_dirty()
@@ -14772,7 +14797,12 @@ class NfitProjectExplorer:
         config = node.metadata["raw_dgs"]
         if config.get(key) == value:
             return
-        config[key] = value
+        if key == "trajectory_energy_policy":
+            from .dgs_normalization import set_dgs_trajectory_energy_policy
+
+            set_dgs_trajectory_energy_policy(node, value)
+        else:
+            config[key] = value
         composite = data_group_composite_config(_composite_scope(self._objects_for_item(self._current_item())[0], node))
         composite["stale"] = True
         self._mark_dirty()

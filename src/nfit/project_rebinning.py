@@ -25,6 +25,12 @@ from .background_channels import (
 from .background_channels import background_channel as _background_channel
 from .dataset import PointData4D, PointListData
 from .histogram_reduction import normalization_denominator
+from .histogram_statistics import (
+    EVENT_STATISTICS_KEY,
+    EVENT_STATISTICS_METADATA,
+    event_statistics_channels,
+    has_event_statistics,
+)
 from .mdhisto import (
     MDHistoAxis,
     MDHistoChannel,
@@ -1908,6 +1914,8 @@ def _rebin_mdhisto_data(
     coverage_mask = coverage < _rebin_minimum_coverage(config)
     mask |= coverage_mask
     metadata = dict(data.metadata)
+    metadata.pop(EVENT_STATISTICS_KEY, None)
+    metadata.pop("normalization_denominator", None)
     metadata.pop(BACKGROUND_EXCEPTIONS_KEY, None)
     metadata.pop(BACKGROUND_PROVENANCE_KEY, None)
     metadata["signal_semantics"] = "density"
@@ -1946,6 +1954,14 @@ def _rebin_mdhisto_data(
             label="Combined detector-trajectory normalization",
             unit="arbitrary normalization units",
         )
+        metadata["normalization_denominator"] = normalization_output
+        if has_event_statistics(data) and background_channel is None:
+            metadata[EVENT_STATISTICS_KEY] = dict(EVENT_STATISTICS_METADATA)
+            metadata["num_events_semantics"] = "contributing_histogram_cells"
+            with np.errstate(invalid="ignore"):
+                numerator = np.where(normalization_output > 0, result.binned_data * normalization_output, 0.0)
+                variance = np.where(normalization_output > 0, np.square(result.binned_data_errs * normalization_output), 0.0)
+            auxiliary_channels.update(event_statistics_channels(numerator, variance, normalization_output))
     if background_result is not None and background_result.binned_data is not None:
         background_values = np.asarray(background_result.binned_data, dtype=float)
         background_values.setflags(write=False)

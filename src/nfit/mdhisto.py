@@ -297,6 +297,19 @@ class MDHistoData:
         if unknown:
             raise TypeError(f"unknown MDHistoData field(s): {', '.join(sorted(unknown))}")
         values.update(changes)
+        primary_changed = any(
+            name in changes and changes[name] is not getattr(self, name)
+            for name in ("signal", "errors")
+        )
+        if primary_changed and "auxiliary_channels" not in changes:
+            from .histogram_statistics import EVENT_STATISTICS_CHANNELS, EVENT_STATISTICS_KEY
+
+            values["auxiliary_channels"] = {
+                name: channel for name, channel in values["auxiliary_channels"].items()
+                if name not in EVENT_STATISTICS_CHANNELS
+            }
+            values["metadata"] = dict(values["metadata"])
+            values["metadata"].pop(EVENT_STATISTICS_KEY, None)
         return MDHistoData(**values)
 
 

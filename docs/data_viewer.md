@@ -114,6 +114,15 @@ cannot be selected. Custom point-data channel labels remain unchanged. Channel
 selection affects visualization only, and saved plots retain their stable channel
 identifiers.
 
+Native DGS/MDE count histograms expose **Event contributions**, **Event signal
+numerator**, **Event numerator variance**, **Normalization exposure**, and
+**Observed event standard error**. Event contributions include symmetry copies;
+they are not necessarily independent counts. Exposure is distinct from geometric
+coverage. A measured zero has positive exposure and zero observed event variance,
+not a zero-width confidence interval for its unknown intensity. Count confidence
+intervals require a declared measurement model; see
+[confidence intervals](physics_conventions.md#covered-empty-cells-and-confidence-intervals).
+
 When switching datasets or binnings, the loading progress dialog belongs to the
 active viewer so closing it does not bring the project explorer in front.
 
@@ -271,8 +280,12 @@ Uniform histogram rebinning uses the denominator as its exposure weight,
 including older histograms that store it in metadata. Inverse-variance rebinning
 is a different estimator and does not retain a physical exposure denominator.
 See [Data representations and normalization](physics_conventions.md#data-representations-and-normalization)
-for the equations and statistical assumptions. Box profiles and optional
-displayed-axis coarsening retain their documented inverse-variance weighting.
+for the equations and statistical assumptions. Displayed-axis coarsening of new
+native count histograms also sums explicit numerator, variance, and exposure.
+Generic and older histograms retain inverse-variance display coarsening. Box
+profiles retain their documented inverse-variance weighting. Pooling diagonal
+variances does not reconstruct cross-bin covariance from symmetry copies or
+fractional sharing.
 
 ### Histogram box cuts
 

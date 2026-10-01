@@ -45,6 +45,8 @@ A few of its main capabilities are:
   including raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data
   with SNS monitor and beam-interval reduction, lazy per-run reduced-event caches
   for repeated binnings, and exposure-pooled normalized histogram slices,
+  with viewable count numerators, event variances and exposure, separate
+  Poisson rate intervals, and selectable first-run or per-run trajectory Ei,
   raw CORELLI finite-energy correlation-chopper reconstruction with fractional
   momentum and discrete reconstructed-energy assignment, and reduced
   CORELLI and WAND² single-crystal data, with conventional major-tick or
