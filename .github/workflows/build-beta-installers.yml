@@ -34,10 +34,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libegl1 libgl1 libopengl0 libxkbcommon0 libxcb-cursor0
       - uses: mamba-org/setup-micromamba@v3
+        env:
+          CONDA_OVERRIDE_GLIBC: ${{ runner.os == 'Linux' && '2.34' || '' }}
         with:
           environment-file: environment.yml
           environment-name: nfit
           cache-environment: true
+          cache-environment-key: nfit-portable-glibc-2.34
           init-shell: bash
       - name: Refresh nfit package metadata
         shell: bash -el {0}
@@ -53,9 +56,61 @@ jobs:
           path: dist/installers/*
           if-no-files-found: error
 
+  linux-compatibility:
+    name: Linux tarball on ${{ matrix.label }}
+    needs: build
+    runs-on: ubuntu-22.04
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Ubuntu 22.04
+            container: ubuntu:22.04
+          - label: RHEL 9 compatible
+            container: rockylinux:9
+    steps:
+      - name: Install host desktop libraries and inspection tools
+        shell: bash
+        run: |
+          if command -v apt-get >/dev/null; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install --yes python3 binutils tar gzip xvfb libegl1 libgl1 libgl1-mesa-dri libopengl0 libxkbcommon0 libxcb-cursor0
+          else
+            dnf install --assumeyes python3 binutils tar gzip xorg-x11-server-Xvfb mesa-libEGL mesa-libGL mesa-dri-drivers libglvnd-opengl libxkbcommon xcb-util-cursor
+          fi
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: nfit-Linux-*
+          merge-multiple: true
+          path: dist/installers
+      - name: Extract and audit the same published tarball
+        shell: bash
+        run: |
+          mkdir -p build/linux-validation
+          tar -xzf dist/installers/nfit-*-linux-x86_64.tar.gz -C build/linux-validation
+          python3 tools/distribution/linux_compatibility.py build/linux-validation/nfit --check-libraries
+      - name: Exercise Qt, scientific libraries and 3D rendering
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: xcb
+          DISPLAY: :99
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..30}; do
+            test -S /tmp/.X11-unix/X99 && break
+            sleep 1
+          done
+          test -S /tmp/.X11-unix/X99
+          build/linux-validation/nfit/nfit --run-script tools/distribution/linux_runtime_smoke.py
+
   beta-release:
     name: Publish experimental beta release
-    needs: build
+    needs: [build, linux-compatibility]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7

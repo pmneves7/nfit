@@ -12,6 +12,8 @@ dependencies:
   - emcee
   - gemmi
   - numba>=0.67
+  # Ship the library needed by Numba's optional parallel TBB backend.
+  - tbb
   - periodictable
   - threadpoolctl
   - pyside6>=6.11.2

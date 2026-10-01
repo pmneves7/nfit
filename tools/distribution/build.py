@@ -25,20 +25,14 @@ def run(*command: str, **kwargs) -> None:
     subprocess.run(list(map(str, command)), check=True, **kwargs)
 
 
-def _install_linux_openssl_libraries(
-    bundle: Path, *, prefix: Path | None = None
+def _install_linux_library_pair(
+    bundle: Path, names: tuple[str, str], *, prefix: Path | None = None
 ) -> tuple[Path, Path]:
-    """Replace system OpenSSL copies with the pair used by the Conda build.
-
-    PyInstaller can discover Ubuntu's older libcrypto while collecting h5py,
-    even though another collected library such as libs2n was linked against the
-    newer OpenSSL in the active Conda environment. Keeping libcrypto and libssl
-    from one prefix prevents that ABI mismatch in the standalone application.
-    """
+    """Use one matching pair from the build environment, resolving symlinks."""
     prefix = Path(sys.prefix) if prefix is None else Path(prefix)
     destination = bundle / "_internal"
     installed = []
-    for name in ("libcrypto.so.3", "libssl.so.3"):
+    for name in names:
         source = prefix / "lib" / name
         if not source.is_file():
             raise FileNotFoundError(
@@ -49,6 +43,35 @@ def _install_linux_openssl_libraries(
         shutil.copy2(source.resolve(), target)
         installed.append(target)
     return installed[0], installed[1]
+
+
+def _install_linux_openssl_libraries(
+    bundle: Path, *, prefix: Path | None = None
+) -> tuple[Path, Path]:
+    """Replace system OpenSSL copies with the pair used by the Conda build.
+
+    PyInstaller can discover Ubuntu's older libcrypto while collecting h5py,
+    even though another collected library such as libs2n was linked against the
+    newer OpenSSL in the active Conda environment. Keeping libcrypto and libssl
+    from one prefix prevents that ABI mismatch in the standalone application.
+    """
+    return _install_linux_library_pair(
+        bundle, ("libcrypto.so.3", "libssl.so.3"), prefix=prefix
+    )
+
+
+def _install_linux_compiler_libraries(
+    bundle: Path, *, prefix: Path | None = None
+) -> tuple[Path, Path]:
+    """Keep the Conda compiler runtime instead of host-specific GCC libraries.
+
+    Host libgcc may require newer glibc symbols, even when collected on a RHEL
+    host with backported libc symbols. The Conda runtime supplies the ABI used
+    by the scientific libraries with an older portable glibc baseline.
+    """
+    return _install_linux_library_pair(
+        bundle, ("libgcc_s.so.1", "libstdc++.so.6"), prefix=prefix
+    )
 
 
 def build(
@@ -102,6 +125,9 @@ def build(
                "--hidden-import", "vtkmodules.vtkRenderingFreeType",
                "--exclude-module", "PyQt5", "--exclude-module", "PyQt6",
                "--exclude-module", "PySide2", "--exclude-module", "IPython",
+               # PySide ships this unused binding without its deprecated Qt
+               # library in our environment. Do not distribute a broken module.
+               "--exclude-module", "PySide6.QtDataVisualization",
                "--exclude-module", "notebook", "--exclude-module", "sphinx",
                "--exclude-module", "pytest", "--exclude-module", "tkinter"]
     if sys.platform in ("darwin", "win32"):
@@ -115,6 +141,8 @@ def build(
     bundle = work / "bundle" / ("nfit.app" if sys.platform == "darwin" else "nfit")
     if sys.platform == "linux":
         _install_linux_openssl_libraries(bundle)
+        _install_linux_compiler_libraries(bundle)
+        run(sys.executable, TOOLS / "linux_compatibility.py", bundle)
     if sys.platform == "darwin":
         info_path = bundle / "Contents/Info.plist"
         info = plistlib.loads(info_path.read_bytes())
@@ -185,7 +213,7 @@ def build(
         (staging / "DEBIAN/control").write_text(
             f"Package: nfit\nVersion: {version}\nArchitecture: {architecture}\n"
             "Maintainer: Paul M. Neves <pneves1@jhu.edu>\n"
-            "Depends: libc6 (>= 2.35), libgl1, libegl1, libopengl0, "
+            "Depends: libc6 (>= 2.34), libgl1, libegl1, libopengl0, "
             "libxkbcommon0, libxcb-cursor0\n"
             "Recommends: zenity\n"
             "Section: science\nPriority: optional\nDescription: Magnetic-scattering analysis and fitting\n")

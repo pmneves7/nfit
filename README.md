@@ -101,6 +101,8 @@ loading screen, offline help, and consent-based verified updates. Testers do
 not need Python, Conda, Git, or the source repository. See
 [Desktop installers and updates](https://nfit.readthedocs.io/en/stable/desktop_installers.html) for download,
 installation, system requirements, and update instructions.
+One Linux x86-64 tarball supports both RHEL 9 and Ubuntu 22.04 or newer,
+including user-local installations and built-in updates.
 
 If you are new to Git, Python, and Conda, follow the step-by-step
 [first-time source setup guide](https://nfit.readthedocs.io/en/stable/getting_started.html#first-time-source-setup).

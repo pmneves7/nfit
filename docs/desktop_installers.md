@@ -55,7 +55,7 @@ Using `apt` installs the required Linux desktop libraries at the same time.
 After installation, open nfit from the application menu or run
 `/opt/nfit/nfit`.
 
-Without administrator access, download
+For **RHEL 9 or newer**, or Ubuntu without administrator access, download
 `nfit-<version>-linux-x86_64.tar.gz` from the same release and run:
 
 ```bash
@@ -67,6 +67,12 @@ tar -xzf nfit-<version>-linux-x86_64.tar.gz -C "$HOME/.local/opt"
 This uses the same standalone application but does not install missing system
 libraries or create an application-menu entry. Replace the extracted `nfit`
 directory with the archive from a newer release to update it.
+The Linux x86-64 tarball is shared by RHEL 9 and Ubuntu 22.04 or newer; no
+Conda environment or glibc replacement is needed. Launch it from a graphical
+desktop session, such as ThinLinc on the ORNL analysis cluster. An ordinary
+SSH terminal needs a working graphical display to open the GUI.
+The application's **File → Check for updates…** can update a writable
+user-local tarball installation.
 
 ## Uninstalling nfit
 
@@ -115,14 +121,20 @@ offline after installation.
 | --- | --- |
 | macOS | Apple silicon or Intel Mac; use the package matching the processor |
 | Windows | 64-bit Windows 10 or Windows 11 |
-| Linux | 64-bit Ubuntu 22.04 or newer, or a compatible Debian-based distribution |
+| Linux `.deb` | 64-bit Ubuntu 22.04 or newer, or a compatible Debian-based distribution |
+| Linux `.tar.gz` | Linux x86-64 with glibc 2.34 or newer; tested on RHEL 9-compatible systems and Ubuntu 22.04 |
 
-The Debian package declares `libc6 (>= 2.35)`, `libgl1`, `libegl1`,
+The Debian package declares `libc6 (>= 2.34)`, `libgl1`, `libegl1`,
 `libopengl0`, `libxkbcommon0`, and `libxcb-cursor0`; `apt install` resolves
 these automatically. It also recommends Zenity for a reliable native open-file
 chooser, especially in remote Linux desktop sessions. Tar installations use
 Zenity or Yad when either is already available and otherwise use nfit's Qt
 fallback for opening files.
+Tarball installations need the host's X11 desktop and OpenGL/EGL libraries.
+On RHEL 9 these are provided by `mesa-libGL`, `mesa-libEGL`,
+`libglvnd-opengl`, `libxkbcommon`, and `xcb-util-cursor`; a graphical
+workstation or remote desktop typically already supplies them. If a required
+system library is missing, ask the system administrator to install it.
 
 For a source installation, nfit requires Python 3.12 or newer. The supplied
 `environment.yml` is the tested developer environment and currently selects
@@ -159,6 +171,16 @@ manually from the GitHub Actions page; an existing release for the same version
 is updated safely. Separate GitHub-hosted runners build and smoke-test Apple
 silicon macOS, Intel macOS, Windows x86-64, and Linux x86-64 installers, then
 publish them as a beta GitHub Release.
+Before publication, the same extracted Linux tarball is checked in Ubuntu
+22.04 and Rocky Linux 9 environments. Rocky Linux exercises the RHEL 9 ABI.
+Linux dependency resolution targets glibc 2.34, and the build rejects ELF
+dependencies requiring newer glibc symbols.
+OpenSSL and GCC runtime libraries come from the same Conda build environment
+as the scientific stack, rather than whichever system copies PyInstaller finds.
+Release checks require all shipped native-library dependencies to resolve and
+exercise Qt/X11, numerical and archive operations, figure exports, and an
+actual VTK 3D render. Linux releases retain one tarball filename for the
+built-in updater.
 
 The release is public immediately and is discoverable by installed beta copies.
 

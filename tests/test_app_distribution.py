@@ -98,6 +98,25 @@ def test_linux_bundle_uses_matching_conda_openssl_pair(tmp_path):
     assert installed[1].read_bytes() == b"conda:libssl.so.3"
 
 
+def test_linux_bundle_uses_portable_conda_compiler_pair(tmp_path):
+    prefix = tmp_path / "conda"
+    libraries = prefix / "lib"
+    libraries.mkdir(parents=True)
+    bundle = tmp_path / "bundle"
+    internal = bundle / "_internal"
+    internal.mkdir(parents=True)
+    for name in ("libgcc_s.so.1", "libstdc++.so.6"):
+        source = libraries / f"{name}.actual"
+        source.write_bytes(f"conda:{name}".encode())
+        (libraries / name).symlink_to(source.name)
+        (internal / name).write_bytes(b"incompatible host runtime")
+    installed = distribution_build._install_linux_compiler_libraries(bundle, prefix=prefix)
+    assert all(not path.is_symlink() for path in installed)
+    assert [path.read_bytes() for path in installed] == [
+        b"conda:libgcc_s.so.1", b"conda:libstdc++.so.6"
+    ]
+
+
 def test_beta_workflow_uses_node24_actions():
     workflow = (
         Path(__file__).resolve().parents[1]
@@ -189,6 +208,25 @@ def test_linux_smoke_runner_installs_debian_runtime_dependencies():
         assert package in workflow
         assert package in build_script
     assert "Recommends: zenity" in build_script
+
+
+def test_linux_releases_gate_one_tarball_on_ubuntu_and_rhel9():
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/build-beta-installers.yml").read_text()
+    assert "container: ubuntu:22.04" in workflow
+    assert "container: rockylinux:9" in workflow
+    assert "needs: [build, linux-compatibility]" in workflow
+    assert "--check-libraries" in workflow
+    assert "CONDA_OVERRIDE_GLIBC:" in workflow
+    assert "cache-environment-key: nfit-portable-glibc-2.34" in workflow
+    assert "nfit-*-linux-x86_64.tar.gz" in workflow
+    assert "linux_runtime_smoke.py" in workflow
+    build_script = (root / "tools/distribution/build.py").read_text()
+    assert 'TOOLS / "linux_compatibility.py", bundle' in build_script
+    assert '"--exclude-module", "PySide6.QtDataVisualization"' in build_script
+    assert "libc6 (>= 2.34)" in build_script
+    environment = (root / "environment.yml").read_text()
+    assert "  - tbb\n" in environment
 
 
 def test_windows_installer_exposes_a_start_menu_uninstaller():
