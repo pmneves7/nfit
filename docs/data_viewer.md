@@ -19,6 +19,8 @@ measured coordinate as usual.
 The data viewer displays point lists and gridded datasets without changing
 their stored values. It supports channel selection, masks, cuts, maps,
 waterfalls, model comparisons, and volumetric rendering.
+Plot canvases have no hover tooltips, so data and screenshots stay unobscured.
+The surrounding controls retain their tooltips.
 Set the default figure font size and axes linewidth under **File → Preferences →
 Data viewer**. New viewers and newly selected dataset views use these defaults;
 saved plot recipes and existing views retain their own styling. Figure font size

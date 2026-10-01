@@ -428,6 +428,8 @@ def test_qt_slice_viewer_interactive_controls_have_tooltips():
             missing.append(f"{type(widget).__name__}:{label}")
 
     assert missing == []
+    assert viewer.canvas.toolTip() == ""
+    viewer.window.close()
 
 
 def test_qt_slice_viewer_can_title_plot_with_hidden_axis_binning():

@@ -26,7 +26,6 @@ class PlotWindow:
         self.fit_entry = fit_entry
         self.figure = render_plot(entry, data, fit_entry=fit_entry)
         self.canvas = FigureCanvasQTAgg(self.figure)
-        self.canvas.setToolTip("Saved plot preview. Use the Plot menu to copy, save, edit, or export its script.")
         self.window.setCentralWidget(self.canvas)
 
         toolbar = self.window.addToolBar("Plot")

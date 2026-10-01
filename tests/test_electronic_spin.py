@@ -250,6 +250,8 @@ def test_matrix_viewer_exposes_exact_values_and_decomposition(monkeypatch):
     )
 
     window = show_electronic_matrix_catalog(catalog)
+    canvas = window.findChild(QtWidgets.QWidget, "electronic_matrix_canvas")
+    assert canvas.toolTip() == ""
     selection = window.findChild(
         QtWidgets.QComboBox,
         "electronic_matrix_selection",

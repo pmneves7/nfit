@@ -185,9 +185,6 @@ def _build_plot_panel(viewer: Any) -> Any:
     viewer.ax_xcut = viewer.figure.add_subplot(viewer.grid[1, 0], sharex=viewer.ax_image)
     viewer._suppress_matplotlib_coordinate_status()
     viewer.canvas = FigureCanvasQTAgg(viewer.figure)
-    viewer.canvas.setToolTip(
-        "Interactive plot canvas. Move the cursor for coordinate readouts; use the toolbar or box tool to inspect slices."
-    )
     viewer.toolbar = _SliceNavigationToolbar(
         viewer.canvas,
         viewer.window,

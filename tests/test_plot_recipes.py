@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from nfit.mdhisto import MDHistoAxis, MDHistoData
 from nfit.pipeline import DataGroup, DatasetEntry
@@ -24,6 +25,26 @@ def test_plot_recipe_renders_and_exports_backend_script(tmp_path):
     script = plot_script(entry, project_path=tmp_path / "sample.nfit")
     assert "PySide" not in script
     compile(script, "generated_plot.py", "exec")
+
+
+def test_saved_plot_canvas_has_no_tooltip_but_controls_do():
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from nfit.plot_gui import PlotWindow
+
+    application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    entry = new_plot_entry("Map", "dataset-id", {"x_dim": "H", "y_dim": "K"}, plot_type="mdhisto_slice")
+    viewer = PlotWindow(entry, _data())
+    try:
+        assert viewer.canvas.toolTip() == ""
+        menu = next(
+            button for button in viewer.window.findChildren(QtWidgets.QToolButton)
+            if button.text() == "Plot"
+        )
+        assert menu.toolTip()
+        assert all(action.toolTip() for action in menu.menu().actions())
+    finally:
+        viewer.window.close()
+    assert application is QtWidgets.QApplication.instance()
 
 
 def test_plot_recipe_restores_major_gridlines_and_shared_style():

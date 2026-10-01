@@ -68,10 +68,6 @@ def show_electronic_matrix_catalog(
     figure = Figure(figsize=(7.0, 6.0))
     canvas = FigureCanvasQTAgg(figure)
     canvas.setObjectName("electronic_matrix_canvas")
-    canvas.setToolTip(
-        "Heatmap of the selected complex matrix component. Row and column "
-        "labels follow the ordered electronic basis."
-    )
     tabs.addTab(canvas, "Heatmap")
     elements = QtWidgets.QTableWidget()
     elements.setObjectName("electronic_matrix_elements")

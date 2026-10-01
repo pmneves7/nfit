@@ -77,6 +77,7 @@ def test_electronic_viewers_share_right_settings_panel(monkeypatch):
         assert panel.toolTip()
         assert placeholder is not None
         assert canvas is not None
+        assert canvas.toolTip() == ""
         root = window.centralWidget().layout()
         assert root.itemAt(root.count() - 1).widget() is panel
         assert window._nfit_close_shortcut is not None

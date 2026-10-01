@@ -784,7 +784,6 @@ def show_electronic_figure(
     settings_content = _scrollable_settings_content(settings, viewer_key)
     canvas = FigureCanvasQTAgg(figure)
     canvas.setObjectName(f"{viewer_key}_canvas")
-    canvas.setToolTip(f"Interactive {title.lower()} visualization.")
     toolbar = NavigationToolbar2QT(canvas, central)
     toolbar.setObjectName(f"{viewer_key}_toolbar")
     viewport_layout.addWidget(toolbar)
