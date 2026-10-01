@@ -1614,10 +1614,11 @@ def _metadata_reference_slice(
     return (slice(None),) * first_metadata + tuple(indices)
 
 
-def _composite_background_cache_key(group, background):
+def _composite_background_cache_key(group, background, config=None):
     return (
         _composite_base_cache_key(group)[0],
         "background",
+        (data_group_composite_config(group) if config is None else config).get("_binning_id", FIT_BINNING_ID),
         background.source_dataset_id,
         background.source_group_id,
         background.name,
@@ -1654,18 +1655,15 @@ def _composite_histograms_current(group, *, config_override=None, binning_id=Non
     for background in getattr(group, "backgrounds", []):
         if not background.enabled or background.scale == 0:
             continue
-        if background.projection == "center" and background.source_group is not None:
-            scope = _CompositeScope(_composite_root(group), background.source_group)
-            if not _composite_histograms_current(scope, trail=trail):
-                return False
-        elif background.projection != "center" or (
+        if _COMPOSITE_DATA_CACHE.has_signature(
+            _composite_background_cache_key(group, background, config),
+            _composite_background_signature(group, background, config),
+        ):
+            continue
+        if background.source_group is not None or background.projection != "center" or (
             background.source_entry is not None and background.source_entry.kind != "mdhisto"
         ):
-            if not _COMPOSITE_DATA_CACHE.has_signature(
-                _composite_background_cache_key(group, background),
-                _composite_background_signature(group, background, config),
-            ):
-                return False
+            return False
     return True
 
 
@@ -1710,15 +1708,41 @@ def _background_membership_unchanged(previous, current):
 def _composite_background_signature(group, background, config):
     root = _composite_root(group)
     source = background.source_entry
+    source_scope = None
+    source_config = None
+    if background.source_group is not None:
+        source_scope = _CompositeScope(root, background.source_group)
+        source_config = copy.deepcopy(data_group_composite_config(source_scope))
+        if background.projection == "center" and source_config.get("coordinate_mode") != "powder":
+            sample_config = data_group_composite_config(group) if config is None else config
+            source_config.update(
+                enabled=True,
+                axes=copy.deepcopy(sample_config["axes"]),
+                coordinate_mode=sample_config["coordinate_mode"],
+            )
+    sample_config = data_group_composite_config(group) if config is None else config
+    sample_signature = _composite_cache_signature(group, config_override=config, include_backgrounds=False)
+    if (
+        source_scope is not None
+        and background.projection == "center"
+        and source_config.get("coordinate_mode") != "powder"
+        and not group.metadata.get("metadata_dimensions")
+        and not any(a.get("auto_lower") or a.get("auto_upper") or a.get("auto_step_size") for a in sample_config["axes"])
+    ):
+        # An explicit center-projected grid does not depend on sample events or
+        # sample symmetry. Identical grids may share the reference histogram.
+        sample_signature = json.dumps(
+            [sample_config["coordinate_mode"], sample_config["axes"]], sort_keys=True, default=str
+        )
     return json.dumps(
         [
-            _composite_cache_signature(group, config_override=config, include_backgrounds=False),
+            sample_signature,
             background.projection,
             background.interpolation,
             None if source is None else _background_source_content_signature(group, source),
             None
-            if background.source_group is None
-            else _composite_cache_signature(_CompositeScope(root, background.source_group)),
+            if source_scope is None
+            else _composite_cache_signature(source_scope, config_override=source_config),
         ],
         sort_keys=True,
         default=str,
@@ -1762,12 +1786,37 @@ def _composite_background_data(group, background, data, *, config, progress_call
         )
         return projected
     if source_group is not None:
-        source_data = _cached_composite_dataset_data(
-            _CompositeScope(root, source_group),
-            apply_spectral_channels=False,
-            force_rebin=True,
-            progress_callback=progress_callback,
-        )
+        source_scope = _CompositeScope(root, source_group)
+        source_config = data_group_composite_config(source_scope)
+        if background.projection == "center" and source_config.get("coordinate_mode") != "powder":
+            # This histogram belongs to the requesting sample binning. The
+            # reference group provides runs, orientation, symmetry and physics,
+            # and need not have an enabled standalone binning.
+            aligned_config = copy.deepcopy(source_config)
+            sample_config = data_group_composite_config(group) if config is None else config
+            spatial_axes = data.axes[:len(source_config["axes"])]
+            aligned_config["enabled"] = True
+            aligned_config["axes"] = copy.deepcopy(sample_config["axes"][:len(spatial_axes)])
+            aligned_config["coordinate_mode"] = sample_config["coordinate_mode"]
+            for settings, axis in zip(aligned_config["axes"], spatial_axes, strict=True):
+                settings.update(
+                    name=axis.name, units=axis.units,
+                    bin_edges=axis.values.tolist(), mode="edges",
+                    auto_lower=False, auto_upper=False, auto_step_size=False,
+                )
+            source_data = composite_dataset_data(
+                source_scope, config_override=aligned_config,
+                apply_spectral_channels=False, progress_callback=progress_callback,
+            )
+            source_data = scale_composite_data(
+                source_data, composite_scaling(source_scope)["result_scale"],
+                _apply_dataset_scale,
+            )
+        else:
+            source_data = _cached_composite_dataset_data(
+                source_scope, apply_spectral_channels=False,
+                force_rebin=True, progress_callback=progress_callback,
+            )
     else:
         # A raw point-data background belongs on the composite's resolved
         # output grid.  Do not honor the background dataset's private
@@ -1855,9 +1904,16 @@ def _apply_composite_backgrounds(
         if not background.enabled or float(background.scale) == 0.0:
             continue
         source = background.source_entry
-        projection_key = _composite_background_cache_key(group, background)
+        projection_key = _composite_background_cache_key(group, background, config)
         projection_signature = _composite_background_signature(group, background, config)
         projected_cache = _COMPOSITE_DATA_CACHE.get(projection_key)
+        if projected_cache is None or projected_cache[0] != projection_signature:
+            for binning in data_group_composite_binnings(group):
+                other_key = _composite_background_cache_key(group, background, binning["config"])
+                if _COMPOSITE_DATA_CACHE.has_signature(other_key, projection_signature):
+                    projected_cache = _COMPOSITE_DATA_CACHE.get(other_key)
+                    _COMPOSITE_DATA_CACHE[projection_key] = projected_cache
+                    break
         if projected_cache is not None and projected_cache[0] == projection_signature:
             source_data = projected_cache[1]
         else:

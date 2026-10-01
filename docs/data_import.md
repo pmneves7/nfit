@@ -974,6 +974,16 @@ Multiple backgrounds contribute separate squared uncertainty terms.
 Coefficient uncertainties are not propagated. Scale and Fit weight must be
 finite and nonnegative; zero is supported.
 
+A referenced single-crystal background collection supplies runs, symmetry, and
+crystal orientation. It does not need an enabled standalone binning. Each sample
+binning owns a background histogram on its own output grid, including zoom
+grids. These histograms are saved compressed with the sample binning and load
+lazily; any independent background viewing grids remain unchanged. Preparing a new
+background grid bins its reduced events and integrates detector trajectories
+for normalization; later scale edits reuse that histogram. Binnings with
+identical explicit output grids share an unchanged background histogram in
+memory and in the saved archive.
+
 Once sample and background histograms are cached, changing their scalar
 coefficients recalculates array arithmetic without reducing or rebinning
 source events. Background projections are reused in memory while their

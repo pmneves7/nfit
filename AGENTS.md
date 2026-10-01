@@ -70,6 +70,8 @@ different Python.
   derived-data coordination, and viewer-ready orchestration.
 - `src/nfit/project_composites.py`: hierarchical composite planning,
   materialization, caching, and background alignment.
+- `src/nfit/project_background_cache.py`: persistence of background histograms
+  owned by sample binnings.
 - `src/nfit/project_dataset_io.py`, `project_point_lists.py`, `project_masks.py`,
   and `project_coordinates.py`: dataset archives, point-list preparation,
   masks, and coordinate projection services.

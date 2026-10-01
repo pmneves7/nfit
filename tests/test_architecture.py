@@ -36,6 +36,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "rebin_cache.py",
     PACKAGE_ROOT / "slice_viewer_cache.py",
     PACKAGE_ROOT / "project_composites.py",
+    PACKAGE_ROOT / "project_background_cache.py",
     PACKAGE_ROOT / "composite_scaling.py",
     PACKAGE_ROOT / "project_cache_compat.py",
     PACKAGE_ROOT / "project_clipboard.py",

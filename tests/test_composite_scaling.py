@@ -79,8 +79,9 @@ def test_saved_base_reopens_lazily_and_rescales_without_binning(tmp_path, monkey
     path = tmp_path / "sample.nfit"
     nfit.save_project(project, path)
     entries = project.settings["binning_cache_entries"]
-    assert len(entries) == 1
+    assert len(entries) == 2
     assert entries[0]["stage"] == "unsubtracted"
+    assert entries[1]["type"] == "composite_background"
     comp._COMPOSITE_DATA_CACHE.clear()
     original = np.load
     monkeypatch.setattr(np, "load", lambda *a, **k: pytest.fail("eager numerical loading"))
@@ -228,3 +229,75 @@ def test_scalar_progress_identifies_cached_arithmetic(monkeypatch):
     nfit.refresh_composite_dataset(group, progress_callback=progress.append)
     assert any(event["stage"] == "composite_scaling" for event in progress)
     assert all(event["stage"] not in {"raw_dgs_events", "raw_dgs_normalization"} for event in progress)
+
+
+def test_background_grids_belong_to_sample_binnings_and_reopen_lazily(tmp_path, monkeypatch):
+    import copy
+
+    from nfit.pipeline import DatasetGroup
+    from tests.test_metadata_dimensions import group, points
+
+    sample_recipe = group([points(5, [10])])
+    background_recipe = group([points(5, [2], sigma=[3])])
+    sample = DatasetGroup('sample', datasets=sample_recipe.datasets, metadata=sample_recipe.metadata)
+    background = DatasetGroup('background', datasets=background_recipe.datasets, metadata=background_recipe.metadata)
+    root = DataGroup('workspace', subgroups=[sample, background])
+    sample.backgrounds = [BackgroundSpec('b', source_group=background, source_group_id=background.id, scale=.5)]
+    scope = comp._composite_scope(root, sample)
+    background_scope = comp._composite_scope(root, background)
+    recipe = comp.data_group_composite_config(background_scope)
+    recipe['enabled'] = False
+    recipe['axes'][0]['bin_edges'] = [-1, 0, 1]
+    original_recipe = copy.deepcopy(recipe)
+    result = nfit.refresh_composite_dataset(root, node=sample)
+    assert result.shape == (1, 1, 1, 1)
+    np.testing.assert_allclose(result.signal, 9)
+    np.testing.assert_allclose(result.errors**2, 3.25)
+    zoom_id = nfit.add_data_group_composite_binning(scope, name='zoom', duplicate_from='fit')
+    zoom_config = comp.data_group_composite_config_by_id(scope, zoom_id)
+    zoom_config['axes'][0].update(bin_edges=[-.25, .1, .25])
+    zoom = nfit.refresh_composite_dataset(root, node=sample, binning_id=zoom_id)
+    assert zoom.shape == (2, 1, 1, 1)
+    np.testing.assert_allclose(zoom.signal[0], 9)
+    assert recipe == original_recipe
+    assert comp._COMPOSITE_DATA_CACHE.get(comp._composite_cache_key(background_scope)) is None
+    duplicate_id = nfit.add_data_group_composite_binning(scope, name='same zoom grid', duplicate_from=zoom_id)
+    with monkeypatch.context() as guard:
+        guard.setattr(comp, '_composite_background_data', lambda *a, **k: pytest.fail('duplicate background rebin'))
+        nfit.refresh_composite_dataset(root, node=sample, binning_id=duplicate_id)
+    # Save raw points as sources so the test can forbid numerical loading on open.
+    for entry in root.iter_datasets():
+        path = tmp_path / (entry.id + '.npz')
+        data = entry.data
+        np.savez(path, H=data.H, K=data.K, L=data.L, E=data.E, intensity=data.intensity, sigma=data.sigma)
+        entry.metadata['source_file'] = str(path)
+        entry.replace_data(entry.data, source_backed=True)
+    # Source registration changes signatures; establish both current grids.
+    nfit.refresh_composite_dataset(root, node=sample)
+    nfit.refresh_composite_dataset(root, node=sample, binning_id=zoom_id)
+    nfit.refresh_composite_dataset(root, node=sample, binning_id=duplicate_id)
+    project = nfit.NfitProject([root], settings={'cache_binnings': True})
+    path = tmp_path / 'owned-backgrounds.nfit'
+    nfit.save_project(project, path)
+    entries = project.settings['binning_cache_entries']
+    owned = [e for e in entries if e['type'] == 'composite_background']
+    assert len(owned) == 3
+    assert len({e['member'] for e in owned}) == 2
+    assert all(e['node_id'] == sample.id for e in owned)
+    comp._COMPOSITE_DATA_CACHE.clear()
+    original_load = np.load
+    monkeypatch.setattr(np, 'load', lambda *a, **k: pytest.fail('eager numerical loading'))
+    restored = nfit.load_project(path)
+    monkeypatch.setattr(np, 'load', original_load)
+    sample = restored.data_groups[0].subgroups[0]
+    monkeypatch.setattr(comp, 'composite_dataset_data', lambda *a, **k: pytest.fail('event rebin'))
+    sample.backgrounds[0].scale = .25
+    # The background's independent viewing recipe does not own these grids.
+    restored_background_scope = comp._composite_scope(restored.data_groups[0], restored.data_groups[0].subgroups[1])
+    comp.data_group_composite_config(restored_background_scope)['axes'][0]['bin_edges'] = [-2, 0, 2]
+    for binning_id in (None, zoom_id, duplicate_id):
+        refreshed = nfit.refresh_composite_dataset(restored.data_groups[0], node=sample, binning_id=binning_id)
+        np.testing.assert_allclose(refreshed.signal.flat[0], 9.5)
+    # A second save streams unchanged background members without decompressing them.
+    monkeypatch.setattr(np, 'load', lambda *a, **k: pytest.fail('unchanged cache decompression'))
+    nfit.save_project(restored, tmp_path / 'owned-backgrounds-copy.nfit')

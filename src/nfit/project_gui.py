@@ -5939,6 +5939,13 @@ def _project_binning_artifacts(
                         "member": member,
                     }
                 )
+    from .project_background_cache import background_binning_artifacts
+
+    background_artifacts, background_entries = background_binning_artifacts(
+        project, directory, PROJECT_BINNING_CACHE_FORMAT_VERSION
+    )
+    artifacts.update(background_artifacts)
+    entries.extend(background_entries)
     return artifacts, entries
 
 
@@ -5949,6 +5956,9 @@ def _adopt_saved_project_binning_backing(
 ) -> None:
     """Replace session spill files with lazy references to saved project members."""
 
+    from .project_background_cache import restore_background_binning_backing
+
+    restore_background_binning_backing(project, path, entries, lazy=False)
     for entry in entries:
         try:
             group = project.data_groups[int(entry["group_index"])]
@@ -6014,6 +6024,9 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
     entries = project.settings.get(PROJECT_BINNING_CACHE_ENTRIES_KEY, [])
     if not isinstance(entries, list):
         return
+    from .project_background_cache import restore_background_binning_backing
+
+    restore_background_binning_backing(project, path, entries, lazy=True)
     base_members = {str(e.get("member")) for e in entries if isinstance(e, dict) and e.get("stage") == "unsubtracted"}
     resolved: list[
         tuple[
