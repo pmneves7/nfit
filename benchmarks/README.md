@@ -121,3 +121,28 @@ count-space variance, isolating exposure differences before comparing errors.
 It records SHA256 checksums and grid differences and does not run Mantid.
 [The historical NiO baseline](results/histogram-uncertainty-baseline.json)
 contains aggregate statistics only; source slabs remain outside the repository.
+
+`benchmark_uncertainty_paths.py` traces actual native hidden-axis pooling,
+regular and rotated box cuts, display coarsening, and ROI sums. It classifies
+geometric fringes and low exposure separately, reports coverage disagreement
+before common-support filtering, and retains fine-cell comparisons even when
+hidden-axis redistribution cancels in the map. Provide the same NPZ fields as
+above; optional `mask` arrays are honored. Axes must be H, K, L, energy:
+
+```bash
+PYTHONPATH=src /Users/pmneves/anaconda3/envs/nfit/bin/python \
+  benchmarks/benchmark_uncertainty_paths.py \
+  --nfit-slab /path/to/nfit.npz --mantid-slab /path/to/mantid.npz \
+  --mantid-data /path/to/mantid-numerator.npz \
+  --normalization-storage auxiliary --roi 0.13,0.23,3.5,25 \
+  --output /tmp/nfit_uncertainty_paths.json
+```
+
+Use `metadata` storage for raw DGS histograms and `auxiliary` for MDE histograms
+with a normalization channel. The helper holds nfit exposure and intensity
+fixed while changing only the variance prescription. Its floor-removal variant
+is a diagnostic for unsubtracted event histograms, not a general correction.
+Its JSON contains full maps and profiles and can include private derived data;
+the committed [NiO fringe report](results/nio-uncertainty-fringes.md) retains
+aggregate metrics only. Neither diagnostic nor its unit tests imports or runs
+Mantid or Shiver. External engine measurements are separate manual runs.

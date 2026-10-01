@@ -395,7 +395,11 @@ $$
 
 $y_i$ is a contributing bin value, $\sigma_i$ is its one-sigma uncertainty,
 and $\bar y$ is the reduced value with uncertainty $\sigma_{\bar y}$.
-Masked bins and invalid uncertainties are excluded.
+Masked bins and nonpositive or nonfinite uncertainties are excluded. This is
+a mean of normalized measurements, not a pooled count/exposure estimate.
+For Poisson measurements, inverse variances estimated from observed counts
+can change the mean and exclude measured zeros. The error prescription for a
+zero-count cell therefore affects both the cut value and its reported error.
 
 The selected rectangle also shows its total integrated sum above the plot,
 left-aligned beneath the optional other-axis binning title:
@@ -407,6 +411,10 @@ Y_{\mathrm{box}}=\sum_i y_i,
 $$
 
 The sum uses the finite, displayed bins whose centers fall inside the rectangle.
+It sums normalized intensities, without multiplying by bin widths or pooling
+count numerators and exposures. It is not a spatial integral or a Mantid
+count/exposure-pooled cut. A weakly exposed zero-count cell with a large stored
+error can dominate this annotation's quadrature error.
 For rotated cuts, contributing pixels are grouped by their projected positions
 along each box side at approximately the displayed grid resolution. Its one-sigma
 uncertainty assumes that their errors are independent. Copied figure scripts

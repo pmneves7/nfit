@@ -504,8 +504,13 @@ variance, so nfit uses
 sigma_zero = 1.29 * representative_event_scale / D
 ```
 
-The representative scale is the root-mean-square event uncertainty over the
-accepted dataset. The factor 1.29 is the 68.27% Feldman--Cousins upper endpoint
+The representative scale is the root-mean-square corrected event uncertainty
+over contributions landing inside the requested output histogram, including
+accepted symmetry copies. Changing the histogram extent can therefore change
+this scale. It is not a locally measured weight scale for an empty cell.
+Multiplying an ordinary Poisson interval by this scale is a heuristic for
+weighted events; its interval coverage has not been established.
+The factor 1.29 is the 68.27% Feldman--Cousins upper endpoint
 for zero observed events and zero known background. Uncovered bins remain
 masked. This fitting convention avoids assigning infinite weight to a measured
 zero; it does not make the underlying Poisson interval symmetric.
@@ -515,6 +520,9 @@ errors. Fine-then-coarse pooling can therefore inflate errors relative to direct
 coarse binning. This is a known statistical limitation; see
 [covered empty cells](physics_conventions.md#covered-empty-cells-current-limitation).
 Event variance and final-bin confidence intervals need separate propagation.
+A weakly exposed cell with no events can legitimately have a large upper limit
+for its unknown intensity. Mantid's zero accumulated event variance for that
+cell does not establish zero uncertainty about the unknown intensity.
 
 ## UB matrices
 

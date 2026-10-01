@@ -717,6 +717,15 @@ from fractional event sharing or repeated symmetry copies. Measured zero-count
 cells contribute their exposure and stored uncertainty; unmeasured or masked
 cells do not contribute.
 
+For independent uncorrected counts with a common intensity, summing counts and
+exposures retains the information needed for a Poisson likelihood. A zero-count
+measurement contributes exposure. Evaluate a confidence interval after pooling;
+do not add confidence endpoints as variances. If intensity varies within the
+region, pooling estimates an exposure-weighted average of those intensities.
+A uniform spatial average or integral is a different target: it requires
+geometric weights and assumptions about unsampled portions. Sparse coverage
+cannot establish those portions by itself.
+
 Uniform weighting coincides with exposure pooling only for equal exposure.
 For uncorrected Poisson counts with a common underlying intensity $I$,
 $\operatorname{Var}(I_i)=I/N_i$, so weights based on the *expected* inverse
@@ -735,11 +744,19 @@ depend on the intermediate grid. A confidence-interval endpoint is not a
 summable variance. For independent events, the observed numerator variance
 is the sum of squared event weights, including zero for an empty cell; zero
 observed variance alone does not imply certainty about the unknown rate.
+In particular, a barely exposed empty fringe cell can have a large upper limit
+without any intermediate pooling. Its large limit alone does not demonstrate
+an error. The demonstrated propagation defect is treating such endpoints as
+independent symmetric errors; both the interval construction and the target
+of a spatial cut need separate validation.
 
 The diagnostic `benchmarks/benchmark_histogram_uncertainty.py` compares these
 quantities without changing production behavior. Separating event variance
 from low-count intervals and retaining source statistics through cuts are
 tracked in the [measurement pipeline plan](measurement_pipeline_plan.md).
+`benchmarks/benchmark_uncertainty_paths.py` traces supplied matched slabs through
+the actual slice, box-cut, display-coarsening, and ROI-sum services. These
+diagnostics and their unit tests neither import nor execute Mantid or Shiver.
 
 ### Derived channels, calibration, and normalization
 

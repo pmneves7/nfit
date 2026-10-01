@@ -1,0 +1,805 @@
+{
+  "assumptions": "independent diagonal variances; exactly known exposure; empty-cell removal only diagnoses unsubtracted event histograms",
+  "shape": [
+    21,
+    3,
+    3,
+    101
+  ],
+  "roi": [
+    0.13,
+    0.23,
+    3.5,
+    25.0
+  ],
+  "normalization_storage": "auxiliary",
+  "viewer_has_normalization_channel": true,
+  "edge_max_abs_differences": [
+    1.907348634588857e-08,
+    2.980229396598588e-10,
+    8.344650304081824e-09,
+    0.0
+  ],
+  "hidden_axis_ranges": {
+    "1": {
+      "edges": [
+        -0.03500000000000014,
+        -0.0050000000000001155,
+        0.02499999999999991,
+        0.054999999999999716
+      ],
+      "selected_center_range": [
+        -0.02000000000000013,
+        0.039999999999999813
+      ]
+    },
+    "2": {
+      "edges": [
+        0.29000000000000004,
+        0.31000000000000005,
+        0.33000000000000007,
+        0.3500000000000001
+      ],
+      "selected_center_range": [
+        0.30000000000000004,
+        0.3400000000000001
+      ]
+    }
+  },
+  "display_axis_edges": {
+    "h": [
+      -0.025000000000000022,
+      0.004999999999999893,
+      0.03499999999999992,
+      0.06499999999999995,
+      0.09499999999999997,
+      0.125,
+      0.15500000000000003,
+      0.18500000000000005,
+      0.21499999999999986,
+      0.24499999999999988,
+      0.2749999999999999,
+      0.30499999999999994,
+      0.33499999999999996,
+      0.365,
+      0.395,
+      0.42500000000000004,
+      0.45499999999999985,
+      0.4849999999999999,
+      0.5149999999999999,
+      0.5449999999999999,
+      0.575,
+      0.605
+    ],
+    "energy": [
+      -0.25,
+      0.25,
+      0.75,
+      1.25,
+      1.75,
+      2.25,
+      2.75,
+      3.25,
+      3.75,
+      4.25,
+      4.75,
+      5.25,
+      5.75,
+      6.25,
+      6.75,
+      7.25,
+      7.75,
+      8.25,
+      8.75,
+      9.25,
+      9.75,
+      10.25,
+      10.75,
+      11.25,
+      11.75,
+      12.25,
+      12.75,
+      13.25,
+      13.75,
+      14.25,
+      14.75,
+      15.25,
+      15.75,
+      16.25,
+      16.75,
+      17.25,
+      17.75,
+      18.25,
+      18.75,
+      19.25,
+      19.75,
+      20.25,
+      20.75,
+      21.25,
+      21.75,
+      22.25,
+      22.75,
+      23.25,
+      23.75,
+      24.25,
+      24.75,
+      25.25,
+      25.75,
+      26.25,
+      26.75,
+      27.25,
+      27.75,
+      28.25,
+      28.75,
+      29.25,
+      29.75,
+      30.25,
+      30.75,
+      31.25,
+      31.75,
+      32.25,
+      32.75,
+      33.25,
+      33.75,
+      34.25,
+      34.75,
+      35.25,
+      35.75,
+      36.25,
+      36.75,
+      37.25,
+      37.75,
+      38.25,
+      38.75,
+      39.25,
+      39.75,
+      40.25,
+      40.75,
+      41.25,
+      41.75,
+      42.25,
+      42.75,
+      43.25,
+      43.75,
+      44.25,
+      44.75,
+      45.25,
+      45.75,
+      46.25,
+      46.75,
+      47.25,
+      47.75,
+      48.25,
+      48.75,
+      49.25,
+      49.75,
+      50.25
+    ]
+  },
+  "provenance": {
+    "nfit": {
+      "path": "/tmp/nio_uncertainty_trace_local/nfit_shared_mde.npz",
+      "sha256": "ab35509595a2d60e1494c7639c31e011d2e26f7efb78bb8da07946da5a57d980"
+    },
+    "mantid": {
+      "path": "/tmp/nio_uncertainty_trace_local/mantid_fine.npz",
+      "sha256": "5c7cd18593975e3d325d54bf6b80e8d60dd8ff398a862e7c326cee15abccf531"
+    },
+    "mantid_data": {
+      "path": "/tmp/nio_uncertainty_trace_local/mantid_fine_data.npz",
+      "sha256": "c49f0203272963f6c41c992240fe3e14a5dacde9c64613a6e1db392e5c244b28"
+    }
+  },
+  "coverage_disagreement": {
+    "nfit_covered_mantid_uncovered_pixels": 1,
+    "mantid_covered_nfit_uncovered_pixels": 0
+  },
+  "fine_cell_coverage_stats": {
+    "nfit": {
+      "covered_cells": 9706,
+      "uncovered_cells": 9383,
+      "geometrically_unexposed_cells": 9383,
+      "masked_cells": 9383,
+      "uncovered_cells_with_positive_events": 0,
+      "events_in_uncovered_cells": 0.0,
+      "geometrically_unexposed_cells_with_positive_events": 0,
+      "events_in_geometrically_unexposed_cells": 0.0,
+      "masked_cells_with_positive_events": 0,
+      "events_in_masked_cells": 0.0
+    },
+    "mantid": {
+      "covered_cells": 9700,
+      "uncovered_cells": 9389,
+      "geometrically_unexposed_cells": 9389,
+      "masked_cells": 0,
+      "uncovered_cells_with_positive_events": 0,
+      "events_in_uncovered_cells": 0.0,
+      "geometrically_unexposed_cells_with_positive_events": 0,
+      "events_in_geometrically_unexposed_cells": 0.0,
+      "masked_cells_with_positive_events": 0,
+      "events_in_masked_cells": 0.0
+    },
+    "nfit_covered_mantid_uncovered": {
+      "cells": 8,
+      "nfit_event_sum": 0.0,
+      "nfit_numerator_sum": 0.0,
+      "mantid_event_sum": 0.0,
+      "mantid_numerator_sum": 0.0
+    },
+    "mantid_covered_nfit_uncovered": {
+      "cells": 2,
+      "nfit_event_sum": 0.0,
+      "nfit_numerator_sum": 0.0,
+      "mantid_event_sum": 0.0,
+      "mantid_numerator_sum": 0.0
+    }
+  },
+  "region_definitions": "fringe: two-pixel Chebyshev neighborhood of uncovered map cells, no crop exterior; low exposure: per-row bottom decile with ties; interior excludes both",
+  "path_semantics": {
+    "hidden_axes": "actual native exposure pooling over both supplied hidden-axis extents",
+    "regular_and_rotated_cuts": "actual pure inverse-variance means; nonpositive errors are excluded, including measured zero-error cells",
+    "display_coarsening": "actual inverse-variance means over 2x native H and E steps",
+    "roi_sum": "actual sum of normalized map intensities and diagonal errors; not a count numerator/exposure pooled estimate or bin-width integral",
+    "floor_removed_diagnostic": "zero inferred variance only where unsubtracted source event count is zero; not a generic production correction"
+  },
+  "regions": {
+    "all_common_covered": {
+      "map_pixels": 1058,
+      "common_finite_cells": 8583,
+      "covered_empty_cells": 4722,
+      "covered_empty_fraction": 0.5501572876616567,
+      "empty_cell_variance_fraction": 0.3304282437451363,
+      "empty_cell_variance_current": 10686.533492488325,
+      "empty_cell_variance_reference": 0.0,
+      "map_error_ratio_same_exposure": {
+        "positive_reference_bins": 928,
+        "min": 1.0,
+        "p5": 1.0,
+        "median": 1.452181734707543,
+        "p95": 3.3552021676080126,
+        "max": 3.6948004526125127,
+        "zero_reference_nonzero_current_bins": 130
+      },
+      "exposure_ratio_nfit_over_mantid": {
+        "positive_reference_bins": 1058,
+        "min": 0.9848238943499135,
+        "p5": 0.9925045610902383,
+        "median": 0.9983851811668943,
+        "p95": 1.0134322539480187,
+        "max": 3.52444432795563,
+        "zero_reference_nonzero_current_bins": 0
+      },
+      "count_max_abs_difference": 0.0,
+      "count_comparison_scope": "count_max_abs_difference compares pooled H/E map pixels; fine-cell differences below retain hidden-axis redistribution",
+      "fine_cell_count_max_abs_difference": 1.0,
+      "fine_cell_count_mismatch_cells": 2,
+      "fine_cell_numerator_relative_l2": 0.00410383483060133,
+      "fine_cell_numerator_max_abs_difference": 1.4597337245941162,
+      "fine_nonempty_numerator_variance_relative_l2": 0.004777424854724903,
+      "fine_nonempty_numerator_variance_max_abs_difference": 2.130822658538822
+    },
+    "fringe_two_pixels": {
+      "map_pixels": 92,
+      "common_finite_cells": 437,
+      "covered_empty_cells": 179,
+      "covered_empty_fraction": 0.4096109839816934,
+      "empty_cell_variance_fraction": 0.11475683117792695,
+      "empty_cell_variance_current": 405.1015449291423,
+      "empty_cell_variance_reference": 0.0,
+      "map_error_ratio_same_exposure": {
+        "positive_reference_bins": 69,
+        "min": 1.0,
+        "p5": 1.0,
+        "median": 1.0837612954859912,
+        "p95": 1.8550649607860008,
+        "max": 2.015043057886409,
+        "zero_reference_nonzero_current_bins": 23
+      },
+      "exposure_ratio_nfit_over_mantid": {
+        "positive_reference_bins": 92,
+        "min": 0.9925042021238519,
+        "p5": 1.0022280752818196,
+        "median": 1.0210033998978059,
+        "p95": 1.2281014849716239,
+        "max": 3.52444432795563,
+        "zero_reference_nonzero_current_bins": 0
+      },
+      "count_max_abs_difference": 0.0,
+      "count_comparison_scope": "count_max_abs_difference compares pooled H/E map pixels; fine-cell differences below retain hidden-axis redistribution",
+      "fine_cell_count_max_abs_difference": 0.0,
+      "fine_cell_count_mismatch_cells": 0,
+      "fine_cell_numerator_relative_l2": 4.130954649049912e-17,
+      "fine_cell_numerator_max_abs_difference": 3.552713678800501e-15,
+      "fine_nonempty_numerator_variance_relative_l2": 1.3897716853283346e-16,
+      "fine_nonempty_numerator_variance_max_abs_difference": 7.105427357601002e-15
+    },
+    "bottom_exposure_decile_per_energy_row": {
+      "map_pixels": 155,
+      "common_finite_cells": 988,
+      "covered_empty_cells": 889,
+      "covered_empty_fraction": 0.8997975708502024,
+      "empty_cell_variance_fraction": 0.878358279545824,
+      "empty_cell_variance_current": 2011.9289019106564,
+      "empty_cell_variance_reference": 0.0,
+      "map_error_ratio_same_exposure": {
+        "positive_reference_bins": 71,
+        "min": 1.1177387410568378,
+        "p5": 1.1579823451352165,
+        "median": 2.4338807574278354,
+        "p95": 3.4756972765682046,
+        "max": 3.52023523289072,
+        "zero_reference_nonzero_current_bins": 84
+      },
+      "exposure_ratio_nfit_over_mantid": {
+        "positive_reference_bins": 155,
+        "min": 0.9887441338934401,
+        "p5": 0.992547376263289,
+        "median": 1.000532545235842,
+        "p95": 1.1332984158742665,
+        "max": 3.52444432795563,
+        "zero_reference_nonzero_current_bins": 0
+      },
+      "count_max_abs_difference": 0.0,
+      "count_comparison_scope": "count_max_abs_difference compares pooled H/E map pixels; fine-cell differences below retain hidden-axis redistribution",
+      "fine_cell_count_max_abs_difference": 0.0,
+      "fine_cell_count_mismatch_cells": 0,
+      "fine_cell_numerator_relative_l2": 6.777532586686948e-17,
+      "fine_cell_numerator_max_abs_difference": 1.7763568394002505e-15,
+      "fine_nonempty_numerator_variance_relative_l2": 1.9917731898416794e-16,
+      "fine_nonempty_numerator_variance_max_abs_difference": 3.552713678800501e-15
+    },
+    "well_covered_interior": {
+      "map_pixels": 851,
+      "common_finite_cells": 7255,
+      "covered_empty_cells": 3728,
+      "covered_empty_fraction": 0.5138525155065472,
+      "empty_cell_variance_fraction": 0.3149259878280666,
+      "empty_cell_variance_current": 8436.975192714204,
+      "empty_cell_variance_reference": 0.0,
+      "map_error_ratio_same_exposure": {
+        "positive_reference_bins": 806,
+        "min": 1.0,
+        "p5": 1.0,
+        "median": 1.4491098686023198,
+        "p95": 3.126635728564444,
+        "max": 3.6948004526125127,
+        "zero_reference_nonzero_current_bins": 45
+      },
+      "exposure_ratio_nfit_over_mantid": {
+        "positive_reference_bins": 851,
+        "min": 0.9848238943499135,
+        "p5": 0.9923736008395362,
+        "median": 0.9980055687292342,
+        "p95": 1.0037876899541975,
+        "max": 1.0102570449778574,
+        "zero_reference_nonzero_current_bins": 0
+      },
+      "count_max_abs_difference": 0.0,
+      "count_comparison_scope": "count_max_abs_difference compares pooled H/E map pixels; fine-cell differences below retain hidden-axis redistribution",
+      "fine_cell_count_max_abs_difference": 1.0,
+      "fine_cell_count_mismatch_cells": 2,
+      "fine_cell_numerator_relative_l2": 0.004346430522735835,
+      "fine_cell_numerator_max_abs_difference": 1.4597337245941162,
+      "fine_nonempty_numerator_variance_relative_l2": 0.005188575672295968,
+      "fine_nonempty_numerator_variance_max_abs_difference": 2.130822658538822
+    },
+    "selected_roi": {
+      "map_pixels": 173,
+      "common_finite_cells": 1341,
+      "covered_empty_cells": 757,
+      "covered_empty_fraction": 0.5645041014168531,
+      "empty_cell_variance_fraction": 0.33184794506039916,
+      "empty_cell_variance_current": 1713.1948017394452,
+      "empty_cell_variance_reference": 0.0,
+      "map_error_ratio_same_exposure": {
+        "positive_reference_bins": 141,
+        "min": 1.0,
+        "p5": 1.0,
+        "median": 1.2969385410489969,
+        "p95": 3.401746640507846,
+        "max": 3.6948004526125127,
+        "zero_reference_nonzero_current_bins": 32
+      },
+      "exposure_ratio_nfit_over_mantid": {
+        "positive_reference_bins": 173,
+        "min": 0.9881244067339227,
+        "p5": 0.9920842364235558,
+        "median": 0.9986535393648133,
+        "p95": 1.0114576664978234,
+        "max": 1.3518030289946852,
+        "zero_reference_nonzero_current_bins": 0
+      },
+      "count_max_abs_difference": 0.0,
+      "count_comparison_scope": "count_max_abs_difference compares pooled H/E map pixels; fine-cell differences below retain hidden-axis redistribution",
+      "fine_cell_count_max_abs_difference": 0.0,
+      "fine_cell_count_mismatch_cells": 0,
+      "fine_cell_numerator_relative_l2": 4.0671588156167285e-17,
+      "fine_cell_numerator_max_abs_difference": 3.552713678800501e-15,
+      "fine_nonempty_numerator_variance_relative_l2": 1.2967182342799162e-16,
+      "fine_nonempty_numerator_variance_max_abs_difference": 1.0658141036401503e-14
+    }
+  },
+  "stage_error_ratios_current_over_reference_same_exposure": {
+    "analytic_pooled_energy_cut": {
+      "positive_reference_bins": 44,
+      "min": 1.0,
+      "p5": 1.0290441961618633,
+      "median": 1.4017521901554013,
+      "p95": 4.608820511032137,
+      "max": 6.805002426641665,
+      "zero_reference_nonzero_current_bins": 0
+    },
+    "display_coarsened_map": {
+      "positive_reference_bins": 310,
+      "min": 0.7862131518829758,
+      "p5": 1.0,
+      "median": 1.4590721817410763,
+      "p95": 2.492763953845262,
+      "max": 3.271405533133038,
+      "zero_reference_nonzero_current_bins": 0
+    },
+    "regular_inverse_variance": {
+      "positive_reference_bins": 44,
+      "min": 1.0,
+      "p5": 1.0337064802317075,
+      "median": 1.3358295417790282,
+      "p95": 2.298384490750896,
+      "max": 2.8006620719111326,
+      "zero_reference_nonzero_current_bins": 0
+    },
+    "rotated_zero_degree": {
+      "positive_reference_bins": 43,
+      "min": 1.0,
+      "p5": 1.0316919269490303,
+      "median": 1.3210002962360907,
+      "p95": 2.3018802692015554,
+      "max": 2.8006620719111335,
+      "zero_reference_nonzero_current_bins": 0
+    },
+    "roi_sum": {
+      "current_error": 0.008861122927269018,
+      "reference_error": 0.0002027908464308632,
+      "ratio": 43.695872290221985
+    }
+  },
+  "measured_date": "2026-10-01",
+  "nfit_version": "0.105.5",
+  "mantid_version": "6.16.0.1",
+  "engines": "fresh manual external Mantid MDNorm and native nfit bin_mdevent_group on identical shared MDE input; not invoked by tests",
+  "input": "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/tempMDE/All_Ei60_T5K_all_617_runs.nxs",
+  "events_in_source": 177778751,
+  "runs": 617,
+  "calibration_and_mask": "van382236_D",
+  "symmetry": "x,y,z;y,z,x;z,x,y;-x,-y,-z;-y,-z,-x;-z,-x,-y",
+  "basis": [
+    [
+      1,
+      1,
+      1,
+      0
+    ],
+    [
+      1,
+      -1,
+      0,
+      0
+    ],
+    [
+      1,
+      1,
+      -2,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      1
+    ]
+  ],
+  "incident_energy_isolation": {
+    "shared_mde_event_counts_max_difference": 1.0,
+    "shared_mde_numerator_rel_l2": 0.0006624576507872282,
+    "shared_mde_nonzero_event_variance_rel_l2": 0.0007809750095213533,
+    "normalization_per_run_rel_l2": 0.00824638989795635,
+    "normalization_first_run_ei_rel_l2": 1.7352878012575605e-06,
+    "first_run_ei": 60.7702,
+    "all_common_covered": {
+      "per_run_exposure_ratio": {
+        "bins": 1058,
+        "min": 0.9848238943499135,
+        "p5": 0.9925045610902383,
+        "median": 0.9983851811668943,
+        "p95": 1.0134322539480187,
+        "max": 3.52444432795563
+      },
+      "first_ei_exposure_ratio": {
+        "bins": 1058,
+        "min": 0.9999940237566614,
+        "p5": 0.9999988004653516,
+        "median": 1.0000001461779653,
+        "p95": 1.0000034145340002,
+        "max": 1.0007397588790428
+      }
+    },
+    "fringe_two_pixels": {
+      "per_run_exposure_ratio": {
+        "bins": 92,
+        "min": 0.9925042021238519,
+        "p5": 1.0022280752818196,
+        "median": 1.0210033998978059,
+        "p95": 1.2281014849716239,
+        "max": 3.52444432795563
+      },
+      "first_ei_exposure_ratio": {
+        "bins": 92,
+        "min": 0.9999986288661125,
+        "p5": 1.000000734272735,
+        "median": 1.00000403330448,
+        "p95": 1.0000325170594642,
+        "max": 1.0007397588790428
+      }
+    },
+    "bottom_exposure_decile_per_energy_row": {
+      "per_run_exposure_ratio": {
+        "bins": 155,
+        "min": 0.9887441338934401,
+        "p5": 0.992547376263289,
+        "median": 1.000532545235842,
+        "p95": 1.1332984158742665,
+        "max": 3.52444432795563
+      },
+      "first_ei_exposure_ratio": {
+        "bins": 155,
+        "min": 0.9999979578097815,
+        "p5": 0.9999988852504528,
+        "median": 1.0000002842869038,
+        "p95": 1.0000277221219218,
+        "max": 1.0007397588790428
+      }
+    },
+    "well_covered_interior": {
+      "per_run_exposure_ratio": {
+        "bins": 851,
+        "min": 0.9848238943499135,
+        "p5": 0.9923736008395362,
+        "median": 0.9980055687292342,
+        "p95": 1.0037876899541975,
+        "max": 1.0102570449778574
+      },
+      "first_ei_exposure_ratio": {
+        "bins": 851,
+        "min": 0.9999940237566614,
+        "p5": 0.9999987739487923,
+        "median": 1.0000000658369017,
+        "p95": 1.0000015466439311,
+        "max": 1.0000043400910303
+      }
+    },
+    "selected_roi": {
+      "per_run_exposure_ratio": {
+        "bins": 173,
+        "min": 0.9881244067339227,
+        "p5": 0.9920842364235558,
+        "median": 0.9986535393648133,
+        "p95": 1.0114576664978234,
+        "max": 1.3518030289946852
+      },
+      "first_ei_exposure_ratio": {
+        "bins": 173,
+        "min": 0.9999989912449139,
+        "p5": 0.9999995103748845,
+        "median": 1.0000003482325053,
+        "p95": 1.000003452944804,
+        "max": 1.0000579676886643
+      }
+    },
+    "direct_cut_vs_fine_then_pool": {
+      "C": 0.0,
+      "V": 0.0,
+      "N": 2.418071159644338e-07,
+      "events": 0.0
+    },
+    "current_native_IV_cut_error_vs_pooled_event_variance_same_exposure": {
+      "bins": 44,
+      "min": 0.8430578184680045,
+      "p5": 0.8617770328376316,
+      "median": 1.2625643572451626,
+      "p95": 4.5446490505870525,
+      "max": 6.563958633902194
+    },
+    "current_native_IV_cut_mean_vs_pooled_same_exposure_rel_l2": 0.14301812330016497,
+    "example_rows": [
+      {
+        "energy": 6.0,
+        "counts": 45.0,
+        "nfit_exposure": 2664966.4498282718,
+        "numerator": 53.060282588005066,
+        "analytic_pooled_signal": 1.991030040600482e-05,
+        "analytic_current_error": 3.8138248350724563e-06,
+        "analytic_reference_error": 2.968060340708413e-06,
+        "mantid_own_exposure_error": 2.964975744467822e-06,
+        "IV_signal": 1.9175510936053234e-05,
+        "IV_error": 3.473240078599269e-06
+      },
+      {
+        "energy": 10.0,
+        "counts": 7.0,
+        "nfit_exposure": 286445.08388097613,
+        "numerator": 8.491011261940002,
+        "analytic_pooled_signal": 2.964271945916235e-05,
+        "analytic_current_error": 2.949993823070216e-05,
+        "analytic_reference_error": 1.1203941033213419e-05,
+        "mantid_own_exposure_error": 1.1226544316070306e-05,
+        "IV_signal": 3.5888576334683183e-05,
+        "IV_error": 2.1124893428046893e-05
+      },
+      {
+        "energy": 12.0,
+        "counts": 3.0,
+        "nfit_exposure": 157426.34087336223,
+        "numerator": 3.7111592292785645,
+        "analytic_pooled_signal": 2.3573940731201494e-05,
+        "analytic_current_error": 4.968090069721444e-05,
+        "analytic_reference_error": 1.3610422552594692e-05,
+        "mantid_own_exposure_error": 1.3558325019443181e-05,
+        "IV_signal": 2.2344450377874445e-05,
+        "IV_error": 4.652068054760421e-05
+      },
+      {
+        "energy": 15.0,
+        "counts": 7.0,
+        "nfit_exposure": 580103.3748690715,
+        "numerator": 8.860068440437317,
+        "analytic_pooled_signal": 1.5273257878282507e-05,
+        "analytic_current_error": 1.346392676268903e-05,
+        "analytic_reference_error": 5.772752213831373e-06,
+        "mantid_own_exposure_error": 5.741590648760783e-06,
+        "IV_signal": 1.6479906913564815e-05,
+        "IV_error": 1.1243771513240185e-05
+      },
+      {
+        "energy": 17.0,
+        "counts": 25.0,
+        "nfit_exposure": 1062703.039423688,
+        "numerator": 32.191957116127014,
+        "analytic_pooled_signal": 3.0292523801931493e-05,
+        "analytic_current_error": 8.530921982773198e-06,
+        "analytic_reference_error": 6.058507910963369e-06,
+        "mantid_own_exposure_error": 6.023675448921128e-06,
+        "IV_signal": 2.8237875855546033e-05,
+        "IV_error": 8.256690918749768e-06
+      },
+      {
+        "energy": 24.0,
+        "counts": 18.0,
+        "nfit_exposure": 684350.7916175413,
+        "numerator": 24.81447958946228,
+        "analytic_pooled_signal": 3.6259882933444734e-05,
+        "analytic_current_error": 1.0337769987054186e-05,
+        "analytic_reference_error": 8.546545064257695e-06,
+        "mantid_own_exposure_error": 8.62687035456515e-06,
+        "IV_signal": 3.445535523576786e-05,
+        "IV_error": 9.787423516777771e-06
+      },
+      {
+        "energy": 24.5,
+        "counts": 9.0,
+        "nfit_exposure": 286065.48462844087,
+        "numerator": 12.484326481819153,
+        "analytic_pooled_signal": 4.36414987219956e-05,
+        "analytic_current_error": 1.943072088124307e-05,
+        "analytic_reference_error": 1.454718230876582e-05,
+        "mantid_own_exposure_error": 1.4766892253325046e-05,
+        "IV_signal": 4.672782949837128e-05,
+        "IV_error": 1.831421153676656e-05
+      },
+      {
+        "energy": 25.0,
+        "counts": 1.0,
+        "nfit_exposure": 67293.09570448504,
+        "numerator": 1.3920451402664185,
+        "analytic_pooled_signal": 2.0686299622468395e-05,
+        "analytic_current_error": 4.390024861064885e-05,
+        "analytic_reference_error": 2.0686299018385114e-05,
+        "mantid_own_exposure_error": 2.1333600614752934e-05,
+        "IV_signal": 2.0848061876801772e-05,
+        "IV_error": 3.808069961104222e-05
+      }
+    ]
+  },
+  "cached_native_context": {
+    "project": "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/SEQUOIA_Ei60_NiO_and_sapphire.nfit",
+    "member": "assets/binnings/composite-713d5b2197c945febd2048b27e52a9b3-0725b5179d704d69bea4f94cb21af9a2/data.npz",
+    "project_size": 27249243628,
+    "requested_center_ranges": [
+      [
+        0.0,
+        0.6
+      ],
+      [
+        -0.03,
+        0.03
+      ],
+      [
+        0.31,
+        0.35
+      ],
+      [
+        0.0,
+        50.0
+      ]
+    ],
+    "selected_indices": [
+      [
+        33,
+        53
+      ],
+      [
+        66,
+        68
+      ],
+      [
+        65,
+        67
+      ],
+      [
+        0,
+        100
+      ]
+    ],
+    "selected_center_ranges": [
+      [
+        -0.010000000000000064,
+        0.59
+      ],
+      [
+        -0.02000000000000013,
+        0.039999999999999813
+      ],
+      [
+        0.30000000000000004,
+        0.3400000000000001
+      ],
+      [
+        0.0,
+        50.0
+      ]
+    ],
+    "selected_edge_ranges": [
+      [
+        -0.025000000000000022,
+        0.605
+      ],
+      [
+        -0.03500000000000014,
+        0.054999999999999716
+      ],
+      [
+        0.29000000000000004,
+        0.3500000000000001
+      ],
+      [
+        -0.25,
+        50.25
+      ]
+    ],
+    "shape": [
+      21,
+      3,
+      3,
+      101
+    ],
+    "event_weight_rms": 1.2548841253006255,
+    "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
+    "elapsed_seconds": 6.857272039866075
+  },
+  "limitations": [
+    "Matched saved cube center grid, not exact screenshot recreation.",
+    "Four fine cells differ by one event at 1 and29 meV, paired within hidden axes. Cause consistent with boundary arithmetic; individual event verification pending.",
+    "No fresh current raw-DGS reduction in this diagnostic. Old native cube reduction cache v1; current reducer v2.",
+    "Observed event variance is not a confidence interval about the unknown rate.",
+    "Diagonal statistical comparison, known exposure; no calibration uncertainty or shared-source covariance validation.",
+    "No production math or saved project changed."
+  ]
+}

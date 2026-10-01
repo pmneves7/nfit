@@ -33,7 +33,7 @@ temperature. Instrument names alone must not determine the statistical estimator
 | Checkpoint | Scope | Status |
 | --- | --- | --- |
 | 1A | Reproducible uncertainty diagnostic baseline | Complete |
-| 1B | Trace the unsubtracted NiO uncertainty example through histogram, slice, and cut | Pending |
+| 1B | Trace the unsubtracted NiO uncertainty example through histogram, slice, and cut | Complete |
 | 1C | Separate accumulated event variance from low-count confidence intervals | Pending |
 | 1D | Validate DGS reference statistics and covariance boundaries | Pending |
 | 2A | Define explicit measurement and estimator contracts | Pending |
@@ -112,7 +112,7 @@ only diagnostics and documentation. Local source and the existing ORNL
 application/help are synchronized for this checkpoint.
 
 **Review gate:** checkpoint 1A is complete. The uncertainty stage is deliberately
-split into 1A–1D; 1B has not started and requires Paul's go-ahead.
+split into 1A–1D; Paul authorized 1B on 2026-10-01. The comparison prioritizes poorly covered fringes.
 
 ### 1B — Trace the NiO example
 
@@ -128,6 +128,39 @@ versus first-run incident-energy convention.
 quantify their contribution, and show which discrepancies remain. Do not assume
 the screenshot's source grid or exact recipe from its appearance. Use the shared
 MDE input to isolate binning before repeating the native raw reduction.
+
+**Measured findings (2026-10-01):** matched shared-MDE histograms isolate the
+zero-count confidence-limit substitution, trajectory incident-energy convention,
+and estimator change in cuts. In the bottom exposure decile, 90.0% of fine
+cells are empty; empty-cell prescriptions contribute 87.8% of current numerator
+variance. Positive-event map errors have median current/reference ratio 2.434
+at the same exposure. Fringe fine-cell counts and nonempty event variances
+agree with Mantid to numerical precision. A common trajectory energy brings
+fringe exposure ratios from a maximum 3.524 to 1.000740. The full
+`benchmarks/results/nio-uncertainty-fringes.md` and accompanying aggregate JSON
+record support, exact edges, checksums, path comparisons, and remaining
+fine-cell boundary discrepancies. Source slabs remain outside the repository.
+
+A weakly exposed measured zero can legitimately have a large confidence upper
+limit. Mantid's zero accumulated event variance does not make its unknown
+intensity certain. The propagation defect and interval construction must be
+addressed separately. For a spatial cut, count pooling estimates an
+exposure-weighted response; a uniform spatial mean or integral has a different
+target and assumptions about sparse coverage.
+
+**Completion record:** version 0.105.7 adds the path diagnostic and synthetic
+tests, clarifies permanent documentation, and retains production behavior.
+All 30 uncertainty-diagnostic and packaging tests pass, along with Ruff,
+byte-compilation, whitespace checks, and Sphinx with warnings treated as errors.
+Manual Mantid reference runs are separate from pytest; no unit tests import or
+execute Mantid/Shiver. Local and ORNL source/help are synchronized after commit.
+The old native cube has reduction-cache version 1; current native reduction is
+version 2. Fresh raw-reduction validation remains in 1D. Exact screenshot
+recreation remains limited by its unavailable source recipe.
+
+**Review gate:** checkpoint 1B is complete. Stop before 1C until Paul authorizes
+it. Evaluate whether 1C needs subdivision into statistics persistence and final
+interval inference before changing production behavior.
 
 ### 1C — Event variance and low-count inference
 
