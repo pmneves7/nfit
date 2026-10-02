@@ -43,15 +43,45 @@ scaling without a saved project or Qt. See
 
 ## Composite workflows
 
-The collection's **Metadata dimensions → Copy composite script** action calls
-`composite_workflow_script(project, group_name, node_id=...)`. Save the project
-first so source membership, imports, masks, scales, and backgrounds are
-available to the script. Its `METADATA_DIMENSIONS` and `REBIN_CONFIG`
-dictionaries capture the current coordinate and grid settings for editing.
-The editable `REDUCTION_RECIPES` include native sample and linked background
-collections; changed settings are applied to the workspace before preparation.
-`run()` loads the saved project and returns the composite histogram without
-constructing Qt widgets.
+The collection's **Copy complete workflow** action calls
+`composite_workflow_script(project, group_name, node_id=...)`. The script
+reconstructs ordinary file-backed datasets and native DGS, CORELLI and MDEvent
+collections from original sources. It retains nested collection topology,
+ancestor masks and lattice, source order, disabled inputs, scales, resolution,
+metadata axes and linked backgrounds, including sources in other workspaces.
+Only the selected tree, its ancestors and background dependencies are included;
+a saved project and Qt are not required.
+
+The editable dictionaries separate the scientific operations:
+
+- `COMPOSITE_RECIPE` contains workspace/collection structure, ordinary source
+  descriptors and inherited settings. Each collection retains its own binning.
+- `REDUCTION_RECIPES` contains native source membership, shared reduction
+  defaults, per-run overrides, UB matrices, and native run/collection masks and
+  background links.
+- `METADATA_DIMENSIONS`, `REBIN_CONFIG` and `SCALING` control the selected output.
+  Edit these to change its coordinate assignment, grid, symmetry, physical
+  channel or scale independently of source reduction.
+
+`build_group()` returns the reconstructed workspace and optional selected
+collection; `run()` returns its histogram. The lower-level public
+`export_composite_recipe(...)` and `replay_composite_recipe(...)` APIs expose
+the same versioned recipe for batch programs. Original data and calibration
+paths must remain accessible. Numerical caches, model state and historical
+fit results are not embedded.
+
+Source-less data, replaced numerical payloads, callable dataset transforms and
+live derived-analysis inputs are rejected explicitly. Save such results as
+portable dataset files and import those files to make a source-based composite
+workflow. Standalone analysis and fit graph support has separate boundaries
+described below.
+
+A workspace-wide background is applied once to the requested result. Child
+composites retain their own background links without reapplying the workspace
+link during parent assembly. References use their own workspace lattice and
+ancestor masks; a reference does not inherit the sample-wide subtraction that
+it supplies. Genuine cycles through reference-local links are rejected.
+Reference collection result scales and link scales are each applied once.
 
 For an already loaded workspace and nested dataset collection:
 

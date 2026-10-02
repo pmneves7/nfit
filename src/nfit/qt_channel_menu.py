@@ -3,6 +3,7 @@
 from PySide6 import QtCore, QtWidgets
 
 from .histogram_statistics import EVENT_SIGNAL_NUMERATOR, EVENT_VARIANCE_NUMERATOR
+from .measurement_diagnostics import event_contribution_description
 
 _GROUPS = (
     (
@@ -17,6 +18,7 @@ _GROUPS = (
         ),
     ),
     ("Event statistics", (EVENT_SIGNAL_NUMERATOR, EVENT_VARIANCE_NUMERATOR)),
+    ("Confidence intervals", ("confidence_lower", "confidence_upper")),
     ("Fit diagnostics", ("fit", "residual")),
     (
         "Coverage and normalization",
@@ -40,6 +42,8 @@ _LABELS = {
     "file_mask": "File mask",
     "nfit_mask": "User mask",
     "coverage_mask": "Coverage mask",
+    "confidence_lower": "Poisson rate lower bound (68.27%)",
+    "confidence_upper": "Poisson rate upper bound (68.27%)",
 }
 
 
@@ -67,7 +71,8 @@ _EVENT_TOOLTIPS = {
     EVENT_SIGNAL_NUMERATOR: "Sum of corrected event weights before division by exposure.",
     EVENT_VARIANCE_NUMERATOR: (
         "Accumulated event numerator variance before division by exposure squared. "
-        "The diagonal variance excludes covariance between reused event contributions."
+        "The saved symmetry policy and represented source dependencies determine "
+        "which shared terms are included; inspect Statistics and provenance."
     ),
 }
 
@@ -92,13 +97,25 @@ def populate_channel_combo(
     labels=None,
     tooltips=None,
     event_statistics=False,
+    num_events_semantics=None,
+    counting_dependencies=False,
 ):
     """Group histogram diagnostics without reading any numerical payloads."""
     channel_labels = dict(_LABELS)
-    channel_tooltips = {}
+    channel_tooltips = {
+        name: "Exact equal-tailed 68.27% Garwood bound, computed after pooling final-bin counts and known exposure. Requires an audited independent constant-weight Poisson model; display smoothing is not applied."
+        for name in ("confidence_lower", "confidence_upper")
+    }
     if event_statistics and not point_list:
         channel_labels.update(_EVENT_LABELS)
         channel_tooltips.update(_EVENT_TOOLTIPS)
+        label, tooltip = event_contribution_description(num_events_semantics)
+        channel_labels["num_events"] = label
+        channel_tooltips["num_events"] = tooltip
+        if counting_dependencies:
+            channel_labels["errors"] = "Propagated count standard uncertainty"
+            channel_tooltips["errors"] = "Standard uncertainty propagated from represented numerator and exposure primitives, including their shared covariance. This is not a low-count confidence interval."
+            channel_tooltips["normalization_denominator"] = "Normalization exposure; represented exposure and shared calibration dependencies enter the propagated ratio uncertainty. Inspect Statistics and provenance for assumptions."
     channel_labels.update(labels or {})
     channel_tooltips.update(tooltips or {})
     blocker = QtCore.QSignalBlocker(combo)

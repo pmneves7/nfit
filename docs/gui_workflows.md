@@ -13,6 +13,11 @@ The nfit interface has two main window types:
 Scientific settings are stored in the `.nfit` project and use the same package
 functions available through the Python API.
 
+Dataset groups separate **Sources**, **Reduction**, **Binning and combination**,
+and **Plots and cuts**. Source membership and reduction settings can be edited
+independently of named histogram recipes. See [data import](data_import.md),
+[reduction recipes](reduction_recipes.md), and [workflow scripts](workflow_scripts.md).
+
 Click **Help** beside **File** in the project explorer toolbar to open the local
 documentation home page (`docs/_build/html/index.html`) in your default web
 browser. If it has not been built, Help shows the build command instead.

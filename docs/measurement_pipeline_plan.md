@@ -54,8 +54,8 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 3B | Edit recipes through one settings schema and targeted cache invalidation | Complete |
 | 4A | Add basic run expressions and resolved-source preview | Complete |
 | 4B | Add grouped, repeated, and stacked run expressions | Complete |
-| 5A | Separate Sources, Reduction, Binning, and Plot controls | Pending |
-| 5B | Expose statistical diagnostics and complete script replay | Pending |
+| 5A | Separate Sources, Reduction, Binning, and Plot controls | Complete |
+| 5B | Expose statistical diagnostics and complete script replay | Complete |
 | 6A | Validate instrument families and continuous measurements | Pending |
 | 6A1 | Validate optional numerical and statistical treatments | Pending |
 | 6A2 | Review and adopt future defaults | Pending |
@@ -600,7 +600,7 @@ are disabled. Mixed reduction families use separate dataset groups.
 Saved source expressions are visible in collection details. Selection scripts
 resolve the current directory; saved reduction recipes retain their resolved
 logical membership. Sources and reduced caches remain lazy. See
-[Selecting numbered sources](source_selection.md). Stage 5 awaits user review;
+[Selecting numbered sources](source_selection.md). Stage 5 follows below;
 alternative validation/default adoption remain 6A1–6A2.
 
 ## 5. GUI and scripting workflow
@@ -625,6 +625,44 @@ introduced dependencies. Export complete editable workflows through public APIs.
 **Acceptance:** no changeable reduction setting is hidden; dataset edits can
 retrigger reduction and binning independently; controls have tested tooltips;
 GUI actions round-trip without constructing widgets.
+
+**Stage 5 completion record (0.114.0):** ordinary dataset groups now present
+Sources, Reduction, Binning and combination, and Plots and cuts separately.
+Shared defaults, mixed effective values, per-run overrides and resolved
+automatic calibration remain visible through the authoritative settings schema.
+Resolved symmetry matrices state their reciprocal-HKL coordinate convention.
+Measurement combination labels explain the target and weights without changing
+estimator defaults.
+
+Source expressions can edit existing groups through `update_source_selection`.
+Edits inspect only new files, retain unchanged entries and reduced caches, and
+invalidate changed combinations. Missing inputs and dangling saved background
+references fail atomically. The GUI checks all project workspaces; scripting
+callers supply external reference roots when needed. Existing expression groups
+remain ordinary subfolders.
+
+The viewer exposes count numerators, numerator variance, exposure, coverage,
+standard uncertainty and a bounded metadata-only provenance report. Audited
+independent constant-weight Poisson models additionally offer final-bin 68.27%
+Garwood bounds, recomputed after integration/coarsening. Weighted DGS,
+symmetrized, subtracted or uncertain-normalizer data are not assigned an
+unsupported exact interval. Display smoothing remains a plot approximation.
+The optional `smooth_count_histogram` API smooths numerator/exposure with
+represented primitive dependencies; it does not change defaults or infer missing
+cross-bin covariance. Representative-data validation remains at 6A.
+
+Standalone composite workflows now contain original source descriptors, native
+reduction recipes, nested topology, ancestor masks/lattice, selected grids,
+scales and linked background closure, including external workspaces. They do
+not require a saved project or Qt. Source-less replacements, custom callable
+transforms and live derived-analysis inputs fail explicitly and remain separate
+export extensions. Scientific background context fixes prevent inherited-root
+self cycles, repeated root subtraction and squared reference result scales;
+versioned affected background caches recompute while reduced-event caches remain
+reusable. Genuine cycles still fail.
+
+Stage 6 awaits user review. Scientific alternative validation and default
+adoption remain 6A1–6A2; no main NiO project is rebuilt for this checkpoint.
 
 ## 6. Cross-instrument acceptance and cleanup
 

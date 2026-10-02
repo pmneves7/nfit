@@ -30,6 +30,7 @@ _bold_label: Any = None
 _compact_point_list_form: Any = None
 _composite_root: Any = None
 _dataset_can_rebin: Any = None
+_dataset_lattice_parameters: Any = None
 _dataset_metadata_mapping: Any = None
 _dataset_rebin_status_text: Any = None
 _format_number: Any = None
@@ -969,15 +970,13 @@ def _dataset_axes_group_box(
         "or saving a rebinned dataset requires an up-to-date rebin."
     )
     auto_check.toggled.connect(lambda checked: self._set_dataset_rebin_auto(dataset, group, checked))
-    mean_label = QtWidgets.QLabel("Mean")
+    from .project_rebin_panels import measurement_average_choices
+
+    mean_label = QtWidgets.QLabel("Measurement target")
     mean_combo = QtWidgets.QComboBox()
     mean_combo.setObjectName("dataset_rebin_mean_weighting")
-    mean_combo.setToolTip(
-        "Choose how multiple source points in a rebinned bin are averaged. "
-        "A physical normalization denominator, when present, always contributes to the data weight. Inverse variance additionally uses 1/sigma^2; uniform does not."
-    )
-    mean_combo.addItem("Inverse variance", "inverse_variance")
-    mean_combo.addItem("Uniform", "uniform")
+    measurement_average_choices(mean_combo)
+    mean_label.setToolTip(mean_combo.toolTip())
     mean_index = mean_combo.findData(_rebin_mean_weighting(config))
     mean_combo.setCurrentIndex(max(mean_index, 0))
     mean_combo.currentIndexChanged.connect(
@@ -1117,6 +1116,15 @@ def _dataset_axes_group_box(
     symmetry_row.addWidget(symmetry_expression, 1)
     symmetry_row.addWidget(symmetry_preview)
     controls_layout.addLayout(symmetry_row, footer_row + 2, 0, 1, last_column + 1)
+    from .project_rebin_panels import rebin_symmetry_operations_widget
+
+    resolved_symmetry = rebin_symmetry_operations_widget(
+        config, object_prefix="dataset_rebin", lattice_parameters=_dataset_lattice_parameters(dataset) or (group.lattice_parameters if group is not None else None)
+    )
+    symmetry_check.toggled.connect(resolved_symmetry.refresh_operations)
+    symmetry_mode.currentIndexChanged.connect(resolved_symmetry.refresh_operations)
+    symmetry_expression.editingFinished.connect(resolved_symmetry.refresh_operations)
+    controls_layout.addWidget(resolved_symmetry, footer_row + 3, 0, 1, last_column + 1)
     from .project_rebin_panels import rebin_memory_estimate_label
 
     cached_rebin_data = _peek_cached_dataset_view(
@@ -1144,21 +1152,21 @@ def _dataset_axes_group_box(
         object_prefix="dataset_rebin",
         compressed_disk_bytes=compressed_disk_bytes,
     )
-    controls_layout.addWidget(memory_label, footer_row + 3, 0, 1, last_column + 1)
+    controls_layout.addWidget(memory_label, footer_row + 4, 0, 1, last_column + 1)
     status_label = QtWidgets.QLabel(_dataset_rebin_status_text(dataset, config))
     status_label.setObjectName("dataset_rebin_status")
     status_label.setWordWrap(True)
     status_label.setToolTip(
         "Shows whether the cached rebinned data is current. Pending manual rebinning will be forced automatically for fit, view, and export operations."
     )
-    controls_layout.addWidget(status_label, footer_row + 4, 0, 1, last_column + 1)
+    controls_layout.addWidget(status_label, footer_row + 5, 0, 1, last_column + 1)
     action_row = QtWidgets.QHBoxLayout()
     action_row.addWidget(rebin_now_button)
     action_row.addWidget(rebin_all_button)
     action_row.addWidget(create_button)
     action_row.addWidget(save_rebin_button)
     action_row.addStretch(1)
-    controls_layout.addLayout(action_row, footer_row + 5, 0, 1, last_column + 1)
+    controls_layout.addLayout(action_row, footer_row + 6, 0, 1, last_column + 1)
     controls.addTab(settings_tab, "Rebin settings")
     from .project_rebin_panels import rebin_bin_information_widget
 

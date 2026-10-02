@@ -39,7 +39,9 @@ A few of its main capabilities are:
 - monitor nfit and system CPU and RAM usage live in the project toolbar;
 - set installation-wide figure font size and axes linewidth defaults in Preferences;
 - select numbered runs with directory/naming patterns, bounded run expressions,
-  metadata previews, and optional ordinary dataset subfolders,
+  metadata previews, editable group membership, and optional ordinary dataset subfolders;
+- separate Sources, Reduction, Binning and combination, and Plots and cuts,
+  with editable standalone composite workflows and statistical provenance reports;
 - import, combine, mask, rebin, and visualize multidimensional neutron data,
   with confirmed project-wide clearing of computed data and model caches,
   with parent-owned hierarchical binning, explicit background recipe context,
@@ -66,6 +68,8 @@ A few of its main capabilities are:
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
 - declare statistical targets through a Python API for count exposure pooling,
   continuous means, coordinate integrals, and shared-source linear uncertainty;
+- smooth count numerator and exposure through an optional bounded Python API
+  that retains primitive covariance for subsequent cuts;
 - preserve count and continuous-mean statistics through binning, slices, box
   profiles and waterfalls, with bounded shared-source uncertainty and statistical
   CSV exports;

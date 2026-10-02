@@ -358,3 +358,64 @@ def _format_bytes(value: int) -> str:
             return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
         size /= 1024.0
     return f"{size:.1f} TiB"
+
+
+def measurement_average_choices(combo: Any) -> None:
+    """Describe legacy averaging choices by their measurement target without changing defaults."""
+    from PySide6 import QtCore
+
+    combo.setToolTip(
+        "For already normalized measurements of a common value: precision weighting uses "
+        "the reported variance, while uniform weighting estimates a mean over measurements. "
+        "Existing physical normalization weights are retained. Native DGS/MDE event histograms "
+        "pool counts, observed variance and exposure; this point-average choice does not change their estimator. "
+        "Declared measurement contracts select their own estimator."
+    )
+    combo.addItem("Common value: precision weighted", "inverse_variance")
+    combo.addItem("Measurement mean: uniform weighting", "uniform")
+    combo.setItemData(0, "Estimate one common value when reported uncertainties are reliable and measurements are independent.", QtCore.Qt.ItemDataRole.ToolTipRole)
+    combo.setItemData(1, "Estimate a measurement mean with uniform statistical weights, retaining any physical normalization weights in the existing recipe.", QtCore.Qt.ItemDataRole.ToolTipRole)
+
+
+def rebin_symmetry_operations_widget(config, *, object_prefix, lattice_parameters=None):
+    """Show the actual HKL matrices used by the numerical service, not a group name alone."""
+    from PySide6 import QtWidgets
+
+    from .project_rebinning import _rebin_symmetry_operations
+
+    box = QtWidgets.QGroupBox("Resolved symmetry operations")
+    box.setObjectName(f"{object_prefix}_resolved_symmetry")
+    box.setToolTip("These exact reciprocal-space matrices are resolved by the same service used for binning.")
+    layout = QtWidgets.QVBoxLayout(box)
+    convention = QtWidgets.QLabel(
+        "Expressions use direct fractional x,y,z coordinates. The displayed reciprocal matrices "
+        "act on column HKL: h′ = M h, before projection onto the bin axes; energy is unchanged. "
+        "Translations are discarded. A bare point-group name uses its conventional orientation."
+    )
+    convention.setWordWrap(True)
+    convention.setToolTip("For direct-space rotation R, M = inverse(R).transpose(). Cartesian rotation generators use the supplied lattice.")
+    layout.addWidget(convention)
+    operations = QtWidgets.QTreeWidget()
+    operations.setObjectName(f"{object_prefix}_resolved_symmetry_operations")
+    operations.setColumnCount(2)
+    operations.setHeaderLabels(["Operation", "Reciprocal HKL matrix"])
+    operations.setMaximumHeight(160)
+    operations.setToolTip("Every resolved operation is shown as a matrix. Disabled symmetry produces the identity only.")
+    operations.header().setStretchLastSection(True)
+    layout.addWidget(operations)
+
+    def refresh(*_args):
+        operations.clear()
+        try:
+            resolved = _rebin_symmetry_operations(config, lattice_parameters)
+        except (ImportError, ValueError) as exc:
+            operations.addTopLevelItem(QtWidgets.QTreeWidgetItem(["Invalid symmetry", str(exc)]))
+            return
+        for index, operation in enumerate(resolved):
+            matrix = np.array2string(np.asarray(operation.matrix_hkl), precision=8, separator=", ", max_line_width=1000)
+            operations.addTopLevelItem(QtWidgets.QTreeWidgetItem([f"{index + 1}: {operation.label}", matrix]))
+        operations.resizeColumnToContents(0)
+
+    box.refresh_operations = refresh
+    refresh()
+    return box

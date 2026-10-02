@@ -305,10 +305,50 @@ copies, uncertain exposure and signed/background reconstructions are rejected.
 Count parameter covariance uses expected Fisher information and is an
 asymptotic estimate, not a low-count confidence interval.
 
+For an audited independent constant-weight Poisson histogram, the slice viewer
+also exposes 68.27% Garwood rate bounds. `poisson_interval_channels(view,
+confidence=...)` accepts a final prepared slice mapping with the same model and
+retained count numerator, numerator variance, and exposure. It validates that
+those statistics reproduce the signal and observed error. Pool counts and
+exposure first; bounds are not additive statistics and must not be averaged.
+
 Saved dataset parameter `fit_likelihood` selects these objectives through the
 project compiler and script API. Reports distinguish deviance from Gaussian
 chi-squared. Aggregated GLS residual components are display diagnostics, not a new
 fit or a spatial map of independent standard-normal residuals.
+
+## Scientific count smoothing
+
+`smooth_count_histogram(data, sigma, truncate=4, fill_missing=False)` is an
+optional Python operation for a declared counting histogram with represented
+`CountingDependencies`. Gaussian widths `sigma` are in native bin widths, one
+per axis; a scalar applies to every axis. The finite kernel uses zero extension
+at grid edges and omits masked or unexposed inputs. A work budget rejects kernels
+that would require excessive sparse assignments. It is intended for selected
+histograms, rather than materializing dependencies for an entire DGS volume.
+
+For kernel coefficient $K_{ji}$ from input bin $i$ to output bin $j$, numerator
+$C_i$ and exposure $N_i$ produce
+
+$$I_j = \frac{\sum_i K_{ji} C_i}{\sum_i K_{ji} N_i}.$$
+
+The kernel is dimensionless. $C_i/N_i$ and $I_j$ have the declared signal units;
+the numerator and exposure retain their original units. This estimates a kernel-
+weighted response with a changed resolution. It differs from blurring already
+divided intensities when exposure varies. Numerator and exposure sensitivities
+are projected through the same kernel; their represented covariance propagates
+through the division and subsequent cuts. Adjacent output bins are correlated.
+Unknown cross-bin event or calibration dependencies cannot be recovered from
+diagonal errors; missing dependency payloads require source replay.
+
+The returned histogram is immutable and the input remains available unchanged.
+With `fill_missing=False`, bins lacking original support remain masked even if
+neighbors supply a kernel estimate. Opting into `fill_missing=True` exposes those
+estimates. The output coverage channel reports the measured fraction of the
+in-grid smoothing kernel, rather than original geometric coverage; original
+coverage remains a separate channel. Constant-weight Poisson declarations and
+stale fitted channels are removed. No GUI display-smoothing setting invokes this
+operation, and no existing scientific default changes.
 
 ## Statistical exports
 

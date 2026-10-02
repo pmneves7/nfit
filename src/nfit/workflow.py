@@ -343,55 +343,55 @@ def _composite_reduction_recipes(
 def composite_workflow_script(
     project: NfitProject, group_name: str, *, node_id: str | None = None
 ) -> str:
-    """Export editable reduction and binning while retaining saved project topology."""
+    """Export editable source closure, collection topology, reduction and binning."""
+    from .composite_scaling import composite_scaling
+    from .composite_workflow import export_composite_recipe
     from .project_composites import _composite_scope, data_group_composite_config
 
-    path = getattr(project, "_project_path", None)
-    if path is None:
-        raise WorkflowValidationError("Save the project before exporting its composite workflow.")
+    try:
+        recipe = export_composite_recipe(project, group_name, node_id=node_id)
+    except (TypeError, ValueError) as exc:
+        raise WorkflowValidationError(str(exc)) from exc
     group = next(item for item in project.data_groups if item.name == group_name)
-    node = (
-        next(item for item in group.iter_subgroups() if item.id == node_id)
-        if node_id is not None
-        else group
-    )
-    config = copy.deepcopy(data_group_composite_config(_composite_scope(group, node)))
+    node = next(item for item in group.iter_subgroups() if item.id == node_id) if node_id else group
+    temporary = copy.copy(node)
+    temporary.metadata = copy.deepcopy(node.metadata)
+    scope = temporary if node is group else _composite_scope(group, temporary)
+    config = copy.deepcopy(data_group_composite_config(scope))
     dimensions = copy.deepcopy(node.metadata.get("metadata_dimensions", []))
-    from .composite_scaling import composite_scaling
     scaling = composite_scaling(node)
-    recipes = _composite_reduction_recipes(node, root=group)
-    return f'''"""Rebuild a composite with editable native reduction and binning recipes.
+    recipes = recipe.pop("reduction_recipes")
+    return f'''"""Rebuild a composite from original sources without a saved project or Qt.
 
-The saved project supplies collection topology, masks, scales, and background
-links. Edit each REDUCTION_RECIPES entry's source_selection and datasets for
-source membership, shared_defaults for reduction settings, per_run_overrides
-for individual runs, and coordinate_transform for UB. Resolved run values are
-provenance snapshots. REBIN_CONFIG separately controls coordinates,
-symmetry, histogram grid, and spectral channels. Standalone export of an entire
-composite topology is not supplied by this script.
+COMPOSITE_RECIPE contains collection topology, source descriptors, ancestor
+masks/lattice, scales and background links. REDUCTION_RECIPES owns native source
+membership, shared_defaults, per_run_overrides, coordinate_transform and run
+masks/backgrounds. REBIN_CONFIG independently controls the selected output
+coordinates, symmetry, grid and spectral channels. Original source and
+calibration paths must remain accessible; numerical caches are not embedded.
 """
-from pathlib import Path
-from nfit import load_project, composite_dataset_data, set_metadata_dimensions, configure_composite_scaling
-from nfit.reduction_recipes import apply_reduction_recipe
+import copy
+from nfit import composite_dataset_data, set_metadata_dimensions, configure_composite_scaling
+from nfit.composite_workflow import replay_composite_recipe
 
-PROJECT_PATH = Path({str(path)!r})
-GROUP_NAME = {group_name!r}
-NODE_ID = {node_id!r}
+COMPOSITE_RECIPE = {pformat(recipe, sort_dicts=False)}
+REDUCTION_RECIPES = {pformat(recipes, sort_dicts=False)}
 METADATA_DIMENSIONS = {pformat(dimensions, sort_dicts=False)}
 REBIN_CONFIG = {pformat(config, sort_dicts=False)}
 SCALING = {pformat(scaling, sort_dicts=False)}
-REDUCTION_RECIPES = {pformat(recipes, sort_dicts=False)}
 
-def run():
-    project = load_project(PROJECT_PATH)
-    source_groups = {{node.id: node for root in project.data_groups for node in root.iter_subgroups()}}
-    for source_id, recipe in REDUCTION_RECIPES.items():
-        apply_reduction_recipe(source_groups[source_id], recipe)
-    group = next(item for item in project.data_groups if item.name == GROUP_NAME)
-    node = next(item for item in group.iter_subgroups() if item.id == NODE_ID) if NODE_ID else None
+def build_group(progress_callback=None):
+    recipe = copy.deepcopy(COMPOSITE_RECIPE)
+    recipe["reduction_recipes"] = copy.deepcopy(REDUCTION_RECIPES)
+    group, node = replay_composite_recipe(recipe, progress_callback=progress_callback)
     set_metadata_dimensions(node if node is not None else group, METADATA_DIMENSIONS)
     configure_composite_scaling(group, node=node, **SCALING)
-    return composite_dataset_data(group, node=node, config_override=REBIN_CONFIG)
+    return group, node
+
+def run(progress_callback=None):
+    group, node = build_group(progress_callback)
+    return composite_dataset_data(group, node=node, config_override=REBIN_CONFIG,
+                                  progress_callback=progress_callback)
 
 if __name__ == "__main__":
     data = run()

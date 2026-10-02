@@ -29,6 +29,13 @@ def editor(monkeypatch):
     explorer.window.resize(900, 500)
     explorer.window.show()
     explorer._refresh_tree(select_dataset_group=groups[0], refresh_viewers=False)
+    workflow_tabs = explorer.details_widget.findChild(
+        QtWidgets.QTabWidget, "collection_workflow_tabs"
+    )
+    workflow_tabs.setCurrentIndex(next(
+        index for index in range(workflow_tabs.count())
+        if workflow_tabs.tabText(index) == "Binning and combination"
+    ))
     explorer.details_widget.findChild(
         QtWidgets.QCheckBox, "group_composite_enabled"
     ).setChecked(True)
@@ -45,6 +52,7 @@ def test_collection_details_refresh_keeps_field_cursor_and_scroll(editor):
     explorer, _groups, QtCore, QtWidgets = editor
     field_name = "group_composite_minimum_coverage"
     field = explorer.details_widget.findChild(QtWidgets.QLineEdit, field_name)
+    assert field.isVisibleTo(explorer.details_widget)
     field.setText("0.125")
     field.setFocus()
     assert explorer.window.focusWidget() is field
@@ -59,6 +67,11 @@ def test_collection_details_refresh_keeps_field_cursor_and_scroll(editor):
 
     replacement = explorer.details_widget.findChild(QtWidgets.QLineEdit, field_name)
     assert replacement is not field
+    workflow_tabs = explorer.details_widget.findChild(
+        QtWidgets.QTabWidget, "collection_workflow_tabs"
+    )
+    assert workflow_tabs.tabText(workflow_tabs.currentIndex()) == "Binning and combination"
+    assert replacement.isVisibleTo(explorer.details_widget)
     assert explorer.window.focusWidget() is replacement
     # Scientific values come from the model, never from the presentation snapshot.
     assert replacement.text() != "0.125"
@@ -80,6 +93,10 @@ def test_collection_refresh_preserves_tab_and_later_focus_change(editor):
     _flush(QtCore, QtWidgets)
     tabs = explorer.details_widget.findChild(QtWidgets.QTabWidget, "group_composite_tabs")
     assert tabs.tabText(tabs.currentIndex()) == title
+    workflow_tabs = explorer.details_widget.findChild(
+        QtWidgets.QTabWidget, "collection_workflow_tabs"
+    )
+    assert workflow_tabs.tabText(workflow_tabs.currentIndex()) == "Binning and combination"
     assert explorer.window.focusWidget() is explorer.tree
     assert explorer.details_scroll.verticalScrollBar().value() == 120
 

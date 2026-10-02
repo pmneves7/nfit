@@ -9,7 +9,11 @@ lazy project assets.
 
 ## Edit shared settings and individual runs
 
-The collection's reduction panel shows all supported settings from one schema.
+The collection's **Reduction** section shows acquisition, calibration and coordinate
+settings from one schema. **Binning and combination** contains histogram
+conventions, including symmetry uncertainty, beside the output grid. The shared
+summary identifies mixed effective values across enabled runs; editors retain
+the inherited defaults rather than averaging per-run overrides.
 Choose a run to override its inherited values. **Inherit** removes the override;
 **Automatic** stores `None` explicitly. Automatic incident energy and time zero
 are shown alongside their resolved values and calibration provenance. A previous
@@ -94,3 +98,18 @@ export of arbitrary composite topology remains separate workflow work.
 
 Replaying freshly inspects acquisition metadata and preserves logical run IDs,
 ordering and saved settings. It neither imports Mantid nor calls Shiver.
+
+## Inspect symmetry and measurement combination
+
+The binning panel displays the resolved reciprocal HKL matrices, including the
+orientation chosen for a named point group. Expressions use direct fractional
+coordinates; the reciprocal matrices act on column HKL before projection onto
+the requested bin axes. Energy is unchanged. A recipe name alone does not
+specify the resulting operation set.
+
+The measurement averaging choices describe their target: a precision-weighted
+common value or a mean with uniform statistical weights. Existing physical normalization
+weights and saved estimator keys are retained. Native DGS and MDE histograms
+pool count numerators, observed variances and exposure; the point-average
+selector does not change that estimator. Explicit measurement contracts select
+their declared estimator.

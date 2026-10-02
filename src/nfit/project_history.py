@@ -154,8 +154,28 @@ def _link_group_backgrounds(group: DataGroup) -> None:
 
 
 def _link_project_backgrounds(project: Any) -> None:
-    for group in project.data_groups:
-        _link_group_backgrounds(group)
+    # Background sources may belong to another workspace. Keep owner context
+    # runtime-only: masks and lattice belong to the source's workspace, while
+    # serialized references remain stable dataset/collection IDs.
+    datasets = {}
+    groups = {}
+    owners = {}
+    for root in project.data_groups:
+        _link_group_backgrounds(root)
+        for dataset in root.iter_datasets():
+            datasets[dataset.id] = dataset
+            owners[dataset.id] = root
+        for node in root.iter_subgroups():
+            groups[node.id] = node
+            owners[node.id] = root
+    for root in project.data_groups:
+        for owner in (root, *root.iter_subgroups(), *root.iter_datasets()):
+            for background in owner.backgrounds:
+                background.source_entry = datasets.get(background.source_dataset_id)
+                background.source_group = groups.get(background.source_group_id or "")
+                background._source_root = owners.get(
+                    background.source_group_id or background.source_dataset_id
+                )
 
 
 def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:

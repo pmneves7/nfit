@@ -88,7 +88,9 @@ def _field_editor(field, value, *, object_name, on_changed, browse=None, resolve
     return container
 
 
-def build_reduction_recipe_panel(group, *, on_shared_changed, on_run_changed, parent=None):
+def build_reduction_recipe_panel(
+    group, *, on_shared_changed, on_run_changed, parent=None, scopes=None, export=True
+):
     """Present shared settings, explicit run overrides, and resolved provenance.
 
     Callbacks use the public reduction API through the explorer coordinator.
@@ -112,14 +114,18 @@ def build_reduction_recipe_panel(group, *, on_shared_changed, on_run_changed, pa
     title = "CORELLI finite-energy reconstruction" if corelli else (
         "MDEvent shared setup" if prefix == "mdevent" else "Raw TOF shared setup"
     )
+    histogram_only = scopes is not None and set(scopes) == {"histogram"}
+    if histogram_only:
+        title = "Histogram conventions"
     box = QtWidgets.QGroupBox(title, parent)
-    box.setObjectName(f"{prefix}_reduction_recipe")
+    box.setObjectName(f"{prefix}_histogram_recipe" if histogram_only else f"{prefix}_reduction_recipe")
     box.setToolTip(
         "Saved acquisition and reduction settings. Shared defaults apply to runs without "
         "an explicit override. Edits invalidate only affected reductions and dependent histograms."
     )
     layout = QtWidgets.QVBoxLayout(box)
-    fields = reduction_settings_schema(group)
+    fields = tuple(field for field in reduction_settings_schema(group)
+                   if scopes is None or field.scope in scopes)
 
     def browse(field, edit, apply):
         path, _filter = get_open_file_name(
@@ -133,6 +139,12 @@ def build_reduction_recipe_panel(group, *, on_shared_changed, on_run_changed, pa
     def shared_changed(key, value):
         if on_shared_changed(key, value) is not False:
             refresh_resolved()
+
+    mixed = QtWidgets.QLabel()
+    mixed.setObjectName(f"{prefix}_mixed_histogram_values" if histogram_only else f"{prefix}_mixed_reduction_values")
+    mixed.setWordWrap(True)
+    mixed.setToolTip("Mixed means enabled runs have different effective settings. Shared editors always show the inherited default, not an average of overrides.")
+    layout.addWidget(mixed)
 
     shared = QtWidgets.QWidget()
     shared_layout = QtWidgets.QFormLayout(shared)
@@ -163,6 +175,24 @@ def build_reduction_recipe_panel(group, *, on_shared_changed, on_run_changed, pa
         )
         shared_layout.addRow(label, editor)
     layout.addWidget(shared)
+
+    def refresh_mixed():
+        participating = [item for item in group.iter_datasets() if item.enabled]
+        configurations = [effective_reduction_config(group, item) for item in participating]
+        mixed_fields = [field.label for field in fields if len({
+            json.dumps(settings.get(field.key, field.default), sort_keys=True, default=str)
+            for settings in configurations
+        }) > 1]
+        overrides_count = sum(bool(get_reduction_overrides(group, item)) for item in participating)
+        mixed.setText(
+            f"Shared defaults; {overrides_count} of {len(participating)} enabled runs have explicit overrides. "
+            + ("Mixed effective values: " + ", ".join(mixed_fields) if mixed_fields else "Effective settings are uniform across enabled runs.")
+        )
+
+    refresh_mixed()
+    if not any(field.per_run for field in fields):
+        refresh_resolved = refresh_mixed
+        return box
 
     run_box = QtWidgets.QGroupBox("Individual run overrides and resolved values")
     run_box.setToolTip(
@@ -201,6 +231,7 @@ def build_reduction_recipe_panel(group, *, on_shared_changed, on_run_changed, pa
         return json.dumps(summary, indent=2, default=str)
 
     def refresh_resolved():
+        refresh_mixed()
         dataset = next((item for item in datasets if item.id == selector.currentData()), None)
         if dataset is not None:
             resolved.setText(resolved_summary(dataset))
@@ -256,6 +287,7 @@ def build_reduction_recipe_panel(group, *, on_shared_changed, on_run_changed, pa
     selector.currentIndexChanged.connect(rebuild_run)
     rebuild_run()
     layout.addWidget(run_box)
+    refresh_resolved()
     if corelli:
         caveat = QtWidgets.QLabel(
             "Energy channels share measured events and have correlated statistical errors. "
@@ -264,6 +296,8 @@ def build_reduction_recipe_panel(group, *, on_shared_changed, on_run_changed, pa
         caveat.setWordWrap(True)
         caveat.setToolTip("The same phase-tagged events reconstruct each CORELLI energy channel.")
         layout.addWidget(caveat)
+    if not export:
+        return box
     buttons = QtWidgets.QHBoxLayout()
     export = QtWidgets.QPushButton("Copy reduction recipe script")
     export.setObjectName(f"{prefix}_copy_reduction_recipe_script")

@@ -131,6 +131,7 @@ different Python.
   conversions.
 - `src/nfit/analysis/`: non-destructive analysis operations.
 - `src/nfit/workflow.py`: dependency graphs and human-readable script export.
+- `src/nfit/composite_workflow.py`: portable source closure and composite recipe replay.
 - `docs/physics_conventions.md`: authoritative physics and unit conventions.
 - `docs/gui_workflows.md`: GUI documentation entry point.
 - `docs/data_import.md`, `docs/gui_fitting.md`, and `docs/data_viewer.md`:
@@ -148,6 +149,10 @@ different Python.
 - `src/nfit/measurement_regions.py`, `measurement_waterfalls.py`,
   `measurement_fit_data.py`, and `measurement_likelihoods.py`: statistical
   region/trace preparation, fit payloads, and declared objectives.
+- `src/nfit/measurement_diagnostics.py`, `measurement_diagnostics_gui.py`, and
+  `measurement_smoothing.py`: statistical provenance, model-specific final-bin
+  intervals, and optional source-aware count smoothing.
+- `src/nfit/collection_workflow_gui.py`: focused dataset-group workflow sections.
 - `docs/measurement_statistics.md`: measurement contract and estimator scripting guide.
 
 Keep this map structural rather than exhaustive. Update it only when subsystem

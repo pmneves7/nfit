@@ -335,3 +335,48 @@ def build_saved_source_selection_summary(metadata, *, parent=None):
     copy_expression.clicked.connect(lambda _checked=False: QtWidgets.QApplication.clipboard().setText(expression))
     layout.addWidget(copy_expression)
     return box
+
+
+def build_saved_source_selection_editor(group, *, on_apply, parent=None):
+    """Edit an existing ordinary dataset group's numbered source membership.
+
+    Preview is asynchronous and metadata-only. The callback must delegate edits
+    to the public ``update_source_selection`` service; widgets do not import or
+    reduce measurements themselves.
+    """
+    from PySide6 import QtWidgets
+
+    selection = group.metadata.get("source_selection", {})
+    if not selection:
+        selection = group.metadata.get("reduction_recipe", {}).get("source_selection", {})
+    paths = [entry.metadata.get("source_file") for entry in group.iter_datasets()]
+    paths = [path for path in paths if path]
+    from pathlib import Path
+
+    config = {
+        "enabled": True, "path": selection.get("directory", str(Path(paths[0]).parent) if paths else ""),
+        "prefix": selection.get("prefix", ""), "suffix": selection.get("suffix", ""),
+        "numors": selection.get("expression", ""), "padding": selection.get("padding", 0),
+        "preserve_groups": selection.get("preserve_groups", bool(group.subgroups)),
+    }
+    if "source_selection_group" in group.metadata:
+        # A subfolder edits only its own members, rather than replaying the
+        # parent expression's complete selection.
+        numbers = group.metadata["source_selection_group"].get("run_numbers", ())
+        config["numors"] = "+".join(str(number) for number in numbers if number is not None) or "0"
+        config["preserve_groups"] = False
+    panel = build_source_selection_panel(
+        config, on_setting_changed=lambda key, value: config.update({key: value}),
+        on_enabled=lambda _value: None, on_import=on_apply,
+        on_files=lambda: None, on_clear=lambda: None, parent=parent,
+    )
+    panel.setTitle("Sources")
+    panel.setObjectName("saved_source_selection_editor")
+    panel.setToolTip("Edit this group's selected runs. Retained runs keep their reduction caches and per-run settings; only added sources are inspected.")
+    panel.findChild(QtWidgets.QCheckBox, "dataset_importing_enabled").hide()
+    panel.findChild(QtWidgets.QPushButton, "dataset_importing_add_files").hide()
+    panel.findChild(QtWidgets.QPushButton, "dataset_importing_clear").hide()
+    apply = panel.findChild(QtWidgets.QPushButton, "dataset_importing_import_range")
+    apply.setText("Apply sources")
+    apply.setToolTip("Replace this group's source membership after preview. Retained sources keep their caches; dependent binnings become stale when membership changes.")
+    return panel

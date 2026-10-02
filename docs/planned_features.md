@@ -40,10 +40,6 @@ tracks the staged implementation and review checkpoints for these changes.
   resolved calibration values and lazy caches are already available. Unmarked
   saved statistical workflows retain compatibility provenance. Controls should
   explain common-response means versus coordinate averages and their assumptions.
-- Add editing of an existing collection's source expression/membership to the
-  unified Sources workflow. Imported expressions are visible, can be copied and
-  reused, and reduction settings already have shared/per-run editors. Current
-  expression selection creates a new collection atomically.
 - Extend source-aware combination to repeated aliases across expression
   subfolders and repeated CORELLI/ordinary sources within a summed subfolder.
   Numbered-source selection and grouping already use ordinary dataset groups;
@@ -72,20 +68,13 @@ tracks the staged implementation and review checkpoints for these changes.
   metadata-axis stacking. Until its source-aware workflow is available, stacking
   declared payloads raises a replay requirement rather than losing their lineage;
   existing unmarked metadata stacks remain supported.
-- Make reduction, histogram, and display recipes separately inspectable and
-  reproducible. The SEQUOIA reduction examples separate run selection, UB,
-  calibration, filters, and background settings from axis/bound/symmetry recipes
-  and plot styling. Existing nfit named binnings provide a starting point;
-  future controls should show resolved per-run settings and uncertainty
-  assumptions through the same public scripting APIs.
-- Complete standalone workflow export for arbitrary nested composite topology,
-  linked backgrounds and ancestor context. Native isolated reduction collections
-  already export complete editable sources/settings/binnings; saved composite
-  scripts expose native sample/background recipes and preserve project topology.
-- For normalized count data, distinguish smoothing numerator and exposure
-  before division from smoothing the divided intensity. Propagate the
-  covariance introduced by smoothing and keep unsmoothed statistics available.
-  Changes here require scientific validation before altering existing plots.
+- Extend portable composite closure export to live derived-analysis sources,
+  source-less edited data and custom callable transforms. Native source
+  collections, file-backed ordinary datasets, nested groups, linked backgrounds
+  and ancestor context already export standalone editable workflows.
+- Validate the optional source-aware count smoothing API on representative
+  instrument data before considering additional GUI controls or default changes.
+  Display blur remains separate and does not modify stored statistics.
 
 ## Electronic-response models
 

@@ -38,6 +38,12 @@ from .measurement_aggregation import (
     validate_measurement_selection,
 )
 from .measurement_contracts import MeasurementContract
+from .measurement_diagnostics import (
+    CONFIDENCE_CHANNELS,
+    available_confidence_channels,
+    event_contribution_description,
+    poisson_interval_channels,
+)
 from .quantities import display_axis_label, display_channel_label, display_unit
 
 
@@ -414,6 +420,7 @@ def plot_mdhisto_slice(
         sigma_x=smoothing_sigma_x,
         sigma_y=smoothing_sigma_y,
         fill_nans=smoothing_fill_nans,
+        channel=channel,
     )
     with plt.rc_context({"font.size": float(font_size)}):
         fig = plt.figure(figsize=figsize, constrained_layout=True)
@@ -636,6 +643,7 @@ def prepare_mdhisto_tiled_slices(
             sigma_x=smoothing_sigma_x,
             sigma_y=smoothing_sigma_y,
             fill_nans=smoothing_fill_nans,
+            channel=channel,
         )
         coordinate = float(coordinates[index])
         if not exact_coordinates and abs(coordinate) < width * 1.e-10:
@@ -1061,6 +1069,7 @@ def prepare_mdhisto_waterfall(
                 sigma_x=smoothing_sigma_x,
                 sigma_y=0.0,
                 fill_nans=smoothing_fill_nans,
+                channel=channel,
             )
             values = np.asarray(model._display_values(view), dtype=float).reshape(-1)
             errors = _waterfall_channel_errors(model, view, values.shape)
@@ -1128,6 +1137,7 @@ def prepare_mdhisto_waterfall(
         sigma_x=smoothing_sigma_x,
         sigma_y=smoothing_sigma_waterfall,
         fill_nans=smoothing_fill_nans,
+        channel=channel,
     )
     values = np.asarray(model._display_values(view), dtype=float)
     errors = _waterfall_channel_errors(model, view, values.shape)
@@ -2651,7 +2661,7 @@ class MDHistoSliceViewer:
                 view[name] = np.moveaxis(values, (y_pos, x_pos), (0, 1))
         view["num_events_semantics"] = self.data.metadata.get("num_events_semantics", "unspecified_source_multiplicity")
         view["masks_applied"] = self.masked
-        for name in ("fit_likelihood", "poisson_count_model", "residual_label", "fit_data_scale"):
+        for name in ("fit_likelihood", "poisson_count_model", "residual_label", "fit_data_scale", "symmetry_operations_hkl"):
             if name in self.data.metadata:
                 view[name] = self.data.metadata[name]
         view["signal_unit"] = self.data.metadata.get("signal_unit", self.data.metadata.get("measurement_contract", {}).get("value_units", "unspecified intensity units"))
@@ -2683,6 +2693,8 @@ class MDHistoSliceViewer:
         if ("measurement_contract" in view or EVENT_STATISTICS_KEY in view) and "fit" in view and "residual" in view:
             from .measurement_likelihoods import histogram_view_residuals
             view["residual"] = histogram_view_residuals(view)
+        if available_confidence_channels(self.data):
+            view.update(poisson_interval_channels(view))
         return view
 
     def update(self) -> None:
@@ -2964,17 +2976,16 @@ class MDHistoSliceViewer:
         extra_channels = (
             *self._metadata_channel_names(),
             *available_background_channels(self.data),
+            *available_confidence_channels(self.data),
         )
         self.CHANNELS = (*type(self).CHANNELS, *extra_channels)
         self.CHANNEL_LABELS = {
             **type(self).CHANNEL_LABELS,
+            "confidence_lower": "Poisson rate lower bound (68.27%)",
+            "confidence_upper": "Poisson rate upper bound (68.27%)",
             **({
-                "errors": "Observed event standard error",
-                "num_events": (
-                    "Contributing histogram cells"
-                    if self.data.metadata.get("num_events_semantics") == "contributing_histogram_cells"
-                    else "Event contributions"
-                ),
+                "errors": "Propagated count standard uncertainty" if self.data.counting_dependencies is not None else "Observed event standard error",
+                "num_events": event_contribution_description(self.data.metadata.get("num_events_semantics"))[0],
                 "normalization_denominator": "Exposure",
             } if has_event_statistics(self.data) else {}),
             **(
@@ -3297,7 +3308,7 @@ class MDHistoSliceViewer:
                 # quantity even when they share its units and quantity type.
                 quantity_type="unknown",
             )
-        source_channel = "signal" if self.channel in {"signal", "errors", "fit"} else self.channel
+        source_channel = "signal" if self.channel in {"signal", "errors", "fit", *CONFIDENCE_CHANNELS} else self.channel
         auxiliary = self.data.auxiliary_channels.get(source_channel)
         if source_channel == "coverage_fraction" and auxiliary is None:
             # Coverage is a derived viewer channel even for older/native data
@@ -3314,6 +3325,9 @@ class MDHistoSliceViewer:
             if auxiliary is not None
             else self.CHANNEL_LABELS.get(source_channel, source_channel)
         )
+        if self.channel in CONFIDENCE_CHANNELS:
+            label = self.CHANNEL_LABELS[self.channel]
+            quantity_type = "unknown"
         return display_channel_label(
             label,
             unit,
@@ -3995,6 +4009,10 @@ def coarsen_mdhisto_view(
     """
 
     result = dict(view)
+    # Intervals are nonlinear functions of pooled counts and exposure.
+    interval_requested = any(name in result for name in CONFIDENCE_CHANNELS)
+    for name in CONFIDENCE_CHANNELS:
+        result.pop(name, None)
     for axis_name, requested in (("x", x_step), ("y", y_step)):
         if requested is None or f"{axis_name}_centers" not in result:
             continue
@@ -4004,6 +4022,8 @@ def coarsen_mdhisto_view(
             axis_name=axis_name,
             factor=factor,
         )
+    if interval_requested:
+        result.update(poisson_interval_channels(result))
     return result
 
 
@@ -4013,10 +4033,14 @@ def smooth_mdhisto_view(
     sigma_x: float = 0.0,
     sigma_y: float = 0.0,
     fill_nans: bool = True,
+    channel: str | None = None,
 ) -> dict[str, np.ndarray]:
     """Return a plot-only smoothed copy of a 1D or 2D slice-view mapping."""
 
     result = dict(view)
+    if channel in CONFIDENCE_CHANNELS:
+        # Exact interval bounds are recomputed on the coarsened unsmoothed bins.
+        return result
     reference = np.asarray(view.get("signal"), dtype=float)
     if reference.ndim == 1:
         sigma = (max(float(sigma_x), 0.0),)
@@ -4027,6 +4051,9 @@ def smooth_mdhisto_view(
     if not any(value > 0.0 for value in sigma):
         return result
     result.pop(EVENT_STATISTICS_KEY, None)
+    result.pop("poisson_count_model", None)
+    for name in CONFIDENCE_CHANNELS:
+        result.pop(name, None)
     declaration = result.pop("measurement_contract", None)
     if declaration is not None:
         result.update(measurement_target_required=True,
@@ -4049,7 +4076,7 @@ def smooth_mdhisto_view(
     }
     for name, values in view.items():
         array = np.asarray(values)
-        if name in excluded or name in EVENT_STATISTICS_CHANNELS or name in MEASUREMENT_STATISTICS_CHANNELS or array.shape != reference.shape or array.dtype == bool:
+        if name in excluded or name in CONFIDENCE_CHANNELS or name in EVENT_STATISTICS_CHANNELS or name in MEASUREMENT_STATISTICS_CHANNELS or array.shape != reference.shape or array.dtype == bool:
             continue
         if name == "errors":
             smoothed = gaussian_smooth_uncertainty(array, sigma)

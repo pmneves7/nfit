@@ -50,6 +50,9 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "measurement_replay.py",
     PACKAGE_ROOT / "measurement_point_bins.py",
     PACKAGE_ROOT / "measurement_scaling.py",
+    PACKAGE_ROOT / "measurement_diagnostics.py",
+    PACKAGE_ROOT / "measurement_smoothing.py",
+    PACKAGE_ROOT / "composite_workflow.py",
     PACKAGE_ROOT / "point_data_archive.py",
     PACKAGE_ROOT / "project_caches.py",
     PACKAGE_ROOT / "figure_export.py",
@@ -111,6 +114,26 @@ def test_measurement_contract_public_exports_are_authoritative():
         assert getattr(nfit, name) is getattr(measurement_statistics, name)
 
 
+def test_measurement_diagnostic_and_replay_exports_are_authoritative():
+    import nfit
+    from nfit import (
+        composite_workflow,
+        measurement_smoothing,
+        source_selection_imports,
+    )
+
+    # Import modules explicitly: the same-named public function is intentional.
+    measurement_diagnostics = importlib.import_module("nfit.measurement_diagnostics")
+    for module, names in (
+        (measurement_diagnostics, ("measurement_diagnostics", "measurement_diagnostics_text", "poisson_interval_channels")),
+        (measurement_smoothing, ("smooth_count_histogram",)),
+        (composite_workflow, ("export_composite_recipe", "replay_composite_recipe")),
+        (source_selection_imports, ("update_source_selection", "SourceSelectionEdit")),
+    ):
+        for name in names:
+            assert getattr(nfit, name) is getattr(module, name)
+
+
 def test_measurement_workflow_public_exports_are_authoritative():
     import nfit
     from nfit import (
@@ -151,6 +174,7 @@ PROJECT_GUI_CLIENT_MODULES = (
     PACKAGE_ROOT / "preferences_gui.py",
     PACKAGE_ROOT / "dgs_reduction_policy_gui.py",
     PACKAGE_ROOT / "reduction_recipe_gui.py",
+    PACKAGE_ROOT / "collection_workflow_gui.py",
     PACKAGE_ROOT / "source_selection_gui.py",
 )
 

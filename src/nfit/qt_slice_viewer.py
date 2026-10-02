@@ -3028,12 +3028,8 @@ class QtMDHistoSliceViewer:
             point_list=point_list,
             labels={**self.model.CHANNEL_LABELS, "normalization_denominator": "Exposure"} if event_statistics else None,
             event_statistics=event_statistics,
-            tooltips={
-                "num_events": (
-                    "Number of source histogram cells contributing to this bin; "
-                    "this is not the number of independent neutron events."
-                ),
-            } if event_statistics and self.data.metadata.get("num_events_semantics") == "contributing_histogram_cells" else None,
+            num_events_semantics=self.data.metadata.get("num_events_semantics"),
+            counting_dependencies=getattr(self.data, "counting_dependencies", None) is not None,
         )
 
     def _non_singleton_dims(self) -> list[int]:
@@ -3199,15 +3195,17 @@ class QtMDHistoSliceViewer:
     def _smoothed_slice_view(self, view: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         if getattr(self.model, "is_point_list", False):
             return view
-        return smooth_mdhisto_view(
-            coarsen_mdhisto_view(
+        coarsened = coarsen_mdhisto_view(
                 view,
                 x_step=self._current_display_step("x"),
                 y_step=self._current_display_step("y"),
-            ),
+            )
+        return smooth_mdhisto_view(
+            coarsened,
             sigma_x=self.smoothing_x,
             sigma_y=self.smoothing_y,
             fill_nans=self.smoothing_fill_nans,
+            channel=self.model.channel,
         )
 
     def _toggle_cmap_reverse(self) -> None:

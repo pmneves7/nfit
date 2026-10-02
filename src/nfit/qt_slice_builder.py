@@ -287,6 +287,11 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
     dataset_layout.addWidget(QtWidgets.QLabel("Channel"), 2, 0)
     dataset_layout.addWidget(viewer.channel_combo, 2, 1)
     dataset_layout.addWidget(viewer.apply_masks_check, 2, 2)
+    from .measurement_diagnostics_gui import build_measurement_diagnostics_button
+
+    dataset_layout.addWidget(
+        build_measurement_diagnostics_button(viewer.window, lambda: viewer.data), 6, 0, 1, 3,
+    )
     viewer.show_fit_check = QtWidgets.QCheckBox("Show model")
     viewer.show_fit_check.setToolTip(
         "Show the current model beside the data (2D) or as a line under the data (1D). "
@@ -638,7 +643,12 @@ def _build_color_controls(viewer: Any, controls_layout: Any) -> None:
 
 
 def _build_smoothing_controls(viewer: Any, controls_layout: Any) -> None:
-    smoothing_group = QtWidgets.QGroupBox("Plot smoothing")
+    smoothing_group = QtWidgets.QGroupBox("Display smoothing")
+    smoothing_group.setToolTip(
+        "Preview blur of the divided intensity, with approximate diagonal errors. "
+        "This is separate from scientific numerator/exposure smoothing with retained covariance. "
+        "Exact confidence-bound channels are displayed without blur."
+    )
     viewer.smoothing_group = smoothing_group
     smoothing_layout = QtWidgets.QGridLayout(smoothing_group)
     viewer.smoothing_x_spin = _make_float_spinbox(0.0, 100.0)

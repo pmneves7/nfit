@@ -143,6 +143,20 @@ not a zero-width confidence interval for its unknown intensity. Count confidence
 intervals require a declared measurement model; see
 [confidence intervals](physics_conventions.md#covered-empty-cells-and-confidence-intervals).
 
+**Statistics and provenance** opens a metadata report containing the declared
+statistical target, retained channels and units, reduction settings and resolved
+run provenance, dependency availability, and confidence-interval assumptions.
+It does not read the full numerical volume. The same report is available through
+`measurement_diagnostics(data)` and `measurement_diagnostics_text(data)`.
+
+Histograms carrying an audited `PoissonCountModel` with independent,
+constant-weight integer counts and known exposure offer **Poisson rate lower
+bound (68.27%)** and **Poisson rate upper bound (68.27%)** channels. These are
+equal-tailed Garwood bounds recomputed after hidden-axis integration and display
+coarsening. A covered zero retains a positive upper bound. Corrected DGS data,
+reused symmetry events, background differences, and uncertain exposure do not
+automatically qualify. Interval channels are displayed without blur.
+
 The variance channel follows the group's saved symmetry policy. The default
 treats symmetry copies separately, matching Mantid's diagonal convention;
 the optional within-bin policy adds covariance only for copies already sharing
@@ -480,7 +494,7 @@ uncertainty assumes that their errors are independent. Copied figure scripts
 produce the same annotation when histogram cuts, rectangle extents, and angle
 are included.
 
-Plot smoothing is specified in displayed-bin widths. It affects only the
+**Display smoothing** is specified in displayed-bin widths. It affects only the
 rendered figure and exported figure recipe, not fitting, rebinning, or numerical
 data exports. With **Fill adjacent NaN bins** checked, Gaussian smoothing uses
 nearby finite display pixels to fill adjacent NaN pixels, including pixels
@@ -490,6 +504,14 @@ views retain the choice independently for each dataset and in saved plot
 recipes. The volume viewer offers the same choice in its own smoothing panel.
 Mask channels still show the unchanged masks, and the stored histogram, masks,
 and uncertainties are never changed.
+
+This preview blurs the divided intensity and shows an approximate diagonal
+uncertainty; it discards scientific dependency and count-model declarations.
+It is separate from `smooth_count_histogram(data, sigma)`, which smooths the
+count numerator and exposure before division and propagates primitive
+dependencies. That optional scientific API requires explicit counting
+dependencies, changes the response's resolution, and returns a new histogram;
+see [scientific count smoothing](measurement_statistics.md#scientific-count-smoothing).
 
 ## Model and residual channels
 

@@ -55,6 +55,7 @@ from .brillouin_zone import (
     standard_band_path,
 )
 from .composite_scaling import configure_composite_scaling
+from .composite_workflow import export_composite_recipe, replay_composite_recipe
 from .corelli import (
     CorelliRunInfo,
     bin_corelli_group,
@@ -395,6 +396,11 @@ from .measurement_dependencies import (
     project_source_dependencies,
     ratio_source_dependencies,
 )
+from .measurement_diagnostics import (
+    measurement_diagnostics,
+    measurement_diagnostics_text,
+    poisson_interval_channels,
+)
 from .measurement_fit_data import prepare_histogram_fit_points
 from .measurement_likelihoods import PoissonCountModel, poisson_deviance_residuals
 from .measurement_point_bins import bin_measurement_points
@@ -403,6 +409,7 @@ from .measurement_rebinning import coarsen_measurement_histogram, combine_measur
 from .measurement_regions import estimate_measurement_region
 from .measurement_replay import replay_measurement_histogram
 from .measurement_scaling import scale_measurement_data
+from .measurement_smoothing import smooth_count_histogram
 from .measurement_statistics import MeasurementEstimate, SourceTerm, estimate_measurement_bin
 from .metadata_dimensions import (
     MetadataBinning,
@@ -606,7 +613,12 @@ from .source_selection import (
     parse_run_expression,
     resolve_source_selection,
 )
-from .source_selection_imports import import_source_selection, source_selection_script
+from .source_selection_imports import (
+    SourceSelectionEdit,
+    import_source_selection,
+    source_selection_script,
+    update_source_selection,
+)
 from .spin_fluctuations import (
     RpaGeometry,
     available_rpa_backends,
@@ -1379,4 +1391,8 @@ __all__ += ["ReductionEdit", "ReductionSetting", "apply_reduction_recipe", "redu
 
 __all__ += ["SourceAppearance", "SourceSelection", "SourceSelectionPlan",
             "import_source_selection", "parse_run_expression", "resolve_source_selection",
-            "source_selection_script"]
+            "source_selection_script", "SourceSelectionEdit", "update_source_selection"]
+
+__all__ += ["measurement_diagnostics", "measurement_diagnostics_text",
+            "poisson_interval_channels", "smooth_count_histogram",
+            "export_composite_recipe", "replay_composite_recipe"]

@@ -1230,3 +1230,18 @@ Raw SNS proton-charge and pause logs may contain backdated records. nfit
 stably orders timestamp/value pairs when constructing pulse-filter intervals,
 while retaining the original charge-record indexing for normalization. Detector
 events and integrated charge use the same accepted time intervals.
+
+## Dataset group workflow sections
+
+Select a dataset group to work in four sections: **Sources** for membership,
+**Reduction** for acquisition settings and run overrides, **Binning and
+combination** for output grids and statistical conventions, and **Plots and
+cuts** for the viewer and saved workspace plots. The sections use the existing
+dataset group hierarchy. Selecting a section does not load events or cached
+histograms. See [source recipes](reduction_recipes.md) for reduction settings
+and [numbered sources](source_selection.md) for source selection.
+
+**Copy complete workflow script** exports the selected collection through public
+APIs, including its original sources, reduction settings, nested dataset groups,
+output grids and background dependencies. Export reports unsupported source
+configurations explicitly instead of substituting a saved project snapshot.

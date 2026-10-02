@@ -913,10 +913,6 @@ def test_saved_composite_export_exposes_native_sample_and_background_recipes(tmp
     namespace = {"__name__": "saved_native_workflow"}
     exec(compile(script, "composite_reduction.py", "exec"), namespace)
     assert set(namespace["REDUCTION_RECIPES"]) == {sample.id, background.id}
-    if background_owner == "root":
-        # Recipe discovery must include inherited external source groups.
-        # Numerical parent-wide background topology is a separate service gate.
-        return
     expected = composite_dataset_data(root, node=sample, config_override=config)
     actual = namespace["run"]()
     np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)

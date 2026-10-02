@@ -1301,6 +1301,7 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
         "Signal convention",
         "Axes",
         "Rebin",
+        "Resolved symmetry operations",
         "Crystal",
         "Data",
         "Source",

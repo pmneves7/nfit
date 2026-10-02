@@ -1,5 +1,16 @@
 # API reference
 
+Statistical diagnostics use `measurement_diagnostics(data)` without reading
+numerical payloads. `poisson_interval_channels(view)` computes final-bin bounds
+only for an audited independent Poisson model. Optional scientific count
+smoothing uses `smooth_count_histogram(data, sigma)` with retained primitive
+dependencies. See [measurement statistics](measurement_statistics.md).
+
+`export_composite_recipe(project, group_name, node_id=...)` and
+`replay_composite_recipe(recipe)` preserve source closure, native recipes,
+nested groups and background context without Qt or a saved project. See
+[workflow scripts](workflow_scripts.md).
+
 ## Measurement contracts and reference estimates
 
 `MeasurementContract` records the measurement kind, estimator, quantity and units,

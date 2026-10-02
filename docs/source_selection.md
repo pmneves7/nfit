@@ -111,3 +111,56 @@ Native
 imports inspect run metadata but do not reduce event arrays. Registered importers
 retain their existing lazy or eager loading behavior. A failed selection import
 leaves the destination group unchanged.
+
+## Editing a saved collection
+
+Select a dataset group and open its **Sources** section. Change the directory,
+filename pattern or expression, preview the new membership, then choose **Apply
+sources**. This replaces membership in that group; it does not create another
+collection. Existing source entries retain their IDs, masks, per-run settings,
+loaded immutable data and lazy reduction caches. Only newly added sources are
+inspected. A missing file or failed importer leaves the saved group unchanged.
+Changed collection binnings and ancestor combinations become stale; unchanged
+run reductions and unrelated branches remain reusable.
+
+Expression subfolders retain their settings by expression-group index. Changing
+between flat membership and expression subfolders moves entries into ordinary
+nfit dataset groups. A moved native run keeps its effective reduction settings
+as per-run overrides; its coordinate transform follows its destination group.
+Editing a summed subfolder in place retains correlated coaddition coefficients
+without creating additional subfolders. MACS importer stream folders retain
+their existing stream settings and entries. Unrelated nested groups are edited
+separately. Changing a native group's reduction format requires importing a
+separate dataset group.
+
+In this editor, applying `x` removes the selected membership, retains the group's
+scientific settings, and disables the empty group. It does not delete acquisition
+files. The original expression shown by a parent collection remains its saved
+selection recipe; edits made directly in a subfolder are recorded in that
+subfolder's current source recipe.
+
+The GUI delegates to the same atomic scripting operation:
+
+```python
+from nfit import SourceSelection, update_source_selection
+
+edit = update_source_selection(
+    collection,
+    SourceSelection("/path/to/data", "SEQ_", ".nxs.h5", "392985:393631"),
+    parent=workspace,
+)
+print(edit.added_dataset_ids, edit.removed_dataset_ids)
+```
+
+Pass the owning top-level `DataGroup` as `parent` to mark ancestor combinations
+stale. Omit it when editing a detached group. This source edit does not itself
+reduce or histogram the selected data; those operations belong to **Reduction**
+and **Binning and combination**.
+
+Before removing a source, edit or remove any background links that refer to its
+entry or a removed subfolder. Disabled saved links are checked too, since they
+can be enabled later. The GUI checks all project workspaces and rejects a source
+edit atomically if it would leave a dangling background link. In scripts, pass
+`reference_roots=project.data_groups` when references can cross workspaces;
+otherwise the default checks the owning `parent`, or the detached group when no
+parent is supplied.

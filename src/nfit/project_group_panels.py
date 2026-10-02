@@ -648,14 +648,13 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         "requires an up-to-date composite."
     )
     auto_check.toggled.connect(lambda checked: self._set_group_composite_auto(group, checked))
-    mean_label = QtWidgets.QLabel("Mean")
+    from .project_rebin_panels import measurement_average_choices
+
+    mean_label = QtWidgets.QLabel("Measurement target")
     mean_combo = QtWidgets.QComboBox()
     mean_combo.setObjectName("group_composite_mean_weighting")
-    mean_combo.setToolTip(
-        "Choose the composite averaging mode. A physical normalization denominator, when present, always contributes to the data weight. Inverse variance additionally uses 1/sigma^2; uniform does not. Dataset scale and fit-weight factors are also applied."
-    )
-    mean_combo.addItem("Inverse variance", "inverse_variance")
-    mean_combo.addItem("Uniform", "uniform")
+    measurement_average_choices(mean_combo)
+    mean_label.setToolTip(mean_combo.toolTip())
     mean_combo.setCurrentIndex(max(mean_combo.findData(_rebin_mean_weighting(config)), 0))
     mean_combo.currentIndexChanged.connect(
         lambda _index, combo=mean_combo: self._set_group_composite_mean_weighting(group, str(combo.currentData() or "uniform"))
@@ -742,6 +741,15 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     symmetry_row.addWidget(symmetry_mode)
     symmetry_row.addWidget(symmetry_expression, 1)
     controls_layout.addLayout(symmetry_row, footer_row + 2, 0, 1, len(headers))
+    from .project_rebin_panels import rebin_symmetry_operations_widget
+
+    resolved_symmetry = rebin_symmetry_operations_widget(
+        config, object_prefix="group_composite", lattice_parameters=root.lattice_parameters
+    )
+    symmetry_check.toggled.connect(resolved_symmetry.refresh_operations)
+    symmetry_mode.currentIndexChanged.connect(resolved_symmetry.refresh_operations)
+    symmetry_expression.editingFinished.connect(resolved_symmetry.refresh_operations)
+    controls_layout.addWidget(resolved_symmetry, footer_row + 3, 0, 1, len(headers))
     from .metadata_dimensions import MetadataDimension, metadata_rebin_axis_config
     from .project_rebin_panels import rebin_memory_estimate_label
 
@@ -775,14 +783,14 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         object_prefix="group_composite",
         compressed_disk_bytes=compressed_disk_bytes,
     )
-    controls_layout.addWidget(memory_label, footer_row + 3, 0, 1, len(headers))
+    controls_layout.addWidget(memory_label, footer_row + 4, 0, 1, len(headers))
     status_label = QtWidgets.QLabel(_composite_rebin_status_text(group, config))
     status_label.setObjectName("group_composite_status")
     status_label.setWordWrap(True)
     status_label.setToolTip(
         "Shows whether the cached composite rebin is current. Pending manual rebinning will be forced automatically for fit and viewer operations."
     )
-    controls_layout.addWidget(status_label, footer_row + 4, 0, 1, len(headers))
+    controls_layout.addWidget(status_label, footer_row + 5, 0, 1, len(headers))
     action_row = QtWidgets.QHBoxLayout()
     rebin_now_button = QtWidgets.QPushButton("Rebin now")
     rebin_now_button.setObjectName("group_composite_rebin_now")
@@ -815,7 +823,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     )
     action_row.addStretch(1)
     action_row.addWidget(materialize_button)
-    controls_layout.addLayout(action_row, footer_row + 5, 0, 1, len(headers))
+    controls_layout.addLayout(action_row, footer_row + 6, 0, 1, len(headers))
     controls.addTab(settings_tab, "Rebin settings")
 
     metadata_tab = QtWidgets.QWidget()

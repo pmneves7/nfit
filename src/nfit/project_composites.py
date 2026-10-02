@@ -207,12 +207,15 @@ _COMPOSITE_DATA_CACHE_LIMIT = None
 # Viewer-ready and composite bin results use the same machine-level allowance;
 # this snapshots that preference when the application starts.
 _COMPOSITE_DATA_CACHE_MAX_BYTES = scientific_cache_budget_bytes()
+# Source-owner context, one workspace subtraction, and one reference scale.
+_BACKGROUND_APPLICATION_VERSION = 2
 
 
 @dataclass(frozen=True)
 class _CompositeScope:
     root: DataGroup
     node: DataGroup | DatasetGroup
+    inherit_root_backgrounds: bool = True
 
     @property
     def name(self) -> str:
@@ -231,7 +234,7 @@ class _CompositeScope:
 
     @property
     def backgrounds(self) -> list[BackgroundSpec]:
-        backgrounds = list(self.root.backgrounds)
+        backgrounds = list(self.root.backgrounds) if self.inherit_root_backgrounds else []
         if self.node is not self.root:
             backgrounds.extend(self.node.backgrounds)
         return backgrounds
@@ -251,15 +254,36 @@ def _composite_root(group: DataGroup | _CompositeScope) -> DataGroup:
     return group.root if isinstance(group, _CompositeScope) else group
 
 
+def _background_group_scope(group, background):
+    """Use source context without recursively subtracting sample-wide links.
+
+    A root-wide sample background applies to the requested sample result, not
+    to the reference used to form that subtraction. Reference-local links and
+    links in a different source workspace retain their own scientific meaning.
+    """
+    sample_root = _composite_root(group)
+    source_root = _background_owner_root(group, background)
+    return _CompositeScope(
+        source_root, background.source_group,
+        inherit_root_backgrounds=source_root is not sample_root,
+    )
+
+
+def _background_owner_root(group, background):
+    return getattr(background, "_source_root", None) or _composite_root(group)
+
+
 def _composite_cache_key(
     group: DataGroup | _CompositeScope, binning_id: str | None = None
 ) -> Any:
     owner_id = id(group.node) if isinstance(group, _CompositeScope) else id(group)
+    if isinstance(group, _CompositeScope) and not group.inherit_root_backgrounds:
+        owner_id = (owner_id, "local-backgrounds", id(group.root))
     return owner_id if binning_id is None else (owner_id, str(binning_id))
 
 
 def _composite_base_cache_key(group, binning_id=None):
-    owner_id = id(group.node) if isinstance(group, _CompositeScope) else id(group)
+    owner_id = _composite_cache_key(group)
     return (owner_id, "unsubtracted", binning_id)
 
 
@@ -758,8 +782,12 @@ def _hierarchical_composite_scopes(
     if any(dataset.enabled for dataset in node.datasets):
         return []
     root = _composite_root(group)
+    inherit_root_backgrounds = not any(background.enabled for background in root.backgrounds)
     return [
-        _CompositeScope(root, subgroup)
+        # Workspace-wide backgrounds belong to the requesting output. Child
+        # results retain their local links; applying the workspace link here
+        # and again to the parent would subtract it twice.
+        _CompositeScope(root, subgroup, inherit_root_backgrounds=inherit_root_backgrounds)
         for subgroup in node.subgroups
         if subgroup.enabled and data_group_composite_enabled(_CompositeScope(root, subgroup))
     ]
@@ -928,6 +956,8 @@ def _composite_cache_signature(
     )
     numerical = _composite_numerical_config(group, config)
     if include_backgrounds:
+        if any(background.enabled for background in getattr(group, "backgrounds", [])):
+            numerical["background_application_version"] = _BACKGROUND_APPLICATION_VERSION
         scalars = {key: value for key, value in composite_scaling(group).items() if key != "fit_weight"}
         if any(value != 1 for value in scalars.values()):
             numerical["composite_scaling"] = scalars
@@ -1003,11 +1033,11 @@ def _composite_cache_signature(
                     (
                         _viewer_view_signature(
                             background.source_entry,
-                            effective_dataset_masks(_composite_root(group), background.source_entry),
+                            effective_dataset_masks(_background_owner_root(group, background), background.source_entry),
                         )
                         if background.source_entry.scale_factor == 1.0 else
                         json.dumps([
-                            _viewer_view_signature(background.source_entry, effective_dataset_masks(_composite_root(group), background.source_entry)),
+                            _viewer_view_signature(background.source_entry, effective_dataset_masks(_background_owner_root(group, background), background.source_entry)),
                             background.source_entry.scale_factor,
                         ], default=str)
                     )
@@ -1016,7 +1046,7 @@ def _composite_cache_signature(
                 ),
                 (
                     _composite_cache_signature(
-                        _CompositeScope(_composite_root(group), background.source_group),
+                        _background_group_scope(group, background),
                         trail,
                     )
                     if background.source_group is not None
@@ -1744,12 +1774,11 @@ def _background_membership_unchanged(previous, current):
 
 
 def _composite_background_signature(group, background, config):
-    root = _composite_root(group)
     source = background.source_entry
     source_scope = None
     source_config = None
     if background.source_group is not None:
-        source_scope = _CompositeScope(root, background.source_group)
+        source_scope = _background_group_scope(group, background)
         source_config = copy.deepcopy(data_group_composite_config(source_scope))
         if background.projection == "center" and source_config.get("coordinate_mode") != "powder":
             sample_config = data_group_composite_config(group) if config is None else config
@@ -1774,10 +1803,11 @@ def _composite_background_signature(group, background, config):
         )
     return json.dumps(
         [
+            {"background_application_version": _BACKGROUND_APPLICATION_VERSION},
             sample_signature,
             background.projection,
             background.interpolation,
-            None if source is None else _background_source_content_signature(group, source),
+            None if source is None else _background_source_content_signature(_background_owner_root(group, background), source),
             None
             if source_scope is None
             else _composite_cache_signature(source_scope, config_override=source_config),
@@ -1789,7 +1819,6 @@ def _composite_background_signature(group, background, config):
 
 def _composite_background_data(group, background, data, *, config, progress_callback):
     """Prepare a unit-link background once on the sample grid."""
-    root = _composite_root(group)
     source = background.source_entry
     source_group = background.source_group
     if source is None and source_group is None:
@@ -1805,7 +1834,7 @@ def _composite_background_data(group, background, data, *, config, progress_call
 
         def with_inherited_masks(scope):
             return [
-                replace(run, masks=[*effective_dataset_masks(root, run), *run.masks])
+                replace(run, masks=[*effective_dataset_masks(_composite_root(scope), run), *run.masks])
                 for run in _composite_candidates(scope)
             ]
 
@@ -1814,7 +1843,7 @@ def _composite_background_data(group, background, data, *, config, progress_call
             source_group,
             data,
             datasets=with_inherited_masks(group),
-            background_datasets=with_inherited_masks(_CompositeScope(root, source_group)),
+            background_datasets=with_inherited_masks(_background_group_scope(group, background)),
             inherited_masks=[],
             background_inherited_masks=[],
             max_batch_bytes=_rebin_max_batch_bytes(
@@ -1824,7 +1853,7 @@ def _composite_background_data(group, background, data, *, config, progress_call
         )
         return projected
     if source_group is not None:
-        source_scope = _CompositeScope(root, source_group)
+        source_scope = _background_group_scope(group, background)
         source_config = data_group_composite_config(source_scope)
         if background.projection == "center" and source_config.get("coordinate_mode") != "powder":
             # This histogram belongs to the requesting sample binning. The
@@ -1846,10 +1875,6 @@ def _composite_background_data(group, background, data, *, config, progress_call
                 source_scope, config_override=aligned_config,
                 apply_spectral_channels=False, progress_callback=progress_callback,
             )
-            source_data = scale_composite_data(
-                source_data, composite_scaling(source_scope)["result_scale"],
-                _apply_dataset_scale,
-            )
         else:
             source_data = _cached_composite_dataset_data(
                 source_scope, apply_spectral_channels=False,
@@ -1861,7 +1886,7 @@ def _composite_background_data(group, background, data, *, config, progress_call
         # viewer-rebin recipe here: that recipe may describe an older or
         # otherwise unrelated grid and aligned subtraction would then fail.
         source_data = _source_data_for_group_composite(
-            group,
+            _background_owner_root(group, background),
             source,
         )
         if isinstance(source_data, PointData4D):
@@ -1884,8 +1909,9 @@ def _composite_background_data(group, background, data, *, config, progress_call
                     auto_step_size=False,
                 )
             source_metadata = dict(source_data.metadata)
-            if root.lattice_parameters:
-                source_metadata.setdefault("lattice_parameters", dict(root.lattice_parameters))
+            source_root = _background_owner_root(group, background)
+            if source_root.lattice_parameters:
+                source_metadata.setdefault("lattice_parameters", dict(source_root.lattice_parameters))
             source_data = _rebin_point_data(
                 source_data.with_updates(metadata=source_metadata),
                 aligned_config,

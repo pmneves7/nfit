@@ -212,13 +212,11 @@ def test_explorer_imports_raw_range_as_one_lazy_group_and_keeps_source_recipe(tm
         group = root.subgroups[0]
         assert len(group.datasets) == 2 and not group.subgroups
         assert all(dataset.data is None for dataset in group.datasets)
-        summary = explorer.details_widget.findChild(QtWidgets.QLabel, "saved_source_selection_text")
+        summary = explorer.details_widget.findChild(QtWidgets.QLineEdit, "dataset_importing_numors")
         assert summary is not None and summary.toolTip()
-        assert "1:2" in summary.text() and "one dataset group" in summary.text()
-        copy_expression = explorer.details_widget.findChild(QtWidgets.QPushButton, "saved_source_selection_copy_expression")
-        assert copy_expression.toolTip()
-        copy_expression.click()
-        assert QtWidgets.QApplication.clipboard().text() == "1:2"
+        assert summary.text() == "1:2"
+        apply_sources = explorer.details_widget.findChild(QtWidgets.QPushButton, "dataset_importing_import_range")
+        assert apply_sources.toolTip() and apply_sources.text() == "Apply sources"
         assert group.metadata["source_selection"]["expression"] == "1:2"
         assert group.metadata["source_selection"]["padding"] == 3
         selection = source_selection_from_config(config)
@@ -282,3 +280,36 @@ def test_destroyed_panel_discards_running_preview_without_touching_widgets(tmp_p
         if isValid(panel):
             panel.deleteLater()
         app.processEvents()
+
+
+def test_saved_source_editor_previews_and_calls_public_membership_update(tmp_path, monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtCore, QtWidgets
+
+    from nfit import DataGroup
+    from nfit.source_selection import SourceSelection
+    from nfit.source_selection_gui import build_saved_source_selection_editor
+    from nfit.source_selection_imports import import_source_selection, update_source_selection
+    from tests.test_raw_dgs import _write_raw_dgs
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    monkeypatch.setattr(QtCore.QThreadPool, "start", lambda _pool, job: job.run())
+    for run in (1, 2):
+        _write_raw_dgs(tmp_path / f"SEQ_{run}.nxs.h5")
+    root = DataGroup("sample")
+    group = import_source_selection(root, SourceSelection(tmp_path, "SEQ_", ".nxs.h5", "1"))
+    original = group.datasets[0]
+    panel = build_saved_source_selection_editor(
+        group, on_apply=lambda selection, **settings: update_source_selection(group, selection, parent=root, **settings),
+    )
+    assert panel.title() == "Sources" and panel.toolTip()
+    apply = panel.findChild(QtWidgets.QPushButton, "dataset_importing_import_range")
+    assert apply.text() == "Apply sources" and apply.toolTip()
+    assert not apply.isEnabled()
+    panel.findChild(QtWidgets.QLineEdit, "dataset_importing_numors").setText("1:2")
+    panel.findChild(QtWidgets.QPushButton, "dataset_importing_preview").click()
+    assert apply.isEnabled()
+    apply.click()
+    assert len(group.datasets) == 2 and group.datasets[0] is original
+    panel.deleteLater()
+    app.processEvents()

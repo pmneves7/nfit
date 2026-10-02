@@ -7592,6 +7592,45 @@ class NfitProjectExplorer:
             success_message="Selected runs imported.",
         )
 
+    def _saved_source_selection_group_box(self, root: DataGroup, node: Any) -> Any:
+        from .source_selection_gui import build_saved_source_selection_editor
+
+        if not isinstance(node, DatasetGroup):
+            return None
+        if node.subgroups and any("source_selection_group" not in child.metadata and not child.metadata.get("source_stream") for child in node.subgroups):
+            return self._details_group_box("Sources", ["Edit source membership in each dataset subfolder."])
+        return build_saved_source_selection_editor(
+            node, on_apply=lambda selection, **settings: self._request_source_selection_update(
+                root, node, selection, **settings,
+            ), parent=self.window,
+        )
+
+    def _request_source_selection_update(
+        self, root: DataGroup, node: DatasetGroup, selection: Any, *, preserve_groups: bool = False,
+    ) -> bool:
+        """Schedule the public atomic membership edit under the operation guard."""
+        from .source_selection_imports import update_source_selection
+
+        def task(progress_callback: Any) -> Any:
+            return update_source_selection(
+                node, selection, parent=root, preserve_groups=preserve_groups,
+                reference_roots=self.project.data_groups, progress_callback=progress_callback,
+            )
+
+        def finish(edit: Any) -> None:
+            if edit.settings_changed:
+                self._record_data_group_state_change(root)
+                self._mark_dirty()
+            self._refresh_tree(select_group=root, select_dataset_group=node)
+
+        if not self._interactive:
+            finish(task(None))
+            return True
+        return self._start_background_task(
+            title="Updating selected runs...", failure_title="Update selected runs",
+            task=task, on_success=finish, success_message="Source membership updated.",
+        )
+
     def _dataset_importing_config(self, group: DataGroup) -> dict[str, Any]:
         config = group.metadata.get("dataset_importing")
         if not isinstance(config, dict):
@@ -9649,6 +9688,14 @@ class NfitProjectExplorer:
         _group, entry, _mask, _model, role = self._objects_for_item(item)
         if role == "dataset" and entry is not None:
             return entry.name, dataset_workflow_script(self.project, entry.id)
+        if role in {"group", "datasets", "dataset_group"} and _group is not None:
+            from .workflow import composite_workflow_script
+
+            node = self._dataset_group_for_item(item)
+            return (
+                node.name if isinstance(node, DatasetGroup) else _group.name,
+                composite_workflow_script(self.project, _group.name, node_id=node.id if isinstance(node, DatasetGroup) else None),
+            )
         if role == "analysis":
             analysis = self._analysis_item_roles.get(id(item))
             if analysis is not None:
@@ -14182,6 +14229,10 @@ class NfitProjectExplorer:
         )
         if isinstance(node, DatasetGroup):
             text += f"\nShared masks: {len(node.masks)}"
+        from PySide6 import QtWidgets
+
+        existing_tabs = self.details_widget.findChild(QtWidgets.QTabWidget, "collection_workflow_tabs")
+        selected_tab = existing_tabs.tabText(existing_tabs.currentIndex()) if existing_tabs is not None else "Sources"
         self.details_label.setText(text)
         self._clear_details_panel()
         summary_lines = [
@@ -14197,21 +14248,21 @@ class NfitProjectExplorer:
                 summary_lines,
             )
         )
-        from .source_selection_gui import build_saved_source_selection_summary
+        from .collection_workflow_gui import build_collection_workflow
 
-        source_summary = build_saved_source_selection_summary(node.metadata, parent=self.window)
-        if source_summary is not None:
-            self.details_layout.addWidget(source_summary)
-        if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
-            self.details_layout.addWidget(self._mdevent_group_box(node))
-        if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("raw_dgs"), dict):
-            self.details_layout.addWidget(self._raw_dgs_group_box(node))
-        if any(dataset.data_type.startswith("single_crystal") for dataset in node.iter_datasets()):
-            self.details_layout.addWidget(self._ub_setup_group_box(root, node))
         scope = _composite_scope(root, node)
-        self.details_layout.addWidget(self._group_composite_group_box(scope))
-        self.details_layout.addWidget(self._group_dataset_weights_group_box(scope))
-        self.details_layout.addStretch(1)
+        self.details_layout.addWidget(build_collection_workflow(
+            root, node,
+            source_panel=lambda: self._saved_source_selection_group_box(root, node),
+            membership_panel=lambda: self._group_dataset_weights_group_box(scope),
+            reduction_panel=lambda **options: self._reduction_recipe_group_box(node, **options),
+            coordinate_panel=lambda: self._ub_setup_group_box(root, node),
+            binning_panel=lambda: self._group_composite_group_box(scope),
+            on_view=self.open_slice_viewer_for_selection,
+            on_copy_workflow=self.copy_workflow_script_for_selection,
+            on_plot=lambda plot: (self._refresh_tree(select_group=root, select_plot=plot), self.open_saved_plot_for_selection()) if plot is not None else None,
+            selected_tab=selected_tab, parent=self.window,
+        ), 1)
 
     def _mdevent_group_box(self, node: DatasetGroup) -> Any:
         return self._reduction_recipe_group_box(node)
@@ -14222,7 +14273,7 @@ class NfitProjectExplorer:
     def _corelli_group_box(self, node: DatasetGroup) -> Any:
         return self._reduction_recipe_group_box(node)
 
-    def _reduction_recipe_group_box(self, node: DatasetGroup) -> Any:
+    def _reduction_recipe_group_box(self, node: DatasetGroup, *, scopes=None, export=True) -> Any:
         from .reduction_recipe_gui import build_reduction_recipe_panel
 
         return build_reduction_recipe_panel(
@@ -14233,7 +14284,7 @@ class NfitProjectExplorer:
             on_run_changed=lambda dataset, key, value, inherit: self._set_reduction_recipe_value(
                 node, key, value, dataset=dataset, inherit=inherit
             ),
-            parent=self.window,
+            parent=self.window, scopes=scopes, export=export,
         )
 
     def _ub_setup_group_box(
