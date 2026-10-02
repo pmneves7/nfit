@@ -39,8 +39,10 @@ error is 1.95e−10. The worst relative N and sigma discrepancy is 12.03 ppm at
 (H,K,L,E)≈(−.76,1.21,.10,0 meV), on the lowest energy output boundary:
 N=260.60066879 native versus 260.60380363 Mantid, count 1 and identical C,V.
 The absolute sigma discrepancy is 5.28e−8. Neighbor differences do not cancel;
-histograms alone do not identify the individual trajectory arithmetic causing
-this small residual.
+histograms alone did not identify the individual trajectory arithmetic causing
+this small residual. A subsequent [targeted boundary trace](dgs-trajectory-boundary.md)
+accounts for the entire difference through two below-edge segments admitted by
+Mantid's rounded midpoint classification.
 
 For the lowest exposure decile of individual 4D cells at E≥3.5 meV
 (N≤161.99621754,5377673 cells), C,V and count remain exact. Maximum sigma
@@ -63,8 +65,9 @@ Mantid:−5.3854e−10 relative. Its intensity difference is 1.03e−12 and sigm
 difference 6.07e−14. The largest underlying N difference is−4.5867e−5 at
 K/L cell(0,2), with N≈4578.63. The ppm residual plot intentionally magnifies
 these small differences; it does not show a practical intensity outlier.
-The remaining numerical trajectory residual is quantified without claiming
-its exact operation-level cause.
+The [subsequent trajectory trace](dgs-trajectory-boundary.md) identifies the
+operation-level cause of the worst cube residual; this pooled fine pixel is a
+separate, much smaller numerical difference.
 
 ## Raw event reduction
 

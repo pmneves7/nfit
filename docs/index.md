@@ -18,7 +18,7 @@ University, pneves1@jhu.edu). AI and large-language-model coding tools have
 assisted with portions of the code, tests, and documentation. Authorship and
 responsibility for the project remain with Paul M. Neves.
 
-Current package version: 0.107.0.
+Current package version: 0.108.0.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the
@@ -67,6 +67,7 @@ fit_constraints
 fit_reports
 performance
 data_philosophy
+measurement_statistics
 api
 references
 planned_features

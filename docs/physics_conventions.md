@@ -720,6 +720,90 @@ $S(\mathbf Q,E)$ as a separate response function
 ([Mantid MDNorm](https://docs.mantidproject.org/v6.1.0/concepts/MDNorm.html);
 [ORNL introduction to neutron spin echo](https://neutrons.ornl.gov/sites/default/files/LS_Introduction_to_NSE_2019NXS-R.pdf)).
 
+### Measurement estimator contracts
+
+The [public measurement statistics API](measurement_statistics.md) declares a
+target quantity, compatible unit labels, support, and dependencies before
+combination. Its one-bin reference estimates do not change existing project
+workflow dispatch. Units below are physical declarations; no automatic unit
+conversion or instrument-based estimator selection is performed.
+
+For continuous observations $y_i$ of a common value $\mu$, with known positive
+independent variances $s_i^2$ in squared observation units, the Gaussian
+inverse-variance estimator is
+
+$$
+a_i=\frac{1/s_i^2}{\sum_j1/s_j^2},\qquad
+\hat\mu=\sum_i a_i y_i,\qquad
+\operatorname{Var}(\hat\mu)=\sum_i a_i^2s_i^2.
+$$
+
+The $a_i$ are dimensionless. Equal-weight propagation instead uses $a_i=1/n$
+for $n$ included observations. Neither estimator multiplies precision weights
+by an unrelated exposure. For Gaussian precision weights,
+$\chi^2=\sum_i(y_i-\hat\mu)^2/s_i^2$ has $n-1$ degrees of freedom under the
+common-value model. A large value diagnoses model/error disagreement; variance
+is not automatically inflated. A varying response produces a precision-weighted
+response, rather than a uniform coordinate average or a bin-center value.
+Correlated observations generally require generalized least squares, not these
+diagonal precision weights.
+
+For samples $y_i=f(x_i)$ at strictly increasing coordinates $x_i$, explicitly
+assume piecewise linear interpolation. Let $\phi_i(x)$ be its nodal basis
+function and $D$ the covered part of the requested interval. Then
+
+$$
+b_i=\int_D\phi_i(x)\,dx,\qquad
+J=\sum_i b_i y_i,\qquad
+\bar f_D=J/|D|.
+$$
+
+$b_i$ and $|D|$ have coordinate units; $J$ has observation times coordinate
+units. The mean retains observation units. Independent-node variance is
+$\sum_i b_i^2s_i^2$ for $J$, divided by $|D|^2$ for the mean. A node shared
+by adjacent interpolation segments has one coefficient $b_i$, not independent
+errors in each segment. Missing or masked nodes break their adjacent segments;
+widely spaced valid nodes still use the selected interpolation. No extrapolation
+or interpolation-model uncertainty is inferred. The default requires full
+interval support; an explicit covered-only target reports $|D|$ and
+$|D|/(x_{\max}-x_{\min})$, where these bounds describe the requested interval.
+
+For linear reconstructed observations, write fluctuations as
+$\delta y_i=\sum_k A_{ik}\delta z_k$, where primitive sources $z_k$ with
+different IDs are independent and have variance $u_k^2$. $A_{ik}$ carries
+observation units divided by source units. For a declared linear combination
+$Y=\sum_i a_i y_i$,
+
+$$
+\operatorname{Var}(Y)=\sum_k\left(\sum_i a_i A_{ik}\right)^2u_k^2.
+$$
+
+Repeated source coefficients are combined before squaring. Signed coefficients
+can cancel shared uncertainty; distinct sources do not cancel by identity.
+The sparse `SourceTerm` representation must reproduce each observation's
+diagonal variance and include every represented dependency. It does not infer
+missing correlations or declare different calibration sources independent
+unless the contract makes that assumption. Required reconstruction terms reject
+missing data by default; omission explicitly changes the target to available
+terms.
+
+For pooled count numerator $C$, exposure $N>0$, numerator variance $V_C$,
+exposure variance $V_N$, and covariance $K_{CN}$, first-order ratio propagation
+gives
+
+$$
+\operatorname{Var}(C/N)\simeq
+\frac{V_C}{N^2}+\frac{C^2V_N}{N^4}-\frac{2CK_{CN}}{N^3}.
+$$
+
+$N$ has numerator units divided by intensity units, and $K_{CN}$ has numerator
+times exposure units. Shared source sensitivities propagate this joint Jacobian
+without subtracting inconsistent marginal errors. A common normalizer error does
+not decrease as independent repeated noise. This delta-method variance is
+approximate, conditional on the supplied model, and unsuitable as an exact
+confidence interval near poorly constrained denominators. It does not establish
+that a plug-in ratio is unbiased or optimal. Known exposure sets $V_N=K_{CN}=0$.
+
 ### Pooling normalized count histograms
 
 Let $C_i$ be the corrected count numerator in cell $i$, $N_i>0$ its known

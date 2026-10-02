@@ -128,6 +128,9 @@ different Python.
 - `docs/data_import.md`, `docs/gui_fitting.md`, and `docs/data_viewer.md`:
   detailed GUI workflows.
 - `docs/data_philosophy.md`: extension, serialization, and data contracts.
+- `src/nfit/measurement_contracts.py` and `measurement_statistics.py`: explicit
+  statistical targets, serializable assumptions, and one-bin reference estimators.
+- `docs/measurement_statistics.md`: measurement contract and estimator scripting guide.
 
 Keep this map structural rather than exhaustive. Update it only when subsystem
 ownership or documentation entry points move.

@@ -384,6 +384,8 @@ from .mdhisto import (
     MDHistoData,
     load_mantid_mdhisto_nxs,
 )
+from .measurement_contracts import MeasurementContract
+from .measurement_statistics import MeasurementEstimate, SourceTerm, estimate_measurement_bin
 from .metadata_dimensions import (
     MetadataBinning,
     MetadataDimension,
@@ -707,6 +709,10 @@ def __dir__() -> list[str]:
     )
 
 __all__ = [
+    "MeasurementContract",
+    "MeasurementEstimate",
+    "SourceTerm",
+    "estimate_measurement_bin",
     "project_cache_clear_script",
     "clear_project_caches",
     "save_figure",

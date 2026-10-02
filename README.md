@@ -60,6 +60,8 @@ A few of its main capabilities are:
   two-dimensional axes ratios, x/y axis swapping, CSV export of maps and cuts,
   and high-resolution raster and vector figure exports;
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
+- declare statistical targets through a Python API for count exposure pooling,
+  continuous means, coordinate integrals, and shared-source linear uncertainty;
 - inspect the subtracted signal, retained background, and on-demand unsubtracted
   slices through a grouped channel menu without adding visualization channels to fits;
 - open viewers on demand, with an optional preference to preload all datasets

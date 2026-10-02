@@ -37,6 +37,8 @@ def test_project_cache_facade_shares_authoritative_stores():
 
 
 GUI_INDEPENDENT_MODULES = (
+    PACKAGE_ROOT / "measurement_contracts.py",
+    PACKAGE_ROOT / "measurement_statistics.py",
     PACKAGE_ROOT / "project_caches.py",
     PACKAGE_ROOT / "figure_export.py",
     PACKAGE_ROOT / "resource_usage.py",
@@ -73,6 +75,25 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "kpath.py",
     PACKAGE_ROOT / "analysis" / "runner.py",
 )
+
+
+@pytest.mark.parametrize("name", ["measurement_contracts", "measurement_statistics"])
+def test_measurement_contract_services_have_no_gui_or_project_dependencies(name):
+    tree = ast.parse((PACKAGE_ROOT / f"{name}.py").read_text())
+    modules = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+    modules.extend(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names)
+    assert not any(module.startswith(("PySide", "PyQt", "project_", "qt_")) for module in modules)
+
+
+def test_measurement_contract_public_exports_are_authoritative():
+    import nfit
+    from nfit import measurement_contracts, measurement_statistics
+
+    assert nfit.MeasurementContract is measurement_contracts.MeasurementContract
+    for name in ("MeasurementEstimate", "SourceTerm", "estimate_measurement_bin"):
+        assert getattr(nfit, name) is getattr(measurement_statistics, name)
+
+
 PROJECT_GUI_CLIENT_MODULES = (
     PACKAGE_ROOT / "qt_figure_export.py",
     PACKAGE_ROOT / "qt_resource_monitor.py",

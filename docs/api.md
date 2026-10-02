@@ -1,5 +1,19 @@
 # API reference
 
+## Measurement contracts and reference estimates
+
+`MeasurementContract` records the measurement kind, estimator, quantity and units,
+missing-data policy, normalizer assumptions, and represented dependencies. Its
+`to_dict()` and `from_dict()` methods preserve the complete versioned declaration.
+`estimate_measurement_bin(contract, values, variances, ...)` returns an immutable
+`MeasurementEstimate` for one bin. `SourceTerm` identifies primitive uncertainty
+sources shared between observations or between a numerator and its normalizer.
+
+These public functions operate independently of instruments and Qt. Existing
+project binning, fitting, cuts and exports retain their current estimators until
+workflow integration is complete. See [Measurement statistics](measurement_statistics.md)
+for supported contracts, input conventions, units, and runnable examples.
+
 ## Reduced data, import adapters, and viewing
 
 nfit importers translate source axes, units, masks, intensities, uncertainties,

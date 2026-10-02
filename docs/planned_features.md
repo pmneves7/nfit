@@ -34,13 +34,18 @@ releases. Current behavior is documented in the workflow and API pages.
 The temporary [Measurement pipeline implementation plan](measurement_pipeline_plan.md)
 tracks the staged implementation and review checkpoints for these changes.
 
-- Expose explicit measurement estimators: exposure pooling for count rates,
+- Integrate the public [measurement contracts and one-bin estimators](measurement_statistics.md)
+  into project binning, cuts, fitting, and export. The API already distinguishes
+  exposure pooling for count rates,
   inverse-variance means for independent continuous measurements, and
   coordinate-interval averages with sampling-width weights. Preserve existing
   saved weighting settings through an explicit compatibility path. The current
   inverse-variance option multiplies any physical exposure weight by
   $1/\sigma^2$, where $\sigma$ is the stored signal uncertainty; it does not
   implement all these distinct estimators.
+- Validate numerical alternatives and choose future defaults at the late
+  cross-instrument acceptance stage. Current DGS compatibility defaults remain
+  unchanged during contract and workflow refactoring.
 - Propagate dependencies from fractional assignment, repeated symmetry copies,
   shared monitors/vanadium, backgrounds, and reconstruction hypotheses.
   CORELLI's reconstructed energy channels and symmetrized copies are not

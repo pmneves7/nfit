@@ -259,6 +259,14 @@ remains a separate workflow requirement.
 
 ## Measurement statistics and binning
 
+The public [Measurement statistics API](measurement_statistics.md) declares
+the target quantity and assumptions independently of the file adapter. Its
+one-bin reference estimators support count exposure pooling, independent
+continuous means, coordinate interval means/integrals, and linear shared-source
+uncertainty. Contracts serialize completely; units are explicit labels and
+must be made compatible before combination. Integration into existing project
+and viewer workflows is tracked separately.
+
 Instrument reduction determines coordinates, calibrated signals, exposure,
 and statistical dependencies. General binning then combines compatible
 measurements using those quantities. A DGS energy trajectory, a diffraction
@@ -276,7 +284,7 @@ precision weights. Bin widths, instrument resolution, and systematic
 calibration differences remain relevant even when the measurement units match.
 
 Exposure pooling and Gaussian precision weighting are not interchangeable.
-The current **Inverse variance** option adds inverse-variance weighting to any
+The existing project **Inverse variance** option adds inverse-variance weighting to any
 physical normalization weight already present; it is therefore not a pure
 Gaussian inverse-variance mean for data carrying an exposure denominator.
 See [Pooling normalized count histograms](physics_conventions.md#pooling-normalized-count-histograms)

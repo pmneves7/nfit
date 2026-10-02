@@ -168,3 +168,9 @@ from both common MDE and fresh raw data, quantified exposure residuals, fine
 low-coverage diagnostics, transient reduced-event cache reuse, and current
 measured timings versus the estimated ordinary sequential Mantid workflow.
 The aggregate receipts exclude full event and diagnostic slab payloads.
+
+The [trajectory boundary diagnostic](results/dgs-trajectory-boundary.md)
+identifies the remaining 12 ppm exposure difference. The
+[performance audit](results/dgs-parity-speedup-audit.md) records a promising
+projection/accumulation prototype and its numerical and real-data adoption gates.
+Its synthetic kernel timings are not measured application speedups.

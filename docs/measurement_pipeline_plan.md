@@ -28,6 +28,9 @@ temperature. Instrument names alone must not determine the statistical estimator
   a pared-down selection is appropriate for interactive checks.
 - Check speed, peak memory, lazy loading, and reuse when changing numerical payloads
   or caching. Reject small speed gains that require disproportionate complexity.
+- Defer validation and adoption of alternative DGS precision, monitor-fitting,
+  trajectory-energy and symmetry-variance defaults to 6A1 and 6A2. Existing
+  compatibility defaults stay fixed during the contract/workflow refactor.
 - Remove this page and its navigation links after all checkpoints are accepted.
   Keep the resulting scientific conventions and workflows in permanent docs.
 
@@ -42,7 +45,7 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 1D1 | Audit converter; validate matched histograms and same-bin copy covariance | Complete |
 | 1D2 | Make Mantid histogram conventions the default and native alternatives explicit | Complete |
 | 1D3 | Resolve remaining monitor peak-fit differences against the reference | Complete |
-| 2A | Define explicit measurement and estimator contracts | Pending |
+| 2A | Define explicit measurement and estimator contracts | Complete |
 | 2B | Apply the contracts consistently to reductions, cuts, and exports | Pending |
 | 3A | Persist complete source and reduction recipes | Pending |
 | 3B | Edit recipes through one settings schema and targeted cache invalidation | Pending |
@@ -51,6 +54,8 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Pending |
 | 5B | Expose statistical diagnostics and complete script replay | Pending |
 | 6A | Validate instrument families and continuous measurements | Pending |
+| 6A1 | Validate optional numerical and statistical treatments | Pending |
+| 6A2 | Review and adopt future defaults | Pending |
 | 6B | Migrate projects, verify performance, and remove this plan | Pending |
 
 Statuses are **Pending**, **Pending review**, **In progress**, **Complete**, or
@@ -329,8 +334,8 @@ Affected reduced-event caches regenerate under version 5, while policy and
 algorithm versions invalidate affected histograms. Other measurement pipelines
 retain their previous conventions.
 
-**Review gate:** phase 1D is complete and awaits review. Start 2A only when Paul
-authorizes it.
+**Review gate:** phase 1D is complete. Paul authorized 2A on 2026-10-02, alongside
+independent diagnostics of the trajectory residual and performance candidates.
 
 ## 2. Measurement and estimator contracts
 
@@ -353,6 +358,32 @@ for each choice. Distinguish a mean, an integral, and a count sum. Use statistic
 assumptions to recommend defaults; let users inspect and override those assumptions.
 Test heterogeneity within a bin and uncertain normalizers explicitly before claiming
 an estimator has the most accurate uncertainty for every acquisition type.
+
+**Implementation boundary:** deliver a versioned public `MeasurementContract`,
+immutable one-bin `MeasurementEstimate`, sparse primitive `SourceTerm` sensitivities,
+and reference estimators independent of Qt and instrument adapters. Existing project
+binning, slicing, fits and exports retain their current dispatch until 2B. Contracts
+serialize complete assumptions without attaching new defaults to existing datasets.
+Unit labels are explicit; callers perform physical unit conversion before combining.
+Uncertain-normalizer propagation is explicitly first-order, not a universal likelihood.
+
+**Completion record (2026-10-02, 0.108.0):** the public contracts and scalar
+reference estimators are implemented in `measurement_contracts.py` and
+`measurement_statistics.py`, with examples in `docs/measurement_statistics.md`.
+Analytic tests cover unequal exposure, measured zeros, coordinate support,
+shared backgrounds/calibration, signed reconstruction, uncertain normalization,
+heterogeneity diagnostics, serialization, and immutable inputs. Architecture
+tests enforce GUI independence and authoritative public exports. The focused
+contract, architecture, and packaging run passed 125 tests; histogram and dataset
+regressions passed another 31. Ruff, byte-compilation, whitespace checks, and
+Sphinx with warnings treated as errors passed. No test invokes Mantid or Shiver.
+
+The separately authorized audits identified the entire trajectory residual as
+float32 boundary leakage and measured a parity-preserving fused-kernel prototype.
+See `benchmarks/results/dgs-trajectory-boundary.md` and
+`benchmarks/results/dgs-parity-speedup-audit.md`. Neither audit changed production
+scientific settings. Alternative validation and default adoption remain at 6A1
+and 6A2. Checkpoint 2B requires Paul's next authorization.
 
 ### 2B — One numerical path
 
@@ -452,6 +483,28 @@ temperature. Include uneven coverage, repeated measurements, independent and
 shared backgrounds, fractional/discrete binning, and symmetry. Match Mantid where
 it implements the same model; analytic and repeated-sampling references decide
 correctness when conventions differ.
+
+### 6A1 — Validate alternatives
+
+Compare optional high precision, stable monitor fitting, per-run trajectory Ei,
+and covariance treatments against analytic references, known calibration or
+simulated truth, and the representative instrument families. Prioritize fringes,
+coverage boundaries, repeated sources, and final cuts. Compare speed and memory
+as well as signal and uncertainty. Agreement with a different convention alone,
+smaller errors, or a smoother image does not establish greater accuracy.
+
+The confirmed 12.03 ppm energy-boundary residual and Python/compiled trajectory
+classification difference are explicit validation cases. Numerical performance
+candidates must preserve the chosen treatment; their synthetic gains require
+real-workload confirmation before adoption.
+
+### 6A2 — Choose defaults
+
+Review the evidence with Paul before changing any scientific default. State the
+measurement assumptions behind each choice and retain a reproducible compatibility
+path. Preserve previously resolved settings through explicit project migration;
+changing a default must not silently reinterpret projects with absent legacy fields.
+This gate follows complete dependency propagation and cross-instrument validation.
 
 ### 6B — Migration, performance, and completion
 
