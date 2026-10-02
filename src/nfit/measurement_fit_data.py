@@ -8,6 +8,7 @@ import numpy as np
 from .dataset import PointData4D
 from .mdhisto import MDHistoData, mdhisto_measured_bins
 from .project_coordinates import _mdhisto_coordinate_grids
+from .source_lineage import SOURCE_LINEAGE_KEY
 
 
 def rebin_declared_fit_points(data, *, lower=None, upper=None, step_size=None,
@@ -71,6 +72,7 @@ def prepare_histogram_fit_points(data: MDHistoData) -> PointData4D:
         "symmetry_operations_hkl", "rebin", "histogram_arithmetic", "bose_separation", "fit_likelihood",
         "measurement_target_required", "measurement_derivation", "cross_reflection_covariance",
         "measurement_reduction", "measurement_source_id", "coordinate_name",
+        SOURCE_LINEAGE_KEY,
     ):
         if key in data.metadata:
             metadata[key] = data.metadata[key]

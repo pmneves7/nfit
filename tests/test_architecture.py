@@ -70,6 +70,9 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "dgs_reduction_settings.py",
     PACKAGE_ROOT / "reduction_recipes.py",
     PACKAGE_ROOT / "reduction_runtime.py",
+    PACKAGE_ROOT / "source_selection.py",
+    PACKAGE_ROOT / "source_lineage.py",
+    PACKAGE_ROOT / "source_selection_imports.py",
     PACKAGE_ROOT / "composite_spectral.py",
     PACKAGE_ROOT / "rebin_cache.py",
     PACKAGE_ROOT / "slice_viewer_cache.py",
@@ -148,6 +151,7 @@ PROJECT_GUI_CLIENT_MODULES = (
     PACKAGE_ROOT / "preferences_gui.py",
     PACKAGE_ROOT / "dgs_reduction_policy_gui.py",
     PACKAGE_ROOT / "reduction_recipe_gui.py",
+    PACKAGE_ROOT / "source_selection_gui.py",
 )
 
 
@@ -388,3 +392,13 @@ def test_histogram_fit_preparation_gui_compatibility_uses_public_service():
     np.testing.assert_array_equal(actual.intensity, expected.intensity)
     np.testing.assert_array_equal(actual.mask, expected.mask)
     assert actual.metadata == expected.metadata
+
+
+def test_source_selection_public_exports_are_authoritative():
+    import nfit
+    from nfit import source_selection, source_selection_imports
+
+    for name in ("SourceSelection", "SourceSelectionPlan", "SourceAppearance", "parse_run_expression", "resolve_source_selection"):
+        assert getattr(nfit, name) is getattr(source_selection, name)
+    for name in ("import_source_selection", "source_selection_script"):
+        assert getattr(nfit, name) is getattr(source_selection_imports, name)

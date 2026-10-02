@@ -36,6 +36,9 @@ def reduce_masked_event_runs(
     """
     def finish(data: MDHistoData) -> MDHistoData:
         metadata = dict(data.metadata)
+        from .source_lineage import source_lineage_metadata
+
+        metadata.update(source_lineage_metadata(runs, include_disabled=True))
         metadata["rebin"] = {**metadata.get("rebin", {}), "minimum_samples": minimum_samples}
         mask = data.mask | (data.num_events < minimum_samples)
         metadata["combined_mask_count"] = int(np.count_nonzero(mask))

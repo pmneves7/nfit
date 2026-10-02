@@ -62,6 +62,7 @@ from .raw_dgs import (
     _use_ki_kf_correction,
 )
 from .reduction_runtime import acquisition_identity, record_resolved_reduction
+from .source_lineage import source_lineage_metadata
 
 ENERGY_FROM_WAVELENGTH_MEV_ANGSTROM_SQ = 81.80421036
 DEFAULT_WAVELENGTH_RANGE_ANGSTROM = (0.6, 2.5)
@@ -959,6 +960,7 @@ def bin_corelli_group(
         mask=mask,
         num_events=hypothesis_count,
         metadata={
+            **source_lineage_metadata(selected, include_disabled=True),
             "raw_dgs": copy.deepcopy(config),
             "resolved_run_reductions": {dataset.id: copy.deepcopy(dataset.metadata.get("resolved_reduction")) for dataset in selected},
             "corelli_reconstruction": {

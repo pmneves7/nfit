@@ -80,6 +80,7 @@ from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group
 from .raw_dgs_cache import RAW_DGS_REDUCTION_VERSION
 from .rebin import rebin_nd
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET, RebinCache
+from .source_lineage import source_lineage_metadata
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
 from .symmetry import SymmetrySpec, symmetry_config
 
@@ -901,6 +902,9 @@ def _composite_cache_signature(
     binning_id: str | None = None,
     include_backgrounds: bool = True,
 ) -> str:
+    from .source_selection_imports import validate_source_selection_combination
+
+    validate_source_selection_combination(_composite_candidates(group))
     cache_key = _composite_cache_key(group, binning_id)
     if cache_key in _trail:
         raise ValueError("composite dependency cycle through a live group background")
@@ -978,7 +982,7 @@ def _composite_cache_signature(
                 {
                     key: dataset.metadata.get(key)
                     for key in ("mdevent_experiment_index", "proton_charge", "incident_energy")
-                },
+                } | source_lineage_metadata([dataset]),
                 _mask_signature(getattr(dataset, "masks", None)),
                 _mask_signature(effective_dataset_masks(_composite_root(group), dataset)),
             ]
@@ -1323,6 +1327,9 @@ def _composite_dataset_data(
     ok, message = data_group_composite_status(group)
     if not ok:
         raise ValueError(message)
+    from .source_selection_imports import validate_source_selection_combination
+
+    validate_source_selection_combination(_composite_candidates(group))
     config = (
         copy.deepcopy(dict(config_override))
         if config_override is not None
@@ -2024,6 +2031,9 @@ def _cached_composite_dataset_data(
     from .composite_spectral import apply_composite_spectral_channels
 
     def finish(data):
+        from .source_lineage import with_source_lineage
+
+        data = with_source_lineage(data, source_lineage_metadata(_composite_candidates(group)))
         if not apply_spectral_channels:
             return data
         return apply_composite_spectral_channels(
@@ -2203,6 +2213,7 @@ def composite_dataset_entry(
             else ""
         ),
         metadata={
+            **source_lineage_metadata(datasets),
             "source_group": group.name,
             "composite": True,
             "composite_scope_id": (

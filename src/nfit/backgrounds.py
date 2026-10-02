@@ -13,6 +13,7 @@ from .measurement_dependencies import (
     combine_source_dependencies,
     project_source_dependencies,
 )
+from .source_lineage import merge_source_lineage_metadata, validate_independent_source_lineage
 
 
 def background_with_user_mask_zeros(background: MDHistoData) -> MDHistoData:
@@ -102,7 +103,10 @@ def subtract_aligned_background(
     if data.source_dependencies is not None or background.source_dependencies is not None:
         dependencies = combine_source_dependencies((data.source_dependencies, background.source_dependencies), (1.0, -factor))
         variance = dependencies.variance()
+    if dependencies is None:
+        validate_independent_source_lineage(data, background)
     metadata = dict(data.metadata)
+    metadata.update(merge_source_lineage_metadata(data, background))
     history = list(metadata.get("background_subtractions", []))
     projection = background.metadata.get("background_projection")
     history.append(
@@ -249,7 +253,10 @@ def subtract_powder_background(
     )
     if dependencies is not None:
         output_errors = np.sqrt(dependencies.variance())
+    if dependencies is None:
+        validate_independent_source_lineage(data, background)
     metadata = dict(data.metadata)
+    metadata.update(merge_source_lineage_metadata(data, background))
     history = list(metadata.get("background_subtractions", []))
     history.append(
         {

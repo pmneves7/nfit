@@ -280,11 +280,18 @@ def combine_measurement_histograms(datasets) -> MDHistoData:
         pooled = (pooled[0],np.where(pooled[2] > 0,variance*pooled[2]**2,0),*pooled[2:])
     elif contract.dependence != "independent" or contract.normalizer != "known":
         raise ValueError("This contract requires source dependencies or source replay")
+    if output_dependencies is None:
+        from .source_lineage import validate_independent_source_lineage
+
+        validate_independent_source_lineage(*datasets)
     channels = event_statistics_channels(*pooled) if counting else measurement_statistics_channels(*pooled)
     coverage = np.maximum.reduce([np.where(good,mdhisto_coverage_fraction(data),0)
         for data,good in zip(datasets,valid,strict=True)])
     channels["coverage_fraction"] = MDHistoChannel(coverage,label="Coverage",unit="fraction")
     metadata = dict(first.metadata)
+    from .source_lineage import merge_source_lineage_metadata
+
+    metadata.update(merge_source_lineage_metadata(*datasets))
     metadata.update(measurement_combination={"version": 1,"sources": len(datasets)},zero_event_bins_are_measured=True)
     if not counting:
         metadata[MEASUREMENT_STATISTICS_KEY] = markers[0]

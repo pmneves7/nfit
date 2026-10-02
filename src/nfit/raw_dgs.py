@@ -88,6 +88,7 @@ from .reduction_runtime import (
     effective_trajectory_energies,
     record_resolved_reduction,
 )
+from .source_lineage import source_lineage_metadata
 
 # Mantid's parameter files select these formula-driven GetEi v2 paths instead
 # of fitting two monitor peaks. The formulas are instrument definitions, not
@@ -654,6 +655,7 @@ def bin_raw_dgs_group(
         mask=mask,
         num_events=event_count,
         metadata={
+            **source_lineage_metadata(selected, include_disabled=True),
             "raw_dgs": copy.deepcopy(config),
             "resolved_run_reductions": {dataset.id: copy.deepcopy(dataset.metadata.get("resolved_reduction")) for dataset in selected},
             "dgs_reduction_policies": policies,

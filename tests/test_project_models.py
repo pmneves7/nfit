@@ -2348,7 +2348,7 @@ def test_dataset_importing_numor_parser_accepts_ranges_steps_and_gaps():
         409985,
     ]
     assert project_gui.parse_dataset_numors("5,5,3:1") == [5, 3, 2, 1]
-    with pytest.raises(ValueError, match="invalid run range"):
+    with pytest.raises(ValueError, match="range stride must be nonzero"):
         project_gui.parse_dataset_numors("409981:0:409995")
 
 
@@ -2366,11 +2366,18 @@ def test_dataset_importing_panel_builds_paths_and_clears_nested_data(tmp_path, m
     enabled.setChecked(True)
     assert group.metadata["dataset_importing"]["enabled"] is True
 
+    from nfit.source_selection import resolve_source_selection
+
     captured = []
+
+    def request_selection(_group, selection, **_kwargs):
+        captured.extend(Path(path) for path in resolve_source_selection(selection).resolved_files)
+        return True
+
     monkeypatch.setattr(
         explorer,
-        "import_dataset_paths",
-        lambda _group, paths, **_kwargs: captured.extend(paths) or [],
+        "_request_source_selection_import",
+        request_selection,
     )
     config = explorer._dataset_importing_config(group)
     config.update(

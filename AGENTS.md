@@ -66,6 +66,11 @@ different Python.
 - `src/nfit/qt_operation_guard.py`: shared operation input and popup-lifetime
   guards for Qt workflows.
 - `src/nfit/project_imports.py`: GUI-independent import, source, and reload orchestration.
+- `src/nfit/source_selection.py`, `source_selection_imports.py`, and
+  `source_selection_gui.py`: bounded run expressions, resolved previews, atomic
+  imports into existing dataset groups, and focused Qt selection controls.
+- `src/nfit/source_lineage.py`: bounded acquisition identity metadata and shared-
+  source guards for combination and separate fit blocks.
 - `src/nfit/project_data.py`: GUI-independent dataset preparation facade,
   derived-data coordination, and viewer-ready orchestration.
 - `src/nfit/project_composites.py`: hierarchical composite planning,

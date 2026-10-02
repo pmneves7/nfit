@@ -3977,6 +3977,7 @@ def test_data_viewer_channel_change_resets_limits(monkeypatch):
 
     data = _tiny_mdhisto_data(1.0)
     viewer = QtMDHistoSliceViewer(data)
+    viewer.hold_view_settings_check.setChecked(False)
     calls = []
     monkeypatch.setattr(viewer, "update_plot", lambda **kwargs: calls.append(kwargs))
     viewer._set_channel("signal")

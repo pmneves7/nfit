@@ -13,6 +13,7 @@ from ..background_channels import (
 )
 from ..dataset import PointData4D
 from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, mdhisto_measured_bins
+from ..source_lineage import merge_source_lineage_metadata, validate_independent_source_lineage
 from .coordinates import (
     physical_axis_vectors,
     q_bin_volume,
@@ -45,6 +46,8 @@ def combine_aligned_histograms(
     scale = float(right_scale)
     if not np.isfinite(scale):
         raise ValueError("right_scale must be finite")
+    if scale != 0.0:
+        validate_independent_source_lineage(left, right)
     sign = -1.0 if operation == "subtract" else 1.0
     left_signal = np.asarray(left.signal, dtype=float)
     right_signal = np.asarray(right.signal, dtype=float)
@@ -61,6 +64,8 @@ def combine_aligned_histograms(
     signal = left_signal + sign * scale * right_signal
     variance = left_variance + scale**2 * right_variance
     metadata = dict(left.metadata)
+    if scale != 0.0:
+        metadata.update(merge_source_lineage_metadata(left, right))
     if operation != "subtract" or scale == 0.0:
         metadata.pop(BACKGROUND_EXCEPTIONS_KEY, None)
         metadata.pop(BACKGROUND_PROVENANCE_KEY, None)
@@ -111,6 +116,7 @@ def separate_bose_elastic(
     """
 
     _validate_matching_histograms(first, second)
+    validate_independent_source_lineage(first, second)
     t1 = _positive_temperature(first_temperature_K, "first")
     t2 = _positive_temperature(second_temperature_K, "second")
     if np.isclose(t1, t2, rtol=1.0e-8, atol=1.0e-10):
@@ -161,6 +167,7 @@ def separate_bose_elastic(
         & (valid_contrast | zero_energy)
     )
     metadata = dict(first.metadata)
+    metadata.update(merge_source_lineage_metadata(first, second))
     metadata.update(
         {
             "signal_semantics": "density",

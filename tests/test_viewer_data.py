@@ -255,6 +255,7 @@ def test_deferred_refresh_reconciles_metadata_tile_range_on_revisit(
         or (tiny_mdhisto_data() if index == 0 else expanded),
     )
     viewer = QtMDHistoSliceViewer(old_sequence, x_dim=0, y_dim=1)
+    viewer.hold_view_settings_check.setChecked(False)
     viewer.tile_dim = 4
     viewer.tile_range = (5.24, 20.12) if manual else (1.54, 30.06)
     viewer.dataset_combo.setCurrentIndex(0)

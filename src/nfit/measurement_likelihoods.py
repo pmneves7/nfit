@@ -7,12 +7,15 @@ import numpy as np
 
 from .measurement_contracts import MeasurementContract
 from .measurement_dependencies import SourceReplayRequired
+from .source_lineage import validate_fit_source_lineage
 
 FIT_LIKELIHOODS = ("gaussian", "gaussian_gls", "poisson_deviance")
 
 
 def validate_fit_dataset_independence(datasets):
     """Reject reused primitives across separately evaluated dataset blocks."""
+    datasets = tuple(datasets)
+    validate_fit_source_lineage(datasets)
     seen = set()
     for name, points in datasets:
         payload = points.source_dependencies

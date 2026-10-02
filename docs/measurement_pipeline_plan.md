@@ -52,8 +52,8 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 2B4 | Complete region, fitting, export, and migration parity | Complete |
 | 3A | Persist complete source and reduction recipes | Complete |
 | 3B | Edit recipes through one settings schema and targeted cache invalidation | Complete |
-| 4A | Add basic run expressions and resolved-source preview | Pending |
-| 4B | Add grouped, repeated, and stacked run expressions | Pending |
+| 4A | Add basic run expressions and resolved-source preview | Complete |
+| 4B | Add grouped, repeated, and stacked run expressions | Complete |
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Pending |
 | 5B | Expose statistical diagnostics and complete script replay | Pending |
 | 6A | Validate instrument families and continuous measurements | Pending |
@@ -442,7 +442,8 @@ is backed up in IPTS-37189; the separate NiO-and-sapphire project is unchanged.
 Task-owned scientific archives and diagnostics were moved from home and `/tmp`
 to IPTS diagnostics storage. Home usage is 7.9 GiB. The existing desktop launcher
 uses IPTS scratch via `TMPDIR`; `NFIT_TMPDIR` can select another validated SNS
-IPTS workspace. No application was launched to verify the shortcut.
+IPTS workspace. The launcher accepts the canonical GPFS IPTS path after symlink
+resolution; a brief offscreen startup check reached the GUI event loop.
 
 Use the same GUI-independent services for rebinning, hidden-axis slicing,
 coarsening, regular/rotated cuts, region summaries, fits, and exported profiles.
@@ -574,6 +575,33 @@ Repeated sources must retain their correlations; empty slots mean missing data.
 **Acceptance:** expansion is deterministic and bounded, errors are actionable,
 large ranges remain responsive, GUI and scripts resolve identically, and grouping
 does not alter the statistical meaning of the measurements.
+
+**Stage 4 completion record (0.113.0):** the public bounded resolver supports
+GRASP-inspired basic, summed, blocked, repeated, empty and second-index
+expressions, plus legacy `start:stride:end` syntax. Directory/prefix/suffix and
+padding are saved alongside resolved appearances. A worker-thread preview reports
+missing/repeated identities and optional metadata without reading event arrays;
+the table is bounded to 1,000 rows. The GUI delegates atomic import to the same
+public service as editable scripts.
+
+Flat import creates one ordinary nfit dataset group with unique physical source
+membership. Optional expression grouping creates ordinary dataset subfolders;
+there is no additional project grouping framework. Repeated raw/MDE sources
+within a summed subfolder retain a correlated multiplicity coefficient, without
+inventing counting precision. Cross-subfolder aliases retain physical identity
+and are rejected when a composite would merge them without shared covariance.
+Acquisition lineage survives histogram and fit preparation; separate positive-
+weight fit blocks reject overlapping tracked acquisitions. The check is
+conservative until primitive-level independence or joint covariance is represented.
+CORELLI/ordinary repeated coaddition likewise requires an adapter extension;
+unmarked legacy entries retain their existing behavior. Empty retained folders
+are disabled. Mixed reduction families use separate dataset groups.
+
+Saved source expressions are visible in collection details. Selection scripts
+resolve the current directory; saved reduction recipes retain their resolved
+logical membership. Sources and reduced caches remain lazy. See
+[Selecting numbered sources](source_selection.md). Stage 5 awaits user review;
+alternative validation/default adoption remain 6A1–6A2.
 
 ## 5. GUI and scripting workflow
 

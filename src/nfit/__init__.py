@@ -599,6 +599,14 @@ from .resolution import (
     constant_fwhm_energy_resolution,
     polynomial_fwhm_energy_resolution,
 )
+from .source_selection import (
+    SourceAppearance,
+    SourceSelection,
+    SourceSelectionPlan,
+    parse_run_expression,
+    resolve_source_selection,
+)
+from .source_selection_imports import import_source_selection, source_selection_script
 from .spin_fluctuations import (
     RpaGeometry,
     available_rpa_backends,
@@ -1368,3 +1376,7 @@ __all__ += ["ReductionEdit", "ReductionSetting", "apply_reduction_recipe", "redu
     "ensure_reduction_recipe", "export_reduction_recipe", "get_reduction_overrides",
     "reduction_recipe_script", "reduction_settings_schema", "replay_reduction_recipe",
     "resolved_reduction_values", "set_reduction_settings", "validated_reduction_settings"]
+
+__all__ += ["SourceAppearance", "SourceSelection", "SourceSelectionPlan",
+            "import_source_selection", "parse_run_expression", "resolve_source_selection",
+            "source_selection_script"]

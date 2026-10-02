@@ -121,3 +121,12 @@ share the same reconstruction path.
 
 Saved plots currently use their existing project-backed exporter. See
 [Models and fitting](gui_fitting.md#scripts) and [Saved plots](plotting.md).
+
+## Numbered-source import
+
+**Copy source import script** exports an editable `SourceSelection` and
+`import_source_selection` call. The script re-resolves the expression, and can
+retain expression groups as ordinary dataset subfolders. Saved native reduction
+recipes instead replay their recorded logical run membership. See
+[Selecting numbered sources](source_selection.md) for syntax and shared-source
+uncertainty restrictions.

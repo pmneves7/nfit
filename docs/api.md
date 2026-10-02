@@ -36,6 +36,17 @@ The count objective requires a `PoissonCountModel` declaration. Prepared CSV
 profile, map and waterfall exports preserve declarations and available source
 factors alongside the tabulated values.
 
+## Numbered source selection
+
+`SourceSelection` records a directory, naming pattern, padding and run expression.
+`parse_run_expression` expands bounded source appearances;
+`resolve_source_selection` adds paths, missing/repeated identities and optional
+metadata-only headers. `import_source_selection` atomically adds one ordinary
+`DatasetGroup`, or optional expression subfolders, using existing importers.
+`source_selection_script` exports that public workflow without Qt. See
+[Selecting numbered sources](source_selection.md) for syntax and repeated-source
+uncertainty rules.
+
 ## Reduced data, import adapters, and viewing
 
 nfit importers translate source axes, units, masks, intensities, uncertainties,

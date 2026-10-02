@@ -52,6 +52,7 @@ from .reduction_runtime import (
     mdevent_run_masks,
     run_calibrations,
 )
+from .source_lineage import source_lineage_metadata
 
 try:
     from . import _mdevent_numba as _MDEVENT_NUMBA
@@ -633,6 +634,7 @@ def bin_mdevent_group(
     result = MDHistoData(
         axes=axes, signal=signal, errors=errors, mask=mask, num_events=event_count,
         metadata={
+            **source_lineage_metadata(selected_runs, include_disabled=True),
             "mdevent": config,
             "dgs_reduction_policies": policies,
             "lattice_parameters": dict(config.get("lattice_parameters", {})),
@@ -1004,6 +1006,7 @@ def bin_mdevent_powder_group(
         mask=mask,
         num_events=event_count,
         metadata={
+            **source_lineage_metadata(selected_runs, include_disabled=True),
             "mdevent": config,
             "dgs_reduction_policies": policies,
             "lattice_parameters": dict(config.get("lattice_parameters", {})),

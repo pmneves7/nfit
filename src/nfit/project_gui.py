@@ -181,7 +181,7 @@ from .project_imports import (
     data_type_label,
     default_importer_for_data_type,
     import_mdevent_dataset_group,  # noqa: F401 - compatibility re-export
-    parse_dataset_numors,
+    parse_dataset_numors,  # noqa: F401 - compatibility re-export
     set_dataset_data_type,
     set_dataset_source,
 )
@@ -2920,6 +2920,9 @@ def _apply_sample_context_to_points(
         magnetic_field=magnetic_field,
         metadata=metadata,
     )
+    from .source_lineage import with_source_lineage
+
+    contextual = with_source_lineage(contextual, dataset.metadata)
     return _apply_kinematic_normalization_to_points(dataset, contextual)
 
 
@@ -7538,6 +7541,57 @@ class NfitProjectExplorer:
             success_message="Dataset import finished.",
         )
 
+    def _request_source_selection_import(
+        self, group: DataGroup, selection: Any, *, preserve_groups: bool = False,
+    ) -> bool:
+        """Schedule the public numbered-source import without blocking Qt."""
+        from .source_selection_imports import import_source_selection
+
+        def finish(collection: DatasetGroup) -> None:
+            self._record_data_group_state_change(group)
+            self._evaluate_model_after_dataset_activation(group)
+            self._mark_dirty()
+            self._refresh_tree(select_group=group, select_dataset_group=collection)
+
+        if not self._interactive:
+            collection = import_source_selection(
+                group, selection, preserve_groups=preserve_groups,
+                data_type=DEFAULT_DATA_TYPE,
+            )
+            finish(collection)
+            return True
+
+        def task(progress_callback: Any) -> tuple[DataGroup, DatasetGroup]:
+            staging = DataGroup(
+                "Import staging", lattice_parameters=copy.deepcopy(group.lattice_parameters),
+                spacegroup=group.spacegroup,
+            )
+            collection = import_source_selection(
+                staging, selection, preserve_groups=preserve_groups,
+                data_type=DEFAULT_DATA_TYPE, progress_callback=progress_callback,
+            )
+            return staging, collection
+
+        def on_success(result: tuple[DataGroup, DatasetGroup]) -> None:
+            staging, collection = result
+            collection.name = _unique_name(
+                collection.name, {item.name for item in group.subgroups},
+            )
+            existing_names = set(group.dataset_names)
+            for dataset in collection.iter_datasets():
+                dataset.name = _unique_dataset_name(dataset.name, existing_names)
+                existing_names.add(dataset.name)
+            group.subgroups.append(collection)
+            if group.lattice_parameters is None:
+                group.lattice_parameters = staging.lattice_parameters
+            finish(collection)
+
+        return self._start_background_task(
+            title="Loading selected runs...", failure_title="Import selected runs",
+            task=task, on_success=on_success,
+            success_message="Selected runs imported.",
+        )
+
     def _dataset_importing_config(self, group: DataGroup) -> dict[str, Any]:
         config = group.metadata.get("dataset_importing")
         if not isinstance(config, dict):
@@ -7548,6 +7602,8 @@ class NfitProjectExplorer:
         config.setdefault("prefix", "")
         config.setdefault("suffix", "")
         config.setdefault("numors", "")
+        config.setdefault("padding", 0)
+        config.setdefault("preserve_groups", False)
         return config
 
     def _set_dataset_importing_enabled(self, group: DataGroup, enabled: bool) -> None:
@@ -7559,9 +7615,16 @@ class NfitProjectExplorer:
         self._mark_dirty()
         self._sync_details()
 
-    def _set_dataset_importing_text(self, group: DataGroup, key: str, text: str) -> None:
+    def _set_dataset_importing_text(self, group: DataGroup, key: str, text: Any) -> None:
         config = self._dataset_importing_config(group)
-        value = str(text).strip()
+        if key == "preserve_groups":
+            if not isinstance(text, bool):
+                raise ValueError("preserve_groups must be a boolean")
+            value = text
+        elif key == "padding":
+            value = int(text)
+        else:
+            value = str(text).strip()
         if config.get(key) == value:
             return
         config[key] = value
@@ -7576,32 +7639,23 @@ class NfitProjectExplorer:
         if paths:
             self._request_dataset_import(group, paths, data_type=DEFAULT_DATA_TYPE)
 
-    def _import_dataset_importing_range(self, group: DataGroup) -> None:
+    def _import_dataset_importing_range(
+        self, group: DataGroup, *, selection: Any = None,
+        preserve_groups: bool | None = None,
+    ) -> None:
         from PySide6 import QtWidgets
+
+        from .source_selection_gui import source_selection_from_config
 
         config = self._dataset_importing_config(group)
         try:
-            numors = parse_dataset_numors(config.get("numors", ""))
-        except ValueError as exc:
-            QtWidgets.QMessageBox.warning(self.window, "Import datasets", str(exc))
-            return
-        directory = Path(str(config.get("path", "")).strip()).expanduser()
-        prefix = str(config.get("prefix", ""))
-        suffix = str(config.get("suffix", ""))
-        if not directory.is_dir():
-            QtWidgets.QMessageBox.warning(self.window, "Import datasets", f"Dataset directory does not exist:\n{directory}")
-            return
-        paths = [directory / f"{prefix}{numor}{suffix}" for numor in numors]
-        missing = [path.name for path in paths if not path.is_file()]
-        if missing:
-            shown = ", ".join(missing[:10])
-            suffix_text = "" if len(missing) <= 10 else f" and {len(missing) - 10} more"
-            QtWidgets.QMessageBox.warning(
-                self.window, "Import datasets",
-                f"The requested files do not exist:\n{shown}{suffix_text}",
+            selection = selection or source_selection_from_config(config)
+            self._request_source_selection_import(
+                group, selection,
+                preserve_groups=config["preserve_groups"] if preserve_groups is None else preserve_groups,
             )
-            return
-        self._request_dataset_import(group, paths, data_type=DEFAULT_DATA_TYPE)
+        except (TypeError, ValueError, OSError) as error:
+            QtWidgets.QMessageBox.warning(self.window, "Import datasets", str(error))
 
     def _clear_imported_datasets(self, group: DataGroup) -> None:
         from PySide6 import QtWidgets
@@ -14094,66 +14148,19 @@ class NfitProjectExplorer:
         self._sync_details()
 
     def _dataset_importing_group_box(self, group: DataGroup) -> Any:
-        from PySide6 import QtWidgets
+        from .source_selection_gui import build_source_selection_panel
 
-        config = self._dataset_importing_config(group)
-        box = QtWidgets.QGroupBox("Dataset importing")
-        box.setToolTip(
-            "Add single-crystal dataset files directly to this data group. Use the range fields for numbered files, "
-            "or Add files to choose an arbitrary set in the file browser."
+        return build_source_selection_panel(
+            self._dataset_importing_config(group),
+            on_setting_changed=lambda key, value: self._set_dataset_importing_text(group, key, value),
+            on_enabled=lambda checked: self._set_dataset_importing_enabled(group, checked),
+            on_import=lambda selection, preserve_groups=False: self._import_dataset_importing_range(
+                group, selection=selection, preserve_groups=preserve_groups
+            ),
+            on_files=lambda: self._add_dataset_import_files(group),
+            on_clear=lambda: self._clear_imported_datasets(group),
+            parent=self.window,
         )
-        layout = QtWidgets.QVBoxLayout(box)
-        enabled = QtWidgets.QCheckBox("Import datasets from files")
-        enabled.setObjectName("dataset_importing_enabled")
-        enabled.setChecked(bool(config.get("enabled", False)))
-        enabled.setToolTip(
-            "Enable file-based dataset importing for this data group. The setting is saved with the project."
-        )
-        enabled.toggled.connect(lambda checked: self._set_dataset_importing_enabled(group, checked))
-        layout.addWidget(enabled)
-
-        controls = QtWidgets.QWidget()
-        controls.setObjectName("dataset_importing_controls")
-        controls.setEnabled(bool(config.get("enabled", False)))
-        grid = QtWidgets.QGridLayout(controls)
-        grid.setContentsMargins(0, 0, 0, 0)
-        add_files = QtWidgets.QPushButton("Add files")
-        add_files.setObjectName("dataset_importing_add_files")
-        add_files.setToolTip("Choose one or more dataset files to add as single-crystal dataset entries.")
-        add_files.clicked.connect(lambda: self._add_dataset_import_files(group))
-        grid.addWidget(add_files, 0, 0, 1, 2)
-
-        fields = (
-            ("Path", "path", "Directory containing numbered dataset files."),
-            ("Prefix", "prefix", "Text before each run number, for example SEQ_."),
-            ("Suffix", "suffix", "Text after each run number, for example .nxs.h5."),
-            ("Numors", "numors", "Run numbers and inclusive ranges: 409981:409995, 409981:3:409995, or comma-separated ranges."),
-        )
-        for row, (label, key, tooltip) in enumerate(fields, start=1):
-            grid.addWidget(QtWidgets.QLabel(label), row, 0)
-            edit = QtWidgets.QLineEdit(str(config.get(key, "")))
-            edit.setObjectName(f"dataset_importing_{key}")
-            if key in {"prefix", "suffix"}:
-                constrain_input_width(edit, COMPACT_SHORT_TEXT_FIELD_WIDTH)
-            edit.setToolTip(tooltip)
-            edit.editingFinished.connect(
-                lambda edit=edit, key=key: self._set_dataset_importing_text(group, key, edit.text())
-            )
-            grid.addWidget(edit, row, 1)
-
-        import_button = QtWidgets.QPushButton("Import datasets")
-        import_button.setObjectName("dataset_importing_import_range")
-        import_button.setToolTip("Build paths from Path, Prefix, Suffix, and Numors, then add each existing file as a dataset.")
-        import_button.clicked.connect(lambda: self._import_dataset_importing_range(group))
-        grid.addWidget(import_button, len(fields) + 1, 0, 1, 2)
-
-        clear_button = QtWidgets.QPushButton("Clear datasets")
-        clear_button.setObjectName("dataset_importing_clear")
-        clear_button.setToolTip("Remove every direct and nested dataset from this data group after confirmation. Models, masks, and fit history are kept.")
-        clear_button.clicked.connect(lambda: self._clear_imported_datasets(group))
-        grid.addWidget(clear_button, len(fields) + 2, 0, 1, 2)
-        layout.addWidget(controls)
-        return box
 
     def _set_dataset_collection_details(
         self,
@@ -14190,6 +14197,11 @@ class NfitProjectExplorer:
                 summary_lines,
             )
         )
+        from .source_selection_gui import build_saved_source_selection_summary
+
+        source_summary = build_saved_source_selection_summary(node.metadata, parent=self.window)
+        if source_summary is not None:
+            self.details_layout.addWidget(source_summary)
         if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
             self.details_layout.addWidget(self._mdevent_group_box(node))
         if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("raw_dgs"), dict):

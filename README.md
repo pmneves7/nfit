@@ -38,6 +38,8 @@ A few of its main capabilities are:
 
 - monitor nfit and system CPU and RAM usage live in the project toolbar;
 - set installation-wide figure font size and axes linewidth defaults in Preferences;
+- select numbered runs with directory/naming patterns, bounded run expressions,
+  metadata previews, and optional ordinary dataset subfolders,
 - import, combine, mask, rebin, and visualize multidimensional neutron data,
   with confirmed project-wide clearing of computed data and model caches,
   with parent-owned hierarchical binning, explicit background recipe context,

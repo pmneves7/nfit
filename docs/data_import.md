@@ -19,7 +19,11 @@ path, prefix, suffix, and numor expression:
 ```
 
 These mean an inclusive range, two comma-separated ranges, and a stepped range.
-nfit checks that all generated paths exist before adding any of them.
+Preview the resolved files and optional acquisition metadata before importing.
+Selections create one ordinary dataset group by default; optionally preserve
+expression groups as dataset subfolders. Repeated sources remain the same
+measurement. See [Selecting numbered sources](source_selection.md) for grouped,
+blocked and repeated expressions, padding, scripting, and uncertainty rules.
 
 Nested dataset groups have their own enabled state and optional composite.
 Their bulk controls can set every descendant's fit weight or calibration scale,

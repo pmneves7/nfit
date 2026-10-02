@@ -545,40 +545,20 @@ def _dataset_ub_for_editor(metadata: dict[str, Any]) -> np.ndarray | None:
 
 
 def parse_dataset_numors(text: str) -> list[int]:
-    """Parse comma-separated run numbers and inclusive ``start[:step]:end`` ranges."""
+    """Return unique selected run numbers using the public expression parser.
 
-    values: list[int] = []
-    seen: set[int] = set()
-    for raw_piece in str(text).split(","):
-        piece = raw_piece.strip()
-        if not piece:
-            continue
-        parts = [part.strip() for part in piece.split(":")]
-        try:
-            if len(parts) == 1:
-                expanded = [int(parts[0])]
-            elif len(parts) == 2:
-                start, end = (int(part) for part in parts)
-                step = 1 if end >= start else -1
-                expanded = list(range(start, end + step, step))
-            elif len(parts) == 3:
-                start, step, end = (int(part) for part in parts)
-                if step == 0 or (end - start) * step < 0:
-                    raise ValueError
-                expanded = list(
-                    range(start, end + (1 if step > 0 else -1), step)
-                )
-            else:
-                raise ValueError
-        except ValueError as exc:
-            raise ValueError(
-                f"invalid run range {piece!r}; use 409981:409995, "
-                "409981:3:409995, or comma-separated values"
-            ) from exc
-        for value in expanded:
-            if value not in seen:
-                seen.add(value)
-                values.append(value)
+    This compatibility API returns flat membership. Use ``SourceSelection`` for
+    expression groups, repeated appearances, empty groups, and resolved paths.
+    """
+    from .source_selection import parse_run_expression
+
+    try:
+        appearances = parse_run_expression(str(text))
+    except ValueError as exc:
+        raise ValueError(f"invalid run range: {exc}") from exc
+    values = list(dict.fromkeys(
+        item.run_number for item in appearances if item.run_number is not None
+    ))
     if not values:
         raise ValueError("enter at least one run number or range")
     return values

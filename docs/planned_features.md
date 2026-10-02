@@ -40,6 +40,17 @@ tracks the staged implementation and review checkpoints for these changes.
   resolved calibration values and lazy caches are already available. Unmarked
   saved statistical workflows retain compatibility provenance. Controls should
   explain common-response means versus coordinate averages and their assumptions.
+- Add editing of an existing collection's source expression/membership to the
+  unified Sources workflow. Imported expressions are visible, can be copied and
+  reused, and reduction settings already have shared/per-run editors. Current
+  expression selection creates a new collection atomically.
+- Extend source-aware combination to repeated aliases across expression
+  subfolders and repeated CORELLI/ordinary sources within a summed subfolder.
+  Numbered-source selection and grouping already use ordinary dataset groups;
+  unsupported repeated combinations currently request source replay.
+  Native histograms and project fit inputs retain acquisition overlap records;
+  extend that provenance through every cut/profile/export adapter before claiming
+  coverage for arbitrary detached products.
 - Validate numerical alternatives and choose future defaults at the late
   cross-instrument acceptance stage. Current DGS compatibility defaults remain
   unchanged during contract and workflow refactoring.
