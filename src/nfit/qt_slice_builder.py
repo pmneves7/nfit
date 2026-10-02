@@ -327,10 +327,11 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
     dataset_layout.addWidget(viewer.coverage_threshold_spin, 5, 1)
     viewer.hold_view_settings_check = QtWidgets.QCheckBox("Hold view settings")
     viewer.hold_view_settings_check.setObjectName("viewer_hold_view_settings")
-    viewer.hold_view_settings_check.setChecked(False)
+    viewer.hold_view_settings_check.setChecked(viewer.hold_view_settings)
     viewer.hold_view_settings_check.setToolTip(
-        "Carry compatible axes, ranges, zoom, color limits, smoothing, and figure styling "
-        "across channel, dataset, or named binning changes. Off keeps independent settings for each view."
+        "Carry compatible axes, ranges, zoom, box cuts, color limits, smoothing, and figure styling "
+        "across channel, dataset, or named binning changes. Enabled by default. "
+        "Off keeps independent settings for each view."
     )
     viewer.hold_view_settings_check.toggled.connect(viewer._set_hold_view_settings)
     dataset_layout.addWidget(viewer.hold_view_settings_check, 5, 2)

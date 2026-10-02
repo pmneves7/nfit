@@ -440,7 +440,7 @@ class QtMDHistoSliceViewer:
         self.tile_label_si_prefix = ""
         self.show_tile_labels = True
         self.tile_local_color_scales = False
-        self.hold_view_settings = False
+        self.hold_view_settings = True
         self._current_tiled_slices: list[TiledSlice] = []
         self._tile_axes = []
         self._tile_colorbar_axes = []
@@ -2505,7 +2505,13 @@ class QtMDHistoSliceViewer:
             self.model.cmap_reversed = bool(state.cmap_reversed)
             self._box_tool_has_auto_shown_hist_axes = bool(state.box_tool_has_auto_shown_hist_axes)
             self._current_slice = None
-            self._last_plot_dims = None
+            # The restored box already belongs to these named display axes.
+            # Mark that coordinate frame before redraw so it is not replaced
+            # by a default box merely because the numerical slice was cleared.
+            self._last_plot_dims = (
+                (self.model.x_dim, self.model.y_dim)
+                if state.roi_extents is not None else None
+            )
             self._sync_axis_combos(rebuild=True)
             self._sync_tile_controls()
             self._sync_view_mode_availability()

@@ -22,13 +22,17 @@ waterfalls, model comparisons, and volumetric rendering.
 Plot canvases have no hover tooltips, so data and screenshots stay unobscured.
 The surrounding controls retain their tooltips.
 Set the default figure font size and axes linewidth under **File → Preferences →
-Data viewer**. New viewers and newly selected dataset views use these defaults;
-saved plot recipes and existing views retain their own styling. Figure font size
+Data viewer**. New viewers use these defaults; newly selected dataset views
+use them when Hold view settings is off. Saved plot recipes and existing views
+retain their own styling. Figure font size
 applies to every plot and cut-axis label, tick label, and scientific-notation offset.
 Box-tool toggles and size edits retain this styling and the selected cut-panel proportions.
-**Hold view settings** keeps compatible displayed axes, X/Y limits, display steps,
+**Hold view settings** is enabled by default. It keeps compatible displayed
+axes, X/Y limits, display steps,
 hidden-axis ranges, and styling when changing channels, named binnings, or
-datasets. Channel changes preserve the current zoom when this option is checked.
+datasets. The histogram box position, size, rotation, visibility, and cut-panel
+proportions also follow compatible views. Channel changes preserve the current
+zoom and box when this option is checked.
 When it is unchecked, channel changes reset the displayed limits and each
 dataset or binning retains its independent view settings.
 

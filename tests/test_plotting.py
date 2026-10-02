@@ -1078,6 +1078,7 @@ def test_qt_dataset_dropdown_keeps_plot_configs_independent():
     data_b = data_b.with_updates(signal=data_b.signal + 1000.0)
 
     viewer = QtMDHistoSliceViewer([data_a, data_b], dataset_names=["first", "second"], x_dim=3, y_dim=2)
+    viewer.hold_view_settings_check.setChecked(False)
     default_cmap = viewer._initial_cmap
 
     viewer.channel_combo.setCurrentText("errors")
@@ -1134,7 +1135,7 @@ def test_qt_hold_view_settings_carries_compatible_state_to_another_dataset():
         y_dim=2,
     )
 
-    assert not viewer.hold_view_settings_check.isChecked()
+    assert viewer.hold_view_settings_check.isChecked()
     viewer.channel_combo.setCurrentText("errors")
     viewer.cmap_combo.setCurrentText("magma")
     viewer.x_combo.setCurrentIndex(1)
