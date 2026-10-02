@@ -9,8 +9,15 @@ from pathlib import Path
 import numpy as np
 
 from .histogram_statistics import EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR
+from .measurement_aggregation import MEASUREMENT_STATISTICS_CHANNELS, MEASUREMENT_STATISTICS_KEY
+from .measurement_dependencies import (
+    CountingDependencies,
+    counting_dependency_archive_payload,
+    source_dependency_archive_payload,
+)
 from .measurement_profiles import MeasurementProfile
 from .plotting_core import WaterfallTrace
+from .project_dataset_io import _json_safe_value
 
 
 def save_viewer_columns_csv(
@@ -82,7 +89,7 @@ def save_measurement_profile_csv(
     data = profile.data
     if include_statistics:
         columns.update({name: data.auxiliary_channels[name].values
-                        for name in (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR)
+                        for name in (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR, *MEASUREMENT_STATISTICS_CHANNELS)
                         if name in data.auxiliary_channels})
         columns.update(num_events=data.num_events, mask=data.mask,
                        coverage_fraction=data.auxiliary_channels["coverage_fraction"].values)
@@ -91,8 +98,57 @@ def save_measurement_profile_csv(
         "coordinate": {"name": coordinate_name, "unit": coordinate_unit,
                        "edges": data.axes[0].values.tolist()},
         "metadata": data.metadata, "columns": list(columns)}
+    _save_measurement_declaration(destination, declaration, {"profile": data.source_dependencies, "counting": data.counting_dependencies})
+    return destination
+
+
+def _save_measurement_declaration(destination, declaration, dependencies):
+    payload, descriptors = {}, {}
+    for name, dependency in dependencies.items():
+        if dependency is not None:
+            members = (counting_dependency_archive_payload(dependency) if isinstance(dependency, CountingDependencies)
+                       else source_dependency_archive_payload(dependency))
+            prefix = name + "_"
+            payload.update({prefix+key: value for key,value in members.items()})
+            descriptors[name] = {"prefix": prefix, "shape": dependency.shape}
+    if payload:
+        archive = destination.with_suffix(destination.suffix + ".sources.npz")
+        np.savez(archive, **payload)
+        declaration["source_dependencies"] = {"file": archive.name, "payloads": descriptors}
     destination.with_suffix(destination.suffix + ".json").write_text(
-        json.dumps(declaration, indent=2) + "\n", encoding="utf-8")
+        json.dumps(_json_safe_value(declaration), indent=2) + "\n", encoding="utf-8")
+
+
+def save_measurement_grid_csv(path, view, *, channel="signal", coordinate_units=("", ""),
+                              values=None, errors=None, include_statistics=True):
+    """Export a prepared slice, retained statistics, units and source factors.
+
+    Diagnostic channels and model predictions do not acquire an observation
+    counting contract. The legacy array-only ``save_grid_csv`` stays available.
+    """
+    values = np.asarray(view[channel] if values is None else values)
+    x, y = np.meshgrid(view["x_centers"], view["y_centers"])
+    if values.shape != x.shape:
+        raise ValueError("Prepared grid values must match the displayed coordinates")
+    columns = {"x": x, "y": y, "I": values}
+    if errors is not None or channel == "signal":
+        columns["dI"] = view["errors"] if errors is None else errors
+    for name in ("mask", "coverage_fraction", "num_events"):
+        if include_statistics and name in view:
+            columns[name] = view[name]
+    metadata = {key: view[key] for key in ("num_events_semantics", "masks_applied", "signal_unit") if key in view}
+    dependencies = {}
+    if channel == "signal":
+        for name in (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR, *MEASUREMENT_STATISTICS_CHANNELS):
+            if name in view:
+                columns[name] = view[name]
+        metadata.update({key: view[key] for key in ("measurement_contract", "event_statistics", MEASUREMENT_STATISTICS_KEY) if key in view})
+        dependencies["grid"] = view.get("source_dependencies")
+        dependencies["counting"] = view.get("counting_dependencies")
+    destination = save_viewer_columns_csv(path, columns)
+    _save_measurement_declaration(destination, {"version": 1, "channel": channel,
+        "metadata": metadata, "coordinate_units": coordinate_units,
+        "edges": {axis:view[f"{axis}_edges"] for axis in ("x", "y")}, "columns": list(columns)}, dependencies)
     return destination
 
 
@@ -189,4 +245,31 @@ def save_waterfall_csv(
     }
     if has_uncertainty:
         columns["dI"] = np.concatenate(error_parts)
-    return save_viewer_columns_csv(path, columns)
+    prepared = [getattr(trace, "measurement", None) for trace in traces]
+    declarations, dependencies = {}, {}
+    if not model and any(item is not None for item in prepared):
+        names = ("num_events", "mask", "coverage_fraction", *EVENT_STATISTICS_CHANNELS,
+                 NORMALIZATION_DENOMINATOR, *MEASUREMENT_STATISTICS_CHANNELS)
+        for name in names:
+            parts = []
+            available = False
+            for trace,item in zip(traces,prepared,strict=True):
+                values = None
+                if item is not None:
+                    if name in {"num_events", "mask"}:
+                        values = getattr(item.data, name)
+                    elif name in item.data.auxiliary_channels:
+                        values = item.data.auxiliary_channels[name].values
+                available |= values is not None
+                parts.append(np.full(len(trace.x), np.nan) if values is None else values)
+            if available:
+                columns[name] = np.concatenate(parts)
+        for index,item in enumerate(prepared):
+            if item is not None:
+                declarations[str(index)] = {"contract": item.contract.to_dict(), "metadata": item.data.metadata}
+                dependencies[f"trace{index}"] = item.data.source_dependencies
+                dependencies[f"trace{index}_counting"] = item.data.counting_dependencies
+    destination = save_viewer_columns_csv(path, columns)
+    if declarations:
+        _save_measurement_declaration(destination, {"version": 1, "traces": declarations, "columns": list(columns)}, dependencies)
+    return destination

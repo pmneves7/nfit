@@ -6,7 +6,12 @@ from itertools import product
 import numpy as np
 
 from ..dataset import PointListData
-from ..mdhisto import MDHistoData
+from ..mdhisto import MDHistoChannel, MDHistoData
+from ..measurement_dependencies import (
+    SourceReplayRequired,
+    project_source_dependencies,
+    select_counting_dependencies,
+)
 from .coordinates import (
     bin_edges,
     measured_mask,
@@ -224,6 +229,9 @@ def _prepare_bragg_integration(
             "Bragg box integration requires a three-dimensional momentum histogram"
         )
     semantics = signal_semantics(data)
+    contract = data.metadata.get("measurement_contract")
+    if isinstance(contract, dict) and contract.get("dependence") == "shared_sources" and data.source_dependencies is None:
+        raise SourceReplayRequired("Declared shared sources require Bragg source sensitivities or source replay")
     if semantics == "unknown":
         raise ValueError("Bragg integration requires signal_semantics metadata")
     vectors = physical_axis_vectors(data)[:, :3]
@@ -382,6 +390,9 @@ def _integrate_gaussian_peak(
     nominal_peak: np.ndarray,
     region: _LocalPeakRegion,
 ) -> _IntegratedBraggPeak:
+    dependencies = region.data.source_dependencies
+    if dependencies is not None and len(np.unique(dependencies.source_indices)) < len(dependencies.source_indices):
+        raise SourceReplayRequired("Gaussian Bragg fitting requires a correlated likelihood for shared sources; use a linear integration or source replay")
     fit_row = _fit_gaussian(
         region.data,
         region.edges,
@@ -482,16 +493,16 @@ def _integrate_summed_peak(
         if geometric_peak_volume > 0
         else 0.0
     )
-    raw = float(np.sum(region.data.signal * peak_measured))
-    raw_var = float(np.sum((region.data.errors * peak_measured) ** 2))
-    background, background_var, background_coverage = _shell_background(
+    raw = float(np.sum(np.where(peak_measured != 0, region.data.signal * peak_measured, 0)))
+    background, _background_var, background_coverage, shell_weights = _shell_background(
         context,
         region,
         all_peaks,
         peak_volume,
     )
     intensity = raw - background
-    sigma = np.sqrt(raw_var + background_var)
+    final_weights = peak_measured if shell_weights is None else peak_measured-shell_weights
+    sigma = np.sqrt(_linear_region_variance(region.data, final_weights))
     signal_to_noise = intensity / sigma if sigma > 0 else np.nan
     status = _peak_rejection_status(
         context,
@@ -563,9 +574,9 @@ def _shell_background(
     region: _LocalPeakRegion,
     all_peaks: np.ndarray,
     peak_volume: float,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, np.ndarray | None]:
     if context.background_mode != "shell":
-        return 0.0, 0.0, 1.0
+        return 0.0, 0.0, 1.0, None
     outer = _region_fraction(
         context, region.edges, region.center, context.background_outer_scale
     )
@@ -627,11 +638,22 @@ def _shell_background(
         else 0.0
     )
     if shell_volume <= 0:
-        return 0.0, 0.0, background_coverage
-    shell_sum = float(np.sum(region.data.signal * shell_measured))
-    shell_var = float(np.sum((region.data.errors * shell_measured) ** 2))
+        return 0.0, 0.0, background_coverage, None
+    shell_sum = float(np.sum(np.where(shell_measured != 0, region.data.signal * shell_measured, 0)))
+    shell_var = _linear_region_variance(region.data, shell_measured)
     ratio = peak_volume / shell_volume
-    return shell_sum * ratio, shell_var * ratio**2, background_coverage
+    return shell_sum * ratio, shell_var * ratio**2, background_coverage, shell_measured*ratio
+
+
+def _linear_region_variance(data, weights):
+    """Propagate one stated linear integral, retaining shared primitives."""
+    included = np.flatnonzero(np.asarray(weights).ravel() != 0)
+    coefficients = np.asarray(weights).ravel()[included]
+    if data.source_dependencies is None:
+        return float(np.sum(np.square(data.errors.ravel()[included]*coefficients)))
+    projected = project_source_dependencies(data.source_dependencies, included,
+        np.zeros(len(included), dtype=np.int64), coefficients, (1,))
+    return float(projected.variance().item())
 
 
 def _peak_rejection_status(
@@ -742,6 +764,8 @@ def _bragg_result_metadata(
     gaussian_fit = context.method == "gaussian_fit"
     return {
         "analysis_kind": "bragg_peak_integration",
+        "uncertainty_dependence": "tracked_sources" if context.data.source_dependencies is not None else "assumed_independent",
+        "cross_reflection_covariance": "not_retained; source replay required" if context.data.source_dependencies is not None else "not_declared",
         "method": context.method,
         "coordinate_frame": context.coordinate_frame,
         "background_mode": context.background_mode,
@@ -1063,6 +1087,15 @@ def _elastic_reduce(data: MDHistoData, lower: float, upper: float) -> MDHistoDat
     valid = measured_mask(data) & (weights > 0)
     signal = np.sum(np.where(valid, data.signal * weights, 0.0), axis=dim)
     errors = np.sqrt(np.sum(np.where(valid, (data.errors * weights) ** 2, 0.0), axis=dim))
+    dependencies = None
+    if data.source_dependencies is not None:
+        included = np.flatnonzero(valid)
+        trailing = int(np.prod(data.shape[dim+1:]))
+        output_indices = (included//(data.shape[dim]*trailing))*trailing + included%trailing
+        coefficients = np.asarray(weights).reshape(-1)[(included//trailing)%data.shape[dim]]
+        dependencies = project_source_dependencies(data.source_dependencies, included, output_indices,
+            coefficients, signal.shape)
+        errors = np.sqrt(dependencies.variance())
     requested = upper - lower
     coverage = np.sum(np.where(valid, overlaps.reshape(shape), 0.0), axis=dim) / requested
     axes = tuple(axis for i, axis in enumerate(data.axes) if i != dim)
@@ -1083,7 +1116,23 @@ def _elastic_reduce(data: MDHistoData, lower: float, upper: float) -> MDHistoDat
             "energy_coverage": coverage.tolist(),
         }
     )
-    return MDHistoData(axes, signal, errors, coverage <= 0, np.where(coverage > 0, 1.0, 0.0), coordinate_system=data.coordinate_system, visual_normalization=data.visual_normalization, metadata=metadata)
+    from ..histogram_statistics import EVENT_STATISTICS_KEY
+    from ..measurement_aggregation import MEASUREMENT_STATISTICS_KEY
+    from ..measurement_contracts import MeasurementContract
+
+    for name in (EVENT_STATISTICS_KEY, MEASUREMENT_STATISTICS_KEY, "normalization_denominator"):
+        metadata.pop(name, None)
+    units = str(data.metadata.get("signal_unit") or "unspecified intensity units")
+    if signal_semantics(data) == "density":
+        units = f"({units})*(meV)"
+    metadata["measurement_contract"] = MeasurementContract(kind="linear_reconstruction", estimator="linear_sum",
+        quantity="elastic-window integral", value_units=units,
+        dependence="shared_sources" if dependencies is not None else "independent").to_dict()
+    metadata["num_events_semantics"] = "source_event_contributions"
+    contributions = np.sum(np.where(valid, data.num_events, 0), axis=dim)
+    metadata["zero_event_bins_are_measured"] = True
+    return MDHistoData(axes, signal, errors, coverage <= 0, contributions, coordinate_system=data.coordinate_system,
+        visual_normalization=data.visual_normalization, metadata=metadata, source_dependencies=dependencies)
 
 
 def bragg_volume(
@@ -1192,4 +1241,25 @@ def _slice_mdhisto(data, slices, edges):
         MDHistoAxis(axis.name, edge[selection.start:selection.stop + 1], axis.units, axis.kind, axis.frame, axis.path, axis.metadata)
         for axis, edge, selection in zip(data.axes, edges, slices, strict=True)
     )
-    return MDHistoData(axes, data.signal[slices], data.errors[slices], data.mask[slices], data.num_events[slices], coordinate_system=data.coordinate_system, visual_normalization=data.visual_normalization, metadata=data.metadata)
+    shape = data.signal[slices].shape
+    dependencies = None
+    if data.source_dependencies is not None:
+        indices = np.zeros(shape, dtype=np.int64)
+        for dimension, (size, selection) in enumerate(zip(data.shape, slices, strict=True)):
+            positions = np.arange(size)[selection]
+            grid_shape = [1]*len(shape)
+            grid_shape[dimension] = len(positions)
+            indices += positions.reshape(grid_shape)*int(np.prod(data.shape[dimension+1:]))
+        dependencies = project_source_dependencies(data.source_dependencies, indices.ravel(),
+            np.arange(indices.size), np.ones(indices.size), shape)
+    metadata = dict(data.metadata)
+    denominator = metadata.get("normalization_denominator")
+    if isinstance(denominator, np.ndarray) and denominator.shape == data.shape:
+        metadata["normalization_denominator"] = denominator[slices]
+    channels = {name: MDHistoChannel(channel.values[slices],
+        None if channel.errors is None else channel.errors[slices], channel.label, channel.unit, channel.quantity_type)
+        for name, channel in data.auxiliary_channels.items()}
+    return MDHistoData(axes, data.signal[slices], data.errors[slices], data.mask[slices], data.num_events[slices],
+        coordinate_system=data.coordinate_system, visual_normalization=data.visual_normalization,
+        metadata=metadata, auxiliary_channels=channels, source_dependencies=dependencies,
+        counting_dependencies=None if data.counting_dependencies is None else select_counting_dependencies(data.counting_dependencies, slices))

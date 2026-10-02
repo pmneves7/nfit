@@ -10,6 +10,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .axes import AxisRole, infer_axis_role
+from .measurement_dependencies import (
+    CountingDependencies,
+    SourceDependencies,
+    ratio_source_dependencies,
+)
 
 AxisKind = Literal["momentum", "energy", "unknown"]
 FloatArray = NDArray[np.float64]
@@ -161,6 +166,8 @@ class MDHistoData:
     visual_normalization: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     auxiliary_channels: dict[str, MDHistoChannel] = field(default_factory=dict)
+    source_dependencies: SourceDependencies | None = field(default=None, kw_only=True)
+    counting_dependencies: CountingDependencies | None = field(default=None, kw_only=True)
     _mutable: InitVar[bool] = False
     _arrays_mutable: bool = field(default=False, init=False, repr=False, compare=False)
 
@@ -220,6 +227,36 @@ class MDHistoData:
                 raise ValueError(f"auxiliary channel {key!r} shape does not match signal shape")
             if channel.errors is not None and channel.errors.shape != shape:
                 raise ValueError(f"auxiliary channel {key!r} error shape does not match signal shape")
+        if self.counting_dependencies is not None:
+            from .histogram_statistics import (
+                EVENT_SIGNAL_NUMERATOR,
+                EVENT_STATISTICS_KEY,
+                EVENT_VARIANCE_NUMERATOR,
+                NORMALIZATION_DENOMINATOR,
+                normalized_event_statistics,
+            )
+
+            if not isinstance(self.counting_dependencies, CountingDependencies):
+                raise TypeError("counting_dependencies must be CountingDependencies or None")
+            if any(name not in channels for name in (EVENT_SIGNAL_NUMERATOR, EVENT_VARIANCE_NUMERATOR, NORMALIZATION_DENOMINATOR)):
+                raise ValueError("Counting dependencies require explicit numerator, numerator variance and exposure channels")
+            self.counting_dependencies.numerator_dependencies.validate_variances(channels[EVENT_VARIANCE_NUMERATOR].values)
+            expected_signal, _ = normalized_event_statistics(channels[EVENT_SIGNAL_NUMERATOR].values,
+                channels[EVENT_VARIANCE_NUMERATOR].values, channels[NORMALIZATION_DENOMINATOR].values)
+            if not np.allclose(expected_signal, self.signal, rtol=1e-12, atol=0, equal_nan=True):
+                raise ValueError("Counting dependencies require numerator/exposure statistics matching the primary signal")
+            primary_dependencies = ratio_source_dependencies(self.counting_dependencies,
+                channels[EVENT_SIGNAL_NUMERATOR].values, channels[NORMALIZATION_DENOMINATOR].values)
+            object.__setattr__(self, "source_dependencies", primary_dependencies)
+            metadata = dict(self.metadata)
+            metadata["counting_uncertainty"] = "delta_method"
+            if isinstance(metadata.get(EVENT_STATISTICS_KEY), dict):
+                metadata[EVENT_STATISTICS_KEY] = {**metadata[EVENT_STATISTICS_KEY], "exposure": "uncertain", "variance": "source_numerator_variance"}
+            object.__setattr__(self, "metadata", metadata)
+        if self.source_dependencies is not None:
+            if not isinstance(self.source_dependencies, SourceDependencies):
+                raise TypeError("source_dependencies must be SourceDependencies or None")
+            self.source_dependencies.validate_variances(np.square(self.errors))
         object.__setattr__(self, "_arrays_mutable", bool(_mutable))
 
     @property
@@ -249,6 +286,7 @@ class MDHistoData:
     def mutable_copy(self) -> MDHistoData:
         """Return an isolated copy whose channel arrays may be edited in place."""
 
+        metadata, channels = _without_primary_statistics(self.metadata, self.auxiliary_channels)
         return MDHistoData(
             axes=self.axes,
             signal=self.signal,
@@ -257,8 +295,8 @@ class MDHistoData:
             num_events=self.num_events,
             coordinate_system=self.coordinate_system,
             visual_normalization=self.visual_normalization,
-            metadata=copy.deepcopy(self.metadata),
-            auxiliary_channels=self.auxiliary_channels,
+            metadata=copy.deepcopy(metadata),
+            auxiliary_channels=channels,
             _mutable=True,
         )
 
@@ -292,6 +330,8 @@ class MDHistoData:
             "visual_normalization": self.visual_normalization,
             "metadata": self.metadata,
             "auxiliary_channels": self.auxiliary_channels,
+            "source_dependencies": self.source_dependencies,
+            "counting_dependencies": self.counting_dependencies,
         }
         unknown = set(changes) - set(values)
         if unknown:
@@ -301,16 +341,53 @@ class MDHistoData:
             name in changes and changes[name] is not getattr(self, name)
             for name in ("signal", "errors")
         )
+        if primary_changed and "source_dependencies" not in changes:
+            values["source_dependencies"] = None
+        if primary_changed and "counting_dependencies" not in changes:
+            values["counting_dependencies"] = None
         if primary_changed and "auxiliary_channels" not in changes:
             from .histogram_statistics import EVENT_STATISTICS_CHANNELS, EVENT_STATISTICS_KEY
+            from .measurement_aggregation import (
+                MEASUREMENT_STATISTICS_CHANNELS,
+                MEASUREMENT_STATISTICS_KEY,
+            )
 
             values["auxiliary_channels"] = {
                 name: channel for name, channel in values["auxiliary_channels"].items()
-                if name not in EVENT_STATISTICS_CHANNELS
+                if name not in (*EVENT_STATISTICS_CHANNELS, *MEASUREMENT_STATISTICS_CHANNELS)
             }
             values["metadata"] = dict(values["metadata"])
             values["metadata"].pop(EVENT_STATISTICS_KEY, None)
+            values["metadata"].pop(MEASUREMENT_STATISTICS_KEY, None)
+        if primary_changed and not ("metadata" in changes and "auxiliary_channels" in changes):
+            values["metadata"] = dict(values["metadata"])
+            values["metadata"].pop("measurement_contract", None)
+            if "measurement_contract" in self.metadata:
+                values["metadata"]["measurement_target_required"] = True
         return MDHistoData(**values)
+
+
+def _without_primary_statistics(metadata, channels):
+    """Working arrays have no certificate for future edits to their primaries."""
+    from .histogram_statistics import (
+        EVENT_STATISTICS_CHANNELS,
+        EVENT_STATISTICS_KEY,
+        NORMALIZATION_DENOMINATOR,
+    )
+    from .measurement_aggregation import MEASUREMENT_STATISTICS_CHANNELS, MEASUREMENT_STATISTICS_KEY
+
+    metadata = dict(metadata)
+    declared = "measurement_contract" in metadata
+    for key in ("measurement_contract", EVENT_STATISTICS_KEY, MEASUREMENT_STATISTICS_KEY,
+                "counting_uncertainty", "poisson_count_model"):
+        metadata.pop(key, None)
+    excluded = (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR, *MEASUREMENT_STATISTICS_CHANNELS)
+    if declared:
+        metadata["measurement_target_required"] = True
+        metadata.pop("normalization_denominator", None)
+    else:
+        excluded = tuple(name for name in excluded if name != NORMALIZATION_DENOMINATOR)
+    return metadata, {name: channel for name, channel in channels.items() if name not in excluded}
 
 
 def _as_array(value: Any, *, dtype: Any, mutable: bool) -> np.ndarray:
@@ -326,6 +403,9 @@ def _as_array(value: Any, *, dtype: Any, mutable: bool) -> np.ndarray:
 def mdhisto_measured_bins(data: MDHistoData) -> BoolArray:
     """Return bins measured by the instrument, including covered zero counts."""
 
+    continuous = _continuous_measurement_support(data, (...,), include_masks=True)
+    if continuous is not None:
+        return continuous
     coverage = data.metadata.get("normalization_denominator")
     return mdhisto_measured_bins_from_arrays(
         data.mask,
@@ -359,6 +439,34 @@ def mdhisto_measured_bins_from_arrays(
     return (np.asarray(num_events, dtype=float) > 0.0) & unmasked
 
 
+def _continuous_measurement_support(data, selection, *, include_masks):
+    """Recognize declared measurements without treating contribution counts as exposure."""
+    from .measurement_aggregation import MEASUREMENT_STATISTICS_KEY, MEASUREMENT_WEIGHT
+    from .measurement_contracts import MeasurementContract
+
+    declaration = data.metadata.get("measurement_contract")
+    contract = None if declaration is None else MeasurementContract.from_dict(declaration)
+    marker = data.metadata.get(MEASUREMENT_STATISTICS_KEY)
+    marked = isinstance(marker, dict) and marker.get("version") == 1
+    if contract is not None and contract.kind != "continuous":
+        return None
+    if contract is None and not marked:
+        return None
+    estimator = contract.estimator if contract is not None else marker.get("estimator")
+    if estimator not in {"uniform_mean", "inverse_variance_mean"}:
+        return None
+    valid = np.isfinite(data.signal[selection]) & np.isfinite(data.errors[selection]) & (data.errors[selection] >= 0)
+    weight = data.auxiliary_channels.get(MEASUREMENT_WEIGHT) if marked else None
+    if weight is not None and weight.values.shape == data.shape:
+        weights = np.asarray(weight.values[selection], dtype=float)
+        valid &= np.isfinite(weights) & (weights > 0)
+    elif estimator == "inverse_variance_mean":
+        valid &= data.errors[selection] > 0
+    if include_masks:
+        valid &= ~np.asarray(data.mask[selection], bool)
+    return valid
+
+
 def mdhisto_coverage_fraction(
     data: MDHistoData,
     selection: tuple[Any, ...] | None = None,
@@ -381,6 +489,9 @@ def mdhisto_coverage_fraction(
     if isinstance(stored, np.ndarray) and stored.shape == data.shape:
         values = np.asarray(stored[index], dtype=float)
         return np.clip(np.where(np.isfinite(values), values, 0.0), 0.0, 1.0)
+    continuous = _continuous_measurement_support(data, index, include_masks=False)
+    if continuous is not None:
+        return np.asarray(continuous, float)
     if bool(data.metadata.get("zero_event_bins_are_measured", False)):
         denominator = data.metadata.get("normalization_denominator")
         if isinstance(denominator, np.ndarray) and denominator.shape == data.shape:

@@ -8,10 +8,9 @@ temperature. Instrument names alone must not determine the statistical estimator
 
 ## Working agreement
 
-- Implement one numbered checkpoint at a time. After each checkpoint, report
-  evidence, limitations, and whether it is complete or needs smaller steps.
-  **Wait for Paul to authorize the next checkpoint.** Approval of this plan does
-  not authorize running all remaining checkpoints.
+- Paul authorized completing all remaining stage 2 checkpoints on 2026-10-02.
+  Report evidence and limitations after stage 2, then **wait for authorization
+  before stage 3**. Later stages still require their agreed review gates.
 - Keep the table below current. Split a checkpoint before proceeding if its
   scope cannot be validated in one coherent change.
 - Update focused user/developer documentation, scripting APIs, and meaningful
@@ -46,11 +45,11 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 1D2 | Make Mantid histogram conventions the default and native alternatives explicit | Complete |
 | 1D3 | Resolve remaining monitor peak-fit differences against the reference | Complete |
 | 2A | Define explicit measurement and estimator contracts | Complete |
-| 2B | Apply the contracts consistently to reductions, cuts, and exports | In progress |
+| 2B | Apply the contracts consistently to reductions, cuts, and exports | Complete |
 | 2B1 | Share box-profile estimation and retain profile statistics | Complete |
-| 2B2 | Preserve estimator statistics through project rebinning and derived views | Pending |
-| 2B3 | Preserve/replay source dependencies through cuts and arithmetic | Pending |
-| 2B4 | Complete region, fitting, export, and migration parity | Pending |
+| 2B2 | Preserve estimator statistics through project rebinning and derived views | Complete |
+| 2B3 | Preserve/replay source dependencies through cuts and arithmetic | Complete |
+| 2B4 | Complete region, fitting, export, and migration parity | Complete |
 | 3A | Persist complete source and reduction recipes | Pending |
 | 3B | Edit recipes through one settings schema and targeted cache invalidation | Pending |
 | 4A | Add basic run expressions and resolved-source preview | Pending |
@@ -408,7 +407,8 @@ Paul authorized 2B on 2026-10-02. The audit requires four reviewable checkpoints
   through the complete contract; validate GUI/script parity, compatibility
   migration and recorded provenance.
 
-After each checkpoint, stop for review before starting the next.
+Paul subsequently authorized continuing through the remaining stage 2 checkpoints.
+Review stage 2 before starting stage 3.
 
 **2B1 completion record (2026-10-02, 0.109.0):** `measurement_profiles.py`
 provides bounded grouped estimates and immutable prepared payloads. Static and
@@ -432,7 +432,8 @@ Only diagonal histogram variances are available in this checkpoint. Shared-sourc
 and uncertain-normalizer contracts fail explicitly until the corresponding
 payload/replay support exists. Background differences, waterfalls, region sums,
 full fit likelihoods and legacy migration remain in 2B2–2B4. Scientific alternative
-validation/default adoption remains at 6A1–6A2. Paul must authorize 2B2 next.
+validation/default adoption remains at 6A1–6A2. The next completion record covers
+the jointly validated 2B2–2B4 integration.
 
 **Cluster completion/storage record:** the requested background-project rebuild
 finished all nine histograms, validated 2,775 v5 reduced-event caches and lazy
@@ -455,6 +456,53 @@ Preserve sufficient statistics in derived views rather than inventing event coun
 **Acceptance:** equivalent GUI and script operations agree; changing an
 intermediate grid does not change the final estimate under the declared model.
 Existing saved choices migrate explicitly and retain their recorded provenance.
+
+**2B2–2B4 completion record (2026-10-02, 0.110.0):** explicitly declared count
+and continuous measurements retain additive statistics through original-point
+binning, aligned histogram coarsening/composites, hidden-axis slicing, displayed
+coarsening, regular/rotated profiles, waterfalls, fit preparation and CSV export.
+Original one-coordinate sampled functions use interval interpolation and retain
+shared nodal sensitivities. Intermediate means preserve their original weights;
+independently initialized precision scales reconcile before combination.
+Continuous measurements do not require neutron event counts to establish support.
+
+Bounded immutable sparse dependencies and numerator/exposure bundles retain
+represented shared uncertainty through cuts, arithmetic, deterministic calibration
+and archives. Region and Bragg linear sums combine signed coefficients before
+squaring. Final-grid raw-DGS/MDE replay reuses reduced-event caches under recorded
+numerical policies. Lazy archive loading remains dataset-owned; copies share
+immutable factors. Grid planning does not accumulate a dummy output histogram.
+Model projection uses observation weights and propagated observation errors,
+without declaring those errors to be fitted-model uncertainty.
+
+Gaussian remains the default fit objective. Optional bounded nonsingular GLS and
+audited constant-weight integer Poisson deviance retain their declarations through
+the project compiler, saved settings, reports and script API. Measured zeros
+participate in the count objective; expected-Fisher parameter errors are explicitly
+asymptotic. Unmarked saved recipes retain compatibility provenance. Declared
+derivations invalidate stale targets rather than silently falling back to a mean.
+
+**Explicit boundaries:** current large DGS caches do not reconstruct every event's
+cross-bin lineage or shared detector-calibration factors. Represented payloads or
+final-grid replay are required; no missing covariance is inferred. Multidimensional
+function interpolation, declared metadata-axis stacking, cross-reflection Bragg
+covariance, singular primitive-source fits and full source-adapter enrichment remain
+in the later workflow/acceptance work. Unsupported operations raise explicit replay
+requirements. Uncertain exposure remains first-order ratio propagation. Smoothing
+is a plot preview; declared scientific aggregation needs an appropriate source
+model. Scientific alternative validation and default adoption remain in 6A1–6A2.
+
+**Validation:** the full regression suite passed 2,582 tests with one optional CuPy
+skip. Subsequent focused runs cover the final grid-planning, immutable-copy,
+shared model-overlay and signed-conversion checks. Ruff, byte-compilation,
+whitespace checks and Sphinx with warnings treated as errors passed. Ordinary
+tests neither import nor call Mantid/Shiver. The existing local and ORNL application,
+source mirror and help are synchronized; scientific project data stay in IPTS.
+Neither NiO project was rebuilt or rewritten in this stage.
+
+**Review gate:** stage 2 is complete within these explicit supported models.
+Stage 3 awaits Paul's authorization. Keep this document until the full refactor
+has been accepted; then remove it and its navigation entries.
 
 ## 3. Persistent source and reduction recipes
 

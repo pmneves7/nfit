@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -26,6 +26,18 @@ from .mdhisto import (
     mdhisto_coverage_fraction,
     mdhisto_measured_bins_from_arrays,
 )
+from .measurement_aggregation import (
+    MEASUREMENT_STATISTICS_CHANNELS,
+    MEASUREMENT_STATISTICS_KEY,
+    coarsen_source_dependencies,
+    initialize_measurement_statistics,
+    normalized_measurement_statistics,
+    pool_measurement_statistics,
+    reduce_source_dependencies,
+    selected_measurement_statistics,
+    validate_measurement_selection,
+)
+from .measurement_contracts import MeasurementContract
 from .quantities import display_axis_label, display_channel_label, display_unit
 
 
@@ -149,6 +161,7 @@ class WaterfallTrace:
     label: str
     waterfall_coordinate: float | None = None
     waterfall_unit: str = ""
+    measurement: Any = None
 
 
 @dataclass(frozen=True)
@@ -1071,6 +1084,12 @@ def prepare_mdhisto_waterfall(
                     fit_model._display_values(fit_view),
                     dtype=float,
                 ).reshape(values.shape)
+            measurement = None
+            if model.channel == "signal" and ((isinstance(view.get(EVENT_STATISTICS_KEY), dict)
+                    and "event_signal_numerator" in view) or "measurement_contract" in view or (view.get("measurement_target_required") and view.get("measurement_derivation", {}).get("operation") != "smoothing_preview")):
+                from .measurement_waterfalls import prepare_waterfall_measurement_profile
+                measurement, _ = prepare_waterfall_measurement_profile(view, np.asarray(view["signal"]), np.asarray(view["errors"]),
+                    np.ones(np.asarray(view["signal"]).shape[0], bool))
             traces.append(
                 WaterfallTrace(
                     x=np.asarray(view["x_centers"], dtype=float),
@@ -1078,6 +1097,7 @@ def prepare_mdhisto_waterfall(
                     errors=errors,
                     model_values=model_values,
                     label=label,
+                    measurement=measurement,
                 )
             )
         return traces
@@ -1150,6 +1170,7 @@ def prepare_mdhisto_waterfall(
         unmask_model=unmask_model,
         axis_name=axis.name,
         axis_units=axis.units,
+        primary_channel=model.channel == "signal",
     )
 
 
@@ -1499,6 +1520,7 @@ def _coarsen_waterfall_view(
     unmask_model: bool,
     axis_name: str,
     axis_units: str,
+    primary_channel: bool = True,
 ) -> list[WaterfallTrace]:
     x = np.asarray(view["x_centers"], dtype=float)
     y = np.asarray(view["y_centers"], dtype=float)
@@ -1517,10 +1539,14 @@ def _coarsen_waterfall_view(
             continue
         selected_values = np.asarray(values[selected, :], dtype=float)
         selected_errors = None if errors is None else np.asarray(errors[selected, :], dtype=float)
-        profile, uncertainty, weights = _waterfall_weighted_profile(
-            selected_values,
-            selected_errors,
-        )
+        measurement = None
+        if primary_channel and ((isinstance(view.get(EVENT_STATISTICS_KEY), dict) and "event_signal_numerator" in view)
+                or "measurement_contract" in view or (view.get("measurement_target_required") and view.get("measurement_derivation", {}).get("operation") != "smoothing_preview")) and selected_errors is not None:
+            from .measurement_waterfalls import prepare_waterfall_measurement_profile
+            measurement, weights = prepare_waterfall_measurement_profile(view, values, errors, selected)
+            _, profile, uncertainty = measurement.arrays
+        else:
+            profile, uncertainty, weights = _waterfall_weighted_profile(selected_values, selected_errors)
         selected_coverage = np.asarray(
             view.get("coverage_fraction", np.ones(values.shape, dtype=float))[selected, :],
             dtype=float,
@@ -1530,9 +1556,18 @@ def _coarsen_waterfall_view(
             selected_coverage * widths[:, None],
             axis=0,
         ) / np.sum(widths)
+        if measurement is not None:
+            coverage = measurement.data.auxiliary_channels["coverage_fraction"].values
         insufficient = ~np.isfinite(coverage) | (
             coverage < float(np.clip(coverage_threshold, 0.0, 1.0))
         )
+        if measurement is not None:
+            from .mdhisto import MDHistoChannel
+            from .measurement_profiles import MeasurementProfile
+            channels = dict(measurement.data.auxiliary_channels)
+            channels["coverage_fraction"] = MDHistoChannel(coverage, label="Geometric coverage", unit="1")
+            measurement = MeasurementProfile(measurement.data.with_updates(
+                mask=measurement.data.mask | insufficient, auxiliary_channels=channels), measurement.contract)
         profile = np.where(insufficient, np.nan, profile)
         if uncertainty is not None:
             uncertainty = np.where(insufficient, np.nan, uncertainty)
@@ -1554,6 +1589,7 @@ def _coarsen_waterfall_view(
                 label=f"{coordinate:.5g}{unit_suffix}",
                 waterfall_coordinate=coordinate,
                 waterfall_unit=displayed_unit,
+                measurement=measurement,
             )
         )
     return traces
@@ -2190,23 +2226,12 @@ def inverse_variance_weighted_profile(
     return mean, uncertainty
 
 
-def integrated_box_sum(
-    values: np.ndarray,
-    errors: np.ndarray,
-) -> tuple[float, float, int]:
-    """Sum valid values and propagate independent one-sigma uncertainties."""
-
-    values = np.asarray(values, dtype=float)
-    errors = np.asarray(errors, dtype=float)
-    if values.shape != errors.shape:
-        raise ValueError("values and errors must have the same shape")
-    valid = np.isfinite(values) & np.isfinite(errors) & (errors >= 0.0)
-    count = int(np.count_nonzero(valid))
-    if count == 0:
-        return np.nan, np.nan, 0
-    total = float(np.sum(values[valid], dtype=float))
-    uncertainty = float(np.sqrt(np.sum(np.square(errors[valid]), dtype=float)))
-    return total, uncertainty, count
+def integrated_box_sum(values, errors, *, weights=None, mask=None, source_dependencies=None, contract=None):
+    """Estimate the explicit linear box sum with represented source covariance."""
+    from .measurement_regions import estimate_measurement_region
+    result = estimate_measurement_region(values, errors, weights=weights, mask=mask,
+        source_dependencies=source_dependencies, contract=contract)
+    return result.value, result.standard_error, result.included
 
 
 def _format_box_sum(total: float, uncertainty: float) -> str:
@@ -2260,7 +2285,8 @@ def _draw_mdhisto_roi_cuts(
             from matplotlib.patches import Polygon
             ax_image.add_patch(Polygon(box_corners(roi_extents, roi_angle),
                 closed=True, fill=False, edgecolor="#4f8bd6", lw=1.5))
-        total, uncertainty, _ = integrated_box_sum(values[profiles.selected], errors[profiles.selected])
+        total, uncertainty, _ = integrated_box_sum(values, errors, mask=~profiles.selected,
+            source_dependencies=view.get("source_dependencies") if model.channel == "signal" else None)
         _draw_box_sum_annotation(ax_image, roi_extents, total, uncertainty)
 
 
@@ -2604,9 +2630,31 @@ class MDHistoSliceViewer:
                 self.channel = "signal"
         if "measurement_contract" in self.data.metadata:
             view["measurement_contract"] = dict(self.data.metadata["measurement_contract"])
+        for name in ("measurement_target_required", "measurement_derivation"):
+            if name in self.data.metadata:
+                view[name] = self.data.metadata[name]
+        if self._reduced_source_dependencies is not None:
+            from .measurement_dependencies import project_source_dependencies
+            dependencies = self._reduced_source_dependencies
+            inputs = np.moveaxis(np.arange(np.prod(dependencies.shape)).reshape(dependencies.shape), (y_pos, x_pos), (0, 1)).reshape(-1)
+            view["source_dependencies"] = project_source_dependencies(dependencies, inputs,
+                np.arange(inputs.size), np.ones(inputs.size), signal2d.shape)
+            if self._reduced_counting_dependencies is not None:
+                from .measurement_dependencies import CountingDependencies
+                bundle = self._reduced_counting_dependencies
+                view["counting_dependencies"] = CountingDependencies(
+                    numerator_dependencies=project_source_dependencies(bundle.numerator_dependencies, inputs, np.arange(inputs.size), np.ones(inputs.size), signal2d.shape),
+                    exposure_dependencies=project_source_dependencies(bundle.exposure_dependencies, inputs, np.arange(inputs.size), np.ones(inputs.size), signal2d.shape))
+        if self._reduced_measurement_statistics is not None:
+            view[MEASUREMENT_STATISTICS_KEY] = self._reduced_measurement_marker
+            for name, values in zip(MEASUREMENT_STATISTICS_CHANNELS, self._reduced_measurement_statistics, strict=True):
+                view[name] = np.moveaxis(values, (y_pos, x_pos), (0, 1))
         view["num_events_semantics"] = self.data.metadata.get("num_events_semantics", "unspecified_source_multiplicity")
         view["masks_applied"] = self.masked
-        view["signal_unit"] = self.data.metadata.get("signal_unit", "unspecified intensity units")
+        for name in ("fit_likelihood", "poisson_count_model", "residual_label", "fit_data_scale"):
+            if name in self.data.metadata:
+                view[name] = self.data.metadata[name]
+        view["signal_unit"] = self.data.metadata.get("signal_unit", self.data.metadata.get("measurement_contract", {}).get("value_units", "unspecified intensity units"))
         if NORMALIZATION_DENOMINATOR in self.data.auxiliary_channels:
             view["exposure_unit"] = self.data.auxiliary_channels[NORMALIZATION_DENOMINATOR].unit
         if self.channel in available_background_channels(self.data):
@@ -2619,7 +2667,7 @@ class MDHistoSliceViewer:
             if errors2d is not None:
                 view[f"{self.channel}_errors"] = errors2d
         for name in self._metadata_channel_names():
-            if name == "coverage_fraction" or name in EVENT_STATISTICS_CHANNELS:
+            if name == "coverage_fraction" or name in EVENT_STATISTICS_CHANNELS or name in MEASUREMENT_STATISTICS_CHANNELS:
                 continue
             if name == NORMALIZATION_DENOMINATOR and event_statistics is not None:
                 continue
@@ -2632,6 +2680,9 @@ class MDHistoSliceViewer:
                 if self.masked:
                     errors2d = np.where(mask2d, np.nan, errors2d)
                 view[f"{name}_errors"] = errors2d
+        if ("measurement_contract" in view or EVENT_STATISTICS_KEY in view) and "fit" in view and "residual" in view:
+            from .measurement_likelihoods import histogram_view_residuals
+            view["residual"] = histogram_view_residuals(view)
         return view
 
     def update(self) -> None:
@@ -2665,6 +2716,10 @@ class MDHistoSliceViewer:
         self.fig.canvas.draw_idle()
 
     def _reduce_arrays(self, selections: dict[int, tuple[int, int] | int]):
+        self._reduced_measurement_statistics = None
+        self._reduced_measurement_marker = None
+        self._reduced_source_dependencies = None
+        self._reduced_counting_dependencies = None
         index = []
         reduce_axes = []
         integrated_dims: list[tuple[int, int, int, int]] = []
@@ -2699,15 +2754,84 @@ class MDHistoSliceViewer:
             coverage = np.where(mask, 0.0, coverage)
         denominator = normalization_denominator(self.data, tuple(index))
         event_statistics = selected_event_statistics(self.data, tuple(index))
+        declaration = self.data.metadata.get("measurement_contract")
+        aggregates_cells = any(signal.shape[axis] > 1 for axis in reduce_axes)
+        if declaration is None and self.data.metadata.get("measurement_target_required") and aggregates_cells:
+            raise ValueError("Aggregating derived measurements requires an explicit statistical target; declare a continuous or sampled-field contract")
+        contract = None if declaration is None else MeasurementContract.from_dict(declaration)
+        validate_measurement_selection(contract, signal, np.sqrt(variance),
+            mask=mask if self.masked else None, weight=denominator if contract is not None and contract.kind == "counting" else None)
+        generic_statistics = None
+        dependencies = getattr(self.data, "source_dependencies", None)
+        bundle = getattr(self.data, "counting_dependencies", None)
+        source_weight = None
+        if contract is not None and contract.kind == "continuous":
+            if contract.dependence != "independent" and dependencies is None:
+                raise ValueError("Shared-source slicing requires a dependency payload or source replay")
+            generic_statistics = selected_measurement_statistics(self.data, tuple(index))
+            if generic_statistics is None:
+                if MEASUREMENT_STATISTICS_KEY in self.data.metadata:
+                    raise ValueError("Stored measurement statistics do not reproduce the primary view; replay sources")
+                generic_statistics, marker = initialize_measurement_statistics(
+                    signal, np.sqrt(variance), replace(contract, dependence="independent"), mask=mask if self.masked else None,
+                )
+            else:
+                marker = dict(self.data.metadata[MEASUREMENT_STATISTICS_KEY])
+            source_weight = generic_statistics[2]
+            generic_statistics = pool_measurement_statistics(
+                *generic_statistics, reduce_axes, mask=mask if self.masked else None,
+            )
+            signal, variance = normalized_measurement_statistics(*generic_statistics)
+            self._reduced_measurement_statistics = generic_statistics
+            self._reduced_measurement_marker = marker
+        elif contract is not None and not (contract.kind == "sampled_function" and not aggregates_cells) and (contract.kind != "counting" or (contract.dependence != "independent" and dependencies is None)
+                                       or (contract.normalizer != "known" and bundle is None)):
+            raise ValueError("This histogram contract requires its measurement payload or source replay")
+        if contract is not None and contract.kind == "counting" and event_statistics is None:
+            raise ValueError("Counting slices require validated numerator, variance and exposure payloads")
         if event_statistics is not None:
+            source_weight = event_statistics[2]
             event_statistics = pool_event_statistics(
                 *event_statistics, reduce_axes, mask=mask if self.masked else None,
             )
             signal, variance = normalized_event_statistics(*event_statistics)
-        elif denominator is not None:
+        elif denominator is not None and generic_statistics is None:
             signal, variance, _ = pool_normalized_histogram(
                 signal, variance, denominator, reduce_axes, mask=mask if self.masked else None,
             )
+        if bundle is not None:
+            from .measurement_dependencies import CountingDependencies, ratio_source_dependencies
+            selected_weight = np.where(np.isfinite(self.data.signal[tuple(index)]) & np.isfinite(self.data.errors[tuple(index)]) & (source_weight > 0), 1., 0.)
+            if self.masked:
+                selected_weight = np.where(self.data.mask[tuple(index)], 0, selected_weight)
+            output_weight = np.ones(np.asarray(signal).shape)
+            reduced_bundle = CountingDependencies(
+                numerator_dependencies=reduce_source_dependencies(bundle.numerator_dependencies, tuple(index), selected_weight, reduce_axes, output_weight),
+                exposure_dependencies=reduce_source_dependencies(bundle.exposure_dependencies, tuple(index), selected_weight, reduce_axes, output_weight))
+            reduced = ratio_source_dependencies(reduced_bundle, event_statistics[0], event_statistics[2])
+            variance = np.where(event_statistics[2] > 0, reduced.variance(), np.nan)
+            self._reduced_source_dependencies = reduced
+            self._reduced_counting_dependencies = reduced_bundle
+            event_statistics = (event_statistics[0], reduced_bundle.numerator_dependencies.variance(), event_statistics[2])
+        elif dependencies is not None:
+            dependencies.validate_variances(self.data.errors**2, mask=self.data.mask if self.masked else None)
+            if source_weight is None:
+                source_weight = np.ones(np.asarray(self.data.signal[tuple(index)]).shape)
+                # Legacy unnormalized hidden-axis integration is a linear sum.
+                output_weight = np.ones(np.asarray(signal).shape)
+            else:
+                output_weight = (event_statistics if event_statistics is not None else generic_statistics)[2]
+            selected_weight = np.where(np.isfinite(self.data.signal[tuple(index)]) & np.isfinite(self.data.errors[tuple(index)]), source_weight, 0)
+            if self.masked:
+                selected_weight = np.where(self.data.mask[tuple(index)], 0, selected_weight)
+            reduced = reduce_source_dependencies(dependencies, tuple(index), selected_weight, reduce_axes, output_weight)
+            variance = reduced.variance()
+            self._reduced_source_dependencies = reduced
+            if event_statistics is not None:
+                event_statistics = (event_statistics[0], variance * event_statistics[2]**2, event_statistics[2])
+            if generic_statistics is not None:
+                generic_statistics = (generic_statistics[0], variance * generic_statistics[2]**2, *generic_statistics[2:])
+                self._reduced_measurement_statistics = generic_statistics
         coverage_weight = np.ones(coverage.shape, dtype=float)
         for axis, dim, start, stop in integrated_dims:
             widths = np.diff(self._axis_edges(dim))[start : stop + 1]
@@ -2717,14 +2841,15 @@ class MDHistoSliceViewer:
         coverage_numerator = coverage * coverage_weight
         coverage_denominator = coverage_weight
         for axis in sorted(reduce_axes, reverse=True):
-            if denominator is None:
+            if denominator is None and generic_statistics is None:
                 signal = np.nansum(signal, axis=axis)
-                variance = np.nansum(variance, axis=axis)
+                if dependencies is None:
+                    variance = np.nansum(variance, axis=axis)
             events = np.nansum(events, axis=axis)
             mask = np.all(mask, axis=axis)
             coverage_numerator = np.sum(coverage_numerator, axis=axis)
             coverage_denominator = np.sum(coverage_denominator, axis=axis)
-            if denominator is None:
+            if denominator is None and generic_statistics is None and dependencies is None:
                 signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
         coverage = np.zeros(np.asarray(coverage_numerator).shape, dtype=float)
         np.divide(
@@ -2738,7 +2863,8 @@ class MDHistoSliceViewer:
         mask = np.asarray(mask, dtype=bool) | coverage_mask | ~np.isfinite(signal)
         signal = np.where(coverage_mask, np.nan, signal)
         variance = np.where(coverage_mask, np.nan, variance)
-        signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
+        if generic_statistics is None:
+            signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
         return signal, variance, events, mask, coverage, coverage_mask, event_statistics
 
     def _metadata_channel_names(self) -> tuple[str, ...]:
@@ -2874,6 +3000,7 @@ class MDHistoSliceViewer:
             },
             "background": "Background",
             "unsubtracted": "Unsubtracted",
+            "residual": str(self.data.metadata.get("residual_label", "Residual (sigma)")),
         }
         if hasattr(self, "channel") and self.channel not in self.CHANNELS:
             self.channel = self._resolve_channel("signal")
@@ -2922,6 +3049,23 @@ class MDHistoSliceViewer:
                     index.append(selection)
         out = values[tuple(index)]
         denominator = normalization_denominator(self.data, tuple(index))
+        if name == "fit" and self.data.metadata.get("measurement_contract", {}).get("kind") == "continuous":
+            statistics = selected_measurement_statistics(self.data, tuple(index))
+            if statistics is None:
+                contract = MeasurementContract.from_dict(self.data.metadata["measurement_contract"])
+                statistics, _ = initialize_measurement_statistics(self.data.signal[tuple(index)], self.data.errors[tuple(index)],
+                    replace(contract, dependence="independent"), mask=self.data.mask[tuple(index)] if self.masked else None)
+            weight = statistics[2]
+            valid = np.isfinite(self.data.signal[tuple(index)]) & np.isfinite(self.data.errors[tuple(index)]) & (weight > 0)
+            if self.masked:
+                valid &= ~self.data.mask[tuple(index)]
+            total = np.sum(np.where(valid, weight, 0), axis=tuple(reduce_axes))
+            prediction_sum = np.sum(np.where(valid & np.isfinite(out), out * weight, 0), axis=tuple(reduce_axes))
+            missing_prediction = np.any(valid & ~np.isfinite(out), axis=tuple(reduce_axes))
+            out = np.full(total.shape, np.nan)
+            np.divide(prediction_sum, total, out=out, where=(total > 0) & ~missing_prediction)
+            remaining = [dim for dim in range(self.data.signal.ndim) if dim in (self.x_dim, self.y_dim)]
+            return np.moveaxis(out, (remaining.index(self.y_dim), remaining.index(self.x_dim)), (0, 1))
         if denominator is not None and name not in {"normalization_denominator", "coverage_fraction", "residual"}:
             out, _, _ = pool_normalized_histogram(
                 out, None, denominator, reduce_axes,
@@ -3674,6 +3818,46 @@ def _coarsen_mdhisto_view_axis(
         },
     }
     handled: set[str] = set()
+    declaration = view.get("measurement_contract")
+    if declaration is None and view.get("measurement_target_required"):
+        raise ValueError("Coarsening derived measurements requires an explicit statistical target; declare a continuous or sampled-field contract")
+    contract = None if declaration is None else MeasurementContract.from_dict(declaration)
+    if contract is not None:
+        validate_measurement_selection(contract, reference, np.asarray(view["errors"]),
+            mask=view.get("mask") if view.get("masks_applied", True) else None,
+            weight=view.get(NORMALIZATION_DENOMINATOR) if contract.kind == "counting" else None)
+    if contract is not None and contract.kind == "continuous":
+        if contract.dependence != "independent" and view.get("source_dependencies") is None:
+            raise ValueError("Shared-source display coarsening requires a dependency payload or source replay")
+        if isinstance(view.get(MEASUREMENT_STATISTICS_KEY), dict) and all(name in view for name in MEASUREMENT_STATISTICS_CHANNELS):
+            source_stats = tuple(np.asarray(view[name], float) for name in MEASUREMENT_STATISTICS_CHANNELS)
+            marker = dict(view[MEASUREMENT_STATISTICS_KEY])
+            expected_signal, expected_variance = normalized_measurement_statistics(*source_stats)
+            visible = ~np.asarray(view.get("mask", np.zeros(reference_shape, bool))) if view.get("masks_applied", True) else np.ones(reference_shape, bool)
+            if marker.get("version") != 1 or marker.get("estimator") != contract.estimator or not (
+                np.allclose(expected_signal[visible], reference[visible], rtol=1e-12, atol=0, equal_nan=True)
+                and np.allclose(expected_variance[visible], np.square(view["errors"])[visible], rtol=1e-12, atol=0, equal_nan=True)):
+                raise ValueError("Stored measurement statistics do not reproduce the declared view; replay sources")
+        else:
+            source_stats, marker = initialize_measurement_statistics(
+                reference, np.asarray(view["errors"], float), replace(contract, dependence="independent"),
+                mask=view.get("mask") if view.get("masks_applied", True) else None,
+            )
+        statistics = pool_measurement_statistics(
+            *(_block_view(array, factor, array_axis, 0.) for array in source_stats), (-1,),
+            mask=_block_view(np.asarray(view.get("mask", np.zeros(reference_shape, bool))), factor, array_axis, True)
+                if view.get("masks_applied", True) else None,
+        )
+        signal, variance = normalized_measurement_statistics(*statistics)
+        result["signal"] = np.moveaxis(signal, -1, array_axis)
+        result["errors"] = np.moveaxis(np.sqrt(variance), -1, array_axis)
+        result[MEASUREMENT_STATISTICS_KEY] = marker
+        for name, array in zip(MEASUREMENT_STATISTICS_CHANNELS, statistics, strict=True):
+            result[name] = np.moveaxis(array, -1, array_axis)
+        handled.update(("signal", "errors", *MEASUREMENT_STATISTICS_CHANNELS))
+    elif contract is not None and (contract.kind != "counting" or (contract.dependence != "independent" and view.get("source_dependencies") is None)
+                                   or (contract.normalizer != "known" and view.get("counting_dependencies") is None)):
+        raise ValueError("This display coarsening requires its measurement payload or source replay")
     if (
         isinstance(view.get(EVENT_STATISTICS_KEY), dict)
         and all(name in view for name in (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR))
@@ -3687,7 +3871,7 @@ def _coarsen_mdhisto_view_axis(
             mask=_block_view(
                 np.asarray(view.get("mask", np.zeros(reference_shape, dtype=bool))),
                 factor, array_axis, True,
-            ),
+            ) if view.get("masks_applied", True) else None,
         )
         signal, variance = normalized_event_statistics(*statistics)
         result["signal"] = np.moveaxis(signal, -1, array_axis)
@@ -3697,6 +3881,20 @@ def _coarsen_mdhisto_view_axis(
         ):
             result[name] = np.moveaxis(values, -1, array_axis)
         handled.update(("signal", "errors", *EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR))
+    if "fit" in view and ("signal" in handled):
+        source_weight = (np.asarray(view[NORMALIZATION_DENOMINATOR], float)
+                         if isinstance(view.get(EVENT_STATISTICS_KEY), dict) else source_stats[2])
+        output_weight = (result[NORMALIZATION_DENOMINATOR]
+                         if isinstance(view.get(EVENT_STATISTICS_KEY), dict) else result["measurement_weight"])
+        prediction = np.asarray(view["fit"], float)
+        valid = np.isfinite(reference) & np.isfinite(view["errors"]) & (source_weight > 0)
+        if view.get("masks_applied", True):
+            valid &= ~np.asarray(view.get("mask", np.zeros(reference_shape, bool)))
+        numerator = _block_sum(np.where(valid & np.isfinite(prediction), prediction * source_weight, 0.), factor, array_axis)
+        missing = ~_block_all(~(valid & ~np.isfinite(prediction)), factor, array_axis)
+        result["fit"] = np.full(np.asarray(output_weight).shape, np.nan)
+        np.divide(numerator, output_weight, out=result["fit"], where=(output_weight > 0) & ~missing)
+        handled.add("fit")
     for value_name, error_name in paired_errors.items():
         if value_name in handled:
             continue
@@ -3732,6 +3930,52 @@ def _coarsen_mdhisto_view_axis(
             result[name] = _block_sum(array, factor, array_axis)
         else:
             result[name] = _block_nanmean(array, factor, array_axis)
+    dependencies = view.get("source_dependencies")
+    bundle = view.get("counting_dependencies")
+    if bundle is not None:
+        from .measurement_dependencies import CountingDependencies, ratio_source_dependencies
+        valid = np.isfinite(reference) & np.isfinite(view["errors"]) & (np.asarray(view[NORMALIZATION_DENOMINATOR]) > 0)
+        if view.get("masks_applied", True):
+            valid &= ~np.asarray(view.get("mask", np.zeros(reference_shape, bool)))
+        output_shape = result["signal"].shape
+        ones = np.ones(output_shape)
+        result["counting_dependencies"] = CountingDependencies(
+            numerator_dependencies=coarsen_source_dependencies(bundle.numerator_dependencies, valid.astype(float), array_axis, factor, ones),
+            exposure_dependencies=coarsen_source_dependencies(bundle.exposure_dependencies, valid.astype(float), array_axis, factor, ones))
+        reduced = ratio_source_dependencies(result["counting_dependencies"], result["event_signal_numerator"], result[NORMALIZATION_DENOMINATOR])
+        result["source_dependencies"] = reduced
+        result["errors"] = np.sqrt(np.where(result[NORMALIZATION_DENOMINATOR] > 0, reduced.variance(), np.nan))
+        result["event_variance_numerator"] = result["counting_dependencies"].numerator_dependencies.variance()
+    elif dependencies is not None:
+        dependencies.validate_variances(np.square(view["errors"]), mask=view.get("mask"))
+        if isinstance(view.get(EVENT_STATISTICS_KEY), dict):
+            weight = np.asarray(view[NORMALIZATION_DENOMINATOR], float)
+            output_weight = result[NORMALIZATION_DENOMINATOR]
+        elif contract is not None and contract.kind == "continuous":
+            weight = source_stats[2]
+            output_weight = result["measurement_weight"]
+        else:
+            errors = np.asarray(view["errors"], float)
+            valid = np.isfinite(reference) & np.isfinite(errors) & (errors > 0)
+            scale = np.min(errors[valid]) if np.any(valid) else 1.
+            weight = np.zeros(reference.shape)
+            np.divide(scale, errors, out=weight, where=valid)
+            weight **= 2
+            output_weight = _block_sum(weight, factor, array_axis)
+        valid = np.isfinite(reference) & np.isfinite(view["errors"]) & (weight > 0)
+        if view.get("masks_applied", True):
+            valid &= ~np.asarray(view.get("mask", np.zeros(reference.shape, bool)))
+        reduced = coarsen_source_dependencies(dependencies, np.where(valid, weight, 0), array_axis, factor, output_weight)
+        result["source_dependencies"] = reduced
+        variance = reduced.variance()
+        result["errors"] = np.sqrt(variance)
+        if isinstance(view.get(EVENT_STATISTICS_KEY), dict):
+            result["event_variance_numerator"] = variance * result[NORMALIZATION_DENOMINATOR]**2
+        elif contract is not None and contract.kind == "continuous":
+            result["measurement_variance_numerator"] = variance * result["measurement_weight"]**2
+    if "fit" in handled and "residual" in view:
+        from .measurement_likelihoods import histogram_view_residuals
+        result["residual"] = histogram_view_residuals(result)
     return result
 
 
@@ -3783,7 +4027,16 @@ def smooth_mdhisto_view(
     if not any(value > 0.0 for value in sigma):
         return result
     result.pop(EVENT_STATISTICS_KEY, None)
-    result.pop("measurement_contract", None)
+    declaration = result.pop("measurement_contract", None)
+    if declaration is not None:
+        result.update(measurement_target_required=True,
+            measurement_derivation={"operation":"smoothing_preview", "original_contract":declaration,
+                "uncertainty":"diagonal_plot_approximation", "further_aggregation":"source_replay_required"})
+    result.pop("source_dependencies", None)
+    result.pop("counting_dependencies", None)
+    result.pop(MEASUREMENT_STATISTICS_KEY, None)
+    for name in MEASUREMENT_STATISTICS_CHANNELS:
+        result.pop(name, None)
     for name in EVENT_STATISTICS_CHANNELS:
         result.pop(name, None)
     excluded = {
@@ -3796,7 +4049,7 @@ def smooth_mdhisto_view(
     }
     for name, values in view.items():
         array = np.asarray(values)
-        if name in excluded or name in EVENT_STATISTICS_CHANNELS or array.shape != reference.shape or array.dtype == bool:
+        if name in excluded or name in EVENT_STATISTICS_CHANNELS or name in MEASUREMENT_STATISTICS_CHANNELS or array.shape != reference.shape or array.dtype == bool:
             continue
         if name == "errors":
             smoothed = gaussian_smooth_uncertainty(array, sigma)

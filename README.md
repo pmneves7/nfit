@@ -63,8 +63,11 @@ A few of its main capabilities are:
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
 - declare statistical targets through a Python API for count exposure pooling,
   continuous means, coordinate integrals, and shared-source linear uncertainty;
-- pool count numerator, variance and exposure consistently in regular/rotated
-  box profiles, retaining their statistics in live viewers and CSV exports;
+- preserve count and continuous-mean statistics through binning, slices, box
+  profiles and waterfalls, with bounded shared-source uncertainty and statistical
+  CSV exports;
+- fit with explicit independent Gaussian, tracked GLS, or audited integer-count
+  objectives while retaining each objective's assumptions;
 - inspect the subtracted signal, retained background, and on-demand unsubtracted
   slices through a grouped channel menu without adding visualization channels to fits;
 - open viewers on demand, with an optional preference to preload all datasets

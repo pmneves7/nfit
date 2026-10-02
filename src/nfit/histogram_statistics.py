@@ -133,6 +133,16 @@ def selected_event_statistics(data, selection=(...,), *, validate=True):
     arrays = tuple(np.asarray(channels[name].values[selection], dtype=float) for name in names)
     if validate:
         signal, variance = normalized_event_statistics(*arrays)
+        if data.counting_dependencies is not None:
+            from .measurement_dependencies import (
+                ratio_source_dependencies,
+                select_counting_dependencies,
+            )
+
+            dependencies = select_counting_dependencies(data.counting_dependencies, selection)
+            dependencies.numerator_dependencies.validate_variances(arrays[1])
+            variance = ratio_source_dependencies(dependencies, arrays[0], arrays[2]).variance()
+            variance = np.where(np.isfinite(signal), variance, np.nan)
         stored_signal = np.asarray(data.signal[selection], dtype=float)
         stored_variance = np.square(np.asarray(data.errors[selection], dtype=float))
         if not (

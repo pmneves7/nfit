@@ -9,8 +9,8 @@ import numpy as np
 
 from .background_channels import scale_background_channels
 from .dataset import PointData4D, PointListData
-from .histogram_statistics import scaled_event_statistics_channels
 from .mdhisto import MDHistoData
+from .measurement_scaling import scale_measurement_data
 from .pipeline import DatasetEntry
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY, with_paired_spectral_channels
 
@@ -158,12 +158,7 @@ def _apply_kinematic_normalization_to_view(
     metadata = dict(data.metadata)
     metadata["nfit_kinematic_kf_ki_normalized"] = True
     metadata["nfit_kinematic_kf_ki_source"] = "Ei" if incident is not None else "Ef"
-    return data.with_updates(
-        signal=np.asarray(data.signal, dtype=float) * factor,
-        errors=np.asarray(data.errors, dtype=float) * np.abs(factor),
-        auxiliary_channels=scaled_event_statistics_channels(data, factor),
-        metadata=metadata,
-    )
+    return scale_measurement_data(data, factor, metadata=metadata)
 
 
 def _apply_kinematic_normalization_to_points(
@@ -187,11 +182,7 @@ def _apply_kinematic_normalization_to_points(
     metadata = dict(points.metadata)
     metadata["nfit_kinematic_kf_ki_normalized"] = True
     metadata["nfit_kinematic_kf_ki_source"] = "Ei" if incident is not None else "Ef"
-    return points.with_updates(
-        intensity=np.asarray(points.intensity, dtype=float) * factor,
-        sigma=np.asarray(points.sigma, dtype=float) * np.abs(factor),
-        metadata=metadata,
-    )
+    return scale_measurement_data(points, factor, metadata=metadata)
 
 
 def _mdhisto_without_nfit_masks(data: MDHistoData) -> MDHistoData:
@@ -217,16 +208,12 @@ def _apply_dataset_scale(
 ) -> MDHistoData | PointListData | PointData4D:
     """Multiply a dataset's signal and errors by its scale factor (both channels)."""
 
-    scale = float(getattr(dataset, "scale_factor", 1.0) or 1.0)
+    scale = float(getattr(dataset, "scale_factor", 1.0))
     if scale == 1.0:
         return data
     if isinstance(data, MDHistoData):
         data = scale_background_channels(data, scale)
-        return data.with_updates(
-            signal=np.asarray(data.signal, dtype=float) * scale,
-            errors=np.asarray(data.errors, dtype=float) * abs(scale),
-            auxiliary_channels=scaled_event_statistics_channels(data, scale),
-        )
+        return scale_measurement_data(data, scale)
     if isinstance(data, PointListData):
         columns = {name: np.array(values, dtype=float) for name, values in data.columns.items()}
         for channel in data.channels:
@@ -245,8 +232,5 @@ def _apply_dataset_scale(
             quantity_types=dict(data.quantity_types),
         )
     if isinstance(data, PointData4D):
-        return data.with_updates(
-            intensity=np.asarray(data.intensity, dtype=float) * scale,
-            sigma=np.asarray(data.sigma, dtype=float) * abs(scale),
-        )
+        return scale_measurement_data(data, scale)
     return data

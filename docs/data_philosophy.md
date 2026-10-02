@@ -264,8 +264,9 @@ the target quantity and assumptions independently of the file adapter. Its
 one-bin reference estimators support count exposure pooling, independent
 continuous means, coordinate interval means/integrals, and linear shared-source
 uncertainty. Contracts serialize completely; units are explicit labels and
-must be made compatible before combination. Integration into existing project
-and viewer workflows is tracked separately.
+must be made compatible before combination. Explicit declarations drive aligned
+project rebinning and viewer aggregation; unmarked projects preserve their saved
+compatibility behavior without an inferred instrument-specific contract.
 
 Instrument reduction determines coordinates, calibrated signals, exposure,
 and statistical dependencies. General binning then combines compatible
@@ -284,13 +285,31 @@ precision weights. Bin widths, instrument resolution, and systematic
 calibration differences remain relevant even when the measurement units match.
 
 Exposure pooling and Gaussian precision weighting are not interchangeable.
-The existing project **Inverse variance** option adds inverse-variance weighting to any
+The legacy project **Inverse variance** option adds inverse-variance weighting to any
 physical normalization weight already present; it is therefore not a pure
 Gaussian inverse-variance mean for data carrying an exposure denominator.
 See [Pooling normalized count histograms](physics_conventions.md#pooling-normalized-count-histograms)
 for the current histogram estimator and its uncertainty assumptions, and
 [Planned statistical binning work](planned_features.md#statistical-binning-and-reduction-recipes)
-for the remaining policy and covariance work.
+for remaining adapter validation and GUI policy work.
+
+Histograms retain optional additive count or continuous-mean statistics, sparse
+primary `SourceDependencies`, and numerator/exposure `CountingDependencies`.
+Point data retain a `measurement_payload` and primary dependencies for fitting
+and further declared binning. These numerical arrays are immutable, archived
+separately from JSON metadata, and loaded with the owning dataset. Bounded factor
+storage raises an explicit replay requirement when a selection exceeds its
+budget. A primary replacement clears stale payloads and contracts; deterministic
+calibration propagates them through `measurement_scaling`.
+
+Shared IDs mean the same primitive source, including across different project
+datasets. Reused backgrounds and calibration factors combine coefficients before
+squaring. Counts and exposure must retain separate primitives when the exposure
+is uncertain: divided-rate errors alone cannot be re-pooled exactly. A transformed
+declared background difference records its derivation and requires a new target
+before mean aggregation. Unmarked historical derivations retain compatibility
+provenance. Unsupported interpolation or source models must request original
+measurements rather than silently approximate their dependence.
 
 ## Adding an importer or operation
 

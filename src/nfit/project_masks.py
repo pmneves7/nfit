@@ -32,19 +32,7 @@ def _point_data_with_nfit_masks(
     metadata = dict(data.metadata)
     metadata["nfit_mask_count"] = int(np.count_nonzero(nfit_mask))
     metadata["combined_mask_count"] = int(np.count_nonzero(combined_reject))
-    temperature = data.temperature.copy() if isinstance(data.temperature, np.ndarray) else data.temperature
-    return PointData4D(
-        H=data.H.copy(),
-        K=data.K.copy(),
-        L=data.L.copy(),
-        E=data.E.copy(),
-        intensity=data.intensity.copy(),
-        sigma=data.sigma.copy(),
-        mask=~combined_reject,
-        temperature=temperature,
-        magnetic_field=None if data.magnetic_field is None else np.array(data.magnetic_field),
-        metadata=metadata,
-    )
+    return data.with_updates(mask=~combined_reject, metadata=metadata)
 
 
 def _nfit_mask_for_point_data(

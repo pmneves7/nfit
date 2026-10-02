@@ -108,7 +108,6 @@ from .mdevent import (
 from .mdhisto import (
     MDHistoData,
     load_mantid_mdhisto_nxs,
-    mdhisto_measured_bins,
 )
 from .model_registry import (
     MODEL_CATEGORY_LABELS,
@@ -2925,65 +2924,9 @@ def _apply_sample_context_to_points(
 
 
 def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
-    """Flatten a masked MDHisto view into fit points using axis roles."""
-
-    coords = _mdhisto_coordinate_grids(data)
-    zeros = np.zeros(data.shape, dtype=float)
-    keep = ~np.asarray(data.mask, dtype=bool)
-    keep &= mdhisto_measured_bins(data)
-    metadata: dict[str, Any] = {
-        "fit_coordinates": sorted(
-            name for name in ("H", "K", "L", "E", "q_modulus") if name in coords
-        ),
-    }
-    for key in (
-        "oriented_lattice",
-        "coordinate_units",
-        "rlu_to_inv_angstrom_matrix",
-        "nfit_kinematic_kf_ki_normalized",
-        "nfit_kinematic_kf_ki_source",
-        "signal_quantity_type",
-        "signal_unit",
-        "spectral_observable",
-    ):
-        if key in data.metadata:
-            metadata[key] = data.metadata[key]
-    if "signal_quantity_type" in metadata:
-        metadata["quantity_type"] = metadata["signal_quantity_type"]
-    if "signal_unit" in metadata:
-        metadata["unit"] = metadata["signal_unit"]
-    temperature = data.metadata.get("temperature")
-    from .metadata_dimensions import metadata_temperature_grid
-
-    temperatures = metadata_temperature_grid(data)
-    powder_q = coords.get("q_modulus")
-    powder_only = powder_q is not None and not any(
-        axis.role in {"h", "k", "l"} for axis in data.axes
-    )
-    if powder_only:
-        metadata["coordinate_units"] = "1/angstrom"
-        metadata["powder_q_modulus_axis"] = True
-    return PointData4D(
-        # PointData4D has a Cartesian-vector momentum slot. For powder data,
-        # place |Q| on x and tag the coordinates as inverse angstroms so
-        # q_modulus_inv_angstrom recovers the measured scalar without a lattice.
-        H=(
-            powder_q
-            if powder_only
-            else coords.get("H", zeros)
-        ).ravel(),
-        K=coords.get("K", zeros).ravel(),
-        L=coords.get("L", zeros).ravel(),
-        E=coords.get("E", zeros).ravel(),
-        intensity=np.asarray(data.signal, dtype=float).ravel(),
-        sigma=np.asarray(data.errors, dtype=float).ravel(),
-        mask=keep.ravel(),
-        temperature=(
-            np.broadcast_to(temperatures, data.shape).ravel() if temperatures is not None
-            else float(temperature) if temperature is not None else None
-        ),
-        metadata=metadata,
-    )
+    """Compatibility wrapper for public statistical fit preparation."""
+    from .measurement_fit_data import prepare_histogram_fit_points
+    return prepare_histogram_fit_points(data)
 
 
 def _point_data_from_point_list_view(data: PointListData) -> PointData4D:
@@ -3046,6 +2989,8 @@ def _point_data_from_point_list_view(data: PointListData) -> PointData4D:
         "spectral_observable",
         "signal_quantity_type",
         "signal_unit",
+        "measurement_contract", "cross_reflection_covariance", "uncertainty_dependence",
+        "fit_likelihood",
     ):
         if key in data.metadata:
             metadata[key] = data.metadata[key]
@@ -3132,6 +3077,7 @@ def fit_dataset_inputs(
             FitDatasetInput(
                 name=dataset.name,
                 data=bundle.points,
+                metadata={**dataset.metadata, "fit_likelihood": str(dataset.parameters.get("fit_likelihood", "gaussian"))},
                 weight=0.0 if visualization_only else fit_weight,
                 data_type=dataset.data_type or DEFAULT_DATA_TYPE,
                 scale_value=(1.0 if is_composite else float(dataset.scale_factor)),
@@ -3580,8 +3526,10 @@ def perform_group_fit(
         ),
         "covariance": _matrix_summary(result.covariance, result.variable_names),
         "covariance_mode": result.covariance_mode,
+        "covariance_interpretation": result.covariance_interpretation,
         "covariance_scale_factor": float(result.covariance_scale_factor),
         "dataset_chi2": {name: float(value) for name, value in result.dataset_chi2.items()},
+        "dataset_likelihoods": dict(result.dataset_likelihoods),
         "dataset_reduced_chi2": {
             name: float(value) for name, value in result.dataset_reduced_chi2.items()
         },
@@ -4338,7 +4286,7 @@ def _log_probability_for_params(
     compiled: CompiledFitProblem,
     params: dict[str, float],
 ) -> float:
-    """Evaluate the Gaussian log likelihood used by emcee for a parameter set."""
+    """Evaluate the selected residual log objective used by emcee."""
 
     trial = {spec.name: float(spec.value) for spec in compiled.problem.parameter_specs}
     trial.update({str(name): float(value) for name, value in params.items()})
@@ -4677,7 +4625,8 @@ def _fit_channels_from_params(
                 if isinstance(points.temperature, np.ndarray):
                     keep &= np.isfinite(points.temperature)
             else:
-                keep = points.valid_mask()
+                count_likelihood = next(dataset for dataset in compiled.problem.datasets if dataset.name == name).likelihood == "poisson_deviance"
+                keep = points.valid_mask(require_positive_sigma=not count_likelihood)
             subset = _subset_points(points, keep)
             if subset_cache is not None:
                 subset_cache[cache_key] = (keep, subset)
@@ -4701,20 +4650,17 @@ def _fit_channels_from_params(
         fit_dataset = next(
             dataset for dataset in compiled.problem.datasets if dataset.name == name
         )
-        intensity = np.asarray(points.intensity, dtype=float)
-        sigma = np.asarray(points.sigma, dtype=float)
+        from .measurement_likelihoods import fit_measurement_residuals
+        scale = 1.
         if fit_dataset.data_scale_parameter:
             resolved = compiled.problem.resolve_parameters(params)
             scale = float(resolved[fit_dataset.data_scale_parameter])
-            intensity = intensity * scale
-            sigma = sigma * max(abs(scale), np.finfo(float).tiny)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            residual_values = (intensity - fit_values) / sigma
-        residual_values = np.where(
-            np.isfinite(intensity) & np.isfinite(sigma) & (sigma > 0.0),
-            residual_values,
-            np.nan,
-        )
+        residual_observations = points.with_updates(mask=np.ones(points.size, dtype=bool)) if evaluate_masked else points
+        residual_keep = residual_observations.valid_mask(require_positive_sigma=fit_dataset.likelihood != "poisson_deviance") & np.isfinite(fit_values)
+        residual_values = np.full(points.size, np.nan)
+        if np.any(residual_keep):
+            residual_values[residual_keep] = fit_measurement_residuals(residual_observations.subset(residual_keep), fit_values[residual_keep],
+                fit_dataset.likelihood, data_scale=scale)
         if bundle.grid_shape is not None:
             fit_values = fit_values.reshape(bundle.grid_shape)
             residual_values = residual_values.reshape(bundle.grid_shape)
@@ -4723,36 +4669,16 @@ def _fit_channels_from_params(
             "fit": fit_values,
             "residual": residual_values,
             "fit_channel": str(points.metadata.get("fit_channel", "")),
+            "likelihood": fit_dataset.likelihood,
+            "fit_data_scale": scale,
+            "residual_label": {"gaussian": "Residual (sigma)", "gaussian_gls": "Whitened residual", "poisson_deviance": "Poisson deviance residual"}[fit_dataset.likelihood],
         }
     return channels
 
 
 def _subset_points(points: PointData4D, keep: np.ndarray) -> PointData4D:
-    """Return the ``keep``-selected subset of ``points`` (order preserved)."""
-
-    if isinstance(points.temperature, np.ndarray):
-        temperature: Any = points.temperature[keep]
-    else:
-        temperature = points.temperature
-    field = points.magnetic_field
-    if isinstance(field, np.ndarray) and field.ndim == 2:
-        magnetic_field: Any = field[keep]
-    elif field is None:
-        magnetic_field = None
-    else:
-        magnetic_field = np.array(field)
-    return PointData4D(
-        H=points.H[keep],
-        K=points.K[keep],
-        L=points.L[keep],
-        E=points.E[keep],
-        intensity=points.intensity[keep],
-        sigma=points.sigma[keep],
-        mask=np.ones(int(np.count_nonzero(keep)), dtype=bool),
-        temperature=temperature,
-        magnetic_field=magnetic_field,
-        metadata=dict(points.metadata),
-    )
+    """Return selected rows with their scientific payloads preserved."""
+    return points.subset(keep)
 
 
 def latest_fit_channels(group: DataGroup, dataset_name: str) -> dict[str, Any] | None:
@@ -4811,6 +4737,9 @@ def attach_fit_channels_to_view(
             return view
         metadata = dict(view.metadata)
         metadata.update(arrays)
+        for key in ("residual_label", "likelihood", "fit_data_scale"):
+            if key in payload:
+                metadata["fit_likelihood" if key == "likelihood" else key] = payload[key]
         return view.with_updates(metadata=metadata)
     if isinstance(view, PointListData):
         if any(array.shape != (view.size,) for array in arrays.values()):

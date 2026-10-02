@@ -40,6 +40,17 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "measurement_contracts.py",
     PACKAGE_ROOT / "measurement_statistics.py",
     PACKAGE_ROOT / "measurement_profiles.py",
+    PACKAGE_ROOT / "measurement_aggregation.py",
+    PACKAGE_ROOT / "measurement_waterfalls.py",
+    PACKAGE_ROOT / "measurement_fit_data.py",
+    PACKAGE_ROOT / "measurement_likelihoods.py",
+    PACKAGE_ROOT / "measurement_dependencies.py",
+    PACKAGE_ROOT / "measurement_rebinning.py",
+    PACKAGE_ROOT / "measurement_regions.py",
+    PACKAGE_ROOT / "measurement_replay.py",
+    PACKAGE_ROOT / "measurement_point_bins.py",
+    PACKAGE_ROOT / "measurement_scaling.py",
+    PACKAGE_ROOT / "point_data_archive.py",
     PACKAGE_ROOT / "project_caches.py",
     PACKAGE_ROOT / "figure_export.py",
     PACKAGE_ROOT / "resource_usage.py",
@@ -78,7 +89,7 @@ GUI_INDEPENDENT_MODULES = (
 )
 
 
-@pytest.mark.parametrize("name", ["measurement_contracts", "measurement_statistics", "measurement_profiles"])
+@pytest.mark.parametrize("name", ["measurement_contracts", "measurement_statistics", "measurement_profiles", "measurement_aggregation", "measurement_waterfalls", "measurement_likelihoods"])
 def test_measurement_contract_services_have_no_gui_or_project_dependencies(name):
     tree = ast.parse((PACKAGE_ROOT / f"{name}.py").read_text())
     modules = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
@@ -93,6 +104,32 @@ def test_measurement_contract_public_exports_are_authoritative():
     assert nfit.MeasurementContract is measurement_contracts.MeasurementContract
     for name in ("MeasurementEstimate", "SourceTerm", "estimate_measurement_bin"):
         assert getattr(nfit, name) is getattr(measurement_statistics, name)
+
+
+def test_measurement_workflow_public_exports_are_authoritative():
+    import nfit
+    from nfit import (
+        measurement_dependencies,
+        measurement_fit_data,
+        measurement_likelihoods,
+        measurement_point_bins,
+        measurement_rebinning,
+        measurement_regions,
+        measurement_replay,
+        measurement_scaling,
+    )
+    for module, names in (
+        (measurement_dependencies, ("SourceDependencies", "CountingDependencies", "SourceReplayRequired")),
+        (measurement_rebinning, ("coarsen_measurement_histogram", "combine_measurement_histograms")),
+        (measurement_point_bins, ("bin_measurement_points",)),
+        (measurement_regions, ("estimate_measurement_region",)),
+        (measurement_replay, ("replay_measurement_histogram",)),
+        (measurement_scaling, ("scale_measurement_data",)),
+        (measurement_fit_data, ("prepare_histogram_fit_points",)),
+        (measurement_likelihoods, ("PoissonCountModel", "poisson_deviance_residuals")),
+    ):
+        for name in names:
+            assert getattr(nfit, name) is getattr(module, name)
 
 
 PROJECT_GUI_CLIENT_MODULES = (
@@ -335,3 +372,16 @@ def test_corelli_backends_share_independent_authoritative_kinematics():
     tree = ast.parse((PACKAGE_ROOT / "corelli_constants.py").read_text())
     imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     assert not imports.intersection({"corelli", "mdevent", "raw_dgs", "dgs_reduction_policy"})
+
+
+def test_histogram_fit_preparation_gui_compatibility_uses_public_service():
+    import numpy as np
+
+    from nfit import project_gui
+    from nfit.mdhisto import MDHistoAxis, MDHistoData
+    from nfit.measurement_fit_data import prepare_histogram_fit_points
+    data = MDHistoData((MDHistoAxis("DeltaE", [0.,1.,2.], "meV", "energy"),), np.array([1.,2.]), np.ones(2), np.zeros(2,bool), np.ones(2))
+    expected, actual = prepare_histogram_fit_points(data), project_gui._point_data_from_mdhisto_view(data)
+    np.testing.assert_array_equal(actual.intensity, expected.intensity)
+    np.testing.assert_array_equal(actual.mask, expected.mask)
+    assert actual.metadata == expected.metadata

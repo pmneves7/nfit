@@ -9,9 +9,9 @@ missing-data policy, normalizer assumptions, and represented dependencies. Its
 `MeasurementEstimate` for one bin. `SourceTerm` identifies primitive uncertainty
 sources shared between observations or between a numerator and its normalizer.
 
-These public functions operate independently of instruments and Qt. Existing
-project binning, fitting, cuts and exports retain their current estimators until
-workflow integration is complete. See [Measurement statistics](measurement_statistics.md)
+These public functions operate independently of instruments and Qt. Explicit
+contracts drive compatible project and viewer aggregation; unmarked legacy
+workflows retain their recorded compatibility behavior. See [Measurement statistics](measurement_statistics.md)
 for supported contracts, input conventions, units, and runnable examples.
 
 `histogram_box_profiles` prepares regular or rotated cuts from a slice view.
@@ -19,6 +19,22 @@ for supported contracts, input conventions, units, and runnable examples.
 `prepare_measurement_profile` supplies the underlying grouped reduction.
 `save_measurement_profile_csv` exports the estimate, available statistics, and
 a versioned JSON sidecar. These are the shared APIs used by static and Qt box cuts.
+
+`bin_measurement_points` bins original observations under a declared target.
+`coarsen_measurement_histogram` combines aligned complete cells and
+`combine_measurement_histograms` pools aligned compatible sources.
+`replay_measurement_histogram` uses original event sources and reduced-event caches
+on a final requested grid. Unsupported transformations raise an explicit source
+replay requirement.
+
+`SourceDependencies` and `CountingDependencies` retain bounded primitive
+sensitivities; projection and signed combination preserve represented covariance.
+`estimate_measurement_region` computes a stated linear sum with those factors.
+`prepare_histogram_fit_points` retains statistics and dependencies for the
+`FitDataset` objectives `gaussian`, `gaussian_gls`, and `poisson_deviance`.
+The count objective requires a `PoissonCountModel` declaration. Prepared CSV
+profile, map and waterfall exports preserve declarations and available source
+factors alongside the tabulated values.
 
 ## Reduced data, import adapters, and viewing
 

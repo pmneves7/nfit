@@ -915,3 +915,20 @@ def test_monitor_unavailable_calibration_has_explicit_provenance(tmp_path):
     result = bin_raw_dgs_group(group, lower=[-10, -10, -10, -100],
         upper=[10, 10, 10, 20], num_bins=[2, 2, 2, 3])
     assert result.metadata["raw_dgs_calibration"][group.datasets[0].id]["source"] == info.calibration_source
+
+
+def test_final_grid_measurement_replay_reuses_cache_and_preserves_policy(tmp_path):
+    from nfit import replay_measurement_histogram
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    kwargs = dict(lower=[-10, -10, -10, -100], upper=[10, 10, 10, 20], num_bins=[1]*4, max_batch_bytes=128)
+    direct = bin_raw_dgs_group(group, **kwargs)
+    replay = replay_measurement_histogram(group, **kwargs)
+    np.testing.assert_array_equal(replay.signal, direct.signal)
+    np.testing.assert_array_equal(replay.errors, direct.errors)
+    assert replay.metadata["reduced_event_cache"]["hits"] == 1
+    assert replay.metadata["dgs_reduction_policies"] == direct.metadata["dgs_reduction_policies"]
+    assert replay.metadata["measurement_replay"]["normalizer"] == "known"
+    with pytest.raises(ValueError, match="Repeated source"):
+        replay_measurement_histogram(group, datasets=[group.datasets[0]]*2, **kwargs)

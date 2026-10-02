@@ -94,6 +94,7 @@ from .slice_viewer_state import (
 from .viewer_data import DeferredViewerDatasets, ViewerLoadCancelled
 from .viewer_export import (
     save_grid_csv,
+    save_measurement_grid_csv,
     save_measurement_profile_csv,
     save_profile_csv,
     save_waterfall_csv,
@@ -1319,7 +1320,7 @@ class QtMDHistoSliceViewer:
             else:
                 save_measurement_profile_csv(path, measurement, coordinate_name="x",
                     coordinate_unit=self.data.axes[self.model.x_dim].units if isinstance(self.data, MDHistoData) else "",
-                    include_statistics=measurement.contract.kind == "counting")
+                    include_statistics=measurement.data.metadata.get("measurement_contract_origin") != "legacy_precision_mean")
 
     def save_y_cut(self) -> None:
         """Save the current vertical box profile as CSV."""
@@ -1334,7 +1335,7 @@ class QtMDHistoSliceViewer:
             else:
                 save_measurement_profile_csv(path, measurement, coordinate_name="y",
                     coordinate_unit=self.data.axes[self.model.y_dim].units if isinstance(self.data, MDHistoData) else "",
-                    include_statistics=measurement.contract.kind == "counting")
+                    include_statistics=measurement.data.metadata.get("measurement_contract_origin") != "legacy_precision_mean")
 
     def _slice_export_values(
         self,
@@ -1384,7 +1385,10 @@ class QtMDHistoSliceViewer:
         if self._waterfall_mode_active():
             save_waterfall_csv(path, self._current_waterfall_traces)
             return
-        save_grid_csv(path, *self._slice_export_values(model=False))
+        _, _, values, errors = self._slice_export_values(model=False)
+        save_measurement_grid_csv(path, self._current_slice, channel=self.model.channel, values=values, errors=errors,
+            coordinate_units=(self.data.axes[self.model.x_dim].units, self.data.axes[self.model.y_dim].units),
+            include_statistics="measurement_contract" in self._current_slice or "event_statistics" in self._current_slice)
 
     def save_displayed_model(self) -> None:
         """Save the active 2D slice or waterfall model as tidy CSV."""
@@ -4970,7 +4974,7 @@ class QtMDHistoSliceViewer:
         self._current_x_cut = profiles.x if len(profiles.x[0]) else None
         self._current_y_cut = profiles.y if len(profiles.y[0]) else None
         if np.any(profiles.selected):
-            self._show_roi_sum_annotation(values[profiles.selected], errors[profiles.selected], extents)
+            self._show_roi_sum_annotation(values, errors, extents, selected=profiles.selected)
         self.ax_xcut.errorbar(*profiles.x[:2], yerr=profiles.x[2], fmt="-", lw=1.2, capsize=0)
         self.ax_ycut.errorbar(profiles.y[1], profiles.y[0], xerr=profiles.y[2], fmt="-", lw=1.2, capsize=0)
         rotated = not np.isclose(self._roi_angle % 360, 0.0, atol=1e-10)
@@ -4995,6 +4999,7 @@ class QtMDHistoSliceViewer:
         values: np.ndarray,
         errors: np.ndarray,
         extents: tuple[float, float, float, float],
+        *, selected=None,
     ) -> None:
         if (
             self.ax_image is None
@@ -5004,7 +5009,10 @@ class QtMDHistoSliceViewer:
             or not self.hist_axes_check.isChecked()
         ):
             return
-        total, uncertainty, _count = integrated_box_sum(values, errors)
+        total, uncertainty, _count = integrated_box_sum(values, errors,
+            mask=None if selected is None else ~selected,
+            source_dependencies=(self._current_slice or {}).get("source_dependencies")
+            if selected is not None and self.model.channel == "signal" else None)
         self.roi_sum_text = _draw_box_sum_annotation(
             self.ax_image,
             extents,

@@ -2782,6 +2782,7 @@ def _build_fit_datasets(
                     dataset.data_type,
                 ),
                 metadata=dict(dataset.metadata),
+                likelihood=str(dataset.metadata.get("fit_likelihood", dataset.data.metadata.get("fit_likelihood", "gaussian"))),
             )
         )
     return fit_datasets

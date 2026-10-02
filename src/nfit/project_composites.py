@@ -2350,6 +2350,7 @@ def _composite_mdhisto_data(
     all_event_statistics = True
     source_datasets = datasets if datasets is not None else _composite_candidates(group)
     report_sources = datasets is None
+    prepared_sources = []
     for dataset_index, dataset in enumerate(source_datasets):
         data = (
             dataset.data
@@ -2367,6 +2368,31 @@ def _composite_mdhisto_data(
                 total=len(source_datasets),
                 dataset_name=dataset.name,
             )
+        prepared_sources.append((dataset, data))
+    declared = [data for _, data in prepared_sources if isinstance(data, MDHistoData)
+                and "measurement_contract" in data.metadata]
+    if declared:
+        from .measurement_rebinning import combine_measurement_histograms
+        from .project_rebinning import _rebin_mdhisto_data
+        if metadata_dimensions or len(declared) != len(prepared_sources):
+            raise ValueError("Declared composites require compatible histogram sources; replay original measurements for metadata stacking")
+        if any(float(dataset.scale_factor) != 1 or float(dataset.fit_weight) != 1
+               for dataset, _ in prepared_sources):
+            raise ValueError("Calibrate declared measurements explicitly before pooling; composite importance weights are not exposure")
+        if not axes_config:
+            axes_config = _default_rebin_axes(declared[0])
+        bounds = [(min(float(data.axes[dim].values[0]) for data in declared),
+                   max(float(data.axes[dim].values[-1]) for data in declared))
+                  for dim in range(len(declared[0].axes))]
+        resolved = {**config, "axes": _resolve_auto_rebin_axes(axes_config, bounds)}
+        result = combine_measurement_histograms(
+            [_rebin_mdhisto_data(data, resolved, progress_callback=progress_callback)
+             for data in declared])
+        return result.with_updates(metadata={**result.metadata, "rebin": copy.deepcopy(resolved)})
+    if any(isinstance(data, MDHistoData) and data.metadata.get("measurement_target_required")
+           for _, data in prepared_sources):
+        raise ValueError("Choose an explicit statistical target for derived measurements before compositing")
+    for dataset, data in prepared_sources:
         if not isinstance(data, MDHistoData):
             continue
         all_event_statistics &= has_event_statistics(data)

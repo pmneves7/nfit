@@ -724,8 +724,8 @@ $S(\mathbf Q,E)$ as a separate response function
 
 The [public measurement statistics API](measurement_statistics.md) declares a
 target quantity, compatible unit labels, support, and dependencies before
-combination. Its one-bin reference estimates do not change existing project
-workflow dispatch. Units below are physical declarations; no automatic unit
+combination. Explicit contracts select corresponding project and viewer paths;
+unmarked saved workflows retain compatibility provenance. Units below are physical declarations; no automatic unit
 conversion or instrument-based estimator selection is performed.
 
 For continuous observations $y_i$ of a common value $\mu$, with known positive
@@ -803,6 +803,41 @@ not decrease as independent repeated noise. This delta-method variance is
 approximate, conditional on the supplied model, and unsuitable as an exact
 confidence interval near poorly constrained denominators. It does not establish
 that a plug-in ratio is unbiased or optimal. Known exposure sets $V_N=K_{CN}=0$.
+
+Additive continuous-mean payloads retain $S=\sum_i w_i y_i$,
+$Q=\sum_i w_i^2s_i^2$, $W=\sum_i w_i$, and the number of observations.
+The mean is $S/W$ and its independent variance is $Q/W^2$. The $w_i$ are
+dimensionless, with a recorded reference scale for precision weighting.
+Combining separately initialized precisions first reconciles that scale.
+Shared-source propagation replaces the diagonal expression by the source
+coefficient formula above. Uncertain count normalization instead retains both
+numerator and exposure primitives; rate sensitivities alone cannot recover the
+variance of a differently pooled ratio.
+
+### Declared fitting likelihoods
+
+Independent Gaussian fitting uses $(y_i-f_i)/s_i$ for model predictions $f_i$,
+with positive supplied standard deviations $s_i$. For represented covariance
+$\Sigma$ in squared observation units, generalized least squares (GLS) minimizes
+$\mathbf r^T\Sigma^{-1}\mathbf r$, where $r_i=y_i-f_i$. nfit factors a bounded
+selected covariance; singular dependence requires a primitive-source fit.
+
+For explicitly audited independent integer counts $n_i$ with known exposure
+$N_i$ and constant dimensionless event weight $w>0$, corrected numerator is
+$C_i=w n_i$ and predicted count is $\lambda_i=N_i f_i/w$. Poisson deviance is
+
+$$
+D=2\sum_i\left[\lambda_i-n_i+n_i\log(n_i/\lambda_i)\right].
+$$
+
+Counts and $\lambda_i$ are dimensionless; $f_i$ has intensity units and $N_i$
+has corrected numerator per intensity units. The logarithmic term is zero when
+$n_i=0$, so a measured empty cell contributes $2\lambda_i$. Positive counts with
+zero prediction have infinite deviance. Corrected weighted events or reused
+symmetry copies do not automatically satisfy this model. Reported Poisson fit
+parameter covariance uses expected Fisher information; its asymptotic standard
+errors are distinct from exact low-count intervals. Dataset importance weights
+do not create extra observations or calibrated likelihood-ratio probabilities.
 
 ### Pooling normalized count histograms
 
@@ -889,14 +924,17 @@ these cross terms using the exact signal-kernel bin assignments, giving
 $4V_{\mathrm{source}}$ for the same two copies in one final bin.
 Event contributions are counted separately under either policy.
 
-The diagonal histogram does **not** retain covariance between different bins.
+The default event histogram does **not** retain covariance between different bins.
 If symmetry copies land in separate bins that are later integrated together,
 adding stored diagonal variances misses those cross terms. Fractional histogram
 assignment, shared monitors/vanadium, reused backgrounds, and CORELLI
 reconstruction also require dependencies beyond this representation. Metadata
 records the selected policy and, for the covariance option, corrected within-bin
 pairs and unrepresented cross-bin pairs. Do not
-interpret diagonal pooling as exact uncertainty for correlated cells.
+interpret diagonal pooling as exact uncertainty for correlated cells. An optional
+`SourceDependencies` payload can retain represented cross-bin sources through
+subsequent aggregation; current native DGS caches do not construct this payload
+for every event or reconstruct shared detector-calibration uncertainty.
 Rebinning cached original events directly onto the final requested grid with
 `within_bin_covariance` recovers same-event covariance within those final bins
 without a dense matrix. It does not supply the covariance needed when subsequent

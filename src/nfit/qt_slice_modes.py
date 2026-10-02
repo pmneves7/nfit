@@ -811,12 +811,12 @@ class FitComparisonController(_ViewerController):
             y = y_centers[y_mask]
             data_z = self.model._display_values(data_view)
             errors = np.asarray(data_view.get("errors"), dtype=float)
-            selected = np.ix_(y_mask, x_mask)
             if errors.shape == data_z.shape:
                 self._show_roi_sum_annotation(
-                    data_z[selected],
-                    errors[selected],
+                    data_z,
+                    errors,
                     extents,
+                    selected=y_mask[:, None] & x_mask[None, :],
                 )
             x_coverage, y_coverage = self._histogram_cut_coverage(
                 data_view, x_mask, y_mask
@@ -986,7 +986,7 @@ class FitComparisonController(_ViewerController):
         self._clear_roi_sum_annotation()
         if np.any(data.selected):
             self._show_roi_sum_annotation(
-                values[data.selected], errors[data.selected], extents
+                values, errors, extents, selected=data.selected
             )
         self.ax_fit_cut.errorbar(
             data.x[0], data.x[1], yerr=data.x[2], marker="o", linestyle="None",

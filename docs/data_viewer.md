@@ -304,11 +304,10 @@ is a different estimator and does not retain a physical exposure denominator.
 See [Data representations and normalization](physics_conventions.md#data-representations-and-normalization)
 for the equations and statistical assumptions. Displayed-axis coarsening of new
 native count histograms also sums explicit numerator, variance, and exposure.
-Generic and older histograms retain inverse-variance display coarsening. Box
-profiles from explicit count statistics pool the same numerator, variance and
-exposure; other channels and legacy data retain inverse-variance profiles. Pooling diagonal
-variances does not reconstruct cross-bin covariance from symmetry copies or
-fractional sharing.
+Declared continuous means retain their additive value, variance and weight sums
+through display coarsening and profiles. Older unmarked histograms retain their
+compatibility behavior. Represented source sensitivities propagate through
+aggregation; diagonal errors alone cannot reconstruct missing covariance.
 
 ### Histogram box cuts
 
@@ -329,10 +328,12 @@ views of the selection, not new project datasets. The x/y panel-size sliders
 apply to inline panels only.
 
 **Save x** and **Save y** export the prepared profile without repeating its
-estimation. Continuous profiles retain `x,intensity,uncertainty` or
-`y,intensity,uncertainty`. Count profiles additionally export their numerator,
-variance, exposure, source contributions, mask and coverage. A `.csv.json`
-sidecar records the measurement contract, units and uncertainty conventions.
+estimation. Legacy profiles retain `x,intensity,uncertainty` or
+`y,intensity,uncertainty`. Prepared profiles additionally export available
+count or continuous-mean statistics, contributions, mask and coverage. A `.csv.json`
+sidecar records the contract, units and uncertainty conventions; optional
+`.csv.sources.npz` retains sparse source factors. Prepared map and waterfall
+exports use the same declaration and payload conventions.
 The public `save_measurement_profile_csv` API provides this export;
 `save_profile_csv` remains available for three-column arrays. For a rotated box, x and y are coordinates along
 its sides, with the box center retaining its displayed x and y coordinates.
@@ -431,8 +432,10 @@ box cuts pool the count numerator $C$, its accumulated variance $V$, and known
 exposure $N$ before division: $I=\sum C/\sum N$ with observed standard error
 $\sqrt{\sum V}/\sum N$. Covered zero-count cells contribute exposure and
 zero observed variance; unexposed cells contribute nothing. This is conditional
-on known exposure and the represented diagonal variances. It does not recover
-missing cross-bin dependencies. Model overlays use the same observation weights;
+on the represented uncertainty model. Supplied shared-source factors combine
+coefficients before squaring; uncertain-exposure bundles pool numerator and
+exposure primitives before division. Missing dependencies require source replay.
+Model overlays use the same observation weights;
 their overlay error is an observation error, not model-parameter uncertainty.
 
 Other channels, smoothed views and legacy continuous histograms retain

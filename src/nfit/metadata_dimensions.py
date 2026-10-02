@@ -520,6 +520,13 @@ def metadata_temperature_grid(data: MDHistoData) -> np.ndarray | None:
 
 def stack_metadata_histograms(template, slices, dimensions, centers) -> MDHistoData:
     """Stack independent histograms; missing combinations remain masked."""
+    from .measurement_dependencies import SourceReplayRequired
+
+    if any(data.source_dependencies is not None or data.counting_dependencies is not None
+           or "measurement_contract" in data.metadata or "measurement_statistics" in data.metadata
+           or data.metadata.get("measurement_target_required", False)
+           for data in (template, *slices.values())):
+        raise SourceReplayRequired("Metadata stacking of declared measurement payloads needs source-aware propagation or replay")
     shape = template.shape + tuple(len(c) for c in centers)
     signal = np.full(shape, np.nan)
     errors = np.full(shape, np.nan)

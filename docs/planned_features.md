@@ -34,33 +34,32 @@ releases. Current behavior is documented in the workflow and API pages.
 The temporary [Measurement pipeline implementation plan](measurement_pipeline_plan.md)
 tracks the staged implementation and review checkpoints for these changes.
 
-- Integrate the public [measurement contracts and one-bin estimators](measurement_statistics.md)
-  into project binning, cuts, fitting, and export. The API already distinguishes
-  exposure pooling for count rates,
-  inverse-variance means for independent continuous measurements, and
-  coordinate-interval averages with sampling-width weights. Preserve existing
-  saved weighting settings through an explicit compatibility path. The current
-  inverse-variance option multiplies any physical exposure weight by
-  $1/\sigma^2$, where $\sigma$ is the stored signal uncertainty; it does not
-  implement all these distinct estimators.
-- Regular/rotated box profiles now share count pooling and independent precision
-  estimation across static plots, Qt viewers, live cut viewers and export. General
-  rebinning, waterfalls, region targets and fit likelihoods still require contract
-  integration and source-dependency propagation.
+- Add the shared GUI settings schema and complete source recipes around the
+  public [measurement contracts](measurement_statistics.md). Explicit targets
+  already drive binning, slices, profiles, waterfalls, fitting and export. Unmarked
+  saved workflows retain compatibility provenance. User controls should explain
+  common-response means versus coordinate averages and show resolved assumptions.
 - Validate numerical alternatives and choose future defaults at the late
   cross-instrument acceptance stage. Current DGS compatibility defaults remain
   unchanged during contract and workflow refactoring.
-- Propagate dependencies from fractional assignment, repeated symmetry copies,
-  shared monitors/vanadium, backgrounds, and reconstruction hypotheses.
+- Extend source adapters to supply dependencies from fractional assignment,
+  repeated symmetry copies, shared monitors/vanadium and reconstruction hypotheses.
   CORELLI's reconstructed energy channels and symmetrized copies are not
   independent measurements. Native DGS/MDE binning offers covariance correction
   for same-event symmetry copies within a bin, while the default follows Mantid's
-  independent-copy convention. The histogram retains no cross-bin covariance;
-  subsequent diagonal pooling assumes independent cells and known exposure.
-- Retain sufficient statistics and provenance for counts, exposure, variance,
-  and shared uncertainty sources through caches and subsequent reductions.
-  Low-count confidence intervals and count-space likelihoods should remain
-  distinguishable from a symmetric Gaussian uncertainty.
+  independent-copy convention. Optional sparse source payloads propagate through
+  subsequent operations; current full DGS caches do not reconstruct calibration
+  factors or retain all cross-bin event dependencies. Final-grid event replay
+  retains the recorded within-bin policy without a dense covariance matrix.
+- Complete generalized multidimensional sampled-function interpolation and
+  primitive-source likelihoods for singular reconstructions. Bragg output tables
+  need represented covariance between reflections before such tables can be fit.
+  Source-node interval binning and bounded nonsingular GLS are already available.
+  Low-count intervals, observed standard errors and count objectives stay distinct.
+- Preserve declared sufficient statistics and source dependencies through
+  metadata-axis stacking. Until its source-aware workflow is available, stacking
+  declared payloads raises a replay requirement rather than losing their lineage;
+  existing unmarked metadata stacks remain supported.
 - Make reduction, histogram, and display recipes separately inspectable and
   reproducible. The SEQUOIA reduction examples separate run selection, UB,
   calibration, filters, and background settings from axis/bound/symmetry recipes

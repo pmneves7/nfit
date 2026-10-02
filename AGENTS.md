@@ -132,6 +132,14 @@ different Python.
   statistical targets, serializable assumptions, and one-bin reference estimators.
 - `src/nfit/measurement_profiles.py` and `box_cuts.py`: shared prepared histogram
   profiles, retained measurement payloads, and box-coordinate selection.
+- `src/nfit/measurement_aggregation.py`, `measurement_rebinning.py`, and
+  `measurement_point_bins.py`: retained estimator statistics and declared binning.
+- `src/nfit/measurement_dependencies.py`, `measurement_scaling.py`, and
+  `measurement_replay.py`: bounded primitive sensitivities, calibration, and
+  original-source replay.
+- `src/nfit/measurement_regions.py`, `measurement_waterfalls.py`,
+  `measurement_fit_data.py`, and `measurement_likelihoods.py`: statistical
+  region/trace preparation, fit payloads, and declared objectives.
 - `docs/measurement_statistics.md`: measurement contract and estimator scripting guide.
 
 Keep this map structural rather than exhaustive. Update it only when subsystem

@@ -48,6 +48,33 @@ those weights and are not necessarily repeated-experiment confidence intervals.
 When weights represent importance rather than statistical precision, reduced
 chi-squared is not a calibrated goodness-of-fit statistic.
 
+## Statistical objective
+
+The default objective uses independent Gaussian residuals and positive supplied
+standard errors. Fit preparation retains declared measurement statistics and
+source dependencies. It rejects treating represented shared observations as
+independent. Through the public `FitDataset(..., likelihood=...)` API or saved
+dataset parameter `fit_likelihood`, select `gaussian_gls` for a bounded tracked
+covariance, or `poisson_deviance` for an audited independent integer-count model
+with known exposure. No count model is inferred from an instrument name or from
+integer-looking corrected intensity. The later settings workflow will provide a
+dedicated objective chooser.
+
+The count objective includes measured zeros and requires a saved
+`PoissonCountModel` declaration and validated C,V,N payload. It does not accept
+heterogeneous event weights, symmetry-expanded measurements, uncertain exposure,
+or signed background differences. Reports label its objective as deviance; its
+parameter standard errors use asymptotic expected Fisher information. GLS requires
+a nonsingular covariance and enforces a work budget; a singular selection needs
+a primitive-source fit. See [Measurement statistics](measurement_statistics.md#fit-objectives)
+for APIs and [Physics conventions](physics_conventions.md#declared-fitting-likelihoods)
+for the equations. These optional objectives do not change saved defaults.
+
+Model projections use observation aggregation weights. Displayed model errors
+are observation errors for overlay, not fitted-parameter uncertainties. Aggregated
+GLS residual components remain diagnostics and are not a new independent residual
+fit at the displayed grid.
+
 The model editor marks fitted values near a finite bound in red. Treat this as a
 diagnostic that the optimum may lie outside the allowed interval.
 

@@ -5,13 +5,11 @@ instrument adapter provides calibrated observations, units, support, and source
 dependencies; the instrument name does not determine the statistical estimator.
 
 `MeasurementContract` and `estimate_measurement_bin` provide public, instrument-
-independent declarations and scalar reference estimates. Existing project
-binnings, viewers, fits, and exports retain their current behavior until the
-workflow integration described in [Planned features](planned_features.md#statistical-binning-and-reduction-recipes).
-The API does not automatically attach contracts to existing projects. Regular
-and rotated box profiles already use these declarations for validated count
-statistics and legacy independent precision means; other workflow integration
-remains staged.
+independent declarations and scalar reference estimates. Explicit declarations
+also drive source-point binning, aligned histogram coarsening, slice reduction,
+box profiles, waterfalls, fit preparation, and statistical CSV export. Existing
+projects are not assigned an acquisition model from their instrument name.
+Unmarked legacy data retain their saved behavior and record that provenance.
 
 ## Choose a target
 
@@ -86,7 +84,8 @@ common-value model. Large disagreement can indicate a varying response,
 underestimated errors, or missing calibration dependencies. The API does not
 automatically inflate variance or fit a random-effects model. Correlated
 observations need generalized least squares rather than diagonal precision
-weights; that estimator is not implemented here.
+weights. A bounded GLS objective is available for fitting tracked observations;
+the scalar inverse-variance estimator continues to require independence.
 
 For interval estimates, coordinates must be finite and strictly increasing.
 Repeated coordinates must first be combined under their measurement model.
@@ -165,9 +164,11 @@ the API does not convert units or infer compatibility from matching text alone.
 The returned immutable `MeasurementEstimate` contains value, propagated variance,
 standard error, support, included/excluded observation counts, and relevant
 pooled statistics. The scalar reference routines use sparse source terms, not a
-dense multidimensional covariance matrix. Project integration must retain or
-replay these dependencies through binning, cuts, fits and exports before claiming
-end-to-end equivalence under changes of intermediate grids.
+dense multidimensional covariance matrix. Histogram and point-data archives
+retain optional numerical statistics and sparse source dependencies as immutable
+array payloads. Project loading remains lazy: factors are read with their owning
+dataset. Replacing primary values clears stale statistical declarations;
+deliberate calibration propagates them through the dedicated scaling path.
 
 
 ## Histogram box profiles
@@ -201,11 +202,119 @@ C,V,N, source contribution semantics, masks and geometric coverage. The explicit
 normalization exposure does not substitute for geometric coverage. Count statistics
 are used only for the validated primary signal; other channels use their separate
 legacy precision-mean treatment. A saved compatible contract is preserved.
-Unsupported shared-source, uncertain-normalizer or other estimator declarations
-fail explicitly instead of silently choosing an independent model.
+Represented shared-source and uncertain-normalizer payloads propagate through
+profiles. Other unsupported declarations require source replay explicitly.
 
 A `reference_values` argument projects model predictions using observation
 weights. The result records `profile_role="model_prediction"` and an observation
 error for overlay; it does not establish model uncertainty or observed event counts.
-Only diagonal uncertainty is propagated here. Full dependency propagation, region
-estimation and fitting likelihoods remain separate workflow requirements.
+Primary source factors are projected with the observation weights. Model overlays
+do not acquire observed count statistics or model-parameter covariance payloads.
+Smoothing is a plot preview with a diagonal error approximation. For declared
+measurements it invalidates statistical payloads and requires source replay or
+an explicit new uncertainty model before further scientific aggregation.
+
+## Binning and source replay
+
+`bin_measurement_points(data, bin_edges, contract=...)` bins original
+`PointData4D` observations with a declared target. Count observations require
+validated numerator, numerator variance, and exposure. Continuous means retain
+four additive arrays: weighted value sum, propagated variance of that sum,
+weight sum, and number of observations. Precision weights carry a shared numerical
+scale; independently prepared sources reconcile that scale before combination.
+Counts of observations are not neutron event counts.
+
+`coarsen_measurement_histogram(data, bin_edges)` combines complete source cells.
+Output edges must coincide with source edges in the same physical basis.
+`combine_measurement_histograms(datasets)` pools compatible aligned payloads;
+contracts and units must agree. Marked project rebinning uses these services.
+Masks and measured zeros affect every additive channel consistently. A composite's
+maximum source coverage is recorded explicitly; overlapping fractional support
+geometry is not reconstructed from scalar coverage fractions.
+
+Refinement, crossing existing cells, changed bases, and fractional/symmetry
+redistribution require original measurements rather than a guess about a cell's
+internal distribution. `replay_measurement_histogram(group, **binning)` bins a
+raw-DGS or MDEvent group directly on the final grid and reuses valid reduced-event
+caches. Give integrated dimensions a single final bin. Its provenance records
+source identities, source configuration, binning and numerical policies.
+Same-event variance follows the recorded copy policy; replay does not invent
+unrecorded detector-calibration dependencies.
+
+For a sampled function, bin the original ordered nodes over explicit coordinate
+intervals. The supported point workflow has one varying coordinate and constant
+remaining coordinates; multidimensional interpolation needs a separate model.
+An interval result retains nodal sensitivities, so adjacent intervals can share
+uncertainty. Rebinning those interval estimates requires the original nodes.
+Supply a stable `source_namespace` or metadata `measurement_source_id` when
+constructing independent node factors. Reuse it only for the same original
+observable. This preserves identity across repeated calls and selections;
+project source-file identity is a fallback for an original file-backed series.
+
+## Source dependencies in derived data
+
+`SourceDependencies` stores bounded sparse sensitivities from stable independent
+primitive IDs to the primary estimate. IDs shared by different datasets refer to
+the same fluctuation and must have the same variance. Projection and signed
+combination merge coefficients before squaring. The default payload budget is
+256 MiB; exceeding it raises `SourceReplayRequired` instead of dropping covariance.
+No dense covariance matrix is allocated for an entire project histogram.
+`scale_measurement_data(data, factor)` propagates a known calibration through
+statistics and source factors. Spectral conversions also update declared quantity
+and units; they do not establish a count likelihood for signed responses.
+
+`CountingDependencies` retains separate numerator and exposure sensitivities.
+These primitives must be pooled before the ratio Jacobian is evaluated. A
+zero-count cell's uncertain exposure can affect a pooled nonzero rate even when
+its own first-order rate variance is zero. The result remains explicitly a
+delta-method approximation. Primary-rate sensitivities alone cannot recover this
+information.
+
+Shared backgrounds propagate through aligned subtraction, interpolation and
+signed region/Bragg integration. A transformed explicitly declared measurement
+needs a new statistical target; it must not inherit a count or mean contract
+describing the unsubtracted signal. Historical unmarked subtractions retain
+their compatibility provenance. `estimate_measurement_region(...)` evaluates a
+stated linear sum, with optional signed or volume coefficients and source factors.
+It is a sum/integral target, not the box-profile mean.
+
+Current DGS caches do not retain the source model needed to reconstruct shared
+vanadium/monitor calibration uncertainty. Bragg tables record individual reflection
+variances but flag unretained covariance between reflections; fitting such a table
+requires primitive-source replay. These boundaries are explicit in the APIs.
+Metadata-axis stacking currently requires original-source replay for declared
+payloads; existing unmarked stacks retain their compatibility path.
+
+## Fit objectives
+
+`prepare_histogram_fit_points(data)` retains contracts, validated statistics,
+exposure and represented primary source sensitivities. `FitDataset(...,
+likelihood="gaussian")` preserves the default independent Gaussian objective;
+positive standard errors are required. It rejects tracked shared observations
+rather than counting them as independent. `likelihood="gaussian_gls"` uses the
+represented covariance of a small selection, with a 128 MiB work budget. A
+singular covariance requires fitting primitive sources; deterministic constraints
+are not discarded through a pseudoinverse.
+
+`likelihood="poisson_deviance"` includes measured count zeros, but requires an
+explicit `PoissonCountModel(constant_weight=..., provenance=...).to_dict()` in
+`data.metadata["poisson_count_model"]`. This certifies independent integer
+primitive counts, known exposure and a constant event weight. Integer-looking
+corrected intensities are insufficient. Heterogeneous weights, symmetry-expanded
+copies, uncertain exposure and signed/background reconstructions are rejected.
+Count parameter covariance uses expected Fisher information and is an
+asymptotic estimate, not a low-count confidence interval.
+
+Saved dataset parameter `fit_likelihood` selects these objectives through the
+project compiler and script API. Reports distinguish deviance from Gaussian
+chi-squared. Aggregated GLS residual components are display diagnostics, not a new
+fit or a spatial map of independent standard-normal residuals.
+
+## Statistical exports
+
+`save_measurement_profile_csv`, `save_measurement_grid_csv` and prepared waterfall
+export retain available additive statistics, masks, support and declaration
+sidecars. `.csv.sources.npz` stores sparse factors when present; `.csv.json`
+records their layout and assumptions. Legacy three-column profile and simple
+map exports remain available. Diagnostic channels do not inherit a count contract
+merely because their source dataset contains counts.

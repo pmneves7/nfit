@@ -1579,6 +1579,37 @@ def _rebin_mdhisto_data(
             )
         physical_transform = np.vstack(source_vectors)
         output_axes = _validate_mdhisto_rebin_basis(axes_config, ndim)
+    declaration = config.get("measurement_contract", data.metadata.get("measurement_contract"))
+    if declaration is None and data.metadata.get("measurement_target_required"):
+        raise ValueError("Choose an explicit statistical target for derived measurements before rebinning")
+    if declaration is not None:
+        from .measurement_contracts import MeasurementContract
+        from .measurement_rebinning import coarsen_measurement_histogram
+        contract = MeasurementContract.from_dict(declaration)
+        if symmetry is not None or not np.allclose(transform, np.eye(ndim), rtol=0, atol=1e-12):
+            raise ValueError("Declared measurement histograms require source replay for symmetry or a changed basis")
+        if bool(config.get("fractional", False)):
+            raise ValueError("Declared measurement histograms require source replay for fractional assignments")
+        bounds = [(float(axis.values[0]), float(axis.values[-1])) for axis in data.axes]
+        axes_config = _resolve_auto_rebin_axes(axes_config, bounds)
+        if any(_rebin_axis_mode(config, axis) in {"discrete", "tolerance"} for axis in axes_config):
+            raise ValueError("Replay source measurements to resolve a data-driven output grid")
+        from .rebin import NDRebin
+        coordinates = np.array([[axis.centers[0] for axis in data.axes]])
+        planner = NDRebin(np.ones(1), coordinates,
+            lower=[axis["lower"] for axis in axes_config], upper=[axis["upper"] for axis in axes_config],
+            **_rebin_grid_kwargs(config, axes_config), fractional=False)
+        # Grid planning must not allocate an output-sized dummy histogram.
+        planner.Ndims = ndim
+        planner.coords_flat = coordinates
+        planner._build_limits()
+        planner._make_bins()
+        output = coarsen_measurement_histogram(data, planner.bins_list, contract=contract,
+            minimum_coverage=_rebin_minimum_coverage(config))
+        metadata = dict(output.metadata)
+        metadata["rebin"] = {**copy.deepcopy(config), "measurement_contract": contract.to_dict(),
+            "statistical_assignment": "aligned_complete_cells"}
+        return output.with_updates(metadata=metadata)
     use_stream = _mdhisto_streaming_supported(data, config, axes_config)
     normalization_values = normalization_denominator(data)
     background_channel = (
@@ -2026,6 +2057,8 @@ def _rebin_point_data(
     *,
     progress_callback: Any | None = None,
 ) -> MDHistoData:
+    if data.metadata.get("measurement_contract") is not None:
+        return _rebin_declared_point_data(data, config, progress_callback=progress_callback)
     source = data.valid(require_positive_sigma=False)
     if source.size == 0:
         raise ValueError("no valid data points remain before rebinning")
@@ -2048,6 +2081,73 @@ def _rebin_point_data(
         },
         progress_callback=progress_callback,
     )
+
+
+def _rebin_declared_point_data(data, config, *, progress_callback=None):
+    """Resolve the native project grid, then call the public point estimator."""
+    from .measurement_dependencies import SourceReplayRequired
+    from .measurement_point_bins import bin_measurement_points
+
+    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
+    if len(axes_config) != 4:
+        raise ValueError("Declared point binning requires four physical coordinate axes")
+    if any(_rebin_fractional_axes(config, axes_config)) or _rebin_symmetry_matrices(config, data.metadata.get("lattice_parameters")) is not None:
+        raise SourceReplayRequired("Declared point fractional assignment or symmetry requires original-source replay")
+    basis = _validate_mdhisto_rebin_basis(axes_config, 4)
+    coordinates = np.column_stack(data.coordinates()) @ np.linalg.inv(basis)
+    axes_config = _resolve_auto_rebin_axes(axes_config, _finite_coordinate_bounds(coordinates))
+    axes_config = _resolve_data_driven_rebin_axes(config, axes_config, coordinates)
+    grid = _rebin_grid_kwargs(config, axes_config)
+    edges = tuple(np.asarray(explicit, float) if explicit is not None else
+                  _uniform_center_edges(axis["lower"], axis["upper"], step=step)
+                  for axis, step, explicit in zip(axes_config, grid["step_size"],
+                    grid.get("bin_edges", [None]*4), strict=True))
+    declaration = data.metadata["measurement_contract"]
+    sampled_dimension = config.get("coordinate_dimension")
+    if declaration["kind"] == "sampled_function":
+        if sampled_dimension is None:
+            varying = np.flatnonzero(np.ptp(coordinates, axis=0) > 0)
+            sampled_dimension = int(varying[0]) if len(varying) == 1 else None
+        if isinstance(sampled_dimension, int) and 0 <= sampled_dimension < 4:
+            axis = axes_config[sampled_dimension]
+            if not axis.get("units"):
+                axis["units"] = declaration["coordinate_units"]
+            if not axis.get("name"):
+                axis["name"] = data.metadata.get("coordinate_name", "coordinate")
+    axes = tuple(MDHistoAxis(str(axis.get("name") or ("H", "K", "L", "DeltaE")[dim]), edge,
+                  str(axis.get("units") or ("rlu" if dim < 3 else "meV")),
+                  "momentum" if dim < 3 else "energy", metadata={"vector": basis[dim].tolist(),
+                    "variable": axis.get("variable", ("H", "K", "L", "E")[dim]),
+                    **({"discrete_centers": axis["discrete_centers"]} if "discrete_centers" in axis else {})})
+                 for dim, (axis, edge) in enumerate(zip(axes_config, edges, strict=True)))
+    if declaration["kind"] == "sampled_function" and sampled_dimension is not None:
+        from dataclasses import replace
+        axes = tuple(replace(axis, kind="unknown", metadata={**axis.metadata, "variable": "coordinate"})
+                     if dim == sampled_dimension else axis for dim, axis in enumerate(axes))
+    if progress_callback is not None:
+        progress_callback({"stage": "rebin_sources", "message": "binning declared point measurements"})
+    source_namespace = data.metadata.get("measurement_source_id")
+    if data.metadata["measurement_contract"]["kind"] == "sampled_function":
+        from pathlib import Path
+        if source_namespace is None and data.metadata.get("source_file"):
+            source_namespace = str(Path(data.metadata["source_file"]).expanduser().resolve())
+    else:
+        source_namespace = None
+    result = bin_measurement_points(data, edges, vectors=basis, axes=axes,
+        coordinate_dimension=config.get("coordinate_dimension"), source_namespace=source_namespace)
+    minimum = _rebin_minimum_samples(config)
+    if minimum > 0 and result.metadata.get("num_events_semantics") == "unavailable":
+        raise SourceReplayRequired("Minimum event counts require retained event counts, not inferred measurements")
+    coverage = result.auxiliary_channels["coverage_fraction"].values
+    mask = result.mask | (coverage < _rebin_minimum_coverage(config)) | (result.num_events < minimum)
+    metadata = dict(result.metadata)
+    metadata["rebin"] = {"bin_edges": [edge.tolist() for edge in edges], "vectors": basis.tolist(),
+        "lower": [axis["lower"] for axis in axes_config], "upper": [axis["upper"] for axis in axes_config],
+        "num_bins": [len(edge)-1 for edge in edges], "fractional_axes": [False]*4,
+        "axis_modes": [_rebin_axis_mode(config, axis) for axis in axes_config],
+        "measurement_estimator": metadata["measurement_contract"]["estimator"],
+        "minimum_coverage": _rebin_minimum_coverage(config), "minimum_samples": minimum}
+    return result.with_updates(mask=mask, metadata=metadata)
 
 
 def _point_data_histogram(

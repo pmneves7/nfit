@@ -17,6 +17,13 @@ from .histogram_statistics import (
     normalized_event_statistics,
 )
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
+from .measurement_aggregation import (
+    MEASUREMENT_STATISTICS_CHANNELS,
+    MEASUREMENT_STATISTICS_KEY,
+    initialize_measurement_statistics,
+    measurement_statistics_channels,
+    normalized_measurement_statistics,
+)
 from .measurement_contracts import MeasurementContract
 
 
@@ -26,7 +33,7 @@ class MeasurementProfile:
 
     ``data`` is one dimensional. Its event-count semantics are recorded; counts
     are never inferred from signal, variance, exposure or the number of bins.
-    Cross-bin source dependencies are not yet represented by this service.
+    Bounded primitive source sensitivities propagate when supplied.
     """
 
     data: MDHistoData
@@ -48,6 +55,11 @@ def _view_statistics(view, reference, errors, channel):
         return None
     arrays = tuple(np.asarray(view[name], dtype=float) for name in names)
     signal, variance = normalized_event_statistics(*arrays)
+    bundle = view.get("counting_dependencies")
+    if bundle is not None:
+        from .measurement_dependencies import ratio_source_dependencies
+        bundle.numerator_dependencies.validate_variances(arrays[1])
+        variance = ratio_source_dependencies(bundle, arrays[0], arrays[2]).variance()
     # Display masks may hide selected cells without changing their statistics.
     visible = np.isfinite(reference) & np.isfinite(errors)
     if not (np.allclose(signal[visible], reference[visible], rtol=1e-12, atol=0)
@@ -87,10 +99,12 @@ def prepare_measurement_profile(
         raise ValueError("Coverage threshold must be between zero and one")
     statistics = _view_statistics(view, reference, errors, channel)
     declared = view.get("measurement_contract") if channel == "signal" else None
+    if declared is None and channel == "signal" and view.get("measurement_target_required"):
+        raise ValueError("Choose an explicit statistical target for derived measurements before profiling")
     if declared is not None:
         declared = MeasurementContract.from_dict(declared)
-        expected = "exposure_pool" if statistics is not None else "inverse_variance_mean"
-        if declared.estimator != expected or declared.dependence != "independent" or declared.normalizer != "known":
+        expected = ("exposure_pool",) if statistics is not None else ("inverse_variance_mean", "uniform_mean")
+        if declared.estimator not in expected or (declared.normalizer != "known" and view.get("counting_dependencies") is None) or (declared.dependence != "independent" and view.get("source_dependencies") is None):
             raise ValueError("This profile path requires known exposure or independent precision means; source replay is needed for this contract")
     good = selected & np.isfinite(values) & np.isfinite(reference) & np.isfinite(errors)
     units = declared.value_units if declared is not None else str(view.get("signal_unit") or "unspecified intensity units")
@@ -115,19 +129,31 @@ def prepare_measurement_profile(
         signal, variance = normalized_event_statistics(*pooled)
         channels.update(event_statistics_channels(*pooled))
     else:
-        good &= errors > 0
-        contract = MeasurementContract(kind="continuous", estimator="inverse_variance_mean",
+        contract = declared or MeasurementContract(kind="continuous", estimator="inverse_variance_mean",
             quantity="common value", value_units=units)
-        minimum_error = np.full(bins, np.inf)
-        np.minimum.at(minimum_error, indices[good], errors[good])
-        weights = np.zeros(values.shape)
-        weights[good] = np.square(minimum_error[indices[good]] / errors[good])
-        weight = sum_bins(weights, good)
-        signal, variance = np.full(bins, np.nan), np.full(bins, np.nan)
-        normalized_weights = np.zeros(values.shape)
-        normalized_weights[good] = weights[good] / weight[indices[good]]
-        signal[weight > 0] = sum_bins(values * normalized_weights, good)[weight > 0]
-        variance[weight > 0] = np.square(minimum_error[weight > 0] / np.sqrt(weight[weight > 0]))
+        generic_marker = view.get(MEASUREMENT_STATISTICS_KEY)
+        generic_stats = None
+        if isinstance(generic_marker, dict) and generic_marker.get("version") == 1:
+            if generic_marker.get("estimator") != contract.estimator:
+                raise ValueError("Stored weights do not match the declared estimator; replay sources")
+            if any(name not in view or np.shape(view[name]) != values.shape for name in MEASUREMENT_STATISTICS_CHANNELS):
+                raise ValueError("Missing additive measurement payload; replay sources")
+            generic_stats = tuple(np.asarray(view[name], float) for name in MEASUREMENT_STATISTICS_CHANNELS)
+            original, original_variance = normalized_measurement_statistics(*generic_stats)
+            visible = np.isfinite(reference) & np.isfinite(errors)
+            if not (np.allclose(original[visible], reference[visible], rtol=1e-12, atol=0)
+                    and np.allclose(original_variance[visible], errors[visible]**2, rtol=1e-12, atol=0)):
+                raise ValueError("Stale additive measurement payload; replay sources")
+        if generic_stats is None:
+            from dataclasses import replace
+            generic_stats, generic_marker = initialize_measurement_statistics(
+                reference, errors, replace(contract, missing="omit", dependence="independent"), mask=~good)
+        source_weights = generic_stats[2]
+        good &= np.isfinite(source_weights) & (source_weights > 0) & (errors >= 0)
+        numerator = generic_stats[0] if reference_values is None else values*source_weights
+        pooled = tuple(sum_bins(array, good) for array in (numerator, *generic_stats[1:]))
+        signal, variance = normalized_measurement_statistics(*pooled)
+        channels.update(measurement_statistics_channels(*pooled))
 
     if declared is not None:
         contract = declared
@@ -142,15 +168,53 @@ def prepare_measurement_profile(
     support = sum_bins(widths, selected)
     fraction = np.zeros(bins)
     np.divide(sum_bins(covered * widths, selected), support, out=fraction, where=support > 0)
+    output_dependencies = None
+    output_counting_dependencies = None
+    dependencies = view.get("source_dependencies")
+    bundle = view.get("counting_dependencies") if statistics is not None else None
+    if bundle is not None:
+        from .measurement_dependencies import (
+            CountingDependencies,
+            project_source_dependencies,
+            ratio_source_dependencies,
+        )
+        inputs, outputs = np.flatnonzero(good), indices[good]
+        count_bundle = CountingDependencies(
+            numerator_dependencies=project_source_dependencies(bundle.numerator_dependencies, inputs, outputs, np.ones(len(inputs)), (bins,)),
+            exposure_dependencies=project_source_dependencies(bundle.exposure_dependencies, inputs, outputs, np.ones(len(inputs)), (bins,)))
+        observed_numerator = sum_bins(statistics[0], good)
+        observed_dependencies = ratio_source_dependencies(count_bundle, observed_numerator, pooled[2])
+        variance = np.where(pooled[2] > 0, observed_dependencies.variance(), np.nan)
+        pooled = (pooled[0], count_bundle.numerator_dependencies.variance(), pooled[2])
+        channels.update(event_statistics_channels(*pooled))
+        if reference_values is None:
+            output_dependencies, output_counting_dependencies = observed_dependencies, count_bundle
+    elif dependencies is not None:
+        from .measurement_dependencies import project_source_dependencies
+        dependencies.validate_variances(errors**2, mask=~good)
+        weights = statistics[2] if statistics is not None else source_weights
+        coefficients = weights[good]/pooled[2][indices[good]]
+        observed_dependencies = project_source_dependencies(dependencies, np.flatnonzero(good),
+            indices[good], coefficients, (bins,))
+        variance = np.where(pooled[2] > 0, observed_dependencies.variance(), np.nan)
+        if reference_values is None:
+            output_dependencies = observed_dependencies
+        pooled = (pooled[0], np.where(pooled[2] > 0, variance*pooled[2]**2, 0), *pooled[2:])
+        channels.update(event_statistics_channels(*pooled) if statistics is not None
+                        else measurement_statistics_channels(*pooled))
     mask = ~np.isfinite(signal) | ~np.isfinite(variance) | (fraction < coverage_threshold)
     error = np.sqrt(variance)
     metadata = {"measurement_contract": contract.to_dict(), "zero_event_bins_are_measured": True,
                 "signal_semantics": "density", "signal_unit": contract.value_units,
-                "profile_covariance": "diagonal_only"}
+                "profile_covariance": "source_sensitivities" if output_dependencies is not None else "diagonal_only",
+                "measurement_contract_origin": "explicit" if declared is not None else "validated_count_statistics" if statistics is not None else "legacy_precision_mean"}
     if statistics is not None:
         metadata[EVENT_STATISTICS_KEY] = dict(view[EVENT_STATISTICS_KEY])
+    else:
+        metadata[MEASUREMENT_STATISTICS_KEY] = dict(generic_marker)
     if reference_values is not None:
         metadata.pop(EVENT_STATISTICS_KEY, None)
+        metadata.pop(MEASUREMENT_STATISTICS_KEY, None)
         metadata["profile_role"] = "model_prediction"
         metadata["profile_uncertainty"] = "observation_error_for_overlay"
     events = np.asarray(view.get("num_events", np.zeros(values.shape)), dtype=float)
@@ -165,5 +229,5 @@ def prepare_measurement_profile(
     axis_metadata = {} if centers is None else {"discrete_centers": np.asarray(centers, dtype=float).tolist()}
     data = MDHistoData(axes=(MDHistoAxis("Box profile", edges, "", "unknown", metadata=axis_metadata),),
         signal=signal, errors=error, mask=mask, num_events=events,
-        metadata=metadata, auxiliary_channels=channels)
+        metadata=metadata, auxiliary_channels=channels, source_dependencies=output_dependencies, counting_dependencies=output_counting_dependencies)
     return MeasurementProfile(data, contract)

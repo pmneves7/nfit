@@ -18,6 +18,12 @@ from numpy.typing import ArrayLike, NDArray
 
 from . import _parallel
 from .dataset import PointData4D
+from .measurement_likelihoods import (
+    FIT_LIKELIHOODS,
+    fit_measurement_residuals,
+    gaussian_whitener,
+    poisson_count_statistics,
+)
 from .rebin import rebin_nd, rebin_nd_symmetry
 
 try:  # pragma: no cover - exercised only when SciPy is importable.
@@ -336,14 +342,21 @@ class FitDataset:
     model: Any = None
     data_scale_parameter: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    likelihood: str = field(default="gaussian", kw_only=True)
     model_jacobian: Any = None
     """Optional ``(data, params) -> {qualified_name: d(model)/d(param)}`` giving
     exact model gradients for analytic least-squares. When every dataset in a
     problem supplies one, the optimizer uses them instead of finite
     differences."""
-    _prepared_valid_cache: dict[bool, PointData4D] = field(
+    _prepared_valid_cache: dict[tuple[bool, str], PointData4D] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
+
+    _measurement_whiteners: dict[int, FloatArray] = field(default_factory=dict, init=False, compare=False, repr=False)
+
+    def __post_init__(self):
+        if self.likelihood not in FIT_LIKELIHOODS:
+            raise ValueError(f"Unknown fit likelihood {self.likelihood!r}")
 
     def prepared(self) -> PointData4D:
         """Return data after applying all dataset-local transforms."""
@@ -367,10 +380,12 @@ class FitDataset:
         actually hit their cache instead of rebuilding.
         """
 
-        cached = self._prepared_valid_cache.get(require_positive_sigma)
+        key = (require_positive_sigma, self.likelihood)
+        cached = self._prepared_valid_cache.get(key)
         if cached is None:
-            cached = self.prepared().valid(require_positive_sigma=require_positive_sigma)
-            self._prepared_valid_cache[require_positive_sigma] = cached
+            positive_sigma = require_positive_sigma and self.likelihood != "poisson_deviance"
+            cached = self.prepared().valid(require_positive_sigma=positive_sigma)
+            self._prepared_valid_cache[key] = cached
         return cached
 
     def apply_resolution(
@@ -551,10 +566,12 @@ class FitResult:
     dataset_reduced_chi2: dict[str, float] = field(default_factory=dict)
     dataset_sizes: dict[str, int] = field(default_factory=dict)
     dataset_weights: dict[str, float] = field(default_factory=dict)
+    dataset_likelihoods: dict[str, str] = field(default_factory=dict, kw_only=True)
     dataset_residuals: dict[str, FloatArray] = field(default_factory=dict)
     dataset_model_values: dict[str, FloatArray] = field(default_factory=dict)
     covariance_mode: str = "absolute"
     covariance_scale_factor: float = 1.0
+    covariance_interpretation: str = field(default="local_gaussian", kw_only=True)
     cancelled: bool = False
 
 
@@ -1016,7 +1033,20 @@ def rebin_point_data(
     Empty bins are retained with ``mask=False`` so later calls to
     :meth:`PointData4D.valid` drop them. ``bin_edges`` may override selected
     axes with nonuniform edges by using ``None`` for axes that remain uniform.
+    Explicit measurement contracts use physical cell binning with
+    ``fractional=False`` and retain their sufficient statistics. The contract
+    selects the estimator; ``mean_weighting`` remains a legacy input option.
     """
+
+    if "measurement_contract" in data.metadata or data.metadata.get("measurement_target_required"):
+        from .measurement_dependencies import SourceReplayRequired
+        from .measurement_fit_data import rebin_declared_fit_points
+        if fractional or (fractional_axes is not None and any(fractional_axes)) or symmetry_operations is not None:
+            raise SourceReplayRequired("Declared fit point binning requires physical cells (fractional=False) without symmetry; replay primitives for reconstruction")
+        if not normalize or minimum_samples != 0:
+            raise ValueError("Declared fit point binning uses its contract estimator and measured support; sum or minimum-sample targets require an explicit different operation")
+        return rebin_declared_fit_points(data, lower=lower, upper=upper, step_size=step_size,
+                                        num_bins=num_bins, bin_edges=bin_edges)
 
     source = data.valid(require_positive_sigma=False)
     if source.size == 0:
@@ -1196,6 +1226,12 @@ def fit_problem_least_squares(
 
     ``sqrt(dataset.weight) * (I_obs - I_model) / sigma``.
 
+    ``FitDataset.likelihood`` can instead select audited Poisson deviance or
+    bounded source-aware Gaussian GLS. Covered count zeros participate in the
+    Poisson objective. The reported ``chi2`` is the weighted objective (Poisson
+    deviance for those datasets), not a universal Gaussian goodness statistic.
+    Count fits report asymptotic expected-Fisher parameter covariance.
+
     The reported ``chi2`` is therefore the weighted objective contribution
     minimized by the optimizer. Per-dataset values in ``dataset_chi2`` use the
     same convention.
@@ -1207,6 +1243,9 @@ def fit_problem_least_squares(
     if opt.covariance_mode not in {"absolute", "residual"}:
         raise ValueError("covariance_mode must be 'absolute' or 'residual'")
 
+    has_poisson = any(dataset.likelihood == "poisson_deviance" for dataset in problem.datasets)
+    if has_poisson and opt.covariance_mode != "absolute":
+        raise ValueError("Count-likelihood covariance uses absolute expected Fisher information; residual scaling is not a Poisson uncertainty model")
     x0, bounds, names, fixed = pack_parameters(problem.parameter_specs)
 
     def residual_fn(x: FloatArray) -> FloatArray:
@@ -1258,6 +1297,7 @@ def fit_problem_least_squares(
             dataset_reduced_chi2=evaluation.dataset_reduced_chi2,
             dataset_sizes=evaluation.dataset_sizes,
             dataset_weights=evaluation.dataset_weights,
+            dataset_likelihoods={dataset.name: dataset.likelihood for dataset in problem.datasets},
             dataset_residuals=evaluation.dataset_residuals,
             dataset_model_values=evaluation.dataset_model_values,
         )
@@ -1292,8 +1332,30 @@ def fit_problem_least_squares(
     chi2 = float(np.sum(residuals * residuals))
     dof = sum(evaluation.dataset_sizes.values()) - len(names)
     reduced_chi2 = chi2 / dof if dof > 0 else np.nan
+    covariance_jacobian = result.jac
+    if has_poisson:
+        def fisher_coordinates(x):
+            trial = problem.resolve_parameters(unpack_parameters(x, names, fixed))
+            blocks = []
+            for dataset in problem.datasets:
+                prepared = dataset.prepared_valid(require_positive_sigma=opt.require_positive_sigma)
+                local = _apply_parameter_bindings(trial, dataset.parameter_bindings)
+                prediction = _evaluate_dataset_model(problem, dataset, prepared, local)
+                scale = float(trial[dataset.data_scale_parameter]) if dataset.data_scale_parameter else 1.
+                if dataset.likelihood == "poisson_deviance":
+                    _counts, exposure, weight = poisson_count_statistics(prepared)
+                    expected = exposure * prediction / (scale * weight)
+                    if np.any(expected <= 0):
+                        return None
+                    blocks.append(np.sqrt(dataset.weight) * 2 * np.sqrt(expected))
+                else:
+                    whitener = dataset._measurement_whiteners.get(id(prepared))
+                    blocks.append(np.sqrt(dataset.weight) * fit_measurement_residuals(prepared, prediction, dataset.likelihood, data_scale=scale, whitener=whitener))
+            return np.concatenate(blocks)
+        coordinates = fisher_coordinates(result.x)
+        covariance_jacobian = None if coordinates is None else _finite_difference_jacobian(fisher_coordinates, result.x, coordinates, bounds)
     covariance = _covariance_from_jacobian(
-        result.jac,
+        covariance_jacobian,
         chi2=chi2,
         dof=dof,
         covariance_mode=opt.covariance_mode,
@@ -1326,10 +1388,12 @@ def fit_problem_least_squares(
         fixed_params=fixed,
         covariance_mode=opt.covariance_mode,
         covariance_scale_factor=covariance_scale_factor,
+        covariance_interpretation="expected_fisher_asymptotic" if has_poisson else "local_gaussian",
         dataset_chi2=evaluation.dataset_chi2,
         dataset_reduced_chi2=evaluation.dataset_reduced_chi2,
         dataset_sizes=evaluation.dataset_sizes,
         dataset_weights=evaluation.dataset_weights,
+        dataset_likelihoods={dataset.name: dataset.likelihood for dataset in problem.datasets},
         dataset_residuals=evaluation.dataset_residuals,
         dataset_model_values=evaluation.dataset_model_values,
         cancelled=bool(result.cancelled),
@@ -1379,8 +1443,10 @@ def sample_problem_parameters(
 
     The default ``method="emcee"`` backend is optional. Install the package
     extra that provides ``emcee`` before using this function. The likelihood is
-    the Gaussian chi-squared implied by the current weighted residual vector,
-    with uniform priors from finite parameter bounds.
+    implied by the selected Gaussian/GLS or audited Poisson-deviance objective,
+    with uniform priors from finite parameter bounds. Gaussian data-side varying
+    scales retain the historical residual objective rather than a complete
+    scale-dependent normalizer likelihood.
     """
 
     sampler = SamplerConfig() if config is None else config
@@ -1710,8 +1776,10 @@ def _evaluate_problem(
     dataset_model_values: dict[str, FloatArray] = {}
 
     params = problem.resolve_parameters(params)
-    for dataset in problem.datasets:
-        prepared = dataset.prepared_valid(require_positive_sigma=require_positive_sigma)
+    from .measurement_likelihoods import validate_fit_dataset_independence
+    prepared_datasets = [(dataset, dataset.prepared_valid(require_positive_sigma=require_positive_sigma)) for dataset in problem.datasets]
+    validate_fit_dataset_independence((dataset.name, points) for dataset, points in prepared_datasets if dataset.weight > 0)
+    for dataset, prepared in prepared_datasets:
         if prepared.size == 0:
             raise ValueError(f"dataset {dataset.name!r} has no valid points after preprocessing")
 
@@ -1723,14 +1791,14 @@ def _evaluate_problem(
                 f"expected {prepared.intensity.shape}"
             )
 
-        intensity = np.asarray(prepared.intensity, dtype=float)
-        sigma = np.asarray(prepared.sigma, dtype=float)
-        if dataset.data_scale_parameter:
-            scale = float(params[dataset.data_scale_parameter])
-            intensity = intensity * scale
-            sigma = sigma * max(abs(scale), np.finfo(float).tiny)
-        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-            residual = (intensity - model_values) / sigma
+        scale = float(params[dataset.data_scale_parameter]) if dataset.data_scale_parameter else 1.
+        whitener = None
+        if dataset.likelihood == "gaussian_gls":
+            whitener = dataset._measurement_whiteners.get(id(prepared))
+            if whitener is None:
+                whitener = gaussian_whitener(prepared)
+                dataset._measurement_whiteners[id(prepared)] = whitener
+        residual = fit_measurement_residuals(prepared, model_values, dataset.likelihood, data_scale=scale, whitener=whitener)
         weighted_residual = np.sqrt(dataset.weight) * residual
         residual_blocks.append(weighted_residual)
         model_blocks.append(model_values)
@@ -1767,7 +1835,7 @@ def problem_supports_analytic_jacobian(problem: FitProblem) -> bool:
     if any(derived.expression is not None for derived in problem.derived_parameters):
         return False
     return all(
-        dataset.model_jacobian is not None and dataset.resolution is None
+        dataset.model_jacobian is not None and dataset.resolution is None and dataset.likelihood == "gaussian"
         for dataset in problem.datasets
     )
 
@@ -1946,6 +2014,8 @@ def _copy_point_data(data: PointData4D, *, mask: ArrayLike) -> PointData4D:
             if data.normalization_denominator is None
             else np.array(data.normalization_denominator)
         ),
+        measurement_payload=data.measurement_payload,
+        source_dependencies=data.source_dependencies,
     )
 
 

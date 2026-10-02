@@ -240,3 +240,22 @@ def test_profile_dataset_archive_round_trip(tmp_path):
     assert all(restored.metadata[key] == value for key, value in original.metadata.items())
     for source, loaded in zip(selected_event_statistics(original), selected_event_statistics(restored), strict=True):
         np.testing.assert_array_equal(source, loaded)
+
+
+def test_model_overlay_uses_shared_observation_error_without_model_source_payload():
+    from nfit.measurement_dependencies import (
+        independent_source_dependencies,
+        project_source_dependencies,
+    )
+    data = count_data(c=(1,1), n=(1,1))
+    primitive = independent_source_dependencies(np.array([1.]), "event")
+    dependencies = project_source_dependencies(primitive, [0,0], [0,1], [1.,1.], data.shape)
+    data = data.with_updates(source_dependencies=dependencies)
+    view = prepare(data)
+    result = histogram_box_profiles(view, np.full(view["signal"].shape,2.), view["errors"],
+        (0.,1.,0.,2.), reference_values=view["signal"]).x_measurement.data
+    assert result.signal.item() == 2.
+    assert result.errors.item() == 1.
+    assert result.source_dependencies is None
+    assert result.metadata["profile_role"] == "model_prediction"
+    assert EVENT_STATISTICS_KEY not in result.metadata

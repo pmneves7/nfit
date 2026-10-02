@@ -386,7 +386,23 @@ from .mdhisto import (
     load_mantid_mdhisto_nxs,
 )
 from .measurement_contracts import MeasurementContract
+from .measurement_dependencies import (
+    CountingDependencies,
+    SourceDependencies,
+    SourceReplayRequired,
+    combine_source_dependencies,
+    independent_source_dependencies,
+    project_source_dependencies,
+    ratio_source_dependencies,
+)
+from .measurement_fit_data import prepare_histogram_fit_points
+from .measurement_likelihoods import PoissonCountModel, poisson_deviance_residuals
+from .measurement_point_bins import bin_measurement_points
 from .measurement_profiles import MeasurementProfile, prepare_measurement_profile
+from .measurement_rebinning import coarsen_measurement_histogram, combine_measurement_histograms
+from .measurement_regions import estimate_measurement_region
+from .measurement_replay import replay_measurement_histogram
+from .measurement_scaling import scale_measurement_data
 from .measurement_statistics import MeasurementEstimate, SourceTerm, estimate_measurement_bin
 from .metadata_dimensions import (
     MetadataBinning,
@@ -604,6 +620,7 @@ from .viewer_data import (
 )
 from .viewer_export import (
     save_grid_csv,
+    save_measurement_grid_csv,
     save_measurement_profile_csv,
     save_profile_csv,
     save_viewer_columns_csv,
@@ -712,10 +729,27 @@ def __dir__() -> list[str]:
     )
 
 __all__ = [
+    "replay_measurement_histogram",
+    "scale_measurement_data",
+    "bin_measurement_points",
+    "estimate_measurement_region",
+    "coarsen_measurement_histogram",
+    "combine_measurement_histograms",
+    "prepare_histogram_fit_points",
+    "PoissonCountModel",
+    "poisson_deviance_residuals",
+    "SourceDependencies",
+    "CountingDependencies",
+    "ratio_source_dependencies",
+    "SourceReplayRequired",
+    "independent_source_dependencies",
+    "project_source_dependencies",
+    "combine_source_dependencies",
     "MeasurementProfile",
     "prepare_measurement_profile",
     "histogram_box_profiles",
     "save_measurement_profile_csv",
+    "save_measurement_grid_csv",
     "MeasurementContract",
     "MeasurementEstimate",
     "SourceTerm",

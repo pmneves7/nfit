@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+
+from .measurement_dependencies import SourceDependencies
 
 FloatArray = NDArray[np.float64]
 BoolArray = NDArray[np.bool_]
@@ -53,6 +57,8 @@ class PointData4D:
     magnetic_field: ArrayLike | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     normalization_denominator: ArrayLike | None = None
+    measurement_payload: Mapping[str, ArrayLike] | None = field(default=None, kw_only=True)
+    source_dependencies: SourceDependencies | None = field(default=None, kw_only=True)
     _mutable: InitVar[bool] = False
     _arrays_mutable: bool = field(default=False, init=False, repr=False, compare=False)
 
@@ -126,6 +132,20 @@ class PointData4D:
                     f"{denominator.shape} does not match H shape {shape}"
                 )
             object.__setattr__(self, "normalization_denominator", denominator)
+        if self.measurement_payload is not None:
+            payload = {}
+            for name, values in self.measurement_payload.items():
+                if not isinstance(name, str) or not name:
+                    raise ValueError("Measurement payload names must be nonempty strings")
+                array = _as_float_1d(name, values, mutable=_mutable)
+                if array.shape != shape:
+                    raise ValueError("Measurement payload arrays must match point coordinates")
+                payload[name] = array
+            object.__setattr__(self, "measurement_payload", MappingProxyType(payload))
+        if self.source_dependencies is not None:
+            if not isinstance(self.source_dependencies, SourceDependencies) or self.source_dependencies.shape != shape:
+                raise ValueError("Source dependencies must match point coordinates")
+            self.source_dependencies.validate_variances(np.square(self.sigma), mask=~self.mask)
         object.__setattr__(self, "metadata", dict(self.metadata))
         object.__setattr__(self, "_arrays_mutable", bool(_mutable))
 
@@ -191,16 +211,51 @@ class PointData4D:
                 if self.normalization_denominator is None
                 else self.normalization_denominator[mask]
             ),
+            measurement_payload=None if self.measurement_payload is None else {name: array[mask] for name, array in self.measurement_payload.items()},
+            source_dependencies=self._selected_source_dependencies(mask),
         )
+
+    def _selected_source_dependencies(self, keep):
+        if self.source_dependencies is None:
+            return None
+        from .measurement_dependencies import project_source_dependencies
+        indices = np.flatnonzero(keep)
+        return project_source_dependencies(self.source_dependencies, indices, np.arange(indices.size), np.ones(indices.size), (indices.size,))
+
+    def subset(self, keep: ArrayLike) -> PointData4D:
+        """Select point rows and every corresponding statistical payload."""
+        keep = np.asarray(keep, dtype=bool)
+        if keep.shape != self.H.shape:
+            raise ValueError("Subset mask must match point coordinates")
+        return PointData4D(H=self.H[keep], K=self.K[keep], L=self.L[keep], E=self.E[keep],
+            intensity=self.intensity[keep], sigma=self.sigma[keep], mask=self.mask[keep],
+            temperature=self.temperature[keep] if isinstance(self.temperature, np.ndarray) else self.temperature,
+            magnetic_field=self.magnetic_field[keep] if isinstance(self.magnetic_field, np.ndarray) and self.magnetic_field.ndim == 2 else self.magnetic_field,
+            metadata=self.metadata, normalization_denominator=None if self.normalization_denominator is None else self.normalization_denominator[keep],
+            measurement_payload=None if self.measurement_payload is None else {name: array[keep] for name, array in self.measurement_payload.items()},
+            source_dependencies=self._selected_source_dependencies(keep))
 
     def coordinates(self) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray]:
         """Return ``(H, K, L, E)`` arrays."""
 
         return self.H, self.K, self.L, self.E
 
+    def __deepcopy__(self, memo):
+        """Copy editable metadata while sharing immutable numerical payloads."""
+        result = self.with_updates(metadata={})
+        memo[id(self)] = result
+        object.__setattr__(result, "metadata", copy.deepcopy(self.metadata, memo))
+        return result
+
     def mutable_copy(self) -> PointData4D:
         """Return an isolated copy whose numeric arrays may be edited in place."""
-
+        metadata = copy.deepcopy(self.metadata)
+        for key in ("measurement_statistics", "event_statistics", "poisson_count_model"):
+            metadata.pop(key, None)
+        declaration = metadata.pop("measurement_contract", None)
+        if declaration is not None:
+            metadata.update(measurement_target_required=True,
+                measurement_derivation={"operation":"editable_primary_copy","original_contract":declaration})
         return PointData4D(
             H=self.H,
             K=self.K,
@@ -211,8 +266,8 @@ class PointData4D:
             mask=self.mask,
             temperature=self.temperature,
             magnetic_field=self.magnetic_field,
-            metadata=copy.deepcopy(self.metadata),
-            normalization_denominator=self.normalization_denominator,
+            metadata=metadata,
+            normalization_denominator=None if declaration is not None or self.measurement_payload is not None or self.source_dependencies is not None else self.normalization_denominator,
             _mutable=True,
         )
 
@@ -253,11 +308,31 @@ class PointData4D:
             "magnetic_field": self.magnetic_field,
             "metadata": self.metadata,
             "normalization_denominator": self.normalization_denominator,
+            "measurement_payload": self.measurement_payload,
+            "source_dependencies": self.source_dependencies,
         }
         unknown = set(changes) - set(values)
         if unknown:
             raise TypeError(f"unknown PointData4D field(s): {', '.join(sorted(unknown))}")
         values.update(changes)
+        primary_changed = any(name in changes and changes[name] is not getattr(self, name) for name in ("intensity", "sigma"))
+        if primary_changed:
+            if "normalization_denominator" not in changes and ("measurement_contract" in self.metadata or self.measurement_payload is not None or self.source_dependencies is not None):
+                values["normalization_denominator"] = None
+            if "measurement_payload" not in changes:
+                values["measurement_payload"] = None
+                values["metadata"] = dict(values["metadata"])
+                for name in ("event_statistics", "measurement_statistics", "poisson_count_model"):
+                    values["metadata"].pop(name, None)
+            if "source_dependencies" not in changes:
+                values["source_dependencies"] = None
+            if "metadata" not in changes and "measurement_payload" not in changes:
+                metadata = dict(values["metadata"])
+                declaration = metadata.pop("measurement_contract", None)
+                if declaration is not None:
+                    metadata.update(measurement_target_required=True,
+                        measurement_derivation={"operation":"primary_replacement","original_contract":declaration})
+                values["metadata"] = metadata
         return PointData4D(**values)
 
 

@@ -12,10 +12,11 @@ import numpy as np
 
 from ..array_archive import write_array_archive
 from ..background_channel_io import background_metadata_payload, restore_background_metadata
-from ..dataset import PointListData
+from ..dataset import PointData4D, PointListData
 from ..mapped_archive import MappedWorkspaceError, read_mapped_array_archive
 from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from ..performance import operation_worker_count, scientific_memory_limit_bytes
+from ..point_data_archive import point_data_archive_payload, restore_point_data_archive
 from ..project_archive import open_project_artifact
 from .core import DatasetOutput, TableOutput
 
@@ -26,7 +27,7 @@ _MAPPED_MEMBER_MIN_BYTES = 8 * 1024**2
 
 
 def write_dataset_artifact(
-    data: MDHistoData | PointListData, destination: str | Path, *, compressed: bool = True
+    data: MDHistoData | PointData4D | PointListData, destination: str | Path, *, compressed: bool = True
 ) -> None:
     target = Path(destination)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -46,7 +47,7 @@ def write_dataset_artifact(
         raise
 
 
-def dataset_artifact_bytes(data: MDHistoData | PointListData) -> bytes:
+def dataset_artifact_bytes(data: MDHistoData | PointData4D | PointListData) -> bytes:
     """Serialize an analysis dataset for storage inside a project archive."""
 
     stream = BytesIO()
@@ -59,7 +60,7 @@ def read_project_dataset_artifact(
     artifact_path: str,
     *,
     memory_map: bool | None = False,
-) -> MDHistoData | PointListData:
+) -> MDHistoData | PointData4D | PointListData:
     """Read an analysis dataset stored inside an nfit project."""
 
     with open_project_artifact(project_path, artifact_path) as stream:
@@ -70,7 +71,7 @@ def read_dataset_artifact(
     source: str | PathLike[str] | bytes | BinaryIO,
     *,
     memory_map: bool | None = False,
-) -> MDHistoData | PointListData:
+) -> MDHistoData | PointData4D | PointListData:
     """Read immutable data; ``None`` maps large histograms under RAM pressure.
 
     ``True`` requests mapping regardless of size, mainly for batch workflows.
@@ -82,7 +83,7 @@ def read_dataset_artifact(
     initial_position = stream.tell() if hasattr(stream, "tell") else None
     if memory_map is not False:
         with np.load(stream, allow_pickle=False) as archive:
-            histogram = str(np.asarray(archive["container"]).item()) == "mdhisto"
+            histogram = str(np.asarray(archive["container"]).item()) in {"mdhisto", "point4d"}
             payload_bytes = sum(info.file_size for info in archive.zip.infolist())
         use_mapping = histogram and (
             memory_map is True
@@ -159,11 +160,13 @@ class _OwnedArchiveArrays:
         return self._read(name)
 
 
-def dataset_artifact_from_payload(archive: Any) -> MDHistoData | PointListData:
+def dataset_artifact_from_payload(archive: Any) -> MDHistoData | PointData4D | PointListData:
     """Reconstruct an artifact from an NPZ reader or in-memory array mapping."""
 
     kind = str(np.asarray(archive["container"]).item())
     metadata = json.loads(str(np.asarray(archive["metadata_json"]).item()))
+    if kind == "point4d":
+        return restore_point_data_archive(archive, metadata)
     if kind == "point_list":
         names = json.loads(str(np.asarray(archive["column_names_json"]).item()))
         return PointListData(
@@ -210,14 +213,19 @@ def dataset_artifact_from_payload(archive: Any) -> MDHistoData | PointListData:
     elif "normalization_denominator_auxiliary_channel" in archive:
         name = str(np.asarray(archive["normalization_denominator_auxiliary_channel"]).item())
         metadata["normalization_denominator"] = channels[name].values
-    return MDHistoData(axes, archive["signal"], archive["errors"], archive["mask"], archive["num_events"], coordinate_system=None if coordinate < 0 else coordinate, visual_normalization=None if visual < 0 else visual, metadata=metadata, auxiliary_channels=channels)
+    from ..measurement_dependencies import (
+        restore_counting_dependencies,
+        restore_source_dependencies,
+    )
+
+    return MDHistoData(axes, archive["signal"], archive["errors"], archive["mask"], archive["num_events"], coordinate_system=None if coordinate < 0 else coordinate, visual_normalization=None if visual < 0 else visual, metadata=metadata, auxiliary_channels=channels, source_dependencies=restore_source_dependencies(archive), counting_dependencies=restore_counting_dependencies(archive))
 
 
 def output_data(output: DatasetOutput | TableOutput) -> MDHistoData | PointListData:
     return output.data
 
 
-def _payload(data: MDHistoData | PointListData) -> dict[str, Any]:
+def _payload(data: MDHistoData | PointData4D | PointListData) -> dict[str, Any]:
     metadata = dict(data.metadata)
     denominator = metadata.get("normalization_denominator")
     if isinstance(denominator, np.ndarray):
@@ -225,11 +233,21 @@ def _payload(data: MDHistoData | PointListData) -> dict[str, Any]:
     metadata, background_arrays = background_metadata_payload(metadata)
     common: dict[str, Any] = {"format": np.asarray("nfit-analysis-artifact"), "version": np.asarray(1), "metadata_json": np.asarray(json.dumps(_json_metadata(metadata), sort_keys=True))}
     common.update(background_arrays)
+    if isinstance(data, PointData4D):
+        common.update({"container": np.asarray("point4d"), **point_data_archive_payload(data)})
+        return common
     if isinstance(data, PointListData):
         common.update({"container": np.asarray("point_list"), "column_names_json": np.asarray(json.dumps(data.column_names)), "units_json": np.asarray(json.dumps(data.units)), "quantity_types_json": np.asarray(json.dumps(data.quantity_types)), "coordinate_names_json": np.asarray(json.dumps(data.coordinate_names)), "channels_json": np.asarray(json.dumps(data.channels))})
         common.update({f"column_{i}": data.column(name) for i, name in enumerate(data.column_names)})
         return common
     common.update({"container": np.asarray("mdhisto"), "signal": data.signal, "errors": data.errors, "mask": data.mask, "num_events": data.num_events, "axis_count": np.asarray(len(data.axes)), "coordinate_system": np.asarray(-1 if data.coordinate_system is None else data.coordinate_system), "visual_normalization": np.asarray(-1 if data.visual_normalization is None else data.visual_normalization)})
+    from ..measurement_dependencies import (
+        counting_dependency_archive_payload,
+        source_dependency_archive_payload,
+    )
+
+    common.update(source_dependency_archive_payload(data.source_dependencies))
+    common.update(counting_dependency_archive_payload(data.counting_dependencies))
     for i, axis in enumerate(data.axes):
         common.update({f"axis_{i}_name": np.asarray(axis.name), f"axis_{i}_values": axis.values, f"axis_{i}_units": np.asarray(axis.units), f"axis_{i}_kind": np.asarray(axis.kind), f"axis_{i}_frame": np.asarray(axis.frame or ""), f"axis_{i}_path": np.asarray(axis.path or ""), f"axis_{i}_metadata": np.asarray(json.dumps(_json_metadata(axis.metadata), sort_keys=True))})
     common["auxiliary_names"] = np.asarray(json.dumps(list(data.auxiliary_channels)))

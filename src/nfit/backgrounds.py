@@ -7,7 +7,12 @@ from scipy.interpolate import RegularGridInterpolator
 
 from .analysis.coordinates import q_modulus_for_spectral
 from .background_channels import accumulate_background_channel
-from .mdhisto import MDHistoData, mdhisto_measured_bins
+from .mdhisto import MDHistoChannel, MDHistoData, mdhisto_coverage_fraction, mdhisto_measured_bins
+from .measurement_dependencies import (
+    SourceReplayRequired,
+    combine_source_dependencies,
+    project_source_dependencies,
+)
 
 
 def background_with_user_mask_zeros(background: MDHistoData) -> MDHistoData:
@@ -27,15 +32,22 @@ def background_with_user_mask_zeros(background: MDHistoData) -> MDHistoData:
     metadata = dict(background.metadata)
     metadata.pop("nfit_mask", None)
     metadata["background_excluded_bins"] = int(np.count_nonzero(excluded))
+    metadata["zero_event_bins_are_measured"] = True
     denominator = metadata.get("normalization_denominator")
     if isinstance(denominator, np.ndarray) and denominator.shape == background.shape:
         metadata["normalization_denominator"] = np.where(excluded, 1.0, denominator)
+    dependencies = background.source_dependencies
+    if dependencies is not None:
+        included = np.flatnonzero(~excluded.ravel())
+        dependencies = project_source_dependencies(dependencies, included, included, np.ones(len(included)), background.shape)
     return background.with_updates(
         signal=np.where(excluded, 0.0, background.signal),
         errors=np.where(excluded, 0.0, background.errors),
-        mask=background.mask & ~excluded,
-        num_events=np.where(excluded, 1.0, background.num_events),
+        mask=(background.mask | ~mdhisto_measured_bins(background)) & ~excluded,
+        num_events=np.where(excluded, 0.0, background.num_events),
         metadata=metadata,
+        source_dependencies=dependencies,
+        counting_dependencies=None,
     )
 
 
@@ -45,7 +57,11 @@ def subtract_aligned_background(
     *,
     scale: float = 1.0,
 ) -> MDHistoData:
-    """Subtract an independently measured histogram on identical axes."""
+    """Subtract aligned histograms, preserving declared shared sensitivities.
+
+    Untracked operands retain the documented independent variance convention.
+    A mixture of tracked and untracked operands requires explicit source replay.
+    """
 
     if float(scale) == 0.0:
         return data
@@ -82,6 +98,10 @@ def subtract_aligned_background(
     variance = np.square(np.asarray(data.errors, dtype=float)) + factor**2 * np.square(
         np.asarray(background.errors, dtype=float)
     )
+    dependencies = None
+    if data.source_dependencies is not None or background.source_dependencies is not None:
+        dependencies = combine_source_dependencies((data.source_dependencies, background.source_dependencies), (1.0, -factor))
+        variance = dependencies.variance()
     metadata = dict(data.metadata)
     history = list(metadata.get("background_subtractions", []))
     projection = background.metadata.get("background_projection")
@@ -98,13 +118,19 @@ def subtract_aligned_background(
         }
     )
     metadata["background_subtractions"] = history
+    metadata["background_uncertainty_dependence"] = "tracked_sources" if dependencies is not None else "assumed_independent"
+    metadata["num_events_semantics"] = "sample_event_contributions"
+    metadata, channels = _background_derived_payload(data, background, metadata, measured)
     result = replace(
         data,
         signal=np.where(measured, signal, np.nan),
         errors=np.where(measured, np.sqrt(np.maximum(variance, 0.0)), np.nan),
         mask=np.asarray(data.mask, dtype=bool) | ~measured,
-        num_events=np.minimum(data.num_events, background.num_events),
+        num_events=data.num_events,
         metadata=metadata,
+        auxiliary_channels=channels,
+        source_dependencies=dependencies,
+        counting_dependencies=None,
     )
     contribution = np.asarray(background.signal, dtype=float)
     contribution_errors = np.asarray(background.errors, dtype=float)
@@ -157,6 +183,8 @@ def subtract_powder_background(
 
     if float(scale) == 0.0:
         return data
+    if (data.source_dependencies is None) != (background.source_dependencies is None):
+        raise SourceReplayRequired("Background interpolation requires tracked dependencies for both operands or source replay")
     if interpolation not in {"linear", "nearest"}:
         raise ValueError("background interpolation must be 'linear' or 'nearest'")
     background = background_with_user_mask_zeros(background)
@@ -208,11 +236,19 @@ def subtract_powder_background(
         interpolated_variance = variance_interpolator(points).reshape(data.shape)
     valid_background = np.isfinite(interpolated) & np.isfinite(interpolated_variance)
     factor = float(scale)
+    dependencies = None
+    if data.source_dependencies is not None:
+        projected = _powder_interpolation_dependencies(background, points, data.shape,
+            q_dim, energy_dim, q_centers, energy_centers, valid_background.ravel(), interpolation)
+        interpolated_variance = projected.variance()
+        dependencies = combine_source_dependencies((data.source_dependencies, projected), (1, -factor))
     output_signal = np.asarray(data.signal, dtype=float) - factor * interpolated
     output_errors = np.sqrt(
         np.square(np.asarray(data.errors, dtype=float))
         + factor**2 * interpolated_variance
     )
+    if dependencies is not None:
+        output_errors = np.sqrt(dependencies.variance())
     metadata = dict(data.metadata)
     history = list(metadata.get("background_subtractions", []))
     history.append(
@@ -224,12 +260,18 @@ def subtract_powder_background(
         }
     )
     metadata["background_subtractions"] = history
+    metadata["background_uncertainty_dependence"] = "tracked_sources" if dependencies is not None else "assumed_independent"
+    metadata["num_events_semantics"] = "sample_event_contributions"
+    metadata, channels = _background_derived_payload(data, background, metadata, valid_background & ~data.mask)
     result = replace(
         data,
         signal=np.where(valid_background, output_signal, np.nan),
         errors=np.where(valid_background, output_errors, np.nan),
         mask=np.asarray(data.mask, dtype=bool) | ~valid_background,
         metadata=metadata,
+        auxiliary_channels=channels,
+        source_dependencies=dependencies,
+        counting_dependencies=None,
     )
     contribution = (
         _freeze_owned(interpolated)
@@ -256,6 +298,75 @@ def _freeze_owned(array: np.ndarray) -> np.ndarray:
 
     array.setflags(write=False)
     return array
+
+
+def _background_derived_payload(data, background, metadata, measured):
+    """Retain provenance and geometric support without stale primary statistics."""
+    from .histogram_statistics import (
+        EVENT_STATISTICS_CHANNELS,
+        EVENT_STATISTICS_KEY,
+        NORMALIZATION_DENOMINATOR,
+    )
+    from .measurement_aggregation import MEASUREMENT_STATISTICS_CHANNELS, MEASUREMENT_STATISTICS_KEY
+
+    explicit = any(source.metadata.get("measurement_target_required", False) or source.source_dependencies is not None or any(key in source.metadata for key in
+        ("measurement_contract", MEASUREMENT_STATISTICS_KEY)) for source in (data, background))
+    metadata = dict(metadata)
+    metadata["measurement_derivation"] = {"version": 1, "operation": "background_subtraction",
+        "sample_contract": data.metadata.get("measurement_contract"),
+        "background_contract": background.metadata.get("measurement_contract"),
+        "uncertainty": metadata["background_uncertainty_dependence"],
+        "target": "requires_explicit_selection" if explicit else "legacy_unmarked"}
+    if explicit:
+        metadata["measurement_target_required"] = True
+    for key in ("measurement_contract", EVENT_STATISTICS_KEY, MEASUREMENT_STATISTICS_KEY,
+                "counting_uncertainty"):
+        metadata.pop(key, None)
+    if explicit:
+        metadata.pop("normalization_denominator", None)
+    metadata["zero_event_bins_are_measured"] = True
+    excluded = (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR, *MEASUREMENT_STATISTICS_CHANNELS)
+    if not explicit:
+        excluded = tuple(name for name in excluded if name != NORMALIZATION_DENOMINATOR)
+    channels = {name: channel for name, channel in data.auxiliary_channels.items() if name not in excluded}
+    if explicit:
+        channels["coverage_fraction"] = MDHistoChannel(np.where(measured, mdhisto_coverage_fraction(data), 0),
+            label="Coverage", unit="fraction")
+    return metadata, channels
+
+
+def _powder_interpolation_dependencies(background, points, shape, q_dim, e_dim, q, energy, valid, method):
+    """Use the same center interpolation to project background sensitivities."""
+    copies = 1 if method == "nearest" else 4
+    if len(points) * copies * 80 > background.source_dependencies.max_bytes:
+        raise SourceReplayRequired("Background interpolation sensitivities exceed their work budget; replay the final bins")
+    coordinates = (q, energy)
+    alternatives = []
+    for dimension, centers in enumerate(coordinates):
+        position = np.clip(np.searchsorted(centers, points[:, dimension]), 0, len(centers)-1)
+        previous = np.maximum(position-1, 0)
+        if method == "nearest":
+            choose = np.where(abs(points[:, dimension]-centers[previous]) <= abs(points[:, dimension]-centers[position]), previous, position)
+            alternatives.append(((choose, np.ones(len(points))),))
+        else:
+            if len(centers) < 2:
+                raise SourceReplayRequired("Source-aware linear interpolation needs two centers on each axis or explicit source replay")
+            upper = np.clip(np.searchsorted(centers, points[:, dimension], side="right"), 1, len(centers)-1)
+            lower = upper-1
+            fraction = (points[:, dimension]-centers[lower])/(centers[upper]-centers[lower])
+            alternatives.append(((lower, 1-fraction), (upper, fraction)))
+    inputs, outputs, coefficients = [], [], []
+    for qi, qw in alternatives[0]:
+        for ei, ew in alternatives[1]:
+            weight = qw*ew
+            included = valid & (weight > np.finfo(float).eps)
+            source = [None, None]
+            source[q_dim], source[e_dim] = qi[included], ei[included]
+            inputs.append(np.ravel_multi_index(tuple(source), background.shape))
+            outputs.append(np.flatnonzero(included))
+            coefficients.append(weight[included])
+    return project_source_dependencies(background.source_dependencies, np.concatenate(inputs),
+        np.concatenate(outputs), np.concatenate(coefficients), shape)
 
 
 def _linear_interpolation_variance(

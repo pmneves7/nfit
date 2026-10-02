@@ -456,7 +456,14 @@ def _section_summary(fit_entry: Any, group_name: str) -> str:
         if covariance_mode == "absolute"
         else "residual variance (covariance scaled by reduced $\\chi^2$)"
     )
+    if goodness.get("covariance_interpretation") == "expected_fisher_asymptotic":
+        covariance_label = "asymptotic expected Fisher information (not a low-count confidence interval)"
     lines.append(f"\\item Parameter-uncertainty convention: {covariance_label}")
+    likelihoods = goodness.get("dataset_likelihoods") or {}
+    for name, likelihood in likelihoods.items():
+        lines.append(f"\\item Likelihood for {latex_escape(name)}: {latex_escape(likelihood)}")
+    if "poisson_deviance" in likelihoods.values():
+        lines.append("\\item Chi-square-labelled objective entries use Poisson deviance for count-likelihood datasets.")
     status = goodness.get("status")
     if status is not None:
         lines.append(f"\\item Status: {latex_escape(status)}")

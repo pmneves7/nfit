@@ -16,12 +16,20 @@ import numpy as np
 
 from .analysis.coordinates import signal_semantics
 from .background_channel_io import background_metadata_payload, restore_background_metadata
-from .dataset import PointListData
+from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
+from .measurement_dependencies import (
+    counting_dependency_archive_payload,
+    restore_counting_dependencies,
+    restore_source_dependencies,
+    source_dependency_archive_payload,
+)
 from .pipeline import DatasetEntry
+from .point_data_archive import point_data_archive_payload, restore_point_data_archive
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
 
 KINEMATIC_KF_KI_INCLUDED_KEY = "kf_ki_included"
+DATASET_CONTEXT_KEYS = ("temperature", "magnetic_field", KINEMATIC_KF_KI_INCLUDED_KEY, SPECTRAL_CHANNEL_CONFIG_KEY)
 
 
 def save_dataset_file(
@@ -40,12 +48,20 @@ def save_dataset_file(
         data = dataset_for_slice_viewer(dataset)
     else:
         data = dataset.data
+    if isinstance(data, PointData4D):
+        payload = {"nfit_dataset_format": np.asarray("nfit-dataset"), "nfit_dataset_version": np.asarray(1),
+                   "nfit_data_container": np.asarray("point4d"),
+                   "metadata_json": np.asarray(json.dumps(_json_safe_value(data.metadata), sort_keys=True)),
+                   "dataset_context_json": np.asarray(json.dumps(_json_safe_value({key: dataset.parameters[key] for key in DATASET_CONTEXT_KEYS if key in dataset.parameters}), sort_keys=True)),
+                   **point_data_archive_payload(data)}
+        np.savez_compressed(path, **payload)
+        return
     if isinstance(data, PointListData):
         _save_point_list_file(data, path)
         return
     if not isinstance(data, MDHistoData):
         raise TypeError(
-            "dataset saving currently supports MDHistoData or PointListData datasets"
+            "dataset saving currently supports MDHistoData, PointData4D or PointListData datasets"
         )
     saved_metadata = dict(data.metadata)
     normalization_denominator = saved_metadata.get("normalization_denominator")
@@ -73,6 +89,8 @@ def save_dataset_file(
         ),
     }
     payload.update(background_arrays)
+    payload.update(source_dependency_archive_payload(data.source_dependencies))
+    payload.update(counting_dependency_archive_payload(data.counting_dependencies))
     if normalization_denominator is not None:
         channel = data.auxiliary_channels.get("normalization_denominator")
         if (
@@ -87,12 +105,7 @@ def save_dataset_file(
             payload["normalization_denominator"] = normalization_denominator
     context = {
         key: copy.deepcopy(dataset.parameters[key])
-        for key in (
-            "temperature",
-            "magnetic_field",
-            KINEMATIC_KF_KI_INCLUDED_KEY,
-            SPECTRAL_CHANNEL_CONFIG_KEY,
-        )
+        for key in DATASET_CONTEXT_KEYS
         if key in dataset.parameters
     }
     observable = data.metadata.get("spectral_observable")
@@ -157,7 +170,7 @@ def _save_point_list_file(data: PointListData, path: str | Path) -> None:
 
 def _load_nfit_dataset_file(
     path: str | Path,
-) -> tuple[MDHistoData | PointListData, dict[str, Any]]:
+) -> tuple[MDHistoData | PointData4D | PointListData, dict[str, Any]]:
     """Load an nfit dataset archive written by :func:`save_dataset_file`."""
 
     source = Path(path)
@@ -167,7 +180,9 @@ def _load_nfit_dataset_file(
         raise ValueError(f"could not read nfit dataset archive {source}") from exc
     with archive:
         files = set(archive.files)
-        if {"signal", "errors", "mask", "num_events", "axis_count"} <= files:
+        if {"H", "K", "L", "E", "intensity", "sigma", "mask"} <= files:
+            data = restore_point_data_archive(archive, _nfit_archive_json_mapping(archive, "metadata_json"))
+        elif {"signal", "errors", "mask", "num_events", "axis_count"} <= files:
             data = _load_nfit_mdhisto_archive(archive, source)
         elif {
             "column_names_json",
@@ -257,6 +272,8 @@ def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
         ),
         metadata=metadata,
         auxiliary_channels=auxiliary_channels,
+        source_dependencies=restore_source_dependencies(archive),
+        counting_dependencies=restore_counting_dependencies(archive),
     )
 
 
