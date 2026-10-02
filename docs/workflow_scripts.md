@@ -32,6 +32,15 @@ paths are resolved from that location. File size and modification time are
 recorded as a lightweight fingerprint; a changed source produces a warning
 rather than silently claiming an exact reproduction.
 
+## Native reduction workflows
+
+`reduction_workflow_script(collection, binning_config=...)` exports an isolated
+raw-DGS, CORELLI or MDEvent collection from original sources. The editable
+`REDUCTION_RECIPE` and independent `REBIN_CONFIG` reproduce run membership,
+shared defaults, per-run overrides, coordinate transforms, local masks and
+scaling without a saved project or Qt. See
+[Source and reduction recipes](reduction_recipes.md).
+
 ## Composite workflows
 
 The collection's **Metadata dimensions → Copy composite script** action calls
@@ -39,6 +48,8 @@ The collection's **Metadata dimensions → Copy composite script** action calls
 first so source membership, imports, masks, scales, and backgrounds are
 available to the script. Its `METADATA_DIMENSIONS` and `REBIN_CONFIG`
 dictionaries capture the current coordinate and grid settings for editing.
+The editable `REDUCTION_RECIPES` include native sample and linked background
+collections; changed settings are applied to the workspace before preparation.
 `run()` loads the saved project and returns the composite histogram without
 constructing Qt widgets.
 

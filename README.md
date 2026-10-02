@@ -44,7 +44,8 @@ A few of its main capabilities are:
   and shared source-group symmetry controls in the background editor,
   including raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data
   with SNS monitor and beam-interval reduction, lazy per-run reduced-event caches
-  for repeated binnings, and exposure-pooled normalized histogram slices,
+  for repeated binnings, editable shared and per-run reduction recipes with
+  resolved calibration provenance, and exposure-pooled normalized histogram slices,
   with viewable count numerators, event variances and exposure, separate
   Poisson rate intervals, and selectable first-run or per-run trajectory Ei,
   with Mantid numerical conventions by default and saved, scriptable monitor,

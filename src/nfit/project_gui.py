@@ -14202,335 +14202,27 @@ class NfitProjectExplorer:
         self.details_layout.addStretch(1)
 
     def _mdevent_group_box(self, node: DatasetGroup) -> Any:
-        from PySide6 import QtWidgets
-
-        from .dgs_normalization_gui import trajectory_energy_selector
-
-        config = node.metadata["mdevent"]
-        box = QtWidgets.QGroupBox("MDEvent shared setup")
-        box.setToolTip(
-            "Shared configuration for every run in this MDEvent dataset group. "
-            "Orientation, detector mask, vanadium normalization, and overrides are stored once."
-        )
-        layout = QtWidgets.QGridLayout(box)
-        fields = [
-            ("Normalization", "normalization_file", "Vanadium detector workspace read directly by nfit and used for detector efficiency and solid-angle normalization. Mantid is not required."),
-            ("Detector mask", "mask_file", "Detector workspace read directly by nfit; zero, negative, or invalid detector values are excluded from both events and normalization coverage."),
-        ]
-        for row, (label, key, tooltip) in enumerate(fields):
-            layout.addWidget(QtWidgets.QLabel(label), row, 0)
-            edit = QtWidgets.QLineEdit(str(config.get(key) or ""))
-            edit.setObjectName(f"mdevent_{key}")
-            edit.setToolTip(tooltip)
-            edit.editingFinished.connect(
-                lambda edit=edit, key=key: self._set_mdevent_group_value(node, key, edit.text().strip() or None)
-            )
-            layout.addWidget(edit, row, 1, 1, 3)
-
-        layout.addWidget(QtWidgets.QLabel("Ei override"), 2, 0)
-        ei = QtWidgets.QDoubleSpinBox()
-        ei.setObjectName("mdevent_incident_energy_override")
-        ei.setRange(-1.0, 1.0e5)
-        ei.setDecimals(6)
-        ei.setSpecialValueText("(from each run)")
-        ei.setValue(float(config.get("incident_energy_override") or -1.0))
-        ei.setToolTip(
-            "Shared incident-energy override in meV. The run Ei is used at the minimum. "
-            "For an already converted MDEvent file this changes normalization trajectories, not stored event coordinates."
-        )
-        ei.valueChanged.connect(
-            lambda value: self._set_mdevent_group_value(node, "incident_energy_override", None if value < 0.0 else float(value))
-        )
-        layout.addWidget(ei, 2, 1)
-
-        layout.addWidget(QtWidgets.QLabel("T0 override"), 2, 2)
-        t0 = QtWidgets.QDoubleSpinBox()
-        t0.setObjectName("mdevent_t0_override")
-        t0.setRange(-1.0, 1.0e6)
-        t0.setDecimals(6)
-        t0.setSpecialValueText("(from each run)")
-        t0.setValue(float(config.get("t0_override") if config.get("t0_override") is not None else -1.0))
-        t0.setToolTip(
-            "Shared time-zero override in microseconds. It is retained for importing raw individual runs. "
-            "It cannot move coordinates already converted and stored in an MDEvent workspace."
-        )
-        t0.valueChanged.connect(
-            lambda value: self._set_mdevent_group_value(node, "t0_override", None if value < 0.0 else float(value))
-        )
-        layout.addWidget(t0, 2, 3)
-
-        layout.addWidget(QtWidgets.QLabel("UB matrix"), 3, 0)
-        ub = QtWidgets.QLineEdit(_parameter_to_text(config.get("ub_matrix", np.eye(3).tolist())))
-        ub.setObjectName("mdevent_ub_matrix")
-        ub.setToolTip(
-            "Shared Mantid UB matrix. Event Q_sample is converted with (2*pi*UB)^-1; "
-            "normalization trajectories additionally include each run goniometer."
-        )
-        ub.editingFinished.connect(lambda: self._set_mdevent_group_ub(node, ub))
-        layout.addWidget(ub, 3, 1, 1, 3)
-        layout.addWidget(QtWidgets.QLabel("Normalization Ei"), 4, 0)
-        layout.addWidget(trajectory_energy_selector(
-            config,
-            object_name="mdevent_trajectory_energy_policy",
-            on_changed=lambda value: self._set_mdevent_group_value(
-                node, "trajectory_energy_policy", value
-            ),
-        ), 4, 1, 1, 3)
-        from .dgs_reduction_policy_gui import add_dgs_policy_controls
-        from .dgs_reduction_settings import dgs_reduction_policy_script
-
-        add_dgs_policy_controls(layout, config, start_row=5, prefix="mdevent", raw=False,
-            on_changed=lambda key, value: self._set_mdevent_group_value(node, key, value),
-            script_factory=lambda: dgs_reduction_policy_script(node))
-        return box
+        return self._reduction_recipe_group_box(node)
 
     def _raw_dgs_group_box(self, node: DatasetGroup) -> Any:
-        """Shared controls for streamed native raw TOF reduction."""
-        from PySide6 import QtWidgets
-
-        from .dgs_normalization_gui import trajectory_energy_selector
-
-        config = node.metadata["raw_dgs"]
-        if config.get("format") == "corelli-correlation-nexus":
-            return self._corelli_group_box(node)
-        box = QtWidgets.QGroupBox("Raw TOF shared setup")
-        box.setToolTip("Shared configuration for all raw direct-geometry runs. nfit reads the detector geometry from each NeXus file and streams events directly into the HKLE composite.")
-        layout = QtWidgets.QGridLayout(box)
-        for row, (label, key, tooltip) in enumerate((
-            ("Vanadium normalization", "normalization_file", "Optional processed vanadium workspace. Zero or negative spectra exclude those detectors; positive values weight detector trajectories in the MDNorm-style normalization denominator."),
-            ("Detector mask", "mask_file", "Optional detector workspace. Zero, negative, or invalid values exclude detector events before TOF-to-HKLE conversion and trajectory normalization."),
-        )):
-            layout.addWidget(QtWidgets.QLabel(label), row, 0)
-            edit = QtWidgets.QLineEdit(str(config.get(key) or ""))
-            edit.setObjectName(f"raw_dgs_{key}")
-            edit.setToolTip(tooltip)
-            edit.editingFinished.connect(lambda edit=edit, key=key: self._set_raw_dgs_group_value(node, key, edit.text().strip() or None))
-            layout.addWidget(edit, row, 1, 1, 2)
-            browse = QtWidgets.QPushButton("Browse…")
-            browse.setObjectName(f"raw_dgs_{key}_browse")
-            browse.setToolTip(f"Choose the {label.lower()} NeXus file.")
-            browse.clicked.connect(
-                lambda _checked=False, edit=edit, key=key, label=label: self._browse_raw_dgs_setup_file(
-                    node, key, label, edit
-                )
-            )
-            layout.addWidget(browse, row, 3)
-        for column, (label, key, tooltip) in enumerate((
-            ("Ei override", "incident_energy_override", "Shared incident-energy override in meV. Leave unset to apply Mantid's local GetEi path for each run: monitor fitting where applicable, or the instrument's requested-Ei formula."),
-            ("T0 override", "t0_override", "Shared time-zero correction in microseconds, subtracted from raw event TOF before calculating final energy. Leave unset to apply Mantid's local GetEi path per run, including formula-derived T0 on instruments that define one."),
-        )):
-            layout.addWidget(QtWidgets.QLabel(label), 2, column * 2)
-            spin = QtWidgets.QDoubleSpinBox()
-            spin.setRange(-1.0, 1e6)
-            spin.setDecimals(6)
-            spin.setSpecialValueText("(from each run)")
-            spin.setValue(
-                float(config.get(key) if config.get(key) is not None else -1.0)
-            )
-            spin.setToolTip(tooltip)
-            spin.valueChanged.connect(lambda value, key=key: self._set_raw_dgs_group_value(node, key, None if value < 0.0 else float(value)))
-            layout.addWidget(spin, 2, column * 2 + 1)
-        for column, (label, key, default, maximum, tooltip) in enumerate((
-            ("Emin / Ei", "energy_min_fraction", -0.95, 0.999999, "Minimum accepted energy transfer divided by the incident energy. The default is -0.95. This same limit is used for event selection and detector-trajectory normalization."),
-            ("Emax / Ei", "energy_max_fraction", 0.95, 0.999999, "Maximum accepted energy transfer divided by the incident energy. It must remain below 1 so the final neutron energy is positive. The default is 0.95. This same limit is used for event selection and detector-trajectory normalization."),
-        )):
-            layout.addWidget(QtWidgets.QLabel(label), 3, column * 2)
-            spin = QtWidgets.QDoubleSpinBox()
-            spin.setObjectName(f"raw_dgs_{key}")
-            spin.setRange(-100.0, maximum)
-            spin.setDecimals(6)
-            spin.setValue(float(config.get(key, default)))
-            spin.setToolTip(tooltip)
-            spin.valueChanged.connect(
-                lambda value, key=key: self._set_raw_dgs_group_value(
-                    node, key, float(value)
-                )
-            )
-            layout.addWidget(spin, 3, column * 2 + 1)
-        correction = QtWidgets.QCheckBox("Apply ki/kf correction")
-        correction.setChecked(bool(config.get("ki_kf_normalization", config.get("kf_ki_normalization", True))))
-        correction.setToolTip("Multiply each accepted event by ki/kf, the incident-to-final wavevector ratio used by Mantid direct-geometry reduction. Event variances receive the square of this factor; the choice is recorded in rebinned metadata.")
-        correction.toggled.connect(lambda checked: self._set_raw_dgs_group_value(node, "ki_kf_normalization", bool(checked)))
-        layout.addWidget(correction, 4, 0, 1, 2)
-        layout.addWidget(QtWidgets.QLabel("UB matrix"), 5, 0)
-        ub = QtWidgets.QLineEdit(_parameter_to_text(config.get("ub_matrix", np.eye(3).tolist())))
-        ub.setToolTip("Shared Mantid/SNS-frame UB matrix. Raw Q is rotated into the sample frame and converted with (2*pi*UB)^-1 before binning.")
-        ub.editingFinished.connect(lambda: self._set_raw_dgs_group_ub(node, ub))
-        layout.addWidget(ub, 5, 1, 1, 3)
-        layout.addWidget(QtWidgets.QLabel("Normalization Ei"), 6, 0)
-        layout.addWidget(trajectory_energy_selector(
-            config,
-            object_name="raw_dgs_trajectory_energy_policy",
-            on_changed=lambda value: self._set_raw_dgs_group_value(
-                node, "trajectory_energy_policy", value
-            ),
-        ), 6, 1, 1, 3)
-        from .dgs_reduction_policy_gui import add_dgs_policy_controls
-        from .dgs_reduction_settings import dgs_reduction_policy_script
-
-        add_dgs_policy_controls(layout, config, start_row=7, prefix="raw_dgs", raw=True,
-            on_changed=lambda key, value: self._set_raw_dgs_group_value(node, key, value),
-            script_factory=lambda: dgs_reduction_policy_script(node))
-        return box
+        return self._reduction_recipe_group_box(node)
 
     def _corelli_group_box(self, node: DatasetGroup) -> Any:
-        """Shared controls for native CORELLI correlation reconstruction."""
-        from PySide6 import QtWidgets
+        return self._reduction_recipe_group_box(node)
 
-        config = node.metadata["raw_dgs"]
-        box = QtWidgets.QGroupBox("CORELLI finite-energy reconstruction")
-        box.setToolTip(
-            "Reconstruct signed finite-energy CORELLI intensity from raw event TOF, "
-            "pulse time, and correlation-chopper phase."
-        )
-        layout = QtWidgets.QGridLayout(box)
-        file_rows = (
-            (
-                "Solid-angle workspace",
-                "normalization_file",
-                "Optional CORELLI solid-angle/vanadium MatrixWorkspace. Positive detector "
-                "values correct event weights; zero or negative values mask detectors.",
-            ),
-            (
-                "Incident-flux workspace",
-                "flux_file",
-                "Optional CORELLI cumulative flux MatrixWorkspace. nfit differentiates each "
-                "bank spectrum and corrects reconstructed events at their incident wavevector.",
-            ),
-            (
-                "Detector mask",
-                "mask_file",
-                "Optional Mantid detector-mask XML or MatrixWorkspace. Listed XML detector "
-                "IDs, or zero, negative, or invalid workspace values, exclude events.",
-            ),
-        )
-        for row, (label, key, tooltip) in enumerate(file_rows):
-            field_label = QtWidgets.QLabel(label)
-            field_label.setToolTip(tooltip)
-            layout.addWidget(field_label, row, 0)
-            edit = QtWidgets.QLineEdit(str(config.get(key) or ""))
-            edit.setObjectName(f"raw_dgs_{key}")
-            edit.setToolTip(tooltip)
-            edit.editingFinished.connect(
-                lambda edit=edit, key=key: self._set_raw_dgs_group_value(
-                    node, key, edit.text().strip() or None
-                )
-            )
-            layout.addWidget(edit, row, 1, 1, 2)
-            browse = QtWidgets.QPushButton("Browse…")
-            browse.setObjectName(f"raw_dgs_{key}_browse")
-            browse.setToolTip(f"Choose the {label.lower()} NeXus file.")
-            browse.clicked.connect(
-                lambda _checked=False, edit=edit, key=key, label=label: self._browse_raw_dgs_setup_file(
-                    node, key, label, edit
-                )
-            )
-            layout.addWidget(browse, row, 3)
+    def _reduction_recipe_group_box(self, node: DatasetGroup) -> Any:
+        from .reduction_recipe_gui import build_reduction_recipe_panel
 
-        numeric_fields = (
-            (
-                "Timing offset (ns)",
-                "timing_offset_ns",
-                14_000.0,
-                0.0,
-                1.0e7,
-                0,
-                "Correlation-chopper TDC timing offset in nanoseconds. Use the value calibrated "
-                "for the experiment cycle; 14,000 ns is the 2026A autoreduction value.",
+        return build_reduction_recipe_panel(
+            node,
+            on_shared_changed=lambda key, value: self._set_reduction_recipe_value(
+                node, key, value
             ),
-            (
-                "Minimum wavelength (Å)",
-                "wavelength_min_angstrom",
-                0.6,
-                0.01,
-                100.0,
-                5,
-                "Shortest reconstructed incident wavelength in angstrom.",
+            on_run_changed=lambda dataset, key, value, inherit: self._set_reduction_recipe_value(
+                node, key, value, dataset=dataset, inherit=inherit
             ),
-            (
-                "Maximum wavelength (Å)",
-                "wavelength_max_angstrom",
-                2.5,
-                0.01,
-                100.0,
-                5,
-                "Longest reconstructed incident wavelength in angstrom.",
-            ),
+            parent=self.window,
         )
-        for column, (label, key, default, minimum, maximum, decimals, tooltip) in enumerate(
-            numeric_fields
-        ):
-            field_label = QtWidgets.QLabel(label)
-            field_label.setToolTip(tooltip)
-            layout.addWidget(field_label, 3, column)
-            spin = QtWidgets.QDoubleSpinBox()
-            spin.setObjectName(f"raw_dgs_{key}")
-            spin.setRange(minimum, maximum)
-            spin.setDecimals(decimals)
-            spin.setValue(float(config.get(key, default)))
-            spin.setToolTip(tooltip)
-            spin.valueChanged.connect(
-                lambda value, key=key: self._set_raw_dgs_group_value(
-                    node, key, float(value)
-                )
-            )
-            layout.addWidget(spin, 4, column)
-
-        corrections = QtWidgets.QWidget()
-        corrections_layout = QtWidgets.QVBoxLayout(corrections)
-        corrections_layout.setContentsMargins(0, 0, 0, 0)
-        ki_kf = QtWidgets.QCheckBox("Apply ki/kf correction")
-        ki_kf.setObjectName("raw_dgs_ki_kf_normalization")
-        ki_kf.setChecked(bool(config.get("ki_kf_normalization", True)))
-        ki_kf.setToolTip(
-            "Multiply each reconstructed hypothesis by the incident-to-final wavevector "
-            "ratio ki/kf and apply the square of that factor to its variance."
-        )
-        ki_kf.toggled.connect(
-            lambda checked: self._set_raw_dgs_group_value(
-                node, "ki_kf_normalization", bool(checked)
-            )
-        )
-        corrections_layout.addWidget(ki_kf)
-        he3 = QtWidgets.QCheckBox("Apply He-3 detector efficiency")
-        he3.setObjectName("raw_dgs_he3_detector_efficiency_correction")
-        he3.setChecked(
-            bool(config.get("he3_detector_efficiency_correction", True))
-        )
-        he3.setToolTip(
-            "Correct each reconstructed hypothesis for the wavelength-dependent "
-            "He-3 tube efficiency from the embedded instrument definition."
-        )
-        he3.toggled.connect(
-            lambda checked: self._set_raw_dgs_group_value(
-                node, "he3_detector_efficiency_correction", bool(checked)
-            )
-        )
-        corrections_layout.addWidget(he3)
-        layout.addWidget(corrections, 4, 3)
-        ub_label = QtWidgets.QLabel("UB matrix")
-        ub_label.setToolTip(
-            "Shared Mantid/SNS-frame UB matrix used to convert reconstructed sample-frame Q to HKL. ISAW files are converted when loaded."
-        )
-        layout.addWidget(ub_label, 5, 0)
-        ub = QtWidgets.QLineEdit(
-            _parameter_to_text(config.get("ub_matrix", np.eye(3).tolist()))
-        )
-        ub.setObjectName("raw_dgs_ub_matrix")
-        ub.setToolTip(ub_label.toolTip())
-        ub.editingFinished.connect(lambda: self._set_raw_dgs_group_ub(node, ub))
-        layout.addWidget(ub, 5, 1, 1, 3)
-        caveat = QtWidgets.QLabel(
-            "Energy channels share measured events and therefore have correlated statistical "
-            "errors. Stored errors contain the diagonal variance."
-        )
-        caveat.setWordWrap(True)
-        caveat.setToolTip(
-            "CORELLI cross correlation reconstructs every requested energy channel from the "
-            "same phase-tagged detector events."
-        )
-        layout.addWidget(caveat, 6, 0, 1, 4)
-        return box
 
     def _ub_setup_group_box(
         self,
@@ -14660,11 +14352,15 @@ class NfitProjectExplorer:
         else:
             root.lattice_parameters = copy.deepcopy(result["lattice_parameters"])
         if isinstance(target, DatasetGroup) and isinstance(target.metadata.get("mdevent"), dict):
-            target.metadata["mdevent"]["ub_matrix"] = copy.deepcopy(result["ub_matrix"])
+            from .reduction_recipes import set_reduction_settings
+
+            set_reduction_settings(target, {"ub_matrix": result["ub_matrix"]})
             target.metadata["mdevent"]["lattice_parameters"] = copy.deepcopy(result["lattice_parameters"])
             data_group_composite_config(_composite_scope(root, target))["stale"] = True
         if isinstance(target, DatasetGroup) and isinstance(target.metadata.get("raw_dgs"), dict):
-            target.metadata["raw_dgs"]["ub_matrix"] = copy.deepcopy(result["ub_matrix"])
+            from .reduction_recipes import set_reduction_settings
+
+            set_reduction_settings(target, {"ub_matrix": result["ub_matrix"]})
             target.metadata["raw_dgs"]["lattice_parameters"] = copy.deepcopy(result["lattice_parameters"])
             data_group_composite_config(_composite_scope(root, target))["stale"] = True
         self._record_data_group_state_change(root)
@@ -14685,23 +14381,7 @@ class NfitProjectExplorer:
         self._set_mdevent_group_value(node, "ub_matrix", matrix.tolist())
 
     def _set_mdevent_group_value(self, node: DatasetGroup, key: str, value: Any) -> None:
-        config = node.metadata["mdevent"]
-        if config.get(key) == value:
-            return
-        if key == "trajectory_energy_policy":
-            from .dgs_normalization import set_dgs_trajectory_energy_policy
-
-            set_dgs_trajectory_energy_policy(node, value)
-        elif key in {"event_precision_policy", "symmetry_variance_policy"}:
-            from .dgs_reduction_settings import set_dgs_reduction_policies
-
-            set_dgs_reduction_policies(node, **{key: value})
-        else:
-            config[key] = value
-        composite = data_group_composite_config(_composite_scope(self._objects_for_item(self._current_item())[0], node))
-        composite["stale"] = True
-        self._mark_dirty()
-        self._refresh_cache_badges()
+        self._set_reduction_recipe_value(node, key, value)
 
     def _set_raw_dgs_group_ub(self, node: DatasetGroup, edit: Any) -> None:
         try:
@@ -14739,23 +14419,36 @@ class NfitProjectExplorer:
         self._set_raw_dgs_group_value(node, key, path)
 
     def _set_raw_dgs_group_value(self, node: DatasetGroup, key: str, value: Any) -> None:
-        config = node.metadata["raw_dgs"]
-        if config.get(key) == value:
-            return
-        if key == "trajectory_energy_policy":
-            from .dgs_normalization import set_dgs_trajectory_energy_policy
+        self._set_reduction_recipe_value(node, key, value)
 
-            set_dgs_trajectory_energy_policy(node, value)
-        elif key in {"monitor_variance_policy", "event_precision_policy", "symmetry_variance_policy"}:
-            from .dgs_reduction_settings import set_dgs_reduction_policies
+    def _set_reduction_recipe_value(
+        self, node: DatasetGroup, key: str, value: Any,
+        *, dataset: DatasetEntry | None = None, inherit: bool = False,
+    ) -> bool:
+        from PySide6 import QtWidgets
 
-            set_dgs_reduction_policies(node, **{key: value})
-        else:
-            config[key] = value
-        composite = data_group_composite_config(_composite_scope(self._objects_for_item(self._current_item())[0], node))
-        composite["stale"] = True
+        from .reduction_recipes import set_reduction_settings
+
+        try:
+            edit = set_reduction_settings(
+                node, {key: value},
+                dataset_ids=None if dataset is None else [dataset.id],
+                inherit=inherit,
+            )
+        except (TypeError, ValueError) as error:
+            QtWidgets.QMessageBox.warning(self.window, "Invalid reduction setting", str(error))
+            self._sync_details()
+            return False
+        if not edit.settings_changed:
+            return True
+        if edit.changed_dataset_ids and set(edit.scopes) != {"storage"}:
+            composite = data_group_composite_config(_composite_scope(
+                self._objects_for_item(self._current_item())[0], node
+            ))
+            composite["stale"] = True
         self._mark_dirty()
         self._refresh_cache_badges()
+        return True
 
     def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         return _project_data_panels.invoke_panel_builder(

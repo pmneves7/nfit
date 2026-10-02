@@ -14,6 +14,7 @@ and extends the elastic incident-time calculation to finite DeltaE.
 
 from __future__ import annotations
 
+import copy
 import math
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable
@@ -60,6 +61,7 @@ from .raw_dgs import (
     _ub_from_logs,
     _use_ki_kf_correction,
 )
+from .reduction_runtime import acquisition_identity, record_resolved_reduction
 
 ENERGY_FROM_WAVELENGTH_MEV_ANGSTROM_SQ = 81.80421036
 DEFAULT_WAVELENGTH_RANGE_ANGSTROM = (0.6, 2.5)
@@ -79,6 +81,8 @@ class CorelliRunInfo:
     l1: float
     source_to_chopper: float
     ub_matrix: np.ndarray
+    instrument_name: str = "unknown"
+    geometry_signature: str | None = None
 
 
 @dataclass(frozen=True)
@@ -201,6 +205,7 @@ def inspect_corelli_run(path: str | Path) -> CorelliRunInfo:
             l1=_source_distance(entry),
             source_to_chopper=_source_to_correlation_chopper(entry),
             ub_matrix=_ub_from_logs(entry),
+            **acquisition_identity(entry),
         )
 
 
@@ -284,15 +289,21 @@ def corelli_dataset_group(
                     "corelli_goniometer_angles": list(info.goniometer_angles),
                     "l1": info.l1,
                     "source_to_chopper": info.source_to_chopper,
+                    "instrument_name": info.instrument_name,
+                    "geometry_signature": info.geometry_signature,
                     "import_status": "pending",
                 },
             )
         )
-    return DatasetGroup(
+    group = DatasetGroup(
         name=name or first.path.stem,
         datasets=datasets,
         metadata={"raw_dgs": shared},
     )
+    from .reduction_recipes import ensure_reduction_recipe
+
+    ensure_reduction_recipe(group)
+    return group
 
 
 def _run_info_from_dataset(dataset: DatasetEntry, config: dict[str, Any]):
@@ -582,34 +593,46 @@ def bin_corelli_group(
     retained_charge = 0.0
     normalization_scale = 0.0
     duty_cycles = []
-    detector_norm = load_detector_normalization(config["normalization_file"]) if config.get("normalization_file") else None
-    incident_flux = _load_corelli_flux(config["flux_file"]) if config.get("flux_file") else None
-    detector_mask = _load_corelli_detector_mask(config.get("mask_file"))
-    wavelength_min = float(config.get("wavelength_min_angstrom", 0.6))
-    wavelength_max = float(config.get("wavelength_max_angstrom", 2.5))
-    if not (0.0 < wavelength_min < wavelength_max):
-        raise ValueError("CORELLI wavelength limits must be positive and increasing")
-    ei_bounds = (
-        ENERGY_FROM_WAVELENGTH_MEV_ANGSTROM_SQ / wavelength_max**2,
-        ENERGY_FROM_WAVELENGTH_MEV_ANGSTROM_SQ / wavelength_min**2,
-    )
+    from .reduction_recipes import effective_reduction_config
 
+    calibration_payloads = {}
+    geometry_payloads = {}
+    detector_geometries = {}
+    shared_config = config
     import h5py
 
-    shared_geometry = None
-    if selected:
-        shared_geometry = _detector_geometry(Path(selected[0].metadata["source_file"]))
-        if config.get("normalization_file"):
-            shared_geometry = _geometry_from_solid_angle(
-                config["normalization_file"], shared_geometry
-            )
-
     for dataset in selected:
+        config = effective_reduction_config(group, dataset)
+        calibration_key = (config.get("normalization_file"), config.get("flux_file"), config.get("mask_file"))
+        if calibration_key not in calibration_payloads:
+            calibration_payloads[calibration_key] = (
+                load_detector_normalization(config["normalization_file"]) if config.get("normalization_file") else None,
+                _load_corelli_flux(config["flux_file"]) if config.get("flux_file") else None,
+                _load_corelli_detector_mask(config.get("mask_file")),
+            )
+        detector_norm, incident_flux, detector_mask = calibration_payloads[calibration_key]
+        wavelength_min = float(config.get("wavelength_min_angstrom", 0.6))
+        wavelength_max = float(config.get("wavelength_max_angstrom", 2.5))
+        if not (0.0 < wavelength_min < wavelength_max):
+            raise ValueError("CORELLI wavelength limits must be positive and increasing")
+        ei_bounds = (ENERGY_FROM_WAVELENGTH_MEV_ANGSTROM_SQ / wavelength_max**2,
+                     ENERGY_FROM_WAVELENGTH_MEV_ANGSTROM_SQ / wavelength_min**2)
         source = Path(dataset.metadata["source_file"])
-        info = _run_info_from_dataset(dataset, config)
-        geometry = shared_geometry
-        if geometry is None:
-            raise ValueError("CORELLI reconstruction requires at least one detector geometry")
+        info = inspect_corelli_run(source)
+        # The lower-level geometry cache checks the entire current IDF. A run
+        # from another instrument/layout must never inherit the first geometry.
+        geometry_identity = info.geometry_signature or ("unverified", str(source.resolve()))
+        if geometry_identity not in detector_geometries:
+            detector_geometries[geometry_identity] = _detector_geometry(source)
+        geometry = detector_geometries[geometry_identity]
+        geometry_key = (id(geometry), config.get("normalization_file"))
+        if geometry_key not in geometry_payloads:
+            geometry_payloads[geometry_key] = (_geometry_from_solid_angle(config["normalization_file"], geometry)
+                if config.get("normalization_file") else geometry)
+        geometry = geometry_payloads[geometry_key]
+        dataset.metadata.update(instrument_name=info.instrument_name, geometry_signature=info.geometry_signature)
+        record_resolved_reduction(dataset, config, provenance={"algorithm": "corelli_finite_energy",
+            "instrument_name": info.instrument_name, "geometry_signature": info.geometry_signature})
         gonio = _corelli_goniometer(info.goniometer_angles)
         ub = np.asarray(config["ub_matrix"], dtype=float)
         hkl_transform = np.linalg.inv(2.0 * np.pi * ub)
@@ -890,6 +913,9 @@ def bin_corelli_group(
                             }
                         )
 
+    config = shared_config
+    wavelength_min = float(config.get("wavelength_min_angstrom", 0.6))
+    wavelength_max = float(config.get("wavelength_max_angstrom", 2.5))
     duty = float(np.mean(duty_cycles)) if duty_cycles else 1.0
     scale = normalization_scale if normalization_scale > 0.0 else (duty if duty > 0.0 else 1.0)
     if metadata_exposure_uah is None:
@@ -933,7 +959,8 @@ def bin_corelli_group(
         mask=mask,
         num_events=hypothesis_count,
         metadata={
-            "raw_dgs": config,
+            "raw_dgs": copy.deepcopy(config),
+            "resolved_run_reductions": {dataset.id: copy.deepcopy(dataset.metadata.get("resolved_reduction")) for dataset in selected},
             "corelli_reconstruction": {
                 "method": "correlation_chopper_finite_energy",
                 "energy_sampling": "requested_DeltaE_bin_centres",

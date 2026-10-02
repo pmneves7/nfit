@@ -362,6 +362,15 @@ normalization trajectories. **Detector mask** can supply an additional
 workspace whose non-positive or invalid values exclude detectors. Both fields
 have **Browse** buttons in the raw-reduction setup panel.
 
+### Editable source and reduction recipes
+
+Native collections expose shared settings, individual run overrides and resolved
+Ei/T0 in the reduction panel. Automatic mode is explicit; negative time-zero
+values are valid. **Copy reduction recipe script** exports complete source and
+reduction settings, while **Copy policy script** remains a shorter policy snippet.
+See [Source and reduction recipes](reduction_recipes.md) for scripting, provenance
+and targeted cache invalidation.
+
 ### Numerical reduction policies
 
 Raw-DGS and MDEvent group settings retain the following choices after import:

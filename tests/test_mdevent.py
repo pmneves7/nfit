@@ -1299,8 +1299,13 @@ def test_mdevent_group_gui_exposes_shared_setup_and_defaults_manual(tmp_path, mo
     mask = explorer.details_widget.findChild(QtWidgets.QLineEdit, "mdevent_mask_file")
     ei = explorer.details_widget.findChild(QtWidgets.QDoubleSpinBox, "mdevent_incident_energy_override")
     t0 = explorer.details_widget.findChild(QtWidgets.QDoubleSpinBox, "mdevent_t0_override")
+    resolved = explorer.details_widget.findChild(QtWidgets.QLabel, "mdevent_resolved_reduction_values")
+    automatic = explorer.details_widget.findChild(QtWidgets.QCheckBox, "mdevent_incident_energy_override_automatic")
     ub = explorer.details_widget.findChild(QtWidgets.QLineEdit, "mdevent_ub_matrix")
-    assert all(widget is not None and widget.toolTip() for widget in (norm, mask, ei, t0, ub))
+    assert all(widget is not None and widget.toolTip() for widget in (norm, mask, ei, ub, resolved, automatic))
+    assert t0 is None  # Time zero cannot change coordinates already stored in MDEvent.
+    assert "t0_override" in resolved.text()
+    assert automatic.isChecked()
     config = data_group_composite_config(_composite_scope(root, subgroup))
     assert config["enabled"] is True
     assert config["auto_rebin"] is False
@@ -1331,6 +1336,7 @@ def test_mdevent_group_gui_exposes_shared_setup_and_defaults_manual(tmp_path, mo
     titles = [box.title() for box in boxes]
     assert titles.index("Composite dataset") < titles.index("Datasets")
 
+    automatic.setChecked(False)
     ei.setValue(12.5)
     assert subgroup.metadata["mdevent"]["incident_energy_override"] == 12.5
     assert config["stale"] is True

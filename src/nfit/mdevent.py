@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import re
@@ -18,7 +19,6 @@ from .backgrounds import background_with_user_mask_zeros
 from .dataset import PointData4D
 from .dgs_normalization import (
     DEFAULT_TRAJECTORY_ENERGY_POLICY,
-    trajectory_incident_energies,
     validated_trajectory_energy_policy,
 )
 from .dgs_reduction_policy import (
@@ -46,6 +46,12 @@ from .histogram_statistics import (
 )
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, mdhisto_measured_bins
 from .pipeline import DatasetEntry, DatasetGroup, MaskSpec
+from .reduction_runtime import (
+    effective_trajectory_energies,
+    filter_mdevent_masks,
+    mdevent_run_masks,
+    run_calibrations,
+)
 
 try:
     from . import _mdevent_numba as _MDEVENT_NUMBA
@@ -84,6 +90,8 @@ class MDEventRunInfo:
     t0: float | None
     goniometer: np.ndarray
     rubw_matrix: np.ndarray
+    instrument_name: str = "unknown"
+    geometry_signature: str | None = None
 
 
 @dataclass(frozen=True)
@@ -228,9 +236,15 @@ def mdevent_dataset_group(
                 "run_number": run.run_number, "omega": run.omega,
                 "incident_energy": run.incident_energy,
                 "proton_charge": run.proton_charge, "duration": run.duration,
+                "instrument_name": run.instrument_name, "geometry_signature": run.geometry_signature,
+                "t0": run.t0, "goniometer_matrix": run.goniometer.tolist(),
             },
         ))
-    return DatasetGroup(name=name or info.path.stem, datasets=datasets, metadata={"mdevent": shared})
+    group = DatasetGroup(name=name or info.path.stem, datasets=datasets, metadata={"mdevent": shared})
+    from .reduction_recipes import ensure_reduction_recipe
+
+    ensure_reduction_recipe(group)
+    return group
 
 
 def append_mdevent_file(group: DatasetGroup, path: str | Path) -> list[DatasetEntry]:
@@ -264,6 +278,8 @@ def append_mdevent_file(group: DatasetGroup, path: str | Path) -> list[DatasetEn
                 "run_number": run.run_number, "omega": run.omega,
                 "incident_energy": run.incident_energy,
                 "proton_charge": run.proton_charge, "duration": run.duration,
+                "instrument_name": run.instrument_name, "geometry_signature": run.geometry_signature,
+                "t0": run.t0, "goniometer_matrix": run.goniometer.tolist(),
             },
         )
         group.datasets.append(entry)
@@ -418,8 +434,8 @@ def bin_mdevent_group(
     # Choose the common Ei before partitioning runs by user masks. A partition
     # is only an accumulation detail, not a new first experiment.
     if _trajectory_reference_energy is None:
-        energies = trajectory_incident_energies(
-            config, (run.metadata["incident_energy"] for run in selected_runs)
+        energies = effective_trajectory_energies(
+            group, selected_runs, (run.metadata["incident_energy"] for run in selected_runs)
         )
         _trajectory_reference_energy = energies[0] if energies else None
     masks = list(group.masks if inherited_masks is None else inherited_masks)
@@ -513,7 +529,7 @@ def bin_mdevent_group(
         wanted = {int(dataset.metadata["mdevent_experiment_index"]): dataset for dataset in source_runs}
         with h5py.File(source, "r") as handle:
             values = handle[f"{config['workspace_path'].strip('/')}/event_data/event_data"]
-            mask_norm = load_detector_normalization(config["mask_file"]) if config.get("mask_file") else None
+            run_masks = mdevent_run_masks(group, wanted, load_detector_normalization)
             batch_rows = max(1, min(1_000_000, int(max_batch_bytes) // (9 * 8 * 3)))
             for start in range(0, values.shape[0], batch_rows):
                 stop = min(start + batch_rows, values.shape[0])
@@ -521,9 +537,7 @@ def bin_mdevent_group(
                 keep = np.isin(block[:, 2].astype(np.int64), list(wanted))
                 if np.any(keep):
                     chosen = block[keep]
-                    if mask_norm is not None:
-                        detector_values = mask_norm.value_for_ids(chosen[:, 4].astype(np.int64))
-                        chosen = chosen[detector_values > 0.0]
+                    chosen = filter_mdevent_masks(chosen, run_masks)
                     if chosen.size:
                         signal_factors, active_runs = _event_run_signal_factors(
                             wanted, chosen[:, 2].astype(np.int64)
@@ -689,12 +703,14 @@ def mdevent_coordinate_bounds(
     run_key = tuple(sorted((str(item.metadata["source_file"]), int(item.metadata["mdevent_experiment_index"])) for item in selected))
     stat_key = tuple((name, os.stat(name).st_mtime_ns, os.stat(name).st_size) for name in source_names)
     ub_matrix = np.asarray(config["ub_matrix"], dtype=float)
-    mask_name = str(config.get("mask_file") or "")
-    mask_key = (
-        (mask_name, os.stat(mask_name).st_mtime_ns, os.stat(mask_name).st_size)
-        if mask_name
-        else None
-    )
+    from .reduction_recipes import effective_reduction_config
+
+    mask_key = []
+    for dataset in selected:
+        mask_name = effective_reduction_config(group, dataset).get("mask_file")
+        stat = os.stat(mask_name) if mask_name else None
+        mask_key.append((dataset.id, mask_name, None if stat is None else (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)))
+    mask_key = tuple(mask_key)
     key = (
         stat_key,
         run_key,
@@ -710,7 +726,6 @@ def mdevent_coordinate_bounds(
         return [tuple(bound) for bound in cached]
     inverse_basis = np.linalg.inv(basis_array)
     transform = np.linalg.inv(2.0 * np.pi * ub_matrix)
-    detector_mask = load_detector_normalization(mask_name) if mask_name else None
     lower = np.full(2 if powder else 4, np.inf)
     upper = np.full(2 if powder else 4, -np.inf)
     batch_rows = max(1, min(1_000_000, int(max_batch_bytes) // (9 * 8 * 3)))
@@ -724,20 +739,18 @@ def mdevent_coordinate_bounds(
     completed_rows = 0
     for source_name in source_names:
         wanted = {
-            int(item.metadata["mdevent_experiment_index"])
+            int(item.metadata["mdevent_experiment_index"]): item
             for item in selected
             if str(item.metadata["source_file"]) == source_name
         }
+        run_masks = mdevent_run_masks(group, wanted, load_detector_normalization)
         with h5py.File(source_name, "r") as handle:
             values = handle[f"{config['workspace_path'].strip('/')}/event_data/event_data"]
             for start in range(0, values.shape[0], batch_rows):
                 stop = min(start + batch_rows, values.shape[0])
                 block = np.asarray(values[start:stop], dtype=float)
                 block = block[np.isin(block[:, 2].astype(np.int64), list(wanted))]
-                if block.size and detector_mask is not None:
-                    block = block[
-                        detector_mask.value_for_ids(block[:, 4].astype(np.int64)) > 0.0
-                    ]
+                block = filter_mdevent_masks(block, run_masks)
                 if block.size:
                     if powder:
                         # Stored QSample event coordinates are physical
@@ -811,8 +824,8 @@ def bin_mdevent_powder_group(
         )
     )
     if _trajectory_reference_energy is None:
-        energies = trajectory_incident_energies(
-            config, (run.metadata["incident_energy"] for run in selected_runs)
+        energies = effective_trajectory_energies(
+            group, selected_runs, (run.metadata["incident_energy"] for run in selected_runs)
         )
         _trajectory_reference_energy = energies[0] if energies else None
     masks = list(group.masks if inherited_masks is None else inherited_masks)
@@ -880,11 +893,7 @@ def bin_mdevent_powder_group(
             values = handle[
                 f"{config['workspace_path'].strip('/')}/event_data/event_data"
             ]
-            mask_norm = (
-                load_detector_normalization(config["mask_file"])
-                if config.get("mask_file")
-                else None
-            )
+            run_masks = mdevent_run_masks(group, wanted, load_detector_normalization)
             batch_rows = max(
                 1, min(1_000_000, int(max_batch_bytes) // (9 * 8 * 3))
             )
@@ -897,11 +906,7 @@ def bin_mdevent_powder_group(
                 )
                 if np.any(keep):
                     chosen = block[keep]
-                    if mask_norm is not None:
-                        detector_values = mask_norm.value_for_ids(
-                            chosen[:, EVENT_COLUMNS["detector_id"]].astype(np.int64)
-                        )
-                        chosen = chosen[detector_values > 0.0]
+                    chosen = filter_mdevent_masks(chosen, run_masks)
                     if chosen.size:
                         signal_factors, active_runs = _event_run_signal_factors(
                             wanted,
@@ -1282,16 +1287,15 @@ def _trajectory_payloads(
     import h5py
 
     config = group.metadata["mdevent"]
-    detector_norm = load_detector_normalization(config["normalization_file"]) if config.get("normalization_file") else None
-    detector_mask = load_detector_normalization(config["mask_file"]) if config.get("mask_file") else None
+    calibration_payloads = {}
     symmetry = _symmetry_matrices(symmetry_operations)
     run_payloads = []
     detector_payloads = []
     datasets = list(datasets)
     trajectory_energies = dict(zip(
         (dataset.id for dataset in datasets),
-        trajectory_incident_energies(
-            config, (dataset.metadata["incident_energy"] for dataset in datasets),
+        effective_trajectory_energies(
+            group, datasets, (dataset.metadata["incident_energy"] for dataset in datasets),
             reference_energy=reference_energy,
         ),
         strict=True,
@@ -1313,6 +1317,7 @@ def _trajectory_payloads(
         with h5py.File(source_text, "r") as handle:
             workspace = handle[config["workspace_path"]]
             for dataset in source_datasets:
+                detector_norm, detector_mask = run_calibrations(group, dataset, load_detector_normalization, calibration_payloads)
                 index = int(dataset.metadata["mdevent_experiment_index"])
                 experiment = workspace[f"experiment{index}"]
                 detector_ids = np.asarray(experiment["instrument/physical_detectors/detector_number"][()], dtype=np.int64)
@@ -1717,23 +1722,14 @@ def _powder_trajectory_normalization(
     import h5py
 
     config = group.metadata["mdevent"]
-    detector_norm = (
-        load_detector_normalization(config["normalization_file"])
-        if config.get("normalization_file")
-        else None
-    )
-    detector_mask = (
-        load_detector_normalization(config["mask_file"])
-        if config.get("mask_file")
-        else None
-    )
+    calibration_payloads = {}
     result = np.zeros(shape)
     payloads = []
     datasets = list(datasets)
     trajectory_energies = dict(zip(
         (dataset.id for dataset in datasets),
-        trajectory_incident_energies(
-            config, (dataset.metadata["incident_energy"] for dataset in datasets),
+        effective_trajectory_energies(
+            group, datasets, (dataset.metadata["incident_energy"] for dataset in datasets),
             reference_energy=reference_energy,
         ),
         strict=True,
@@ -1749,6 +1745,7 @@ def _powder_trajectory_normalization(
         with h5py.File(source_text, "r") as handle:
             workspace = handle[config["workspace_path"]]
             for dataset in source_datasets:
+                detector_norm, detector_mask = run_calibrations(group, dataset, load_detector_normalization, calibration_payloads)
                 index = int(dataset.metadata["mdevent_experiment_index"])
                 experiment = workspace[f"experiment{index}"]
                 detector_ids = np.asarray(
@@ -2208,12 +2205,24 @@ def _read_run(group, index):
         path = f"logs/{name}/value"
         return _scalar(group[path]) if path in group else default
     t0 = log("CalculatedT0", None)
+    detector = group.get("instrument/physical_detectors")
+    digest = hashlib.sha256()
+    if detector is not None:
+        for name in ("detector_number", "polar_angle", "azimuthal_angle"):
+            if name in detector:
+                array = np.asarray(detector[name][()])
+                digest.update(name.encode())
+                digest.update(str((array.shape, array.dtype.str)).encode())
+                digest.update(array.tobytes())
+    instrument = group.get("instrument/name")
+    instrument_name = "unknown" if instrument is None else str(_scalar(instrument))
     return MDEventRunInfo(
         index, str(log("run_number", index)), float(log("Ei")), float(log("gd_prtn_chrg")),
         float(log("omega")), float(log("phi")), float(log("chi")), float(log("duration")),
         None if t0 is None else float(t0),
         _read_goniometer_matrix(group),
         np.asarray(group["logs/RUBW_MATRIX/value"][()], dtype=float).reshape(3, 3),
+        instrument_name, None if detector is None else digest.hexdigest(),
     )
 
 

@@ -740,3 +740,185 @@ def test_project_cache_clear_script_removes_saved_cache_artifacts(tmp_path):
         restored.data_groups[0].datasets[0], rebin_config={"enabled": False}
     )
     np.testing.assert_array_equal(restored_data.signal, source.signal)
+
+
+def _native_workflow_grid(group):
+    from nfit.project_composites import data_group_composite_config
+
+    config = data_group_composite_config(group)
+    config.update(enabled=True, auto_rebin=False, minimum_coverage=0.0, resolution_mode="bins")
+    for axis in config["axes"]:
+        axis.update(lower=-1.0, upper=1.0, auto_lower=False, auto_upper=False,
+                    num_bins=1, mode="bins", auto_step_size=False)
+    return config
+
+
+def test_standalone_reduction_workflow_replays_source_and_editable_grid(tmp_path):
+    from nfit import composite_dataset_data, configure_composite_scaling, mdevent_dataset_group
+    from nfit.workflow import reduction_workflow_script
+    from tests.test_mdevent import _write_mdevent
+
+    source = tmp_path / "original events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+    group.datasets[0].scale_factor = 2.0
+    group.datasets[1].enabled = False
+    group.masks = [MaskSpec("Outside", parameters={"H": [0.5, 0.8]})]
+    config = _native_workflow_grid(group)
+    root = DataGroup("workspace", subgroups=[group])
+    configure_composite_scaling(root, node=group, result_scale=3.0)
+    expected = composite_dataset_data(root, node=group, config_override=config)
+
+    original_metadata_keys = set(group.metadata)
+    script = reduction_workflow_script(group)
+    assert set(group.metadata) == original_metadata_keys
+    assert "load_project" not in script and "PySide" not in script
+    namespace = {"__name__": "standalone_reduction"}
+    exec(compile(script, "native_reduction.py", "exec"), namespace)
+    replay_root, replay_group = namespace["build_group"]()
+    assert [item.id for item in replay_group.datasets] == [item.id for item in group.datasets]
+    assert [item.enabled for item in replay_group.datasets] == [True, False]
+    assert replay_group.masks[0].name == "Outside"
+    actual = namespace["run"]()
+    np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
+    np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
+    np.testing.assert_array_equal(actual.num_events, expected.num_events)
+
+    # The exposed histogram recipe can be edited independently of source reduction.
+    namespace["REBIN_CONFIG"]["axes"][0]["num_bins"] = 2
+    rebinned = namespace["run"]()
+    assert rebinned.shape == (2, 1, 1, 1)
+    direct = composite_dataset_data(replay_root, node=replay_group,
+                                    config_override=namespace["REBIN_CONFIG"])
+    np.testing.assert_allclose(rebinned.signal, direct.signal, equal_nan=True)
+
+
+def test_standalone_reduction_export_rejects_unreplayed_topology(tmp_path):
+    from nfit import mdevent_dataset_group
+    from nfit.workflow import reduction_workflow_script
+    from tests.test_mdevent import _write_mdevent
+
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+    group.subgroups = [DatasetGroup("nested")]
+    with pytest.raises(WorkflowValidationError, match="nested"):
+        reduction_workflow_script(group)
+    group.subgroups = []
+    group.backgrounds = [BackgroundSpec("missing topology", source_group=group)]
+    with pytest.raises(WorkflowValidationError, match="background links"):
+        reduction_workflow_script(group)
+
+
+def test_standalone_raw_reduction_workflow_preserves_order_and_run_overrides(tmp_path):
+    from nfit import composite_dataset_data, raw_dgs_dataset_group
+    from nfit.reduction_recipes import effective_reduction_config, set_reduction_settings
+    from nfit.workflow import reduction_workflow_script
+    from tests.test_raw_dgs import _write_raw_dgs
+
+    paths = [tmp_path / name for name in ("SEQ_42.nxs.h5", "SEQ_43.nxs.h5")]
+    for path in paths:
+        _write_raw_dgs(path)
+    group = raw_dgs_dataset_group(paths)
+    set_reduction_settings(group, {"t0_override": -3.0})
+    set_reduction_settings(group, {"t0_override": -7.0}, dataset_ids=[group.datasets[1].id])
+    config = _native_workflow_grid(group)
+    for index, axis in enumerate(config["axes"]):
+        axis.update(lower=-10.0 if index < 3 else -100.0,
+                    upper=10.0 if index < 3 else 40.0)
+    root = DataGroup("raw workspace", subgroups=[group])
+    expected = composite_dataset_data(root, node=group, config_override=config)
+    namespace = {"__name__": "raw_standalone"}
+    exec(compile(reduction_workflow_script(group, binning_config=config), "raw.py", "exec"), namespace)
+    _, replay_group = namespace["build_group"]()
+    assert [dataset.id for dataset in replay_group.datasets] == [dataset.id for dataset in group.datasets]
+    assert [effective_reduction_config(replay_group, dataset)["t0_override"]
+            for dataset in replay_group.datasets] == [-3.0, -7.0]
+    actual = namespace["run"]()
+    np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
+    np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
+
+    # Source identity, not list position, owns each override when order is edited.
+    namespace["REDUCTION_RECIPE"]["datasets"].reverse()
+    _, reordered = namespace["build_group"]()
+    assert [dataset.id for dataset in reordered.datasets] == [dataset.id for dataset in reversed(group.datasets)]
+    assert [effective_reduction_config(reordered, dataset)["t0_override"]
+            for dataset in reordered.datasets] == [-7.0, -3.0]
+    namespace["REDUCTION_RECIPE"]["shared_defaults"]["t0_override"] = -11.0
+    _, edited = namespace["build_group"]()
+    assert [effective_reduction_config(edited, dataset)["t0_override"]
+            for dataset in edited.datasets] == [-7.0, -11.0]
+
+
+def test_standalone_corelli_workflow_replays_correlation_settings(tmp_path):
+    from nfit import composite_dataset_data, corelli_dataset_group
+    from nfit.reduction_recipes import effective_reduction_config, set_reduction_settings
+    from nfit.workflow import reduction_workflow_script
+    from tests.test_corelli import _write_corelli
+
+    path = tmp_path / "CORELLI_7.nxs.h5"
+    _write_corelli(path)
+    group = corelli_dataset_group([path])
+    set_reduction_settings(group, {"timing_offset_ns": -1000.0,
+                                   "wavelength_min_angstrom": 0.7,
+                                   "wavelength_max_angstrom": 2.0})
+    config = _native_workflow_grid(group)
+    for axis in config["axes"][:3]:
+        axis.update(lower=-10.0, upper=10.0)
+    root = DataGroup("correlation workspace", subgroups=[group])
+    expected = composite_dataset_data(root, node=group, config_override=config)
+    namespace = {"__name__": "corelli_standalone"}
+    exec(compile(reduction_workflow_script(group, binning_config=config), "correlation.py", "exec"), namespace)
+    _, replay_group = namespace["build_group"]()
+    assert effective_reduction_config(replay_group, replay_group.datasets[0])["timing_offset_ns"] == -1000.0
+    actual = namespace["run"]()
+    np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
+    np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
+    np.testing.assert_array_equal(actual.num_events, expected.num_events)
+
+
+@pytest.mark.parametrize("background_owner", ["node", "root"])
+def test_saved_composite_export_exposes_native_sample_and_background_recipes(tmp_path, background_owner):
+    from nfit import (
+        composite_dataset_data,
+        composite_workflow_script,
+        mdevent_dataset_group,
+        save_project,
+    )
+    from tests.test_mdevent import _write_mdevent
+
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    sample = mdevent_dataset_group(source, name="sample")
+    background = mdevent_dataset_group(source, name="background")
+    backgrounds = [BackgroundSpec(
+        "measured background", source_group=background, source_group_id=background.id,
+        projection="measured_events", scale=0.25,
+    )]
+    sample.datasets[0].scale_factor = 2.0
+    sample.datasets[1].enabled = False
+    config = _native_workflow_grid(sample)
+    root = DataGroup("workspace", subgroups=[sample, background])
+    (sample if background_owner == "node" else root).backgrounds = backgrounds
+    groups = [root]
+    if background_owner == "root":
+        # A root-wide background cannot be its own descendant: that would
+        # subtract it from itself recursively. Keep its source in another root.
+        root.subgroups = [sample]
+        groups.append(DataGroup("background sources", subgroups=[background]))
+    project = NfitProject(groups)
+    save_project(project, tmp_path / "topology.nfit")
+
+    script = composite_workflow_script(project, root.name, node_id=sample.id)
+    namespace = {"__name__": "saved_native_workflow"}
+    exec(compile(script, "composite_reduction.py", "exec"), namespace)
+    assert set(namespace["REDUCTION_RECIPES"]) == {sample.id, background.id}
+    if background_owner == "root":
+        # Recipe discovery must include inherited external source groups.
+        # Numerical parent-wide background topology is a separate service gate.
+        return
+    expected = composite_dataset_data(root, node=sample, config_override=config)
+    actual = namespace["run"]()
+    np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
+    np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
+    assert actual.metadata["background_subtractions"][-1]["projection"]["mode"] == "measured_events"

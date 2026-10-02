@@ -10,6 +10,7 @@ reducer for every direct-geometry NeXus file.
 from __future__ import annotations
 
 import ast
+import copy
 import json
 import math
 import re
@@ -26,7 +27,6 @@ import numpy as np
 
 from .dgs_normalization import (
     DEFAULT_TRAJECTORY_ENERGY_POLICY,
-    trajectory_incident_energies,
     validated_trajectory_energy_policy,
 )
 from .dgs_reduction_policy import (
@@ -62,6 +62,7 @@ from .mdevent import (
 from .mdhisto import MDHistoAxis, MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup
 from .raw_dgs_cache import (
+    RAW_DGS_REDUCTION_VERSION,
     cache_event_chunks,
     cached_reduction,
     iter_cached_event_chunks,
@@ -82,6 +83,11 @@ from .raw_dgs_monitors import (
     _mantid_getei_peak_region as _mantid_getei_peak_region,
 )
 from .raw_dgs_pulses import select_pulses
+from .reduction_runtime import (
+    acquisition_identity,
+    effective_trajectory_energies,
+    record_resolved_reduction,
+)
 
 # Mantid's parameter files select these formula-driven GetEi v2 paths instead
 # of fitting two monitor peaks. The formulas are instrument definitions, not
@@ -107,6 +113,8 @@ class RawDGSRunInfo:
     ub_matrix: np.ndarray
     calibration_source: str = "unspecified"
     calibration_warning: str | None = None
+    instrument_name: str = "unknown"
+    geometry_signature: str | None = None
 
 
 def is_raw_dgs_nexus_file(path: str | Path) -> bool:
@@ -157,6 +165,7 @@ def inspect_raw_dgs_run(
             ub_matrix=_ub_from_logs(entry),
             calibration_source=calibration["source"],
             calibration_warning=calibration.get("warning"),
+            **acquisition_identity(entry),
         )
 
 
@@ -289,6 +298,8 @@ def raw_dgs_dataset_group(
                     "incident_energy": info.incident_energy,
                     "calibration_source": info.calibration_source,
                     "calibration_warning": info.calibration_warning,
+                    "instrument_name": info.instrument_name,
+                    "geometry_signature": info.geometry_signature,
                     "proton_charge": info.proton_charge,
                     "omega": info.omega,
                     "phi": info.phi,
@@ -308,9 +319,13 @@ def raw_dgs_dataset_group(
                     "message": f"reading raw run metadata {index:,}/{len(infos):,}",
                 }
             )
-    return DatasetGroup(
+    group = DatasetGroup(
         name=name or first.path.stem, datasets=datasets, metadata={"raw_dgs": shared}
     )
+    from .reduction_recipes import ensure_reduction_recipe
+
+    ensure_reduction_recipe(group)
+    return group
 
 
 def bin_raw_dgs_group(
@@ -429,7 +444,7 @@ def bin_raw_dgs_group(
     # the positive processed-vanadium values.
     detector_norm = None
     detector_mask = None
-    calibration_loaded = False
+    calibration_payloads = {}
     total = sum(int(dataset.metadata.get("event_count", 0)) for dataset in selected)
     processed = 0
     energy_bounds_by_dataset_id: dict[str, tuple[float, float]] = {}
@@ -444,10 +459,14 @@ def bin_raw_dgs_group(
             policy=policies["event_precision_policy"])
         for operation in symmetry
     )
+    from .reduction_recipes import effective_reduction_config
+
     for dataset in selected:
+        run_config = effective_reduction_config(group, dataset)
+        run_policies = resolved_dgs_reduction_policies(run_config)
         source = Path(dataset.metadata["source_file"])
-        use_cache = bool(config.get("cache_reduced_events", True))
-        signature = reduction_signature(dataset, config) if use_cache else None
+        use_cache = bool(run_config.get("cache_reduced_events", True))
+        signature = reduction_signature(dataset, run_config) if use_cache else None
         cache = cached_reduction(dataset, signature) if use_cache else None
         with cache.open() if cache is not None else nullcontext() as archive:
             if cache is not None:
@@ -459,18 +478,18 @@ def bin_raw_dgs_group(
                 }
                 cache_hits += 1
             else:
-                if not calibration_loaded:
-                    normalization_path = config.get("normalization_file")
-                    detector_norm = (
-                        load_detector_normalization(normalization_path)
-                        if normalization_path else None
+                calibration_key = (run_config.get("normalization_file"), run_config.get("mask_file"))
+                if calibration_key not in calibration_payloads:
+                    normalization_path = run_config.get("normalization_file")
+                    calibration_payloads[calibration_key] = (
+                        load_detector_normalization(normalization_path) if normalization_path else None,
+                        _combined_detector_mask(run_config),
                     )
-                    detector_mask = _combined_detector_mask(config)
-                    calibration_loaded = True
-                info = inspect_raw_dgs_run(source, monitor_variance_policy=policies["monitor_variance_policy"])
+                detector_norm, detector_mask = calibration_payloads[calibration_key]
+                info = inspect_raw_dgs_run(source, monitor_variance_policy=run_policies["monitor_variance_policy"])
                 geometry = _detector_geometry(source)
                 normalization_payload = _run_normalization_payload(
-                    info, geometry, detector_norm, detector_mask, config
+                    info, geometry, detector_norm, detector_mask, run_config
                 )
                 cache_misses += 1
             run_infos_by_dataset_id[dataset.id] = info
@@ -479,10 +498,15 @@ def bin_raw_dgs_group(
                 **normalization_payload,
                 "charge": np.asarray(normalization_payload["charge"]) * dataset.fit_weight,
             }
-            ei = float(config.get("incident_energy_override") or info.incident_energy)
+            ei = float(run_config.get("incident_energy_override") or info.incident_energy)
             if ei <= 0.0 or info.l1 <= 0.0:
                 raise ValueError(f"{source.name} has no usable incident energy or source distance")
-            energy_bounds = _energy_transfer_bounds(config, ei)
+            energy_bounds = _energy_transfer_bounds(run_config, ei)
+            record_resolved_reduction(dataset, run_config,
+                automatic={"incident_energy_meV": info.incident_energy, "t0_microseconds": info.t0},
+                provenance={"algorithm_version": RAW_DGS_REDUCTION_VERSION, "calibration_source": info.calibration_source,
+                    "calibration_warning": info.calibration_warning, "instrument_name": info.instrument_name,
+                    "geometry_signature": info.geometry_signature, "reduction_signature": signature})
             energy_bounds_by_dataset_id[dataset.id] = energy_bounds
             resolved_energy_windows.append(
                 {
@@ -549,7 +573,7 @@ def bin_raw_dgs_group(
                 accumulate(iter_cached_event_chunks(archive, max_batch_bytes))
             else:
                 chunks = _iter_reduced_event_chunks(
-                    info, config, _masked_detector_geometry(geometry, detector_norm, detector_mask),
+                    info, run_config, _masked_detector_geometry(geometry, detector_norm, detector_mask),
                     ei, energy_bounds, max_batch_bytes,
                 )
                 if use_cache:
@@ -630,7 +654,8 @@ def bin_raw_dgs_group(
         mask=mask,
         num_events=event_count,
         metadata={
-            "raw_dgs": config,
+            "raw_dgs": copy.deepcopy(config),
+            "resolved_run_reductions": {dataset.id: copy.deepcopy(dataset.metadata.get("resolved_reduction")) for dataset in selected},
             "dgs_reduction_policies": policies,
             "reduced_event_cache": {"hits": cache_hits, "misses": cache_misses},
             "raw_dgs_energy_windows_meV": resolved_energy_windows,
@@ -832,13 +857,16 @@ def _trajectory_normalization(
             monitor_variance_policy=resolved_dgs_reduction_policies(config)["monitor_variance_policy"])
         for dataset in datasets
     }
-    trajectory_energies = trajectory_incident_energies(
-        config, (infos[dataset.id].incident_energy for dataset in datasets)
+    trajectory_energies = effective_trajectory_energies(
+        group, datasets, (infos[dataset.id].incident_energy for dataset in datasets)
     )
     for dataset, ei in zip(datasets, trajectory_energies, strict=True):
         info = infos[dataset.id]
+        from .reduction_recipes import effective_reduction_config
+
+        run_config = effective_reduction_config(group, dataset)
         snapshot = (
-            _run_normalization_payload(info, _detector_geometry(info.path), detector_norm, detector_mask, config)
+            _run_normalization_payload(info, _detector_geometry(info.path), detector_norm, detector_mask, run_config)
             if normalization_payloads_by_dataset_id is None
             else normalization_payloads_by_dataset_id[dataset.id]
         )
@@ -852,8 +880,8 @@ def _trajectory_normalization(
             basis_inverse[:3, :3].T @ operation @ canonical_inverse for operation in symmetry
         ]
         energy_bounds = (
-            _energy_transfer_bounds(config, float(
-                config.get("incident_energy_override") or info.incident_energy
+            _energy_transfer_bounds(run_config, float(
+                run_config.get("incident_energy_override") or info.incident_energy
             ))
             if energy_bounds_by_dataset_id is None
             else energy_bounds_by_dataset_id[dataset.id]
@@ -980,13 +1008,16 @@ def _powder_trajectory_normalization(
             monitor_variance_policy=resolved_dgs_reduction_policies(config)["monitor_variance_policy"])
         for dataset in datasets
     }
-    trajectory_energies = trajectory_incident_energies(
-        config, (infos[dataset.id].incident_energy for dataset in datasets)
+    trajectory_energies = effective_trajectory_energies(
+        group, datasets, (infos[dataset.id].incident_energy for dataset in datasets)
     )
     for dataset, incident_energy in zip(datasets, trajectory_energies, strict=True):
         info = infos[dataset.id]
+        from .reduction_recipes import effective_reduction_config
+
+        run_config = effective_reduction_config(group, dataset)
         snapshot = (
-            _run_normalization_payload(info, _detector_geometry(info.path), detector_norm, detector_mask, config)
+            _run_normalization_payload(info, _detector_geometry(info.path), detector_norm, detector_mask, run_config)
             if normalization_payloads_by_dataset_id is None
             else normalization_payloads_by_dataset_id[dataset.id]
         )

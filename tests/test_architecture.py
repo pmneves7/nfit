@@ -68,6 +68,8 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "dgs_normalization.py",
     PACKAGE_ROOT / "dgs_reduction_policy.py",
     PACKAGE_ROOT / "dgs_reduction_settings.py",
+    PACKAGE_ROOT / "reduction_recipes.py",
+    PACKAGE_ROOT / "reduction_runtime.py",
     PACKAGE_ROOT / "composite_spectral.py",
     PACKAGE_ROOT / "rebin_cache.py",
     PACKAGE_ROOT / "slice_viewer_cache.py",
@@ -145,6 +147,7 @@ PROJECT_GUI_CLIENT_MODULES = (
     PACKAGE_ROOT / "performance_gui.py",
     PACKAGE_ROOT / "preferences_gui.py",
     PACKAGE_ROOT / "dgs_reduction_policy_gui.py",
+    PACKAGE_ROOT / "reduction_recipe_gui.py",
 )
 
 

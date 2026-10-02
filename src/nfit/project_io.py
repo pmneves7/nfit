@@ -262,6 +262,13 @@ def _dataset_group_from_dict(payload: dict[str, Any]) -> DatasetGroup:
 
 
 def _dataset_group_to_dict(group: DatasetGroup) -> dict[str, Any]:
+    if any(isinstance(group.metadata.get(key), dict) and group.metadata[key].get("format") in {
+        "raw-direct-geometry-nexus", "corelli-correlation-nexus", "mantid-mdevent"
+    } for key in ("raw_dgs", "mdevent")):
+        from .reduction_recipes import ensure_reduction_recipe
+
+        ensure_reduction_recipe(group)
+
     return {
         "id": group.id,
         "name": group.name,

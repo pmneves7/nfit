@@ -238,11 +238,113 @@ class WorkflowPlan:
         return plan
 
 
+def reduction_workflow_script(
+    group: DatasetGroup, *, binning_config: dict[str, Any] | None = None
+) -> str:
+    """Export one native source/reduction group and an independent histogram recipe.
+
+    This standalone workflow reconstructs the group's original sources without
+    a saved project or Qt. Background links and nested collection topology need
+    :func:`composite_workflow_script`, which retains that topology in a project.
+    """
+    from .composite_scaling import composite_scaling
+    from .project_composites import GROUP_COMPOSITE_KEY, data_group_composite_config
+    from .reduction_recipes import export_reduction_recipe
+
+    if group.subgroups:
+        raise WorkflowValidationError(
+            "Standalone reduction export requires one source group, without nested collections."
+        )
+    if any(background.enabled for owner in [group, *group.datasets]
+           for background in owner.backgrounds):
+        raise WorkflowValidationError(
+            "Use a saved composite workflow to replay enabled background links."
+        )
+    recipe = export_reduction_recipe(group)
+    saved_config = group.metadata.get(GROUP_COMPOSITE_KEY, {})
+    config = copy.deepcopy(data_group_composite_config(
+        group, config_override=copy.deepcopy(
+            binning_config if binning_config is not None
+            else saved_config if isinstance(saved_config, dict) else {}
+        )
+    ))
+    dimensions = copy.deepcopy(group.metadata.get("metadata_dimensions", []))
+    scaling = composite_scaling(group)
+    return f'''"""Reconstruct native sources and bin one reduction group with nfit.
+
+Edit REDUCTION_RECIPE's source_selection and datasets for source membership,
+shared_defaults for reduction settings, per_run_overrides for individual runs,
+and coordinate_transform for UB. Resolved run values are provenance snapshots.
+Edit REBIN_CONFIG independently for coordinates, symmetry, grid, and channels.
+No saved project or Qt is required. This script exports this group's own masks
+and calibration; ancestor collection settings and linked backgrounds require
+a composite workflow.
+"""
+from nfit import DataGroup, composite_dataset_data, set_metadata_dimensions, configure_composite_scaling
+from nfit.reduction_recipes import replay_reduction_recipe
+
+REDUCTION_RECIPE = {pformat(recipe, sort_dicts=False)}
+REBIN_CONFIG = {pformat(config, sort_dicts=False)}
+METADATA_DIMENSIONS = {pformat(dimensions, sort_dicts=False)}
+SCALING = {pformat(scaling, sort_dicts=False)}
+
+def build_group(*, progress_callback=None):
+    group = replay_reduction_recipe(REDUCTION_RECIPE, progress_callback=progress_callback)
+    set_metadata_dimensions(group, METADATA_DIMENSIONS)
+    root = DataGroup(group.name, subgroups=[group])
+    configure_composite_scaling(root, node=group, **SCALING)
+    return root, group
+
+def run(*, progress_callback=None):
+    root, group = build_group(progress_callback=progress_callback)
+    return composite_dataset_data(root, node=group, config_override=REBIN_CONFIG,
+                                  progress_callback=progress_callback)
+
+if __name__ == "__main__":
+    data = run()
+    print(data.shape)
+'''
+
+
+def _composite_reduction_recipes(
+    node: DataGroup | DatasetGroup, *, root: DataGroup | None = None
+) -> dict[str, Any]:
+    """Collect source groups and linked background dependencies once by identity."""
+    from .reduction_recipes import export_reduction_recipe, reduction_family
+
+    recipes: dict[str, Any] = {}
+    visited: set[int] = set()
+
+    def visit(owner):
+        if id(owner) in visited:
+            return
+        visited.add(id(owner))
+        if isinstance(owner, DatasetGroup) and reduction_family(owner) is not None:
+            recipes[owner.id] = export_reduction_recipe(owner)
+        for child in owner.subgroups:
+            visit(child)
+        for background in owner.backgrounds:
+            if background.enabled and background.source_group is not None:
+                visit(background.source_group)
+        for dataset in owner.datasets:
+            for background in dataset.backgrounds:
+                if background.enabled and background.source_group is not None:
+                    visit(background.source_group)
+
+    visit(node)
+    if root is not None and root is not node:
+        # A subgroup composite also consumes backgrounds attached to its root.
+        for background in root.backgrounds:
+            if background.enabled and background.source_group is not None:
+                visit(background.source_group)
+    return recipes
+
+
 def composite_workflow_script(
     project: NfitProject, group_name: str, *, node_id: str | None = None
 ) -> str:
-    """Export a composite with editable grid, metadata axes, and INS conventions."""
-    from .project_data import _composite_scope, data_group_composite_config
+    """Export editable reduction and binning while retaining saved project topology."""
+    from .project_composites import _composite_scope, data_group_composite_config
 
     path = getattr(project, "_project_path", None)
     if path is None:
@@ -257,14 +359,20 @@ def composite_workflow_script(
     dimensions = copy.deepcopy(node.metadata.get("metadata_dimensions", []))
     from .composite_scaling import composite_scaling
     scaling = composite_scaling(node)
-    return f'''"""Rebuild a discrete metadata composite from a saved nfit project.
+    recipes = _composite_reduction_recipes(node, root=group)
+    return f'''"""Rebuild a composite with editable native reduction and binning recipes.
 
-Save source membership, import options, masks, scales, and backgrounds in the
-project before running. Edit the coordinate recipes, spatial grid, and
-spectral_channels INS settings in REBIN_CONFIG below.
+The saved project supplies collection topology, masks, scales, and background
+links. Edit each REDUCTION_RECIPES entry's source_selection and datasets for
+source membership, shared_defaults for reduction settings, per_run_overrides
+for individual runs, and coordinate_transform for UB. Resolved run values are
+provenance snapshots. REBIN_CONFIG separately controls coordinates,
+symmetry, histogram grid, and spectral channels. Standalone export of an entire
+composite topology is not supplied by this script.
 """
 from pathlib import Path
 from nfit import load_project, composite_dataset_data, set_metadata_dimensions, configure_composite_scaling
+from nfit.reduction_recipes import apply_reduction_recipe
 
 PROJECT_PATH = Path({str(path)!r})
 GROUP_NAME = {group_name!r}
@@ -272,9 +380,13 @@ NODE_ID = {node_id!r}
 METADATA_DIMENSIONS = {pformat(dimensions, sort_dicts=False)}
 REBIN_CONFIG = {pformat(config, sort_dicts=False)}
 SCALING = {pformat(scaling, sort_dicts=False)}
+REDUCTION_RECIPES = {pformat(recipes, sort_dicts=False)}
 
 def run():
     project = load_project(PROJECT_PATH)
+    source_groups = {{node.id: node for root in project.data_groups for node in root.iter_subgroups()}}
+    for source_id, recipe in REDUCTION_RECIPES.items():
+        apply_reduction_recipe(source_groups[source_id], recipe)
     group = next(item for item in project.data_groups if item.name == GROUP_NAME)
     node = next(item for item in group.iter_subgroups() if item.id == NODE_ID) if NODE_ID else None
     set_metadata_dimensions(node if node is not None else group, METADATA_DIMENSIONS)

@@ -34,11 +34,12 @@ releases. Current behavior is documented in the workflow and API pages.
 The temporary [Measurement pipeline implementation plan](measurement_pipeline_plan.md)
 tracks the staged implementation and review checkpoints for these changes.
 
-- Add the shared GUI settings schema and complete source recipes around the
-  public [measurement contracts](measurement_statistics.md). Explicit targets
-  already drive binning, slices, profiles, waterfalls, fitting and export. Unmarked
-  saved workflows retain compatibility provenance. User controls should explain
-  common-response means versus coordinate averages and show resolved assumptions.
+- Extend the native reduction settings schema to the remaining measurement
+  adapters and present [measurement contracts](measurement_statistics.md) around
+  physical targets. Native DGS/CORELLI/MDEvent source recipes, shared/run edits,
+  resolved calibration values and lazy caches are already available. Unmarked
+  saved statistical workflows retain compatibility provenance. Controls should
+  explain common-response means versus coordinate averages and their assumptions.
 - Validate numerical alternatives and choose future defaults at the late
   cross-instrument acceptance stage. Current DGS compatibility defaults remain
   unchanged during contract and workflow refactoring.
@@ -66,12 +67,10 @@ tracks the staged implementation and review checkpoints for these changes.
   and plot styling. Existing nfit named binnings provide a starting point;
   future controls should show resolved per-run settings and uncertainty
   assumptions through the same public scripting APIs.
-- Complete workflow script export for grouped raw-DGS/MDE reductions. The
-  trajectory-energy, event-precision, symmetry-variance, and raw monitor-fitting
-  settings have public APIs and project persistence. **Copy policy script**
-  exports these choices for an already imported group. Grouped source imports
-  and complete reductions/binnings are not yet emitted by the workflow renderer
-  as a complete editable script.
+- Complete standalone workflow export for arbitrary nested composite topology,
+  linked backgrounds and ancestor context. Native isolated reduction collections
+  already export complete editable sources/settings/binnings; saved composite
+  scripts expose native sample/background recipes and preserve project topology.
 - For normalized count data, distinguish smoothing numerator and exposure
   before division from smoothing the divided intensity. Propagate the
   covariance introduced by smoothing and keep unsmoothed statistics available.

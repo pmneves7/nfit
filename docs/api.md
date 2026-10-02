@@ -119,6 +119,14 @@ changes the saved normalization convention. Raw/MDE group import functions also
 accept `trajectory_energy_policy`. The default first-run Ei matches Mantid MDNorm;
 event reconstruction remains per run. A positive Ei override takes precedence.
 
+`reduction_settings_schema(group)` supplies native DGS/CORELLI/MDEvent settings.
+`set_reduction_settings(group, updates, dataset_ids=..., inherit=...)` validates
+shared or per-run edits and invalidates affected reductions. Use
+`export_reduction_recipe`, `replay_reduction_recipe` and `apply_reduction_recipe`
+for persisted source membership/settings; `reduction_workflow_script` adds an
+independent final binning recipe. See
+[Source and reduction recipes](reduction_recipes.md).
+
 `set_dgs_reduction_policies(group, *, event_precision_policy=...,
 symmetry_variance_policy=..., monitor_variance_policy=...)` atomically validates
 and saves numerical choices for the next reduction or histogram. Raw/MDE import

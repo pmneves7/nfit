@@ -82,6 +82,9 @@ different Python.
 - `src/nfit/dgs_reduction_policy.py` and `dgs_reduction_settings.py`: shared DGS
   numerical conventions and public policy configuration; the focused
   `dgs_reduction_policy_gui.py` presents those choices.
+- `src/nfit/reduction_recipes.py`, `reduction_runtime.py`, and
+  `reduction_recipe_gui.py`: source/reduction schemas, execution provenance,
+  targeted edits, public replay, and focused Qt controls.
 - `src/nfit/corelli.py`, `_corelli_numba.py`, and `corelli_constants.py`: CORELLI
   reconstruction, its compiled kernels, and their shared numerical conventions.
 - `src/nfit/project_derived_grid.py`: shared output-grid planning for live

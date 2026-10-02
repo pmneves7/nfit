@@ -50,8 +50,8 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 2B2 | Preserve estimator statistics through project rebinning and derived views | Complete |
 | 2B3 | Preserve/replay source dependencies through cuts and arithmetic | Complete |
 | 2B4 | Complete region, fitting, export, and migration parity | Complete |
-| 3A | Persist complete source and reduction recipes | Pending |
-| 3B | Edit recipes through one settings schema and targeted cache invalidation | Pending |
+| 3A | Persist complete source and reduction recipes | Complete |
+| 3B | Edit recipes through one settings schema and targeted cache invalidation | Complete |
 | 4A | Add basic run expressions and resolved-source preview | Pending |
 | 4B | Add grouped, repeated, and stacked run expressions | Pending |
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Pending |
@@ -501,7 +501,7 @@ source mirror and help are synchronized; scientific project data stay in IPTS.
 Neither NiO project was rebuilt or rewritten in this stage.
 
 **Review gate:** stage 2 is complete within these explicit supported models.
-Stage 3 awaits Paul's authorization. Keep this document until the full refactor
+Paul authorized stages 3 and 4 on 2026-10-02. Keep this document until the full refactor
 has been accepted; then remove it and its navigation entries.
 
 ## 3. Persistent source and reduction recipes
@@ -531,6 +531,27 @@ reuse require complete dependency signatures.
 
 **Acceptance:** saved edits replay without Qt, affected caches rebuild, unrelated
 caches remain reusable, and project reopening is lazy.
+
+**Stage 3 completion record (0.112.0):** native DGS, CORELLI and MDEvent
+imports and project saves persist metadata-only source/reduction recipes with
+current run membership, shared defaults, per-run overrides, resolved automatic
+values and per-run geometry/calibration provenance. A schema supplies scientific
+validation, serialization and focused Qt controls; signed T0 uses explicit
+automatic mode. UB belongs to the group coordinate transform. DGS cache edits
+invalidate only effectively changed run reductions; histogram signatures include
+calibration identities and effective overrides. CORELLI verifies each current
+embedded geometry before reuse. Reopening continues to bind lazy event assets.
+
+Editable standalone native-group scripts replay source/reduction/grid settings
+without Qt; project-backed composite scripts expose editable native sample and
+background recipes while retaining topology. Complete standalone arbitrary
+composite export remains 5B. CORELLI reconstruction still depends on its requested
+energy hypotheses and does not use the DGS laboratory-event cache. Source file
+identities use size and nanosecond modification/change times, with full embedded
+geometry hashes; large acquisition files are not content-hashed.
+
+See [Source and reduction recipes](reduction_recipes.md) for current usage.
+Stage 4 is authorized; scientific alternative/default decisions remain 6A1–6A2.
 
 ## 4. Run-expression selection
 

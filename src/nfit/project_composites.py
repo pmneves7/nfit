@@ -885,6 +885,14 @@ def _composite_numerical_config(group, config):
     return result
 
 
+def _event_reduction_dependency_signature(node):
+    if not isinstance(node, DatasetGroup) or not any(isinstance(node.metadata.get(key), dict) for key in ("raw_dgs", "mdevent")):
+        return None
+    from .reduction_runtime import reduction_dependency_signature
+
+    return reduction_dependency_signature(node)
+
+
 def _composite_cache_signature(
     group: DataGroup,
     _trail: frozenset[Any] = frozenset(),
@@ -942,6 +950,7 @@ def _composite_cache_signature(
         else node.metadata.get("raw_dgs"),
         getattr(_composite_root(group), "lattice_parameters", {}),
         json.dumps(numerical, sort_keys=True, default=str),
+        _event_reduction_dependency_signature(node),
         dimensions,
         # Raw CORELLI event metadata are evaluated directly from the NeXus
         # timestamp log during rebinning. They are not scalar DatasetEntry

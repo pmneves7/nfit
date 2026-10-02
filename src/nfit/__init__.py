@@ -578,6 +578,22 @@ from .rebin import (
     rebin_nd_stream,
     rebin_nd_symmetry,
 )
+from .reduction_recipes import (
+    ReductionEdit,
+    ReductionSetting,
+    apply_reduction_recipe,
+    effective_reduction_config,
+    ensure_reduction_recipe,
+    export_reduction_recipe,
+    get_reduction_overrides,
+    reduction_family,
+    reduction_recipe_script,
+    reduction_settings_schema,
+    replay_reduction_recipe,
+    resolved_reduction_values,
+    set_reduction_settings,
+    validated_reduction_settings,
+)
 from .resolution import (
     EnergyGaussianResolution,
     constant_fwhm_energy_resolution,
@@ -640,6 +656,7 @@ from .workflow import (
     fit_workflow_plan,
     fit_workflow_script,
     project_cache_clear_script,
+    reduction_workflow_script,
     render_workflow_script,
 )
 
@@ -728,6 +745,7 @@ def __dir__() -> list[str]:
         | {"NfitProjectExplorer", "QtMDHistoSliceViewer"}
     )
 
+
 __all__ = [
     "replay_measurement_histogram",
     "scale_measurement_data",
@@ -772,6 +790,7 @@ __all__ = [
     "refresh_composite_dataset",
     "composite_dataset_data",
     "composite_workflow_script",
+    "reduction_workflow_script",
     "AnalysisContext",
     "AnalysisEntry",
     "AnalysisExecution",
@@ -1343,3 +1362,9 @@ __all__ = [
     "slice_viewer_datasets",
     "k_mesh",
 ]
+
+
+__all__ += ["ReductionEdit", "ReductionSetting", "apply_reduction_recipe", "reduction_family", "effective_reduction_config",
+    "ensure_reduction_recipe", "export_reduction_recipe", "get_reduction_overrides",
+    "reduction_recipe_script", "reduction_settings_schema", "replay_reduction_recipe",
+    "resolved_reduction_values", "set_reduction_settings", "validated_reduction_settings"]
