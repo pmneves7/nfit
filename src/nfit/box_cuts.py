@@ -6,12 +6,22 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .measurement_profiles import MeasurementProfile, prepare_measurement_profile
+
 
 @dataclass(frozen=True)
 class BoxProfiles:
     x: tuple[np.ndarray, np.ndarray, np.ndarray]
     y: tuple[np.ndarray, np.ndarray, np.ndarray]
     selected: np.ndarray
+    x_measurement: MeasurementProfile | None = None
+    y_measurement: MeasurementProfile | None = None
+
+    @property
+    def value_label(self) -> str:
+        if self.x_measurement is not None and self.x_measurement.contract.kind == "counting":
+            return "Pooled intensity"
+        return "Weighted mean"
 
 
 def box_corners(extents: tuple[float, float, float, float], angle: float) -> np.ndarray:
@@ -63,38 +73,49 @@ def box_membership(
     return (u >= x0) & (u <= x1) & (v >= y0) & (v <= y1)
 
 
-def _profile(
-    coordinates: np.ndarray,
-    values: np.ndarray,
-    errors: np.ndarray,
-    coverage: np.ndarray,
-    selected: np.ndarray,
-    edges: np.ndarray,
-    threshold: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    bins = len(edges) - 1
-    centers = (edges[:-1] + edges[1:]) / 2
-    index = np.searchsorted(edges, coordinates[selected], side="right") - 1
-    index = np.clip(index, 0, bins - 1)
-    good = selected & np.isfinite(values) & np.isfinite(errors) & (errors > 0)
-    good_index = np.searchsorted(edges, coordinates[good], side="right") - 1
-    good_index = np.clip(good_index, 0, bins - 1)
-    weights = 1 / np.square(errors[good])
-    denominator = np.bincount(good_index, weights=weights, minlength=bins)
-    numerator = np.bincount(good_index, weights=weights * values[good], minlength=bins)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        means = numerator / denominator
-        uncertainty = np.sqrt(1 / denominator)
-    means[denominator == 0] = np.nan
-    uncertainty[denominator == 0] = np.nan
-    if threshold > 0:
-        cover = np.bincount(index, weights=coverage[selected], minlength=bins)
-        counts = np.bincount(index, minlength=bins)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            insufficient = cover / counts < threshold
-        means[insufficient] = np.nan
-        uncertainty[insufficient] = np.nan
-    return centers, means, uncertainty
+def _profile(view, coordinates, values, errors, selected, edges, threshold,
+             *, centers=None, coverage_weights=None, channel="signal", reference_values=None):
+    indices = np.clip(np.searchsorted(edges, coordinates, side="right") - 1, 0, len(edges) - 2)
+    return prepare_measurement_profile(
+        view, values, errors, selected=selected, indices=indices, edges=edges,
+        centers=centers, coverage_weights=coverage_weights,
+        coverage_threshold=threshold, channel=channel, reference_values=reference_values,
+    )
+
+
+def histogram_box_profiles(
+    view, values, errors, extents, angle=0.0, *, coverage_threshold=0.0,
+    channel="signal", reference_values=None,
+) -> BoxProfiles:
+    """Prepare regular or rotated cuts using the same measurement estimator.
+
+    Primary count signals pool their validated numerator, variance and exposure.
+    Other channels and legacy continuous signals retain precision means. Regular
+    cuts retain source centers/edges; rotated cuts select centers and project them
+    to the box axes. No subpixel or missing source covariance is invented.
+    """
+    if not np.isclose(float(angle) % 360, 0.0, atol=1e-10):
+        return rotated_box_profiles(view, values, errors, extents, angle,
+            coverage_threshold=coverage_threshold, channel=channel, reference_values=reference_values)
+    x, y = np.asarray(view["x_centers"]), np.asarray(view["y_centers"])
+    z, e = np.asarray(values), np.asarray(errors)
+    if z.shape != (len(y), len(x)) or e.shape != z.shape:
+        raise ValueError("box profiles require matching 2D values and errors")
+    x0, x1, y0, y1 = extents
+    xm, ym = (x >= x0) & (x <= x1), (y >= y0) & (y <= y1)
+    selected = ym[:, None] & xm[None, :]
+    if not np.any(xm) or not np.any(ym):
+        empty = (np.array([]), np.array([]), np.array([]))
+        return BoxProfiles(empty, empty, selected)
+    xe, ye = np.asarray(view["x_edges"]), np.asarray(view["y_edges"])
+    xi, yi = np.flatnonzero(xm), np.flatnonzero(ym)
+    xp = _profile(view, np.broadcast_to(x[None, :], z.shape), z, e, selected,
+        xe[xi[0]:xi[-1]+2], coverage_threshold, centers=x[xm],
+        coverage_weights=np.diff(ye)[:, None], channel=channel, reference_values=reference_values)
+    yp = _profile(view, np.broadcast_to(y[:, None], z.shape), z, e, selected,
+        ye[yi[0]:yi[-1]+2], coverage_threshold, centers=y[ym],
+        coverage_weights=np.diff(xe)[None, :], channel=channel, reference_values=reference_values)
+    return BoxProfiles(xp.arrays, yp.arrays, selected, xp, yp)
 
 
 def rotated_box_profiles(
@@ -105,8 +126,10 @@ def rotated_box_profiles(
     angle: float = 0.0,
     *,
     coverage_threshold: float = 0.0,
+    channel: str = "signal",
+    reference_values=None,
 ) -> BoxProfiles:
-    """Inverse-variance weighted cuts along a box's two principal axes.
+    """Measurement-aware cuts along a box's two principal axes.
 
     Bin centers determine membership. For a rotated box, each selected pixel
     contributes to one projected bin on each axis. The projected pitch follows
@@ -117,7 +140,6 @@ def rotated_box_profiles(
     y = np.asarray(view["y_centers"], dtype=float)
     z = np.asarray(values, dtype=float)
     e = np.asarray(errors, dtype=float)
-    coverage = np.asarray(view["coverage_fraction"], dtype=float)
     if z.shape != (len(y), len(x)) or e.shape != z.shape:
         raise ValueError("box profiles require matching 2D values and errors")
     selected = box_membership(x, y, extents, angle)
@@ -136,11 +158,11 @@ def rotated_box_profiles(
 
     x_edges = edges(extents[0], extents[1], upitch)
     y_edges = edges(extents[2], extents[3], vpitch)
-    return BoxProfiles(
-        x=_profile(u, z, e, coverage, selected, x_edges, coverage_threshold),
-        y=_profile(v, z, e, coverage, selected, y_edges, coverage_threshold),
-        selected=selected,
-    )
+    xp = _profile(view, u, z, e, selected, x_edges, coverage_threshold,
+        channel=channel, reference_values=reference_values)
+    yp = _profile(view, v, z, e, selected, y_edges, coverage_threshold,
+        channel=channel, reference_values=reference_values)
+    return BoxProfiles(xp.arrays, yp.arrays, selected, xp, yp)
 
 
 def rotated_box_sum_profile(

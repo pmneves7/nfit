@@ -14,6 +14,12 @@ project binning, fitting, cuts and exports retain their current estimators until
 workflow integration is complete. See [Measurement statistics](measurement_statistics.md)
 for supported contracts, input conventions, units, and runnable examples.
 
+`histogram_box_profiles` prepares regular or rotated cuts from a slice view.
+`MeasurementProfile` retains the declaration and immutable histogram payload;
+`prepare_measurement_profile` supplies the underlying grouped reduction.
+`save_measurement_profile_csv` exports the estimate, available statistics, and
+a versioned JSON sidecar. These are the shared APIs used by static and Qt box cuts.
+
 ## Reduced data, import adapters, and viewing
 
 nfit importers translate source axes, units, masks, intensities, uncertainties,

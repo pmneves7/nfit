@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
 
+from .histogram_statistics import EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR
+from .measurement_profiles import MeasurementProfile
 from .plotting_core import WaterfallTrace
 
 
@@ -62,6 +65,35 @@ def save_profile_csv(
             "uncertainty": uncertainty,
         },
     )
+
+
+def save_measurement_profile_csv(
+    path: str | Path, profile: MeasurementProfile, *, coordinate_name: str,
+    coordinate_unit: str = "", include_statistics: bool = True,
+) -> Path:
+    """Export a prepared profile and its versioned declaration in ``.csv.json``.
+
+    Extended columns retain available C,V,N, contributions, mask and coverage.
+    ``include_statistics=False`` preserves the historical three-column CSV;
+    the JSON sidecar still records its estimator and uncertainty assumptions.
+    """
+    coordinate, values, errors = profile.arrays
+    columns = {coordinate_name: coordinate, "intensity": values, "uncertainty": errors}
+    data = profile.data
+    if include_statistics:
+        columns.update({name: data.auxiliary_channels[name].values
+                        for name in (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR)
+                        if name in data.auxiliary_channels})
+        columns.update(num_events=data.num_events, mask=data.mask,
+                       coverage_fraction=data.auxiliary_channels["coverage_fraction"].values)
+    destination = save_viewer_columns_csv(path, columns)
+    declaration = {"version": 1, "measurement_contract": profile.contract.to_dict(),
+        "coordinate": {"name": coordinate_name, "unit": coordinate_unit,
+                       "edges": data.axes[0].values.tolist()},
+        "metadata": data.metadata, "columns": list(columns)}
+    destination.with_suffix(destination.suffix + ".json").write_text(
+        json.dumps(declaration, indent=2) + "\n", encoding="utf-8")
+    return destination
 
 
 def save_grid_csv(

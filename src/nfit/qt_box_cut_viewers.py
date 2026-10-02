@@ -9,7 +9,8 @@ from typing import Any
 import numpy as np
 
 from .dataset import PointListData
-from .mdhisto import MDHistoAxis, MDHistoData
+from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
+from .measurement_profiles import MeasurementProfile
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,7 @@ def _profile_dataset(
     context: CutViewerContext,
     axis: str,
     cut: tuple[np.ndarray, np.ndarray, np.ndarray],
+    measurement: MeasurementProfile | None = None,
 ) -> MDHistoData:
     coordinates, values, errors = cut
     coordinates = np.asarray(coordinates, dtype=float)
@@ -39,6 +41,9 @@ def _profile_dataset(
         edges = np.array([coordinates[0] - 0.5, coordinates[0] + 0.5])
     dimension = context.x_dim if axis == "x" else context.y_dim
     source_axis = context.data.axes[dimension] if isinstance(context.data, MDHistoData) else None
+    payload = None if measurement is None else measurement.data
+    if payload is not None:
+        edges = payload.axes[0].values
     return MDHistoData(
         axes=(
             MDHistoAxis("Profile", np.array([0.0, 1.0]), "", "unknown"),
@@ -47,12 +52,21 @@ def _profile_dataset(
                 edges,
                 source_axis.units if source_axis else "",
                 source_axis.kind if source_axis else "unknown",
+                metadata=payload.axes[0].metadata if payload is not None else {},
             ),
         ),
-        signal=np.asarray(values, dtype=float)[None, :],
-        errors=np.asarray(errors, dtype=float)[None, :],
-        mask=np.zeros((1, len(values)), dtype=bool),
-        num_events=np.ones((1, len(values)), dtype=float),
+        signal=np.asarray(values, dtype=float)[None, :] if payload is None else payload.signal[None, :],
+        errors=np.asarray(errors, dtype=float)[None, :] if payload is None else payload.errors[None, :],
+        mask=(~np.isfinite(values) | ~np.isfinite(errors))[None, :] if payload is None else payload.mask[None, :],
+        num_events=np.zeros((1, len(values)), dtype=float) if payload is None else payload.num_events[None, :],
+        metadata={"zero_event_bins_are_measured": True, "num_events_semantics": "not_available"}
+        if payload is None else dict(payload.metadata),
+        auxiliary_channels={} if payload is None else {
+            name: MDHistoChannel(channel.values[None, :],
+                None if channel.errors is None else channel.errors[None, :],
+                channel.label, channel.unit, channel.quantity_type)
+            for name, channel in payload.auxiliary_channels.items()
+        },
     )
 
 
@@ -75,12 +89,14 @@ class LiveBoxCutViewers:
         self,
         context: CutViewerContext,
         cuts: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray] | None],
+        *,
+        measurements: dict[str, MeasurementProfile | None] | None = None,
     ) -> None:
         for axis in ("x", "y"):
             cut = cuts.get(axis)
             if cut is None or len(cut[0]) == 0:
                 continue
-            data = _profile_dataset(context, axis, cut)
+            data = _profile_dataset(context, axis, cut, (measurements or {}).get(axis))
             name = f"{context.dataset_name} — {axis} box cut"
             viewer = self.viewers.get(axis)
             if viewer is None:

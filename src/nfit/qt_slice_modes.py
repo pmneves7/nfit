@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 
 from .background_channels import available_background_channels
-from .box_cuts import rotated_box_profiles, rotated_box_sum_profile
+from .box_cuts import histogram_box_profiles, rotated_box_profiles, rotated_box_sum_profile
 from .mdhisto import MDHistoData
 from .plotting_core import (
     MDHistoSliceViewer,
@@ -25,6 +25,7 @@ _DEFAULT_HELPERS = {
     "default_waterfall_step": default_waterfall_step,
     "draw_waterfall_traces": draw_waterfall_traces,
     "inverse_variance_weighted_profile": inverse_variance_weighted_profile,
+    "histogram_box_profiles": histogram_box_profiles,
     "prepare_mdhisto_tiled_slices": prepare_mdhisto_tiled_slices,
     "prepare_mdhisto_waterfall": prepare_mdhisto_waterfall,
     "waterfall_colors": waterfall_colors,
@@ -781,8 +782,8 @@ class FitComparisonController(_ViewerController):
 
         The data and fit cuts are overlaid on one axes (markers plus a line,
         like the 1D fit view); the residual cut, when shown, gets its own axes.
-        Data and fit cuts are inverse-variance weighted means over the boxed
-        rows or columns. Residual cuts retain their sigma summation.
+        Data and fit use the same measurement weights over boxed rows/columns.
+        Residual cuts retain their sigma summation.
         """
 
         if self.ax_fit_cut is None or self._current_slice is None or extents is None:
@@ -823,14 +824,13 @@ class FitComparisonController(_ViewerController):
             x_insufficient = x_coverage < self.coverage_threshold
             y_insufficient = y_coverage < self.coverage_threshold
             if errors.shape == data_z.shape:
-                data_cut, err_cut = self._helper("inverse_variance_weighted_profile")(
-                    data_z[selected], errors[selected], axis=0
+                profiles = self._helper("histogram_box_profiles")(
+                    data_view, data_z, errors, extents,
+                    coverage_threshold=self.coverage_threshold, channel=self.model.channel,
                 )
-                data_y_cut, err_y_cut = self._helper(
-                    "inverse_variance_weighted_profile"
-                )(
-                    data_z[selected], errors[selected], axis=1
-                )
+                self._current_box_profiles = profiles
+                _, data_cut, err_cut = profiles.x
+                _, data_y_cut, err_y_cut = profiles.y
                 data_cut = np.where(x_insufficient, np.nan, data_cut)
                 err_cut = np.where(x_insufficient, np.nan, err_cut)
                 data_y_cut = np.where(y_insufficient, np.nan, data_y_cut)
@@ -881,12 +881,12 @@ class FitComparisonController(_ViewerController):
                 raw_data_view = data_view
                 fit_z = np.asarray(data_view["fit"], dtype=float)
             if fit_errors.shape == data_z.shape:
-                fit_cut, _ = self._helper("inverse_variance_weighted_profile")(
-                    fit_z[selected], fit_errors[selected], axis=0
+                fit_profiles = self._helper("histogram_box_profiles")(
+                    raw_data_view, fit_z, fit_errors, extents,
+                    channel=self.model.channel,
+                    reference_values=self.model._display_values(raw_data_view),
                 )
-                fit_y_cut, _ = self._helper("inverse_variance_weighted_profile")(
-                    fit_z[selected], fit_errors[selected], axis=1
-                )
+                fit_cut, fit_y_cut = fit_profiles.x[1], fit_profiles.y[1]
             else:
                 fit_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=0)
                 fit_y_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=1)
@@ -951,13 +951,13 @@ class FitComparisonController(_ViewerController):
                     )
 
         x_label = self.model._axis_label(self.model.x_dim)
-        self.ax_fit_cut.set_ylabel("Weighted mean")
+        self.ax_fit_cut.set_ylabel(getattr(self._current_box_profiles, "value_label", "Weighted mean"))
         if self.ax_residual_cut is not None:
             self.ax_residual_cut.set_ylabel("Res. (σ)")
             self.ax_residual_cut.set_xlabel(x_label)
         self.ax_fit_cut.set_xlabel(x_label)
         if self.ax_ycut is not None:
-            self.ax_ycut.set_xlabel("Weighted mean")
+            self.ax_ycut.set_xlabel(getattr(self._current_box_profiles, "value_label", "Weighted mean"))
             self.ax_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
             self.ax_ycut.tick_params(labelleft=False)
         if self.ax_residual_ycut is not None:
@@ -976,8 +976,9 @@ class FitComparisonController(_ViewerController):
         errors = np.asarray(view["errors"], dtype=float)
         data = rotated_box_profiles(
             view, values, errors, extents, self._roi_angle,
-            coverage_threshold=self.coverage_threshold,
+            coverage_threshold=self.coverage_threshold, channel=self.model.channel,
         )
+        self._current_box_profiles = data
         self._current_x_cut, self._current_y_cut = data.x, data.y
         for axis in (self.ax_fit_cut, self.ax_ycut, self.ax_residual_cut, self.ax_residual_ycut):
             if axis is not None:
@@ -1009,6 +1010,7 @@ class FitComparisonController(_ViewerController):
             fit_view, np.asarray(fit_view["fit"], dtype=float),
             np.asarray(fit_view["errors"], dtype=float), extents, self._roi_angle,
             coverage_threshold=0.0 if self.unmask_model else self.coverage_threshold,
+            channel=self.model.channel, reference_values=self.model._display_values(fit_view),
         )
         self.ax_fit_cut.plot(
             fit.x[0], fit.x[1], linestyle="-", color=self.fit_line_color,
@@ -1036,9 +1038,9 @@ class FitComparisonController(_ViewerController):
                                            color=self.line_color)
         x_label = f"Box x · {self.model._axis_label(self.model.x_dim)}"
         y_label = f"Box y · {self.model._axis_label(self.model.y_dim)}"
-        self.ax_fit_cut.set(xlabel=x_label, ylabel="Weighted mean")
+        self.ax_fit_cut.set(xlabel=x_label, ylabel=data.value_label)
         if self.ax_ycut is not None:
-            self.ax_ycut.set(xlabel="Weighted mean", ylabel=y_label)
+            self.ax_ycut.set(xlabel=data.value_label, ylabel=y_label)
         if self.ax_residual_cut is not None:
             self.ax_residual_cut.set(xlabel=x_label, ylabel="Res. (σ)")
         if self.ax_residual_ycut is not None:

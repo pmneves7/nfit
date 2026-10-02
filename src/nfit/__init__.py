@@ -40,6 +40,7 @@ from .analysis.spectral import (
 )
 from .axes import AxisRole, infer_axis_role
 from .background_channels import available_background_channels, background_channel
+from .box_cuts import histogram_box_profiles
 from .brillouin_zone import (
     BrillouinZoneNode,
     BrillouinZoneScene,
@@ -385,6 +386,7 @@ from .mdhisto import (
     load_mantid_mdhisto_nxs,
 )
 from .measurement_contracts import MeasurementContract
+from .measurement_profiles import MeasurementProfile, prepare_measurement_profile
 from .measurement_statistics import MeasurementEstimate, SourceTerm, estimate_measurement_bin
 from .metadata_dimensions import (
     MetadataBinning,
@@ -602,6 +604,7 @@ from .viewer_data import (
 )
 from .viewer_export import (
     save_grid_csv,
+    save_measurement_profile_csv,
     save_profile_csv,
     save_viewer_columns_csv,
     save_waterfall_csv,
@@ -709,6 +712,10 @@ def __dir__() -> list[str]:
     )
 
 __all__ = [
+    "MeasurementProfile",
+    "prepare_measurement_profile",
+    "histogram_box_profiles",
+    "save_measurement_profile_csv",
     "MeasurementContract",
     "MeasurementEstimate",
     "SourceTerm",

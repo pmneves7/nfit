@@ -130,6 +130,8 @@ different Python.
 - `docs/data_philosophy.md`: extension, serialization, and data contracts.
 - `src/nfit/measurement_contracts.py` and `measurement_statistics.py`: explicit
   statistical targets, serializable assumptions, and one-bin reference estimators.
+- `src/nfit/measurement_profiles.py` and `box_cuts.py`: shared prepared histogram
+  profiles, retained measurement payloads, and box-coordinate selection.
 - `docs/measurement_statistics.md`: measurement contract and estimator scripting guide.
 
 Keep this map structural rather than exhaustive. Update it only when subsystem

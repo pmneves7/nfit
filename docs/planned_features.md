@@ -43,6 +43,10 @@ tracks the staged implementation and review checkpoints for these changes.
   inverse-variance option multiplies any physical exposure weight by
   $1/\sigma^2$, where $\sigma$ is the stored signal uncertainty; it does not
   implement all these distinct estimators.
+- Regular/rotated box profiles now share count pooling and independent precision
+  estimation across static plots, Qt viewers, live cut viewers and export. General
+  rebinning, waterfalls, region targets and fit likelihoods still require contract
+  integration and source-dependency propagation.
 - Validate numerical alternatives and choose future defaults at the late
   cross-instrument acceptance stage. Current DGS compatibility defaults remain
   unchanged during contract and workflow refactoring.

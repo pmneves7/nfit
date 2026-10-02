@@ -761,8 +761,8 @@ def _build_histogram_tool_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.roi_button = QtWidgets.QPushButton("Box tool")
     viewer.roi_button.setCheckable(True)
     viewer.roi_button.setToolTip(
-        "Toggle the rectangle tool used to populate inverse-variance weighted x/y profile cuts "
-        "with propagated error bars."
+        "Toggle the rectangle tool for x/y profiles. Count signals pool numerator, variance and "
+        "exposure; other channels use precision means, with propagated error bars."
     )
     viewer.roi_button.toggled.connect(viewer._set_roi_enabled)
     viewer.show_box_check = QtWidgets.QCheckBox("Show box tool")
@@ -772,8 +772,8 @@ def _build_histogram_tool_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.hist_axes_check = QtWidgets.QCheckBox("Show x/y cuts")
     viewer.hist_axes_check.setChecked(False)
     viewer.hist_axes_check.setToolTip(
-        "Show or hide x/y profile cuts. Each point is an inverse-variance weighted "
-        "mean over the selected box with its propagated standard error."
+        "Show or hide x/y profiles. Count signals pool numerator, variance and exposure, "
+        "including measured zeros. Other channels use inverse-variance means."
     )
     viewer.hist_axes_check.toggled.connect(viewer._set_histogram_axes_visible)
     viewer.popout_cuts_check = QtWidgets.QCheckBox("Pop out x/y cuts")
@@ -847,10 +847,12 @@ def _build_histogram_tool_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.save_x_cut_button = QtWidgets.QPushButton("Save x")
     viewer.save_y_cut_button = QtWidgets.QPushButton("Save y")
     viewer.save_x_cut_button.setToolTip(
-        "Save the current horizontal box profile as x, intensity, and uncertainty CSV columns."
+        "Save the horizontal profile as CSV with a measurement-contract JSON sidecar. "
+        "Count profiles also retain numerator, variance, exposure, contributions, mask and coverage."
     )
     viewer.save_y_cut_button.setToolTip(
-        "Save the current vertical box profile as y, intensity, and uncertainty CSV columns."
+        "Save the vertical profile as CSV with a measurement-contract JSON sidecar. "
+        "Count profiles also retain numerator, variance, exposure, contributions, mask and coverage."
     )
     viewer.save_x_cut_button.clicked.connect(viewer.save_x_cut)
     viewer.save_y_cut_button.clicked.connect(viewer.save_y_cut)

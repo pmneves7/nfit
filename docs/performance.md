@@ -222,6 +222,21 @@ storage is unavailable or Linux identifies the temporary directory as a
 RAM-backed filesystem, loading falls back to resident arrays. Other operating
 systems retain the resident loader.
 
+On clusters that require scientific data inside an experiment directory, set
+`TMPDIR` to a writable scratch directory in that experiment **before starting
+nfit or Python**. For example:
+
+```bash
+mkdir -p /path/to/IPTS/shared/nfit/.nfit-work
+TMPDIR=/path/to/IPTS/shared/nfit/.nfit-work nfit
+```
+
+This selects the temporary filesystem for mapped-array extraction, reduced-event
+staging and histogram staging. The session-cache folder preference controls a
+separate cache tier and does not replace `TMPDIR`. Keep diagnostics and retained
+project backups inside the experiment directory as well. Changing `TMPDIR` after
+Python has cached its temporary directory does not reliably move existing files.
+
 Mapped arrays retain float64 precision and the ordinary NumPy interface. They
 avoid a permanent heap allocation for the expanded histogram, but initial
 decompression still takes time and a page evicted from RAM must be read from

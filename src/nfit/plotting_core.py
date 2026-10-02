@@ -15,7 +15,6 @@ from .histogram_reduction import normalization_denominator, pool_normalized_hist
 from .histogram_statistics import (
     EVENT_STATISTICS_CHANNELS,
     EVENT_STATISTICS_KEY,
-    EVENT_STATISTICS_METADATA,
     NORMALIZATION_DENOMINATOR,
     has_event_statistics,
     normalized_event_statistics,
@@ -2242,81 +2241,27 @@ def _draw_mdhisto_roi_cuts(
     ax_image=None,
     roi_angle: float = 0.0,
 ) -> None:
-    if not np.isclose(float(roi_angle) % 360, 0.0, atol=1e-10):
-        from matplotlib.patches import Polygon
+    from .box_cuts import box_corners, histogram_box_profiles
 
-        from .box_cuts import box_corners, rotated_box_profiles
-
-        values = model._display_values(view)
-        errors = np.asarray(view["errors"], dtype=float)
-        profiles = rotated_box_profiles(
-            view, values, errors, roi_extents, roi_angle,
-            coverage_threshold=model.coverage_threshold,
-        )
-        ax_xcut.errorbar(profiles.x[0], profiles.x[1], yerr=profiles.x[2], fmt="-", lw=1.2, capsize=0)
-        ax_ycut.errorbar(profiles.y[1], profiles.y[0], xerr=profiles.y[2], fmt="-", lw=1.2, capsize=0)
-        ax_xcut.set_ylabel("Weighted mean")
-        ax_xcut.set_xlabel(f"Box x · {model._axis_label(model.x_dim)}")
-        ax_ycut.set_xlabel("Weighted mean")
-        ax_ycut.set_ylabel(f"Box y · {model._axis_label(model.y_dim)}")
-        if ax_image is not None:
+    values = model._display_values(view)
+    errors = np.asarray(view["errors"], dtype=float)
+    profiles = histogram_box_profiles(view, values, errors, roi_extents, roi_angle,
+        coverage_threshold=model.coverage_threshold, channel=model.channel)
+    ax_xcut.errorbar(*profiles.x[:2], yerr=profiles.x[2], fmt="-", lw=1.2, capsize=0)
+    ax_ycut.errorbar(profiles.y[1], profiles.y[0], xerr=profiles.y[2], fmt="-", lw=1.2, capsize=0)
+    label = profiles.value_label
+    rotated = not np.isclose(float(roi_angle) % 360, 0.0, atol=1e-10)
+    ax_xcut.set_ylabel(label)
+    ax_xcut.set_xlabel(("Box x · " if rotated else "") + model._axis_label(model.x_dim))
+    ax_ycut.set_xlabel(label)
+    ax_ycut.set_ylabel(("Box y · " if rotated else "") + model._axis_label(model.y_dim))
+    if ax_image is not None and np.any(profiles.selected):
+        if rotated:
+            from matplotlib.patches import Polygon
             ax_image.add_patch(Polygon(box_corners(roi_extents, roi_angle),
-                                       closed=True, fill=False, edgecolor="#4f8bd6", lw=1.5))
-            total, uncertainty, _ = integrated_box_sum(
-                values[profiles.selected], errors[profiles.selected]
-            )
-            _draw_box_sum_annotation(ax_image, roi_extents, total, uncertainty)
-        return
-    x0, x1, y0, y1 = roi_extents
-    x0, x1 = sorted((float(x0), float(x1)))
-    y0, y1 = sorted((float(y0), float(y1)))
-    x_mask = (view["x_centers"] >= x0) & (view["x_centers"] <= x1)
-    y_mask = (view["y_centers"] >= y0) & (view["y_centers"] <= y1)
-    if np.any(x_mask) and np.any(y_mask):
-        z = model._display_values(view)
-        errors = np.asarray(view["errors"], dtype=float)
-        selected = np.ix_(y_mask, x_mask)
-        total, total_error, _count = integrated_box_sum(
-            z[selected], errors[selected]
-        )
-        x_cut, x_error = inverse_variance_weighted_profile(
-            z[selected], errors[selected], axis=0
-        )
-        y_cut, y_error = inverse_variance_weighted_profile(
-            z[selected], errors[selected], axis=1
-        )
-        coverage = np.asarray(view["coverage_fraction"], dtype=float)[selected]
-        x_widths = np.diff(np.asarray(view["x_edges"], dtype=float))[x_mask]
-        y_widths = np.diff(np.asarray(view["y_edges"], dtype=float))[y_mask]
-        x_coverage = np.sum(coverage * y_widths[:, None], axis=0) / np.sum(
-            y_widths
-        )
-        y_coverage = np.sum(coverage * x_widths[None, :], axis=1) / np.sum(
-            x_widths
-        )
-        x_insufficient = x_coverage < model.coverage_threshold
-        y_insufficient = y_coverage < model.coverage_threshold
-        x_cut = np.where(x_insufficient, np.nan, x_cut)
-        x_error = np.where(x_insufficient, np.nan, x_error)
-        y_cut = np.where(y_insufficient, np.nan, y_cut)
-        y_error = np.where(y_insufficient, np.nan, y_error)
-        ax_xcut.errorbar(
-            view["x_centers"][x_mask], x_cut, yerr=x_error, fmt="-", lw=1.2, capsize=0
-        )
-        ax_ycut.errorbar(
-            y_cut, view["y_centers"][y_mask], xerr=y_error, fmt="-", lw=1.2, capsize=0
-        )
-        if ax_image is not None:
-            _draw_box_sum_annotation(
-                ax_image,
-                (x0, x1, y0, y1),
-                total,
-                total_error,
-            )
-    ax_xcut.set_ylabel("Weighted mean")
-    ax_xcut.set_xlabel(model._axis_label(model.x_dim))
-    ax_ycut.set_xlabel("Weighted mean")
-    ax_ycut.set_ylabel(model._axis_label(model.y_dim))
+                closed=True, fill=False, edgecolor="#4f8bd6", lw=1.5))
+        total, uncertainty, _ = integrated_box_sum(values[profiles.selected], errors[profiles.selected])
+        _draw_box_sum_annotation(ax_image, roi_extents, total, uncertainty)
 
 
 def _apply_axes_linewidth(axes, colorbar, linewidth: float) -> None:
@@ -2648,7 +2593,7 @@ class MDHistoSliceViewer:
             ),
         }
         if event_statistics is not None:
-            view[EVENT_STATISTICS_KEY] = dict(EVENT_STATISTICS_METADATA)
+            view[EVENT_STATISTICS_KEY] = dict(self.data.metadata[EVENT_STATISTICS_KEY])
             for name, values in zip(
                 (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR), event_statistics, strict=True,
             ):
@@ -2657,6 +2602,13 @@ class MDHistoSliceViewer:
             self.CHANNELS = tuple(name for name in self.CHANNELS if name not in EVENT_STATISTICS_CHANNELS)
             if self.channel in EVENT_STATISTICS_CHANNELS:
                 self.channel = "signal"
+        if "measurement_contract" in self.data.metadata:
+            view["measurement_contract"] = dict(self.data.metadata["measurement_contract"])
+        view["num_events_semantics"] = self.data.metadata.get("num_events_semantics", "unspecified_source_multiplicity")
+        view["masks_applied"] = self.masked
+        view["signal_unit"] = self.data.metadata.get("signal_unit", "unspecified intensity units")
+        if NORMALIZATION_DENOMINATOR in self.data.auxiliary_channels:
+            view["exposure_unit"] = self.data.auxiliary_channels[NORMALIZATION_DENOMINATOR].unit
         if self.channel in available_background_channels(self.data):
             values2d, errors2d = self._slice_background_channel(
                 self.channel,
@@ -3831,6 +3783,7 @@ def smooth_mdhisto_view(
     if not any(value > 0.0 for value in sigma):
         return result
     result.pop(EVENT_STATISTICS_KEY, None)
+    result.pop("measurement_contract", None)
     for name in EVENT_STATISTICS_CHANNELS:
         result.pop(name, None)
     excluded = {

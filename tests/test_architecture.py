@@ -39,6 +39,7 @@ def test_project_cache_facade_shares_authoritative_stores():
 GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "measurement_contracts.py",
     PACKAGE_ROOT / "measurement_statistics.py",
+    PACKAGE_ROOT / "measurement_profiles.py",
     PACKAGE_ROOT / "project_caches.py",
     PACKAGE_ROOT / "figure_export.py",
     PACKAGE_ROOT / "resource_usage.py",
@@ -77,7 +78,7 @@ GUI_INDEPENDENT_MODULES = (
 )
 
 
-@pytest.mark.parametrize("name", ["measurement_contracts", "measurement_statistics"])
+@pytest.mark.parametrize("name", ["measurement_contracts", "measurement_statistics", "measurement_profiles"])
 def test_measurement_contract_services_have_no_gui_or_project_dependencies(name):
     tree = ast.parse((PACKAGE_ROOT / f"{name}.py").read_text())
     modules = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]

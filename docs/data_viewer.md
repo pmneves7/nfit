@@ -305,7 +305,8 @@ See [Data representations and normalization](physics_conventions.md#data-represe
 for the equations and statistical assumptions. Displayed-axis coarsening of new
 native count histograms also sums explicit numerator, variance, and exposure.
 Generic and older histograms retain inverse-variance display coarsening. Box
-profiles retain their documented inverse-variance weighting. Pooling diagonal
+profiles from explicit count statistics pool the same numerator, variance and
+exposure; other channels and legacy data retain inverse-variance profiles. Pooling diagonal
 variances does not reconstruct cross-bin covariance from symmetry copies or
 fractional sharing.
 
@@ -327,13 +328,18 @@ close when the cuts are hidden or the source viewer closes. They are live
 views of the selection, not new project datasets. The x/y panel-size sliders
 apply to inline panels only.
 
-**Save x** and **Save y** write the current inverse-variance weighted profiles
-as `x,intensity,uncertainty` or `y,intensity,uncertainty` through the public
-`save_profile_csv` function. For a rotated box, x and y are coordinates along
+**Save x** and **Save y** export the prepared profile without repeating its
+estimation. Continuous profiles retain `x,intensity,uncertainty` or
+`y,intensity,uncertainty`. Count profiles additionally export their numerator,
+variance, exposure, source contributions, mask and coverage. A `.csv.json`
+sidecar records the measurement contract, units and uncertainty conventions.
+The public `save_measurement_profile_csv` API provides this export;
+`save_profile_csv` remains available for three-column arrays. For a rotated box, x and y are coordinates along
 its sides, with the box center retaining its displayed x and y coordinates.
 Copied figure scripts preserve the angle through `roi_angle` in
-`plot_mdhisto_slice`; `nfit.box_cuts.rotated_box_profiles` computes the same
-profiles without Qt.
+`plot_mdhisto_slice`; `histogram_box_profiles` computes regular and rotated
+profiles without Qt. Each prepared result retains its statistics and contract;
+popped-out cut viewers keep that payload rather than assigning invented events.
 
 ### Two-dimensional axes ratio
 
@@ -420,7 +426,17 @@ profiles are drawn. Coverage is available as its own channel and in the cursor
 readout; it does not alter pixel opacity or the intensity colormap. The default
 cutoff is 0, which retains every bin unless the user selects a stricter value.
 
-For a histogram box cut, data are combined with inverse-variance weights:
+For a primary signal with validated count statistics, both regular and rotated
+box cuts pool the count numerator $C$, its accumulated variance $V$, and known
+exposure $N$ before division: $I=\sum C/\sum N$ with observed standard error
+$\sqrt{\sum V}/\sum N$. Covered zero-count cells contribute exposure and
+zero observed variance; unexposed cells contribute nothing. This is conditional
+on known exposure and the represented diagonal variances. It does not recover
+missing cross-bin dependencies. Model overlays use the same observation weights;
+their overlay error is an observation error, not model-parameter uncertainty.
+
+Other channels, smoothed views and legacy continuous histograms retain
+inverse-variance weights:
 
 $$
 \bar y=\frac{\sum_i y_i/\sigma_i^2}{\sum_i1/\sigma_i^2},
@@ -431,7 +447,8 @@ $$
 $y_i$ is a contributing bin value, $\sigma_i$ is its one-sigma uncertainty,
 and $\bar y$ is the reduced value with uncertainty $\sigma_{\bar y}$.
 Masked bins and nonpositive or nonfinite uncertainties are excluded. This is
-a mean of normalized measurements, not a pooled count/exposure estimate.
+a common-value precision mean. It applies where the corresponding
+continuous-measurement assumptions hold.
 For Poisson measurements, inverse variances estimated from observed counts
 can change the mean and exclude measured zeros. The error prescription for a
 zero-count cell therefore affects both the cut value and its reported error.

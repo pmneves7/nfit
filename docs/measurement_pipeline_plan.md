@@ -46,7 +46,11 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 1D2 | Make Mantid histogram conventions the default and native alternatives explicit | Complete |
 | 1D3 | Resolve remaining monitor peak-fit differences against the reference | Complete |
 | 2A | Define explicit measurement and estimator contracts | Complete |
-| 2B | Apply the contracts consistently to reductions, cuts, and exports | Pending |
+| 2B | Apply the contracts consistently to reductions, cuts, and exports | In progress |
+| 2B1 | Share box-profile estimation and retain profile statistics | Complete |
+| 2B2 | Preserve estimator statistics through project rebinning and derived views | Pending |
+| 2B3 | Preserve/replay source dependencies through cuts and arithmetic | Pending |
+| 2B4 | Complete region, fitting, export, and migration parity | Pending |
 | 3A | Persist complete source and reduction recipes | Pending |
 | 3B | Edit recipes through one settings schema and targeted cache invalidation | Pending |
 | 4A | Add basic run expressions and resolved-source preview | Pending |
@@ -386,6 +390,58 @@ scientific settings. Alternative validation and default adoption remain at 6A1
 and 6A2. Checkpoint 2B requires Paul's next authorization.
 
 ### 2B — One numerical path
+
+Paul authorized 2B on 2026-10-02. The audit requires four reviewable checkpoints:
+
+- **2B1:** one prepared-view service for regular and rotated box profiles,
+  retaining count numerator, variance, exposure, contributions, masks and support;
+  use it in static/Qt plots, live cut viewers and existing CSV export. Preserve
+  legacy continuous weighting explicitly. Region sums retain their stated linear
+  target.
+- **2B2:** attach and preserve contracts/sufficient statistics through project
+  rebinning, slices/coarsening and derived containers. Test direct/staged
+  equivalence for each supported estimator and document when source replay is
+  required rather than silently redistributing histogram centers.
+- **2B3:** bounded source-dependency propagation or cached-source replay for
+  fractional assignments, symmetry copies, shared calibration and backgrounds.
+- **2B4:** route region estimates, fit preparation/model projection and exports
+  through the complete contract; validate GUI/script parity, compatibility
+  migration and recorded provenance.
+
+After each checkpoint, stop for review before starting the next.
+
+**2B1 completion record (2026-10-02, 0.109.0):** `measurement_profiles.py`
+provides bounded grouped estimates and immutable prepared payloads. Static and
+Qt regular/rotated box cuts share this service; model overlays use observation
+weights and record prediction provenance. Live cut viewers retain C,V,N and source
+contribution semantics. CSV exports retain available statistics and a versioned
+contract sidecar; historical three-column array export remains available.
+Measured zero-count cells contribute exposure. Masks, coverage cutoffs, missing
+values, stable precision means, and unsupported declarations are explicit.
+Statistics metadata survives slicing; smoothing invalidates the unsmoothed
+contract. Tests cover analytic references, coarsening followed by cuts, rotated
+selection, archive/live-view preservation and GUI/script/export equivalence.
+
+**Validation:** the full suite passed 2,486 tests with one optional GPU skip.
+After the final profile-mask and tooltip changes, the focused profile, statistics,
+export, architecture, Qt and packaging suite passed 136 tests. Ruff,
+byte-compilation, diff checks and the Sphinx build with warnings treated as errors
+passed. These tests do not invoke Mantid or Shiver.
+
+Only diagonal histogram variances are available in this checkpoint. Shared-source
+and uncertain-normalizer contracts fail explicitly until the corresponding
+payload/replay support exists. Background differences, waterfalls, region sums,
+full fit likelihoods and legacy migration remain in 2B2–2B4. Scientific alternative
+validation/default adoption remains at 6A1–6A2. Paul must authorize 2B2 next.
+
+**Cluster completion/storage record:** the requested background-project rebuild
+finished all nine histograms, validated 2,775 v5 reduced-event caches and lazy
+archive backings, and installed the 89,869,291,072-byte result. The previous file
+is backed up in IPTS-37189; the separate NiO-and-sapphire project is unchanged.
+Task-owned scientific archives and diagnostics were moved from home and `/tmp`
+to IPTS diagnostics storage. Home usage is 7.9 GiB. The existing desktop launcher
+uses IPTS scratch via `TMPDIR`; `NFIT_TMPDIR` can select another validated SNS
+IPTS workspace. No application was launched to verify the shortcut.
 
 Use the same GUI-independent services for rebinning, hidden-axis slicing,
 coarsening, regular/rotated cuts, region summaries, fits, and exported profiles.

@@ -83,6 +83,7 @@ def test_extracted_mode_calls_preserve_public_viewer_dispatch() -> None:
         "default_waterfall_step",
         "draw_waterfall_traces",
         "inverse_variance_weighted_profile",
+        "histogram_box_profiles",
         "prepare_mdhisto_tiled_slices",
         "prepare_mdhisto_waterfall",
         "waterfall_colors",

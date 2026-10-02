@@ -8,7 +8,10 @@ dependencies; the instrument name does not determine the statistical estimator.
 independent declarations and scalar reference estimates. Existing project
 binnings, viewers, fits, and exports retain their current behavior until the
 workflow integration described in [Planned features](planned_features.md#statistical-binning-and-reduction-recipes).
-The API does not automatically attach contracts to existing projects.
+The API does not automatically attach contracts to existing projects. Regular
+and rotated box profiles already use these declarations for validated count
+statistics and legacy independent precision means; other workflow integration
+remains staged.
 
 ## Choose a target
 
@@ -165,3 +168,44 @@ pooled statistics. The scalar reference routines use sparse source terms, not a
 dense multidimensional covariance matrix. Project integration must retain or
 replay these dependencies through binning, cuts, fits and exports before claiming
 end-to-end equivalence under changes of intermediate grids.
+
+
+## Histogram box profiles
+
+`histogram_box_profiles(view, values, errors, extents, angle=0, ...)` accepts a
+prepared two-dimensional slice from `MDHistoSliceViewer.slice_arrays()`.
+`extents` is `(xmin, xmax, ymin, ymax)` in the displayed coordinate units;
+rotation uses that coordinate plane. Regular cuts retain native coordinates;
+rotated cuts assign selected pixel centers to projected bins. No partial-pixel
+redistribution or missing source covariance is inferred.
+
+```python
+from nfit import histogram_box_profiles, save_measurement_profile_csv
+
+# view is an existing prepared slice; these calls do not construct Qt widgets.
+profiles = histogram_box_profiles(
+    view, view["signal"], view["errors"], (0, 0.6, 0, 30),
+    coverage_threshold=0.1,
+)
+if profiles.x_measurement is not None:
+    save_measurement_profile_csv(
+        "x_cut.csv", profiles.x_measurement, coordinate_name="x",
+        coordinate_unit="r.l.u.",
+    )
+```
+
+`profiles.x` and `.y` retain the `(coordinate, value, standard_error)` tuple API.
+`.x_measurement` and `.y_measurement` additionally contain an immutable
+one-dimensional `MDHistoData` and its `MeasurementContract`. Count payloads retain
+C,V,N, source contribution semantics, masks and geometric coverage. The explicit
+normalization exposure does not substitute for geometric coverage. Count statistics
+are used only for the validated primary signal; other channels use their separate
+legacy precision-mean treatment. A saved compatible contract is preserved.
+Unsupported shared-source, uncertain-normalizer or other estimator declarations
+fail explicitly instead of silently choosing an independent model.
+
+A `reference_values` argument projects model predictions using observation
+weights. The result records `profile_role="model_prediction"` and an observation
+error for overlay; it does not establish model uncertainty or observed event counts.
+Only diagonal uncertainty is propagated here. Full dependency propagation, region
+estimation and fitting likelihoods remain separate workflow requirements.

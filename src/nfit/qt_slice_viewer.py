@@ -13,7 +13,10 @@ from .application_preferences import (
 )
 from .axes_ratio import mdhisto_axes_aspect
 from .background_channels import available_background_channels
-from .box_cuts import rotated_box_profiles
+from .box_cuts import (  # noqa: F401 - compatibility re-export
+    histogram_box_profiles,
+    rotated_box_profiles,
+)
 from .colormaps import (
     IMAGE_COLORMAP_GROUPS,  # noqa: F401 - compatibility re-export
     WATERFALL_COLORMAP_GROUPS,  # noqa: F401 - compatibility re-export
@@ -37,7 +40,7 @@ from .plotting_core import (
     draw_mdhisto_brillouin_zones,
     draw_waterfall_traces,  # noqa: F401 - compatibility re-export
     integrated_box_sum,
-    inverse_variance_weighted_profile,
+    inverse_variance_weighted_profile,  # noqa: F401 - compatibility re-export
     mdhisto_view_native_step,
     prepare_mdhisto_tiled_slices,  # noqa: F401 - compatibility re-export
     prepare_mdhisto_waterfall,  # noqa: F401 - compatibility re-export
@@ -89,7 +92,12 @@ from .slice_viewer_state import (
     _point_list_wavelength,
 )
 from .viewer_data import DeferredViewerDatasets, ViewerLoadCancelled
-from .viewer_export import save_grid_csv, save_profile_csv, save_waterfall_csv
+from .viewer_export import (
+    save_grid_csv,
+    save_measurement_profile_csv,
+    save_profile_csv,
+    save_waterfall_csv,
+)
 
 _MARKER_OPTIONS = {
     "none": "",
@@ -461,6 +469,7 @@ class QtMDHistoSliceViewer:
         self._cut_viewers = self._cut_viewer_manager.viewers
         self._current_x_cut: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._current_y_cut: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+        self._current_box_profiles = None
         self._view_limit_callback_ids: list[int] = []
         self.bragg_peak_overlay: dict[str, Any] | None = None
         self.display_step_factors: dict[int, int] = {}
@@ -1304,11 +1313,13 @@ class QtMDHistoSliceViewer:
             return
         path = self._csv_export_path("Save x profile", "x_cut.csv")
         if path:
-            save_profile_csv(
-                path,
-                *self._current_x_cut,
-                coordinate_name="x",
-            )
+            measurement = getattr(self._current_box_profiles, "x_measurement", None)
+            if measurement is None:
+                save_profile_csv(path, *self._current_x_cut, coordinate_name="x")
+            else:
+                save_measurement_profile_csv(path, measurement, coordinate_name="x",
+                    coordinate_unit=self.data.axes[self.model.x_dim].units if isinstance(self.data, MDHistoData) else "",
+                    include_statistics=measurement.contract.kind == "counting")
 
     def save_y_cut(self) -> None:
         """Save the current vertical box profile as CSV."""
@@ -1317,11 +1328,13 @@ class QtMDHistoSliceViewer:
             return
         path = self._csv_export_path("Save y profile", "y_cut.csv")
         if path:
-            save_profile_csv(
-                path,
-                *self._current_y_cut,
-                coordinate_name="y",
-            )
+            measurement = getattr(self._current_box_profiles, "y_measurement", None)
+            if measurement is None:
+                save_profile_csv(path, *self._current_y_cut, coordinate_name="y")
+            else:
+                save_measurement_profile_csv(path, measurement, coordinate_name="y",
+                    coordinate_unit=self.data.axes[self.model.y_dim].units if isinstance(self.data, MDHistoData) else "",
+                    include_statistics=measurement.contract.kind == "counting")
 
     def _slice_export_values(
         self,
@@ -4781,6 +4794,8 @@ class QtMDHistoSliceViewer:
                 self.model._axis_label, self.dataset_names[self.dataset_index],
             ),
             {"x": self._current_x_cut, "y": self._current_y_cut},
+            measurements={axis: getattr(self._current_box_profiles, f"{axis}_measurement", None)
+                          for axis in ("x", "y")},
         )
 
     def _set_xcut_percent(self, value: int) -> None:
@@ -4930,6 +4945,7 @@ class QtMDHistoSliceViewer:
     def _update_histogram_cuts_from_extents(self, extents: tuple[float, float, float, float] | None) -> None:
         self._current_x_cut = None
         self._current_y_cut = None
+        self._current_box_profiles = None
         self._sync_export_controls()
         if self._fit_cuts_active():
             self._update_fit_compare_cuts(extents)
@@ -4942,84 +4958,26 @@ class QtMDHistoSliceViewer:
             return
         if self._current_slice is None or extents is None:
             return
-        x0, x1, y0, y1 = extents
         view = self._current_slice
-        if not np.isclose(self._roi_angle % 360, 0.0, atol=1e-10):
-            self.ax_xcut.clear()
-            self.ax_ycut.clear()
-            self._clear_roi_sum_annotation()
-            values = self.model._display_values(view)
-            errors = np.asarray(view["errors"], dtype=float)
-            profiles = rotated_box_profiles(
-                view, values, errors, extents, self._roi_angle,
-                coverage_threshold=self.coverage_threshold,
-            )
-            self._current_x_cut, self._current_y_cut = profiles.x, profiles.y
-            if np.any(profiles.selected):
-                self._show_roi_sum_annotation(
-                    values[profiles.selected], errors[profiles.selected], extents,
-                )
-            self.ax_xcut.errorbar(profiles.x[0], profiles.x[1], yerr=profiles.x[2], fmt="-", lw=1.2, capsize=0)
-            self.ax_ycut.errorbar(profiles.y[1], profiles.y[0], xerr=profiles.y[2], fmt="-", lw=1.2, capsize=0)
-            self.ax_xcut.set_ylabel("Weighted mean")
-            self.ax_xcut.set_xlabel(f"Box x · {self.model._axis_label(self.model.x_dim)}")
-            self.ax_ycut.set_xlabel("Weighted mean")
-            self.ax_ycut.set_ylabel(f"Box y · {self.model._axis_label(self.model.y_dim)}")
-            self._apply_histogram_axes_layout(draw=False)
-            self._apply_figure_font_size()
-            self._apply_axis_linewidth()
-            self._sync_export_controls()
-            self._sync_cut_viewers()
-            return
-        x_mask = (view["x_centers"] >= x0) & (view["x_centers"] <= x1)
-        y_mask = (view["y_centers"] >= y0) & (view["y_centers"] <= y1)
         self.ax_xcut.clear()
         self.ax_ycut.clear()
         self._clear_roi_sum_annotation()
-        if np.any(x_mask) and np.any(y_mask):
-            z = self.model._display_values(view)
-            errors = np.asarray(view["errors"], dtype=float)
-            selected = np.ix_(y_mask, x_mask)
-            self._show_roi_sum_annotation(
-                z[selected],
-                errors[selected],
-                extents,
-            )
-            x_cut, x_error = inverse_variance_weighted_profile(
-                z[selected], errors[selected], axis=0
-            )
-            y_cut, y_error = inverse_variance_weighted_profile(
-                z[selected], errors[selected], axis=1
-            )
-            x_coverage, y_coverage = self._histogram_cut_coverage(
-                view, x_mask, y_mask
-            )
-            x_insufficient = x_coverage < self.coverage_threshold
-            y_insufficient = y_coverage < self.coverage_threshold
-            x_cut = np.where(x_insufficient, np.nan, x_cut)
-            x_error = np.where(x_insufficient, np.nan, x_error)
-            y_cut = np.where(y_insufficient, np.nan, y_cut)
-            y_error = np.where(y_insufficient, np.nan, y_error)
-            self._current_x_cut = (
-                np.asarray(view["x_centers"][x_mask], dtype=float),
-                np.asarray(x_cut, dtype=float),
-                np.asarray(x_error, dtype=float),
-            )
-            self._current_y_cut = (
-                np.asarray(view["y_centers"][y_mask], dtype=float),
-                np.asarray(y_cut, dtype=float),
-                np.asarray(y_error, dtype=float),
-            )
-            self.ax_xcut.errorbar(
-                view["x_centers"][x_mask], x_cut, yerr=x_error, fmt="-", lw=1.2, capsize=0
-            )
-            self.ax_ycut.errorbar(
-                y_cut, view["y_centers"][y_mask], xerr=y_error, fmt="-", lw=1.2, capsize=0
-            )
-        self.ax_xcut.set_ylabel("Weighted mean")
-        self.ax_xcut.set_xlabel(self.model._axis_label(self.model.x_dim))
-        self.ax_ycut.set_xlabel("Weighted mean")
-        self.ax_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
+        values = self.model._display_values(view)
+        errors = np.asarray(view["errors"], dtype=float)
+        profiles = histogram_box_profiles(view, values, errors, extents, self._roi_angle,
+            coverage_threshold=self.coverage_threshold, channel=self.model.channel)
+        self._current_box_profiles = profiles
+        self._current_x_cut = profiles.x if len(profiles.x[0]) else None
+        self._current_y_cut = profiles.y if len(profiles.y[0]) else None
+        if np.any(profiles.selected):
+            self._show_roi_sum_annotation(values[profiles.selected], errors[profiles.selected], extents)
+        self.ax_xcut.errorbar(*profiles.x[:2], yerr=profiles.x[2], fmt="-", lw=1.2, capsize=0)
+        self.ax_ycut.errorbar(profiles.y[1], profiles.y[0], xerr=profiles.y[2], fmt="-", lw=1.2, capsize=0)
+        rotated = not np.isclose(self._roi_angle % 360, 0.0, atol=1e-10)
+        self.ax_xcut.set_ylabel(profiles.value_label)
+        self.ax_xcut.set_xlabel(("Box x · " if rotated else "") + self.model._axis_label(self.model.x_dim))
+        self.ax_ycut.set_xlabel(profiles.value_label)
+        self.ax_ycut.set_ylabel(("Box y · " if rotated else "") + self.model._axis_label(self.model.y_dim))
         self._apply_histogram_axes_layout(draw=False)
         self._apply_figure_font_size()
         self._apply_axis_linewidth()
