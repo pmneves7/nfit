@@ -32,6 +32,22 @@ datasets. Channel changes preserve the current zoom when this option is checked.
 When it is unchecked, channel changes reset the displayed limits and each
 dataset or binning retains its independent view settings.
 
+**Copy settings** and **Paste settings** sit at the far right of the Store plot
+row. Copy a view, then paste into another data viewer to transfer compatible
+axes, zoom limits, display steps, hidden-axis ranges, channel, masks, coverage,
+color scaling, smoothing, gridlines, figure and line styling, box cuts, and
+waterfall or tiled-slice presentation. Axes match by name, including when their
+order differs. Coordinate-dependent settings are skipped when the destination
+lacks the required axes. The destination keeps its dataset, binning, waterfall
+dataset selection, lattice metadata, and window size. Paste is enabled when the
+system clipboard contains nfit viewer settings. Volume-specific controls are
+not included in this transfer.
+
+Python callers can capture the same portable settings using
+`nfit.viewer_settings.copy_viewer_settings(viewer.current_plot_settings(), axis_names)`
+and apply `compatible_viewer_settings(payload, destination_axis_names)` through
+`viewer.apply_plot_settings(...)`.
+
 Histogram slices process coverage only inside the selected region. Appearance
 changes in the ordinary slice view reuse the displayed numerical slice;
 changing axes, selections, masks, or coverage settings recomputes it. No

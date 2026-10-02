@@ -27,6 +27,7 @@ from .qt_slice_controls import (
     _make_data_viewer_window_class,
     _make_float_spinbox,
 )
+from .qt_viewer_settings import add_settings_buttons
 from .slice_viewer_state import _option_name
 
 
@@ -163,6 +164,7 @@ def _build_window_shell(viewer: Any) -> None:
     )
     mode_layout.addWidget(viewer.store_plot_status_label)
     mode_layout.addStretch(1)
+    add_settings_buttons(viewer, mode_layout)
     main_layout.addWidget(mode_bar)
     viewer.content_stack = QtWidgets.QStackedWidget()
     main_layout.addWidget(viewer.content_stack, 1)

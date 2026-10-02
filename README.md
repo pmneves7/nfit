@@ -55,7 +55,8 @@ A few of its main capabilities are:
   Brillouin-zone gridline overlays, trajectory-projected powder-background
   subtraction with masked correction windows, directional measured-background
   replay at sample angles with bounded compiled parallel acceleration, reversible displayed-axis
-  coarsening, held cross-dataset viewer settings, symmetric color limits, and
+  coarsening, held cross-dataset viewer settings, copy/paste of compatible viewer settings,
+  symmetric color limits, and
   rotatable histogram box cuts with one-dimensional pop-out viewers, selectable
   two-dimensional axes ratios, x/y axis swapping, CSV export of maps and cuts,
   and high-resolution raster and vector figure exports;
