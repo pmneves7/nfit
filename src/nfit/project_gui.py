@@ -14347,6 +14347,12 @@ class NfitProjectExplorer:
                 node, "trajectory_energy_policy", value
             ),
         ), 4, 1, 1, 3)
+        from .dgs_reduction_policy_gui import add_dgs_policy_controls
+        from .dgs_reduction_settings import dgs_reduction_policy_script
+
+        add_dgs_policy_controls(layout, config, start_row=5, prefix="mdevent", raw=False,
+            on_changed=lambda key, value: self._set_mdevent_group_value(node, key, value),
+            script_factory=lambda: dgs_reduction_policy_script(node))
         return box
 
     def _raw_dgs_group_box(self, node: DatasetGroup) -> Any:
@@ -14430,6 +14436,12 @@ class NfitProjectExplorer:
                 node, "trajectory_energy_policy", value
             ),
         ), 6, 1, 1, 3)
+        from .dgs_reduction_policy_gui import add_dgs_policy_controls
+        from .dgs_reduction_settings import dgs_reduction_policy_script
+
+        add_dgs_policy_controls(layout, config, start_row=7, prefix="raw_dgs", raw=True,
+            on_changed=lambda key, value: self._set_raw_dgs_group_value(node, key, value),
+            script_factory=lambda: dgs_reduction_policy_script(node))
         return box
 
     def _corelli_group_box(self, node: DatasetGroup) -> Any:
@@ -14751,6 +14763,10 @@ class NfitProjectExplorer:
             from .dgs_normalization import set_dgs_trajectory_energy_policy
 
             set_dgs_trajectory_energy_policy(node, value)
+        elif key in {"event_precision_policy", "symmetry_variance_policy"}:
+            from .dgs_reduction_settings import set_dgs_reduction_policies
+
+            set_dgs_reduction_policies(node, **{key: value})
         else:
             config[key] = value
         composite = data_group_composite_config(_composite_scope(self._objects_for_item(self._current_item())[0], node))
@@ -14801,6 +14817,10 @@ class NfitProjectExplorer:
             from .dgs_normalization import set_dgs_trajectory_energy_policy
 
             set_dgs_trajectory_energy_policy(node, value)
+        elif key in {"monitor_variance_policy", "event_precision_policy", "symmetry_variance_policy"}:
+            from .dgs_reduction_settings import set_dgs_reduction_policies
+
+            set_dgs_reduction_policies(node, **{key: value})
         else:
             config[key] = value
         composite = data_group_composite_config(_composite_scope(self._objects_for_item(self._current_item())[0], node))

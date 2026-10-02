@@ -17,7 +17,8 @@ from tests.test_raw_dgs import _write_raw_dgs
 
 @pytest.mark.parametrize("compiled", [False, True])
 @pytest.mark.parametrize("source_kind", ["raw", "mde"])
-def test_repeated_symmetry_copy_preserves_original_standard_error(tmp_path, monkeypatch, compiled, source_kind):
+@pytest.mark.parametrize("variance_policy", ["independent_copies", "within_bin_covariance"])
+def test_repeated_symmetry_copy_follows_selected_variance_policy(tmp_path, monkeypatch, compiled, source_kind, variance_policy):
     if compiled and mdevent._MDEVENT_NUMBA is None:
         pytest.skip("Numba backend is unavailable")
     if not compiled:
@@ -30,18 +31,19 @@ def test_repeated_symmetry_copy_preserves_original_standard_error(tmp_path, monk
         source = tmp_path / "events.nxs"
         _write_mdevent(source)
         group, bin_data = mdevent_dataset_group(source), bin_mdevent_group
+    group.metadata["raw_dgs" if source_kind == "raw" else "mdevent"]["symmetry_variance_policy"] = variance_policy
     options = dict(lower=[-10, -10, -10, -100], upper=[10, 10, 10, 20], num_bins=[1]*4)
     original = bin_data(group, **options)
     copied = bin_data(group, symmetry_operations=[np.eye(3), np.eye(3)], **options)
     original_stats = selected_event_statistics(original)
     copied_stats = selected_event_statistics(copied)
     assert original.num_events.item() > 0
-    for source_values, copy_values, multiplier in zip(original_stats, copied_stats, (2, 4, 2), strict=True):
+    for source_values, copy_values, multiplier in zip(original_stats, copied_stats, (2, 4 if variance_policy == "within_bin_covariance" else 2, 2), strict=True):
         np.testing.assert_allclose(copy_values, multiplier * source_values)
     np.testing.assert_allclose(copied.signal, original.signal)
-    np.testing.assert_allclose(copied.errors, original.errors)
+    np.testing.assert_allclose(copied.errors, original.errors if variance_policy == "within_bin_covariance" else original.errors / np.sqrt(2))
     np.testing.assert_equal(copied.num_events, 2 * original.num_events)
-    assert copied.metadata["symmetry_covariance"]["within_bin_pairs_corrected"] == original.num_events.item()
+    assert copied.metadata["symmetry_covariance"]["within_bin_pairs_corrected"] == (original.num_events.item() if variance_policy == "within_bin_covariance" else 0)
 
 
 @pytest.mark.parametrize("compiled", [False, True])

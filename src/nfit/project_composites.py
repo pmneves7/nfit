@@ -40,6 +40,7 @@ from .cache_utils import (
 from .composite_scaling import composite_scaling, scale_composite_data
 from .dataset import PointData4D, PointListData
 from .dgs_normalization import trajectory_normalization_signature
+from .dgs_reduction_policy import DGS_REDUCTION_POLICY_VERSION, resolved_dgs_reduction_policies
 from .histogram_statistics import (
     EVENT_STATISTICS_KEY,
     EVENT_STATISTICS_METADATA,
@@ -925,10 +926,14 @@ def _composite_cache_signature(
         COMPOSITE_CACHE_SIGNATURE_TAG,
         {
             **trajectory_normalization_signature(mdevent_config),
+            **resolved_dgs_reduction_policies(mdevent_config, include_monitor=False),
+            "dgs_reduction_policy_version": DGS_REDUCTION_POLICY_VERSION,
             "histogram_statistics_version": EVENT_STATISTICS_VERSION,
         } if isinstance(mdevent_config, dict) else mdevent_config,
         {
             **trajectory_normalization_signature(raw_config),
+            **resolved_dgs_reduction_policies(raw_config),
+            "dgs_reduction_policy_version": DGS_REDUCTION_POLICY_VERSION,
             "native_reduction_version": RAW_DGS_REDUCTION_VERSION,
             "histogram_statistics_version": EVENT_STATISTICS_VERSION,
             **calibration_rule,

@@ -138,9 +138,9 @@ def test_raw_reduction_reads_metadata_once_per_run_but_refreshes_next_operation(
     original = raw_dgs.inspect_raw_dgs_run
     calls = []
 
-    def inspect(path):
+    def inspect(path, **kwargs):
         calls.append(path)
-        return original(path)
+        return original(path, **kwargs)
 
     monkeypatch.setattr(raw_dgs, "inspect_raw_dgs_run", inspect)
     options = (
@@ -304,7 +304,7 @@ def test_raw_dgs_trajectory_normalization_keeps_each_runs_detector_geometry(monk
     monkeypatch.setattr(
         raw_dgs,
         "_accumulate_detector_trajectory",
-        lambda result, edges, inverse, direction, ei, bounds, weight: (
+        lambda result, edges, inverse, direction, ei, bounds, weight, **kwargs: (
             directions.append(direction.copy()),
             energy_bounds.append(bounds),
         ),
@@ -353,12 +353,12 @@ def test_raw_dgs_mismatched_detector_geometries_still_use_compiled_kernels(
         @staticmethod
         def run_trajectory_normalization(*args, workers):
             calls["hkle"] += 1
-            return np.zeros(int(np.prod(args[-1])))
+            return np.zeros(int(np.prod(args[-2])))
 
         @staticmethod
         def run_powder_trajectory_normalization(*args, workers):
             calls["powder"] += 1
-            return np.zeros(int(np.prod(args[-1])))
+            return np.zeros(int(np.prod(args[-2])))
 
     monkeypatch.setattr(raw_dgs, "_detector_geometry", lambda path: geometries[path])
     monkeypatch.setattr(raw_dgs, "_MDEVENT_NUMBA", Kernels)

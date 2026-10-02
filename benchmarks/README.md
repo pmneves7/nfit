@@ -156,8 +156,15 @@ normalization contract through viewer coarsening. Omitting the flag traces
 the historical histogram behavior. Ordinary inverse-variance box cuts and
 covariance between different output bins remain separate diagnostic limits.
 
-See [current DGS reference measurements](results/dgs-reference-current.md)
-for manual matched-MDE thin/cube binning, final fresh native reduction,
+See [previous DGS reference measurements](results/dgs-reference-current.md)
+for historical manual matched-MDE thin/cube binning, final fresh native reduction,
 standard sequential Mantid/Shiver reduction estimates, calibration audits,
 and fringe uncertainty diagnostics. The report separates measured phase times
 from extrapolations and incomplete converter/covariance parity.
+
+See [final SEQUOIA DGS parity validation](results/dgs-parity-final.md) for the
+nfit 0.107.0 manual comparison with Mantid: identical per-cell event moments
+from both common MDE and fresh raw data, quantified exposure residuals, fine
+low-coverage diagnostics, transient reduced-event cache reuse, and current
+measured timings versus the estimated ordinary sequential Mantid workflow.
+The aggregate receipts exclude full event and diagnostic slab payloads.

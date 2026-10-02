@@ -73,7 +73,7 @@ def test_first_run_mdevent_normalization_matches_analytic_common_energy(
             logs = handle[f"MDEventWorkspace/experiment{index}/logs"]
             logs["Ei/value"][...] = [ei]
             logs["processed_histogram_bins/value"][...] = [-3.0, 3.0]
-    group = mdevent_dataset_group(source)
+    group = mdevent_dataset_group(source, event_precision_policy="high_precision")
     edges = ([-0.01, 0.01], [-0.01, 0.01], [0.09, 0.11], [0.0, 3.0])
     options = dict(
         lower=[0, 0, 0.1, 1.5], upper=[0, 0, 0.1, 1.5],
@@ -118,9 +118,9 @@ def test_raw_normalization_policy_reuses_events_and_retains_run_energy_bounds(
     original = getattr(raw_dgs, accumulator_name)
     energy_index = 3 if powder else 4
 
-    def accumulate(*args):
+    def accumulate(*args, **kwargs):
         observed.append((args[energy_index], args[energy_index + 1]))
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(raw_dgs, accumulator_name, accumulate)
     options = (
@@ -158,7 +158,7 @@ def test_mdevent_powder_trajectories_use_the_saved_energy_policy(monkeypatch, tm
     group = mdevent_dataset_group(source)
     monkeypatch.setattr(mdevent, "_MDEVENT_NUMBA", None)
     observed = []
-    monkeypatch.setattr(mdevent, "_accumulate_powder_detector_trajectory", lambda *args: observed.append(args[3]))
+    monkeypatch.setattr(mdevent, "_accumulate_powder_detector_trajectory", lambda *args, **kwargs: observed.append(args[3]))
     options = (group, group.datasets, ([0, 10], [-3, 3]), (1, 1))
     mdevent._powder_trajectory_normalization(*options)
     assert observed == [10.0, 10.0]

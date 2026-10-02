@@ -47,6 +47,8 @@ A few of its main capabilities are:
   for repeated binnings, and exposure-pooled normalized histogram slices,
   with viewable count numerators, event variances and exposure, separate
   Poisson rate intervals, and selectable first-run or per-run trajectory Ei,
+  with Mantid numerical conventions by default and saved, scriptable monitor,
+  event-precision, and symmetry-variance alternatives,
   raw CORELLI finite-energy correlation-chopper reconstruction with fractional
   momentum and discrete reconstructed-energy assignment, and reduced
   CORELLI and WAND² single-crystal data, with conventional major-tick or

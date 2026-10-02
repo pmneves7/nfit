@@ -17,6 +17,11 @@ from typing import Any
 import numpy as np
 
 from .array_archive import array_archive_writer
+from .dgs_reduction_policy import (
+    DEFAULT_EVENT_PRECISION_POLICY,
+    DEFAULT_MONITOR_VARIANCE_POLICY,
+    resolved_dgs_reduction_policies,
+)
 from .project_archive import (
     REDUCED_EVENT_ASSET_ROOT,
     ArchiveMember,
@@ -25,8 +30,8 @@ from .project_archive import (
 )
 
 _CACHE_KEY = "raw_dgs_reduction_cache"
-RAW_DGS_REDUCTION_VERSION = 3
-_EVENT_ROW_BYTES = 5 * 8
+RAW_DGS_REDUCTION_VERSION = 5
+_EVENT_ROW_BYTES = 6 * 8
 _EVENT_BLOCK_ROWS = (32 * 1024**2 + _EVENT_ROW_BYTES - 1) // _EVENT_ROW_BYTES
 _REDUCTION_DEFAULTS = {
     "incident_energy_override": None,
@@ -36,6 +41,8 @@ _REDUCTION_DEFAULTS = {
     "bad_pulse_threshold": 95.0,
     "ki_kf_normalization": True,
     "he3_detector_efficiency_correction": True,
+    "monitor_variance_policy": DEFAULT_MONITOR_VARIANCE_POLICY,
+    "event_precision_policy": DEFAULT_EVENT_PRECISION_POLICY,
 }
 
 
@@ -60,13 +67,17 @@ def reduction_signature(dataset, config):
     except (TypeError, ValueError):
         previous = []
     previous_files = previous[1:4] if len(previous) >= 4 else [None] * 3
+    settings = {key: [key in config, config.get(key, default)] for key, default in _REDUCTION_DEFAULTS.items()}
+    policies = resolved_dgs_reduction_policies(config)
+    for key in ("monitor_variance_policy", "event_precision_policy"):
+        settings[key] = policies[key]
     return json.dumps(
         [
             RAW_DGS_REDUCTION_VERSION,
             _file_signature(dataset.metadata["source_file"], previous_files[0]),
             _file_signature(config.get("normalization_file"), previous_files[1]),
             _file_signature(config.get("mask_file"), previous_files[2]),
-            {key: [key in config, config.get(key, default)] for key, default in _REDUCTION_DEFAULTS.items()},
+            settings,
             config.get("kf_ki_normalization", True),
         ],
         sort_keys=True,
@@ -106,7 +117,7 @@ def cache_event_chunks(dataset, signature, header, normalization, chunks):
     chunk_count = 0
     # Column storage makes the coordinate/weight columns contiguous. Buffering
     # preserves event order and bounds storage without repeated bank headers.
-    buffer = np.empty((_EVENT_BLOCK_ROWS, 5), dtype=np.float64, order="F")
+    buffer = np.empty((_EVENT_BLOCK_ROWS, 6), dtype=np.float64, order="F")
     filled = 0
     pending_raw_count = 0
     try:
@@ -149,7 +160,7 @@ def cache_event_chunks(dataset, signature, header, normalization, chunks):
 
 def iter_cached_event_chunks(archive, max_batch_bytes):
     header = json.loads(str(archive["header_json"].item()))
-    rows = max(1, int(max_batch_bytes) // (5 * 8))
+    rows = max(1, int(max_batch_bytes) // _EVENT_ROW_BYTES)
     for index in range(header["chunk_count"]):
         events = archive[f"events_{index}"]
         raw_count = int(archive[f"raw_count_{index}"].item())

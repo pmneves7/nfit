@@ -34,7 +34,7 @@ def test_cache_stores_bounded_blocks_and_preserves_event_bits(tmp_path, monkeypa
     dataset = DatasetEntry(name='run', data=None)
     # Include empty banks, a chunk straddling several blocks, signed zero, NaN,
     # and more raw events than retained events. Storage must preserve exact bits.
-    events = np.arange(95, dtype=np.float64).reshape(19, 5)
+    events = np.arange(114, dtype=np.float64).reshape(19, 6)
     events[0, :3] = [0., -0., np.nan]
     chunks = [(events[:0], 11), (events[:3], 6), (events[3:], 32), (events[:0], 5)]
     if empty:
@@ -99,9 +99,9 @@ def test_cache_is_per_run_and_detects_source_and_reduction_changes(tmp_path, mon
     original = raw_dgs.inspect_raw_dgs_run
     calls = []
 
-    def inspect(path):
+    def inspect(path, **kwargs):
         calls.append(path)
-        return original(path)
+        return original(path, **kwargs)
 
     monkeypatch.setattr(raw_dgs, 'inspect_raw_dgs_run', inspect)
     new = raw_dgs_dataset_group([sources[2]]).datasets[0]

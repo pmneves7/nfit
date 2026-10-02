@@ -119,7 +119,7 @@ def test_clear_project_caches_drops_reduced_model_and_prepared_data_caches(
     group.fits.append(fit)
     project = NfitProject([group], settings={"cache_binnings": True, "binning_cache_entries": [1]})
 
-    reduced_events = np.arange(10.0).reshape(2, 5)
+    reduced_events = np.arange(12.0).reshape(2, 6)
     tuple(
         cache_event_chunks(
             dataset,

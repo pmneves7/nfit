@@ -38,10 +38,10 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 1A | Reproducible uncertainty diagnostic baseline | Complete |
 | 1B | Trace the unsubtracted NiO uncertainty example through histogram, slice, and cut | Complete |
 | 1C | Separate accumulated event variance from low-count confidence intervals | Complete |
-| 1D | Validate DGS reference statistics and covariance boundaries | Needs subdivision |
+| 1D | Match Mantid DGS reduction and histogram statistics; expose deviations | Complete |
 | 1D1 | Audit converter; validate matched histograms and same-bin copy covariance | Complete |
-| 1D2 | Propagate cross-bin source dependencies through pooling | Pending review |
-| 1D3 | Resolve remaining monitor peak-fit differences against the reference | Pending review |
+| 1D2 | Make Mantid histogram conventions the default and native alternatives explicit | Complete |
+| 1D3 | Resolve remaining monitor peak-fit differences against the reference | Complete |
 | 2A | Define explicit measurement and estimator contracts | Pending |
 | 2B | Apply the contracts consistently to reductions, cuts, and exports | Pending |
 | 3A | Persist complete source and reduction recipes | Pending |
@@ -212,98 +212,125 @@ lazy cached-project round trips. Complete grouped event workflow script generati
 remains a pre-existing gap tracked in `planned_features.md`; the scientific APIs
 and saved settings are Qt-independent. Regular and rotated box cuts remain in 2B.
 
-### 1D — DGS reference and dependency validation
+### 1D — Mantid-compatible DGS reduction and histogramming
 
-Test native reduction and shared-MDE binning against Mantid at the statistics
-level, including incident energy, time zero, beam deadtime/pause/bad-pulse removal,
-charge accounting, vanadium, mask, and trajectory normalization. Read the SEQUOIA
-recipes in `shared/MDE_data_reduction_backup` as reference examples, rather than
-as a requirement to preserve a wrong estimator.
+**Scope agreed 2026-10-02:** finish the Mantid-compatible reference path first.
+Make intentional native alternatives selectable, saved, and documented. Cross-bin
+source dependency propagation moves to 2B, where cuts and pooling acquire an
+explicit statistical contract. This change of scope does not claim that dependency
+propagation is already implemented.
 
-Validate weighted events and known correlated copies separately. Repeated events,
-symmetry copies, fractional assignment, shared calibration, and backgrounds must
-not acquire artificial independence. Document which dependencies are represented
-and which remain outside the current model. Add source/per-bin sparse or low-rank
-representations where justified; avoid a dense covariance matrix for a large 4D
-histogram. Split implementation from validation if needed.
+Validate native reduction and shared-MDE binning at the statistics level: incident
+energy $E_i$ (meV), time zero $T_0$ (µs), retained pulses and charge, detector
+geometry, vanadium, masks, weighted signal $C$, accumulated variance $V$, event
+contributions, exposure $N$, and coverage. Prioritize fringe cells and the lowest
+exposure decile. Use both six-operation 3bar and twelve-operation 3barm symmetry.
+Compare the same input, bounds, actual bin counts, and symmetry; matching aggregate
+intensity alone is insufficient. Manual Mantid jobs remain separate from pytest.
 
-**Reference evidence before the monitor stability correction:** fresh NiO runs
-392985, 393089, and 393387 match
-Mantid's accepted event counts and detector sequence exactly. Resolved Ei, T0,
-retained charge, and detector geometry agree to float64 roundoff; the maximum
-energy-transfer difference is below $6.5\times10^{-13}$ meV. Corrected event
-weight/variance differences are consistent with Mantid's float32 weighted-event
-storage. The saved MDE comparison identifies observed-extrema endpoint drops
-outside the requested 0–50 meV grid, rather than missing in-grid events.
+**Earlier evidence:** versions 0.106.0–0.106.1 corrected empty-bin error-floor
+propagation, added sufficient-statistic channels, and diagnosed the remaining
+monitor and event-boundary differences. Their measurements are retained in
+`benchmarks/results/dgs-reference-current.md` and its aggregate JSON. The earlier
+remaining −708 cube contributions and one thin-slice contribution were not a
+parity claim.
 
-An audit of all 617 runs exposed four silent monitor-calibration failures that
-substituted nominal $E_i=60$ meV and $T_0=0$. A cancellation-sensitive derivative
-variance was the cause. The nonnegative equivalent now avoids these failures;
-calibration failures are warned and recorded, and reduction-version signatures
-invalidate affected caches. In the final implementation, 26 runs still have small
-peak-tail differences from Mantid, up to 0.01104 meV in $E_i$ and 0.82705 µs in
-$T_0$. Full converter
-parity is therefore not claimed. This reference discrepancy is tracked as 1D3,
-separately from the earlier representative-run comparison and shared-MDE
-statistics. The earlier float64 converter agreement is not claimed for runs
-whose monitor fit changed with the stability correction.
-With the correction, fresh reduction and 3bar cube binning of all 617 runs takes
-418.88 s on the recorded benchmark host. Its total count differs from native
-saved-MDE binning by −708 out of approximately 352 million contributions
-(2.0 parts per million), compared with +21,506 before the correction. This
-remaining raw-versus-saved discrepancy is not classified as resolved parity.
+#### 1D2 — Explicit histogram conventions
 
-The final fresh-raw thin grid contains 86,498 contributions versus Mantid's
-86,499. Fringe, low-exposure, and selected-ROI counts agree exactly; fringe
-standard-error ratios at the same exposure lie between 0.99999948 and
-1.00000213. All 9,700 covered fine cells have matching coverage, with no events
-in unexposed cells. Four interior fine cells differ by one count. These local
-checks establish that the remaining reference discrepancy is not producing the
-earlier fringe error-floor inflation in this slice.
+The reference defaults reproduce Mantid's float32 weighted-event storage,
+independently accumulated event weight and variance, coordinate transforms, bin
+edges, trajectory midpoint assignment, and independent symmetry-copy variance.
+These numerical conventions are implemented in nfit without calling Mantid.
+Reduced-event caches retain separate weight and variance columns. Version 5
+invalidates older five-column caches and interim caches with nominal He-3 geometry. Histogram signatures include effective
+policies and their numerical version.
 
-On the common 617-run MDE input, the thin 3bar map has identical pooled counts,
-numerators, and numerator variances; four one-event fine-cell boundary
-redistributions cancel in the map. Fringe and selected-ROI fine-cell statistics
-match exactly. The full cube differs by 26 contributions out of approximately
-352 million. Same-bin copy covariance adds a separately reported variance term;
-matching Mantid's assumption of independent transformed copies is not the
-acceptance criterion for those correlated events.
+The He-3 reference path reproduces the radius obtained from Mantid's distant
+ray and source-ordered absorption correction for checked local cylinders. The
+cylinder's bottom and height are part of this calculation. Unsupported declared
+shape rotations or transverse offsets fail explicitly; incomplete IDFs without
+height retain a documented nominal-radius fallback.
 
-Current measurements and their hardware, grids, phase boundaries, precision
-checks, and conventional single-job estimates are recorded in
-`benchmarks/results/dgs-reference-current.md` and its aggregate JSON. Manual
-Mantid comparisons remain outside pytest; no nfit unit tests import or execute
-Mantid/Shiver. Low-count interval coverage also passes seeded repeated-sampling
-checks at expected counts 0.2, 1, 5, and 20.
+Selectable alternatives retain double-precision event arithmetic, nominal He-3
+tube radius, stable absorption arithmetic, and same-bin symmetry-copy covariance. They are scientific choices, not a promise of improved
+accuracy for every dataset. Same-bin covariance is appropriate when a source event
+and its transformed copies are contributions to the same final estimate; it does
+not propagate dependencies between different histogram bins through later cuts.
+For that optional calculation, bin the original cached events directly onto the
+final requested grid. Nonuniform explicit axes have no BinMD equivalent and retain
+their supplied boundaries; uniform-grid reference parity is not claimed for them.
 
-**Subdivision:** 1D1 reference audit and marginal same-bin covariance are
-validated in this change. Complete converter agreement remains in 1D3.
-Transformed copies of a measured event now contribute
-the covariance cross terms when they land in the same output bin. The histogram
-records how many copy pairs land in different bins; their cross-bin covariance
-cannot be recovered from its diagonal variances alone.
+The GUI exposes the policies after import. Public setters validate atomically,
+and the policy script export replays the choices without Qt. The snippet does not
+include source import and binning recipes; complete grouped workflow export
+remains in 5B. Changing monitor or event precision regenerates affected raw
+caches, while changing symmetry variance retains reusable events.
 
-A remaining **1D2 — Cross-bin dependency propagation** must preserve or replay
-source contributions when a slice, coarsening, or cut reunites those copies. This
-requires a bounded source-aware representation or exact cached-event replay, not a
-dense 4D covariance matrix. Fractional assignments, repeated sources, shared
-calibration, and background dependencies require separate validation. For an exact
-symmetrized final estimate today, bin the original cached events directly onto
-that final grid instead of integrating an intermediate grid. This restriction is
-also documented in the permanent physics and viewer pages.
+#### 1D3 — Monitor calibration
 
-**Review gate:** stop after reporting the current reference and performance
-evidence. Paul should review this subdivision before 1D2, 1D3, or checkpoint 2A
-starts. Checkpoint 1D3 should compare peak selection, fitting, and final fringe
-statistics while retaining nonnegative uncertainty arithmetic; reproducing an
-unstable intermediate expression is not an acceptance criterion.
+The default follows GetEi's histogram variance, reciprocal-width multiplication,
+peak-tail derivative parentheses, and floating-point stopping rules. In
+particular, a negative cancellation residual has the reference NaN comparison
+behavior rather than raising a Python exception and silently substituting nominal
+$E_i$ and $T_0$. All 617 NiO runs agree with the reference to floating-point
+roundoff: maximum absolute differences are $3.979\times10^{-13}$ meV in $E_i$
+and $1.910\times10^{-11}$ µs in $T_0$, with no calibration failures.
 
-**Validation record:** version 0.106.1. The full suite passes 2,343 tests with
-one unavailable-backend skip; 89 focused reduction, cache, statistics, diagnostic,
-and packaging tests also pass. Ruff, byte-compilation, whitespace checks, and
-Sphinx with warnings treated as errors pass. The reference report retains
-measured timings separately from estimates. The main NiO project remains
-unchanged; only source, documentation, and external diagnostic artifacts change.
+The nonnegative derivative-variance formulation remains an optional monitor
+policy. Its peak selection can differ slightly; numerical stability alone does
+not establish that it estimates the peak more accurately. Physical conversion
+constants and arithmetic order are pinned to the measured Mantid reference.
+
+**Validated shared-MDE results:** all 91,584,578 cells in the 617-run 3bar cube
+have identical event counts, signal numerators, and variance numerators. Exposure
+relative L2 difference is $1.95\times10^{-10}$; the maximum relative difference
+is $1.20\times10^{-5}$ in an energy-boundary cell. The lowest exposure decile
+has maximum relative uncertainty difference $1.61\times10^{-11}$. Its engine
+wall time is 244.20 s in nfit and 751.00 s in Mantid on the same host, excluding
+Mantid's separate 118.43 s MDE load. This isolates histogramming and does not yet
+establish fresh raw-reduction parity.
+
+**Validation record:** the full-suite run passed 2,412 tests with one skip for
+an unavailable CuPy electronic-response backend. Final focused geometry,
+reduced-cache, and architecture checks passed 122 tests. Ruff, byte-compilation,
+whitespace checks, and Sphinx with warnings treated as errors passed. Neither
+production code nor unit tests import or execute Mantid/Shiver; external engine
+comparisons remain manual diagnostics.
+
+**Final fresh-raw validation:** all 617 NiO runs were reduced once into temporary,
+dataset-owned disk caches. Event contributions, signal numerators, and variance
+numerators match Mantid literally in every 91,584,578 cube cell and every
+130,235 fine-cut cell. Coverage and the 13 event contributions outside exposure
+also match. The largest cube uncertainty residual is 12.029 ppm at an $E=0$
+boundary; the lowest-exposure decile has maximum relative uncertainty difference
+$5.35\times10^{-11}$. The fine cut's selected low-coverage region agrees to
+$3.92\times10^{-13}$ relative uncertainty. Exposure has a small numerical
+residual; bitwise equality is not claimed for it.
+
+Fresh reduction plus twelve-operation fine binning and cache creation took
+371.46 s. The subsequent six-operation cube took 238.93 s with 617 cache hits
+and no reduction. Temporary caches occupied 10.70 GiB; fine-operation peak RSS
+was 3.49 GiB and cube peak RSS was 41.83 GiB. Both saved NiO projects remained
+unchanged and all temporary reduced caches were removed. The standard sequential
+Mantid reduction estimate is about 139 minutes, extrapolated from three measured
+runs; it is not a measured full 617-run reduction. Full measurements, input and
+symmetry contracts, residuals, and limitations are recorded in
+`benchmarks/results/dgs-parity-final.md` and its aggregate JSON.
+
+The screenshot's saved sample recipe named **Al2O3 3barm zoom** resolves to a
+different set of matrices from the explicitly supplied twelve-operation 3barm
+recipe. The comparison uses the supplied operations and exact selected grid;
+the report records the saved-generator difference independently of parity.
+Future GUI work will expose resolved operations alongside recipe names.
+
+**Completion record:** version 0.107.0. The existing ORNL application and help
+files use the same source as the local checkout; the desktop launcher is retained.
+Affected reduced-event caches regenerate under version 5, while policy and
+algorithm versions invalidate affected histograms. Other measurement pipelines
+retain their previous conventions.
+
+**Review gate:** phase 1D is complete and awaits review. Start 2A only when Paul
+authorizes it.
 
 ## 2. Measurement and estimator contracts
 
@@ -332,6 +359,10 @@ an estimator has the most accurate uncertainty for every acquisition type.
 Use the same GUI-independent services for rebinning, hidden-axis slicing,
 coarsening, regular/rotated cuts, region summaries, fits, and exported profiles.
 Carry masks and support consistently across numerator, variance, and exposure.
+Preserve or replay source dependencies when slices or cuts reunite symmetry
+copies, repeated sources, or fractional assignments. Validate shared calibration
+and background dependencies separately. Use bounded source-aware storage or
+cached-event replay rather than a dense 4D covariance matrix.
 Preserve sufficient statistics in derived views rather than inventing event counts.
 
 **Acceptance:** equivalent GUI and script operations agree; changing an
@@ -358,8 +389,9 @@ resolved values. Support physically valid negative time-zero overrides without
 using a numerical sentinel for automatic mode.
 
 Invalidate and reconstruct only affected run reductions and dependent binnings.
-Keep compressed, lazy, dataset-owned reduced-event caches; adding or removing one
-run must not require reducing unrelated runs again. Calibration edits and geometry
+Keep bounded, lazy, dataset-owned reduced-event caches with streamed on-disk
+blocks; retain the uncompressed storage chosen for fast reuse. Adding or removing
+one run must not require reducing unrelated runs again. Calibration edits and geometry
 reuse require complete dependency signatures.
 
 **Acceptance:** saved edits replay without Qt, affected caches rebuild, unrelated
@@ -394,6 +426,8 @@ does not alter the statistical meaning of the measurements.
 Organize dataset groups around **Sources**, **Reduction**, **Binning and
 combination**, and **Plots and cuts**. Retain the useful current import controls.
 Show shared defaults, mixed values, overrides, and resolved automatic results.
+Preview resolved symmetry operations and their coordinate convention; a recipe
+name alone must not imply a particular group orientation.
 Use SEQUOIA's separate data/slice recipes as design inspiration while supporting
 other acquisition types through instrument adapters.
 

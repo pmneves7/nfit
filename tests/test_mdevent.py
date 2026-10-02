@@ -888,7 +888,8 @@ def test_native_mdevent_accepts_custom_hkl_basis_without_changing_totals(tmp_pat
     assert progress[-1]["iteration"] == progress[-1]["total"]
 
 
-def test_symmetry_trajectory_numba_matches_python_fallback(monkeypatch, tmp_path):
+@pytest.mark.parametrize("event_precision", ["mantid", "high_precision"])
+def test_symmetry_trajectory_numba_matches_python_fallback(monkeypatch, tmp_path, event_precision):
     if mdevent._MDEVENT_NUMBA is None:
         pytest.skip("Numba MDEvent normalization is unavailable")
     source = tmp_path / "events.nxs"
@@ -899,7 +900,7 @@ def test_symmetry_trajectory_numba_matches_python_fallback(monkeypatch, tmp_path
         handle[
             "MDEventWorkspace/experiment1/instrument/physical_detectors/polar_angle"
         ][...] = [35.0]
-    group = mdevent_dataset_group(source)
+    group = mdevent_dataset_group(source, event_precision_policy=event_precision)
     operations = [np.eye(3), np.diag([1.0, 1.0, -1.0])]
     progress = []
 
@@ -965,7 +966,7 @@ def test_trajectory_normalization_uses_each_runs_energy_and_is_additive(
             logs = handle[f"MDEventWorkspace/experiment{index}/logs"]
             logs["Ei/value"][...] = [ei]
             logs["processed_histogram_bins/value"][...] = [-3.0, 3.0]
-    group = mdevent_dataset_group(source, trajectory_energy_policy="per_run")
+    group = mdevent_dataset_group(source, trajectory_energy_policy="per_run", event_precision_policy="high_precision")
     edges = ([-0.01, 0.01], [-0.01, 0.01], [0.09, 0.11], [0.0, 3.0])
     kwargs = dict(
         lower=[0, 0, 0.1, 1.5], upper=[0, 0, 0.1, 1.5],
@@ -1067,7 +1068,11 @@ def test_persistent_trajectory_accumulator_matches_per_batch_wrapper():
     )
     for args in batches:
         eager.accumulate(*args)
-    np.testing.assert_array_equal(eager.result(), accumulator.result())
+    # Parallel task assignment can change which worker first sums a detector;
+    # only floating-point association differs between allocation strategies.
+    np.testing.assert_allclose(
+        eager.result(), accumulator.result(), rtol=8 * np.finfo(float).eps, atol=0
+    )
     assert not eager.partial.flags.writeable
     with pytest.raises(RuntimeError, match="finalized"):
         eager.accumulate(*batches[0])

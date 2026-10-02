@@ -5,7 +5,23 @@ from __future__ import annotations
 import numpy as np
 from numba import get_num_threads, get_thread_id, njit, prange, set_num_threads
 
-ENERGY_TO_K2 = 2.072124855
+from .dgs_reduction_policy import ENERGY_TO_K
+from .dgs_reduction_policy import ENERGY_TO_K2 as ENERGY_TO_K2
+
+
+@njit(cache=True, fastmath=False, nogil=True)
+def _trajectory_bin_index(value, edge, mantid_precision):
+    if mantid_precision:
+        relative = np.float32(np.float32(value) - np.float32(edge[0]))
+        width = np.float32(np.float32(edge[1]) - np.float32(edge[0]))
+        fractional = np.float32(relative / width)
+        if not np.isfinite(fractional) or relative < 0 or fractional >= edge.size - 1:
+            return -1
+        return int(fractional)
+    index = np.searchsorted(edge, value, side="right") - 1
+    if value == edge[-1]:
+        index = edge.size - 2
+    return index
 
 
 @njit(cache=True, fastmath=False, nogil=True)
@@ -73,7 +89,7 @@ def _eager_trajectory_partial(workers, output_size):
 @njit(fastmath=False, nogil=True, parallel=True)
 def accumulate_trajectory_normalization(
     partial, scratch, theta, phi, solid, inverse_matrices, incident_energies,
-    energy_limits, proton_charges, edge0, edge1, edge2, edge3, shape,
+    energy_limits, proton_charges, edge0, edge1, edge2, edge3, shape, mantid_precision=False,
 ):
     detectors = theta.size
     total = inverse_matrices.shape[0] * detectors
@@ -86,9 +102,9 @@ def accumulate_trajectory_normalization(
         ei = incident_energies[run]
         if ei <= 0.0:
             continue
-        ki = np.sqrt(ei / ENERGY_TO_K2)
-        kfa = np.sqrt(max(ei - energy_limits[run, 0], 0.0) / ENERGY_TO_K2)
-        kfb = np.sqrt(max(ei - energy_limits[run, 1], 0.0) / ENERGY_TO_K2)
+        ki = np.sqrt(ei * ENERGY_TO_K)
+        kfa = np.sqrt(max(ei - energy_limits[run, 0], 0.0) * ENERGY_TO_K)
+        kfb = np.sqrt(max(ei - energy_limits[run, 1], 0.0) * ENERGY_TO_K)
         low_kf = min(kfa, kfb)
         high_kf = max(kfa, kfb)
         st = np.sin(theta[detector])
@@ -129,8 +145,8 @@ def accumulate_trajectory_normalization(
                 break
         if outside:
             continue
-        energy_kf0 = np.sqrt(max(ei - edge3[-1], 0.0) / ENERGY_TO_K2)
-        energy_kf1 = np.sqrt(max(ei - edge3[0], 0.0) / ENERGY_TO_K2)
+        energy_kf0 = np.sqrt(max(ei - edge3[-1], 0.0) * ENERGY_TO_K)
+        energy_kf1 = np.sqrt(max(ei - edge3[0], 0.0) * ENERGY_TO_K)
         clipped_low = max(clipped_low, min(energy_kf0, energy_kf1))
         clipped_high = min(clipped_high, max(energy_kf0, energy_kf1))
         if clipped_high - clipped_low <= 1e-12:
@@ -159,7 +175,7 @@ def accumulate_trajectory_normalization(
             else:
                 end2 = count
         for boundary_index in range(edge3.size - 1, -1, -1):
-            value = np.sqrt(max(ei - edge3[boundary_index], 0.0) / ENERGY_TO_K2)
+            value = np.sqrt(max(ei - edge3[boundary_index], 0.0) * ENERGY_TO_K)
             if clipped_low < value < clipped_high:
                 intersections[count] = value
                 count += 1
@@ -188,28 +204,27 @@ def accumulate_trajectory_normalization(
                 cursor3 += 1
             previous = first
             first = second
-            if second - previous <= 1e-12:
+            delta = (second * second - previous * previous) / ENERGY_TO_K
+            if (mantid_precision and delta < 1e-10) or (not mantid_precision and second - previous <= 1e-12):
                 continue
             middle = 0.5 * (previous + second)
             coordinate0 = qin0 - qout0 * middle
             coordinate1 = qin1 - qout1 * middle
             coordinate2 = qin2 - qout2 * middle
-            coordinate3 = ei - ENERGY_TO_K2 * middle * middle
-            index0 = np.searchsorted(edge0, coordinate0, side="right") - 1
-            index1 = np.searchsorted(edge1, coordinate1, side="right") - 1
-            index2 = np.searchsorted(edge2, coordinate2, side="right") - 1
-            index3 = np.searchsorted(edge3, coordinate3, side="right") - 1
-            if coordinate0 == edge0[-1]:
-                index0 = edge0.size - 2
-            if coordinate1 == edge1[-1]:
-                index1 = edge1.size - 2
-            if coordinate2 == edge2[-1]:
-                index2 = edge2.size - 2
-            if coordinate3 == edge3[-1]:
-                index3 = edge3.size - 2
+            coordinate3 = ei - middle * middle / ENERGY_TO_K
+            if mantid_precision:
+                coordinate0 = float(np.float32(coordinate0))
+                coordinate1 = float(np.float32(coordinate1))
+                coordinate2 = float(np.float32(coordinate2))
+                midpoint32 = np.float32(middle)
+                coordinate3 = float(np.float32(ei - float(midpoint32 * midpoint32) / ENERGY_TO_K))
+            index0 = _trajectory_bin_index(coordinate0, edge0, mantid_precision)
+            index1 = _trajectory_bin_index(coordinate1, edge1, mantid_precision)
+            index2 = _trajectory_bin_index(coordinate2, edge2, mantid_precision)
+            index3 = _trajectory_bin_index(coordinate3, edge3, mantid_precision)
             if 0 <= index0 < edge0.size - 1 and 0 <= index1 < edge1.size - 1 and 0 <= index2 < edge2.size - 1 and 0 <= index3 < edge3.size - 1:
                 flat = ((index0 * shape[1] + index1) * shape[2] + index2) * shape[3] + index3
-                partial[thread, flat] += weight * ENERGY_TO_K2 * (second * second - previous * previous)
+                partial[thread, flat] += weight * delta
 
 
 @njit(cache=True, parallel=True, fastmath=False, nogil=True)
@@ -292,7 +307,7 @@ class TrajectoryNormalizationAccumulator:
 
 def trajectory_normalization(
     theta, phi, solid, inverse_matrices, incident_energies, energy_limits,
-    proton_charges, edge0, edge1, edge2, edge3, shape,
+    proton_charges, edge0, edge1, edge2, edge3, shape, mantid_precision=False,
 ):
     """Compatibility entry point for a single trajectory batch."""
 
@@ -301,7 +316,7 @@ def trajectory_normalization(
     )
     accumulator.accumulate(
         theta, phi, solid, inverse_matrices, incident_energies, energy_limits,
-        proton_charges, edge0, edge1, edge2, edge3, shape,
+        proton_charges, edge0, edge1, edge2, edge3, shape, mantid_precision,
     )
     return accumulator.result()
 
@@ -463,9 +478,9 @@ def trajectory_powder_background(
         ei = incident_energies[run]
         if ei <= 0.0:
             continue
-        ki = np.sqrt(ei / ENERGY_TO_K2)
-        kfa = np.sqrt(max(ei - energy_limits[run, 0], 0.0) / ENERGY_TO_K2)
-        kfb = np.sqrt(max(ei - energy_limits[run, 1], 0.0) / ENERGY_TO_K2)
+        ki = np.sqrt(ei * ENERGY_TO_K)
+        kfa = np.sqrt(max(ei - energy_limits[run, 0], 0.0) * ENERGY_TO_K)
+        kfb = np.sqrt(max(ei - energy_limits[run, 1], 0.0) * ENERGY_TO_K)
         low_kf = min(kfa, kfb)
         high_kf = max(kfa, kfb)
         st = np.sin(theta[detector])
@@ -500,8 +515,8 @@ def trajectory_powder_background(
                 break
         if outside:
             continue
-        energy_kf0 = np.sqrt(max(ei - edge3[-1], 0.0) / ENERGY_TO_K2)
-        energy_kf1 = np.sqrt(max(ei - edge3[0], 0.0) / ENERGY_TO_K2)
+        energy_kf0 = np.sqrt(max(ei - edge3[-1], 0.0) * ENERGY_TO_K)
+        energy_kf1 = np.sqrt(max(ei - edge3[0], 0.0) * ENERGY_TO_K)
         clipped_low = max(clipped_low, min(energy_kf0, energy_kf1))
         clipped_high = min(clipped_high, max(energy_kf0, energy_kf1))
         if clipped_high - clipped_low <= 1e-12:
@@ -522,7 +537,7 @@ def trajectory_powder_background(
                         intersections[count] = value
                         count += 1
         for boundary in edge3:
-            value = np.sqrt(max(ei - boundary, 0.0) / ENERGY_TO_K2)
+            value = np.sqrt(max(ei - boundary, 0.0) * ENERGY_TO_K)
             if clipped_low < value < clipped_high:
                 intersections[count] = value
                 count += 1
@@ -542,7 +557,7 @@ def trajectory_powder_background(
                 intersections[count] = second
                 count += 1
         for boundary in energy_centers:
-            value = np.sqrt(max(ei - boundary, 0.0) / ENERGY_TO_K2)
+            value = np.sqrt(max(ei - boundary, 0.0) * ENERGY_TO_K)
             if clipped_low < value < clipped_high:
                 intersections[count] = value
                 count += 1
@@ -563,7 +578,7 @@ def trajectory_powder_background(
             coordinate0 = qin0 - qout0 * middle
             coordinate1 = qin1 - qout1 * middle
             coordinate2 = qin2 - qout2 * middle
-            energy = ei - ENERGY_TO_K2 * middle * middle
+            energy = ei - middle * middle / ENERGY_TO_K
             index0 = np.searchsorted(edge0, coordinate0, side="right") - 1
             index1 = np.searchsorted(edge1, coordinate1, side="right") - 1
             index2 = np.searchsorted(edge2, coordinate2, side="right") - 1
@@ -584,7 +599,7 @@ def trajectory_powder_background(
             ):
                 continue
             flat = ((index0 * shape[1] + index1) * shape[2] + index2) * shape[3] + index3
-            segment_weight = weight * ENERGY_TO_K2 * (second * second - first * first)
+            segment_weight = weight * ((second * second - first * first) / ENERGY_TO_K)
             partial_total[thread, flat] += segment_weight
             q_value = np.sqrt(
                 max(
@@ -632,6 +647,7 @@ def powder_trajectory_normalization(
     q_edges,
     energy_edges,
     shape,
+    mantid_precision=False,
 ):
     """Accumulate radial detector trajectories for raw or stored DGS runs."""
 
@@ -651,9 +667,9 @@ def powder_trajectory_normalization(
         ei = incident_energies[run]
         if ei <= 0.0:
             continue
-        ki = np.sqrt(ei / ENERGY_TO_K2)
-        kfa = np.sqrt(max(ei - energy_limits[run, 0], 0.0) / ENERGY_TO_K2)
-        kfb = np.sqrt(max(ei - energy_limits[run, 1], 0.0) / ENERGY_TO_K2)
+        ki = np.sqrt(ei * ENERGY_TO_K)
+        kfa = np.sqrt(max(ei - energy_limits[run, 0], 0.0) * ENERGY_TO_K)
+        kfb = np.sqrt(max(ei - energy_limits[run, 1], 0.0) * ENERGY_TO_K)
         low_kf = min(kfa, kfb)
         high_kf = max(kfa, kfb)
         cosine = np.cos(theta[detector])
@@ -677,7 +693,7 @@ def powder_trajectory_normalization(
                 intersections[count] = second
                 count += 1
         for boundary in energy_edges:
-            value = np.sqrt(max(ei - boundary, 0.0) / ENERGY_TO_K2)
+            value = np.sqrt(max(ei - boundary, 0.0) * ENERGY_TO_K)
             if low_kf < value < high_kf:
                 intersections[count] = value
                 count += 1
@@ -692,7 +708,8 @@ def powder_trajectory_normalization(
         for i in range(count - 1):
             first = intersections[i]
             second = intersections[i + 1]
-            if second - first <= 1e-12:
+            delta = (second * second - first * first) / ENERGY_TO_K
+            if (mantid_precision and delta < 1e-10) or (not mantid_precision and second - first <= 1e-12):
                 continue
             middle = 0.5 * (first + second)
             q_value = np.sqrt(
@@ -703,20 +720,20 @@ def powder_trajectory_normalization(
                     - 2.0 * ki * middle * cosine,
                 )
             )
-            energy = ei - ENERGY_TO_K2 * middle * middle
-            q_index = np.searchsorted(q_edges, q_value, side="right") - 1
-            energy_index = np.searchsorted(energy_edges, energy, side="right") - 1
-            if q_value == q_edges[-1]:
-                q_index = q_edges.size - 2
-            if energy == energy_edges[-1]:
-                energy_index = energy_edges.size - 2
+            energy = ei - middle * middle / ENERGY_TO_K
+            if mantid_precision:
+                q_value = float(np.float32(q_value))
+                midpoint32 = np.float32(middle)
+                energy = float(np.float32(ei - float(midpoint32 * midpoint32) / ENERGY_TO_K))
+            q_index = _trajectory_bin_index(q_value, q_edges, mantid_precision)
+            energy_index = _trajectory_bin_index(energy, energy_edges, mantid_precision)
             if (
                 0 <= q_index < q_edges.size - 1
                 and 0 <= energy_index < energy_edges.size - 1
             ):
                 flat = q_index * shape[1] + energy_index
                 partial[thread, flat] += (
-                    weight * ENERGY_TO_K2 * (second * second - first * first)
+                    weight * delta
                 )
     return np.sum(partial, axis=0)
 

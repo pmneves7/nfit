@@ -336,8 +336,9 @@ intermediate four-dimensional volume.
 Native raw-event and HKLE MDE binning use an ordered compiled pass for bin lookup
 and the signal, variance, and event-count updates when Numba is available.
 Uniform output grids use arithmetic bin lookup corrected against their actual
-edges; nonuniform grids retain binary search. Coordinate transforms retain
-their float64 operation order. Event accumulation
+edges; nonuniform grids retain binary search. The default event policy follows
+Mantid's float32 projection and bin-boundary arithmetic; the optional high-precision
+policy uses float64 projection. Event accumulation
 does not allocate worker-sized copies of the output volume. Trajectory
 normalization reuses its worker grids across batches and supplies each
 instrument geometry's own detector angles and solid-angle weights. Momentum
@@ -361,12 +362,59 @@ normalization trajectories. **Detector mask** can supply an additional
 workspace whose non-positive or invalid values exclude detectors. Both fields
 have **Browse** buttons in the raw-reduction setup panel.
 
+### Numerical reduction policies
+
+Raw-DGS and MDEvent group settings retain the following choices after import:
+
+| Setting | Default | Alternative |
+| --- | --- | --- |
+| **Monitor peak fitting** (raw runs only) | `mantid`: GetEi's derivative-variance arithmetic and peak-tail selection | `stable`: algebraically nonnegative derivative variance |
+| **Event precision** | `mantid`: float32 event correction storage, projection and uniform-grid bin arithmetic | `high_precision`: float64 event corrections and projection |
+| **Symmetry uncertainty** | `independent_copies`: add each copy's variance separately, following Mantid | `within_bin_covariance`: add covariance terms for copies of one event in the same output bin |
+
+These are numerical and statistical conventions, not interchangeable accuracy
+levels. The stable monitor option can select different peak tails and therefore
+change resolved $E_i$ and $T_0$; improved calibration accuracy has not been
+established for this alternative. The event policy can move boundary events and
+normalization midpoints between cells. Mantid precision follows its uniform-grid
+MDNorm/BinMD conventions, including float32 trajectory-midpoint indexing.
+Uniform-grid extents follow MDNorm's six-significant-digit text formatting
+before float32 dimension construction; high precision preserves the requested
+bounds without this formatting.
+Explicit nonuniform edges remain supported but have no BinMD counterpart.
+These policies apply to the DGS/MDE path. CORELLI retains its existing
+reconstruction coefficients pending its dedicated instrument validation.
+Already stored MDE coordinates and variances cannot recover precision lost by
+an earlier reduction. Neither symmetry policy retains cross-bin covariance for
+later cuts; see [event copies](physics_conventions.md#event-copies-and-covariance).
+
+For raw He-3 tube corrections, Mantid precision follows the source operation
+order when deriving a ray-intersection radius from each detector cylinder's
+local bottom, axis and height. This is implemented for cardinal local axes with
+zero transverse offset and a cylinder spanning the local origin, before the
+detector's physical rotation. An active correction with an unsupported shape
+raises an error asking for `high_precision`, whose nominal-radius calculation
+is available without a general ray-intersection implementation. Historical
+instrument definitions without cylinder height retain a nominal-radius fallback;
+exact Mantid shape parity is not claimed for those definitions. High precision
+uses the nominal radius and `expm1` for the efficiency denominator; this is a
+different numerical convention, not an established accuracy improvement.
+
+**Copy policy script** exports the effective choices through
+`set_dgs_reduction_policies` and `set_dgs_trajectory_energy_policy`. It applies to
+an already imported group and does not export its source selection or complete
+binning recipe. Changing monitor or event precision regenerates raw reduced-event
+caches; changing symmetry variance or trajectory Ei retains those events and
+requires histogram recomputation. Saved old histogram values remain unchanged
+until recomputed.
+
 ### Reduced-event caches
 
 The first binning caches each direct-geometry run after TOF conversion, pulse
 and detector selection, and efficiency corrections. It retains float64 laboratory
 momentum transfer $\mathbf Q$ (in inverse ångströms), energy transfer $\Delta E$
-(in meV), dimensionless event weights, and detector-trajectory normalization
+(in meV), dimensionless event weights and separately stored event variances,
+and detector-trajectory normalization
 inputs. All events in the reduction energy window are retained, including those
 outside the first histogram. Output bounds, steps, axis vectors, UB matrices,
 and symmetry operations can therefore change without rereading raw events.
@@ -383,13 +431,19 @@ binning. Small bank chunks are combined into approximately 32 MiB blocks in
 their original event order; each block is loaded independently. Column storage
 keeps coordinate and weight arrays contiguous. The complete event cache stays
 on disk rather than occupying RAM when the project opens. Each retained event
-uses 40 bytes, plus small trajectory and archive metadata. Compatible
+uses 48 bytes: six float64 columns $(Q_x,Q_y,Q_z,\Delta E,w,v)$, with
+dimensionless weight $w$ and weight variance $v$. Under Mantid precision,
+the stored float64 values preserve the independently rounded float32 $w$ and
+$v$; recomputing $v$ from $w^2$ would change the reference variance. Compatible
 compressed event caches remain readable; saved histogram rebins retain their
 lossless NPZ compression.
 
 The cache signature includes the raw, vanadium, and mask file paths, sizes, and
 nanosecond modification/change times, together with incident-energy/time-zero
-overrides, reduction energy bounds, pulse filtering, and efficiency settings.
+overrides, reduction energy bounds, pulse filtering, efficiency settings, and
+the monitor and event-precision policies. Current reduction version 5 records
+the six-column independent-variance format and the He-3 geometry convention.
+Earlier caches, including the interim six-column version 4, regenerate.
 Changes to these inputs regenerate affected caches. If a source file is absent,
 its last saved signature is retained so the cached reduction remains usable.
 Changed reduction settings still require the original inputs for regeneration.
@@ -434,10 +488,11 @@ moment of each peak. The TOF-to-energy conversion uses the same neutron mass
 and meV conversion as Mantid. $E_i$ is in meV and $T_0$ is in µs. Explicit
 incident-energy and time-zero overrides remain available.
 
-Monitor derivative uncertainties retain the squared coefficient of the shared
-central measurement. This avoids cancellation producing a negative variance in
-sparse peak tails. Peak-tail selection can differ slightly from Mantid where
-its expanded expression is sensitive to floating-point cancellation.
+The default monitor policy reproduces Mantid GetEi's expanded derivative-variance
+expression and control flow, including a non-finite square root when roundoff
+makes the expression negative. The optional stable policy retains the squared
+coefficient of the shared central measurement, avoiding that cancellation;
+its different peak-tail selection can change calibration results.
 Run metadata records the calibration source. If usable monitors fail calibration,
 nfit warns and records the reason before falling back to requested $E_i$ and
 $T_0=0$; check these runs and supply explicit overrides as appropriate. Missing
@@ -486,6 +541,8 @@ This follows Mantid 6.16's first-experiment trajectory convention
 Reordering participating runs can change the default reference; use an override
 when an explicit reference energy is required. The per-run choice is available
 when physical differences between measured energies should enter normalization.
+Validate the per-run choice for the measurement; agreement with the first-run
+MDNorm reference does not validate this alternative normalization model.
 Neither choice changes stored MDE coordinates or the per-run Ei/T0 used to
 reconstruct raw events. Pulse-resolved Ei is not available in this importer.
 
@@ -503,10 +560,13 @@ Event histograms distinguish:
 - bins with no detector coverage.
 
 For independent events, the corrected count numerator is $C=\sum_j w_j$ and
-its observed variance is $V=\sum_j w_j^2$, where $w_j$ is a dimensionless corrected
-event weight. With known normalization exposure $N>0$, intensity is $C/N$ and
-the observed event standard error is $\sqrt{V}/N$. Same-event symmetry copies
-landing in one bin include their covariance cross terms in $V$.
+its observed variance is $V=\sum_j v_j$, where $w_j$ is a dimensionless corrected
+event weight and $v_j$ its separately stored variance. Before storage rounding,
+a unit-count event corrected by a known factor has $v_j=w_j^2$. Mantid precision
+rounds weight and variance independently. With known normalization exposure
+$N>0$, intensity is $C/N$ and the observed event standard error is $\sqrt{V}/N$.
+Symmetry copies contribute independent diagonal variances by default;
+`within_bin_covariance` additionally includes their same-bin cross terms.
 
 Covered empty bins retain $C=V=0$, their exposure, and zero **observed event
 standard error**. They remain measured cells. This zero is not a confidence

@@ -211,8 +211,10 @@ MDEvent imports do not require Mantid at runtime. A group owns shared
 crystallographic orientation, detector mask, normalization, and optional
 incident-energy or time-zero overrides. Run entries contain run-specific
 metadata and references to event files. Reduction streams event chunks and
-converts stored `Q_sample` vectors with $(2\pi UB)^{-1}$, avoiding duplicate
-copies of event and instrument data.
+projects stored `Q_sample` vectors onto the requested HKL basis, avoiding duplicate
+copies of event and instrument data. The physical transform is $(2\pi UB)^{-1}$;
+the default numerical policy follows Mantid's float32 affine projection and
+uniform-grid indexing. An explicit high-precision policy uses float64 projection.
 
 Here UB is the sample orientation times the crystallographic reciprocal
 basis without $2\pi$, `Q_sample` has physical Å$^{-1}$ coordinates, and the
@@ -223,8 +225,9 @@ Normalized output is a ratio. Corrected event signal and error-squared form the
 numerator; detector trajectories, proton charge, and energy coverage form the
 denominator. Raw direct-geometry events receive the instrument-defined
 wavelength-dependent detector-efficiency correction and the $k_i/k_f$
-kinematic correction. In SHIVER-compatible imports, vanadium supplies a binary
-detector mask rather than signal weights. nfit masks are applied afterward
+kinematic correction. In Shiver-compatible imports, non-positive vanadium values
+exclude detectors and positive values weight their normalization trajectories,
+rather than event signals. nfit masks are applied afterward
 through the ordinary group mask path.
 
 The native MDEvent reducer can accumulate either a projected four-dimensional
@@ -241,6 +244,18 @@ Primary-data replacements discard inherited source statistics unless explicitly
 updated; unsupported background transformations must not silently inherit a count
 likelihood. See [Measured-zero uncertainties](data_import.md#measured-zero-uncertainties)
 and [event dependencies](physics_conventions.md#event-copies-and-covariance).
+
+Raw/MDE groups save event-precision and symmetry-variance conventions; raw groups
+also save the monitor-fitting convention. Defaults follow Mantid's numerical
+and independent-copy variance rules. Stable monitor arithmetic, float64 event
+precision, and covariance for same-bin copies are explicit alternatives.
+The float64 event option also uses nominal tube radii rather than the default
+source-ordered Mantid ray geometry. Alternative calibration and per-run
+trajectory models require physical validation for the measurement.
+These choices do not establish cross-bin independence or resolve shared
+normalization uncertainty. Public policy setters and policy-script export use
+the same configuration as the GUI; full grouped import/binning script export
+remains a separate workflow requirement.
 
 ## Measurement statistics and binning
 
@@ -293,8 +308,11 @@ Unimplemented directions are listed separately in
 ## Raw direct-geometry event caches
 
 Reduced-event caches are owned by individual raw dataset entries. They retain
-streamed, float64 event chunks and trajectory inputs inside the project archive,
-independently of histogram caches. Opening a project binds lazy references; it
-does not load event tables. Removing entries removes their cached events at the
+streamed, six-column float64 event chunks $(Q_x,Q_y,Q_z,\Delta E,w,v)$ and
+trajectory inputs inside the project archive. Momentum is in Å$^{-1}$ and
+energy in meV; weight $w$ and its variance $v$ are dimensionless. Separate
+weight and variance columns preserve independently rounded corrected events.
+These caches are independent of histogram caches. Opening a project binds lazy
+references; it does not load event tables. Removing entries removes their cached events at the
 next save. See [reduced-event caches](data_import.md#reduced-event-caches) for
 cache invalidation, storage costs, and the scripting API.

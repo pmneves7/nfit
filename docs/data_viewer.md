@@ -123,6 +123,12 @@ not a zero-width confidence interval for its unknown intensity. Count confidence
 intervals require a declared measurement model; see
 [confidence intervals](physics_conventions.md#covered-empty-cells-and-confidence-intervals).
 
+The variance channel follows the group's saved symmetry policy. The default
+treats symmetry copies separately, matching Mantid's diagonal convention;
+the optional within-bin policy adds covariance only for copies already sharing
+one histogram bin. Neither choice propagates covariance between different bins
+through subsequent slices or box cuts.
+
 When switching datasets or binnings, the loading progress dialog belongs to the
 active viewer so closing it does not bring the project explorer in front.
 

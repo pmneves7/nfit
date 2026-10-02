@@ -7,8 +7,8 @@ import math
 import numpy as np
 from numba import get_num_threads, get_thread_id, njit, prange, set_num_threads
 
-ENERGY_TO_K2 = 2.072124855
-TOF_FACTOR = 2286.271549
+from .corelli_constants import CORELLI_TOF_US_PER_M_SQRT_MEV as TOF_FACTOR
+from .corelli_constants import ENERGY_TO_K2
 
 
 @njit(inline="always")

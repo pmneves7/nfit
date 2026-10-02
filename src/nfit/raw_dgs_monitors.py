@@ -10,13 +10,24 @@ import math
 
 import numpy as np
 
+from .dgs_reduction_policy import (
+    DEFAULT_MONITOR_VARIANCE_POLICY,
+    MANTID_MEV_J,
+    MANTID_NEUTRON_MASS_KG,
+    validated_monitor_variance_policy,
+)
+
 # Mantid PhysicalConstants: microseconds per metre times sqrt(meV).
-TOF_US_PER_M_SQRT_MEV = math.sqrt(5e11 * 1.674927211e-27 / 1.602176487e-22)
+TOF_US_PER_M_SQRT_MEV = math.sqrt(5e11 * MANTID_NEUTRON_MASS_KG / MANTID_MEV_J)
 
 
-def _mantid_getei_v2_peak(values, distance, energy_guess, *, grid_start=None):
+def _mantid_getei_v2_peak(
+    values, distance, energy_guess, *, grid_start=None,
+    variance_policy=DEFAULT_MONITOR_VARIANCE_POLICY,
+):
     """Reproduce Mantid GetEi v2's monitor peak estimate without Mantid."""
 
+    variance_policy = validated_monitor_variance_policy(variance_policy)
     expected = TOF_US_PER_M_SQRT_MEV * distance / math.sqrt(energy_guess)
     lower, upper = 0.9 * expected, 1.1 * expected
     # SNS first rebins all monitor spectra on a common 1-us grid. Cropping
@@ -31,7 +42,9 @@ def _mantid_getei_v2_peak(values, distance, energy_guess, *, grid_start=None):
     if not np.any(counts):
         return None
     centres = 0.5 * (edges[:-1] + edges[1:])
-    region = _mantid_getei_peak_region(centres, counts.astype(float), np.sqrt(counts))
+    region = _mantid_getei_peak_region(
+        centres, counts.astype(float), np.sqrt(counts), variance_policy=variance_policy,
+    )
     if region is None:
         return None
     _, _, width = region
@@ -41,12 +54,14 @@ def _mantid_getei_v2_peak(values, distance, energy_guess, *, grid_start=None):
     # significant digits, then fractionally rebins the matrix histogram.
     lower, width, upper = (float(format(v, ".6g")) for v in (lower, width / 12.0, upper))
     rebinned_edges = _monitor_rebin_edges(lower, width, upper)
-    rebinned, rebinned_errors = _rebin_monitor_histogram(counts, edges, rebinned_edges)
+    rebinned, rebinned_errors = _rebin_monitor_histogram(
+        counts, edges, rebinned_edges, distribution=True,
+    )
     rebinned_centres = 0.5 * (rebinned_edges[:-1] + rebinned_edges[1:])
-    widths = np.diff(rebinned_edges)
     for prominence in (4.0, 2.0):
         region = _mantid_getei_peak_region(
-            rebinned_centres, rebinned / widths, rebinned_errors / widths, prominence,
+            rebinned_centres, rebinned, rebinned_errors, prominence,
+            variance_policy=variance_policy,
         )
         if region is not None:
             x, y, _ = region
@@ -71,9 +86,14 @@ def _monitor_rebin_edges(lower, width, upper):
     return edges
 
 
-def _rebin_monitor_histogram(counts, edges, target):
+def _rebin_monitor_histogram(counts, edges, target, *, distribution=False):
     """Rebin count integrals and Poisson variances by overlap fraction."""
     rebinned = np.zeros(len(target) - 1)
+    variance = np.zeros(len(target) - 1)
+    source_widths = np.diff(edges)
+    source_factors = 1.0 / source_widths
+    frequencies = counts * source_factors
+    frequency_errors = np.sqrt(counts) * source_factors
     i = 0
     for j, (lo, hi) in enumerate(zip(target[:-1], target[1:], strict=True)):
         while i < len(counts) and edges[i + 1] <= lo:
@@ -82,15 +102,26 @@ def _rebin_monitor_histogram(counts, edges, target):
         while k < len(counts) and edges[k] < hi:
             overlap = min(hi, edges[k + 1]) - max(lo, edges[k])
             if overlap > 0:
-                rebinned[j] += counts[k] * overlap / (edges[k + 1] - edges[k])
+                rebinned[j] += frequencies[k] * overlap
+                variance[j] += frequency_errors[k] * frequency_errors[k] * overlap * source_widths[k]
             k += 1
-    # Mantid propagates Poisson variance by the overlap fraction, not its square.
-    return rebinned, np.sqrt(np.maximum(rebinned, 0.0))
+    # GetEi converts to a distribution before Rebin. Preserve HistogramData's
+    # separate E*E accumulation and multiplication by reciprocal width: replacing
+    # either with sqrt(rebinned)/width changes sparse-tail derivative decisions.
+    errors = np.sqrt(variance)
+    if distribution:
+        factors = 1.0 / np.diff(target)
+        rebinned *= factors
+        errors *= factors
+    return rebinned, errors
 
 
-def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
+def _mantid_getei_peak_region(
+    x, y, errors, prominence=4.0, *, variance_policy=DEFAULT_MONITOR_VARIANCE_POLICY,
+):
     """Port of Mantid GetEi2::calculatePeakWidthAtHalfHeight's peak region."""
 
+    variance_policy = validated_monitor_variance_policy(variance_policy)
     if x.size < 3:
         return None
     peak = int(np.argmax(y))
@@ -123,25 +154,30 @@ def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
         derivative = 0.5 * (
             (y[right + 1] - y[right]) / forward + (y[right] - y[right - 1]) / backward
         )
-        uncertainty = _peak_derivative_uncertainty(
+        uncertainty = _monitor_derivative_uncertainty(
             errors[right - 1], errors[right], errors[right + 1], backward, forward,
+            trailing=True, variance_policy=variance_policy,
         )
         right += 1
     right -= 1
     if derivative < -uncertainty:
         right = x.size - 1
 
-    derivative, uncertainty = 1000.0, 0.0
-    while left > 0 and derivative > uncertainty:
-        forward, backward = x[left + 1] - x[left], x[left] - x[left - 1]
-        derivative = 0.5 * ((y[left + 1] - y[left]) / forward + (y[left] - y[left - 1]) / backward)
-        uncertainty = _peak_derivative_uncertainty(
-            errors[left - 1], errors[left], errors[left + 1], backward, forward,
-        )
-        left -= 1
-    left += 1
-    if derivative > uncertainty:
-        left = 0
+    if left > 0:
+        derivative, uncertainty = 1000.0, 0.0
+        while left > 0 and derivative > uncertainty:
+            forward, backward = x[left + 1] - x[left], x[left] - x[left - 1]
+            derivative = 0.5 * (
+                (y[left + 1] - y[left]) / forward + (y[left] - y[left - 1]) / backward
+            )
+            uncertainty = _monitor_derivative_uncertainty(
+                errors[left - 1], errors[left], errors[left + 1], backward, forward,
+                trailing=False, variance_policy=variance_policy,
+            )
+            left -= 1
+        left += 1
+        if derivative > uncertainty:
+            left = 0
 
     peak_width = x[right] - x[left]
     if peak_width <= 0.0:
@@ -189,6 +225,31 @@ def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
     else:
         xmax = px[-1]
     return px, py, xmax - xmin
+
+
+def _monitor_derivative_uncertainty(
+    previous_error, centre_error, next_error, backward, forward, *, trailing, variance_policy,
+):
+    if variance_policy == "stable":
+        return _peak_derivative_uncertainty(
+            previous_error, centre_error, next_error, backward, forward,
+        )
+    # GetEi2 uses different parentheses on the two sides. Preserve their
+    # floating arithmetic: moving the factor 2 through the division changes
+    # empty-tail rounding and therefore the peak's derivative stopping point.
+    central = (
+        2.0 * (centre_error**2 / (forward * backward))
+        if trailing else 2.0 * centre_error**2 / (forward * backward)
+    )
+    variance = (
+        (next_error**2 + centre_error**2) / forward**2
+        + (centre_error**2 + previous_error**2) / backward**2
+        - central
+    )
+    # C++ sqrt returns NaN for negative roundoff, and its comparisons stop
+    # derivative extension. Python's math.sqrt raises instead; reproduce the
+    # reference branch without accidentally triggering requested-Ei fallback.
+    return 0.5 * (math.nan if variance < 0.0 else math.sqrt(variance))
 
 
 def _peak_derivative_uncertainty(previous_error, centre_error, next_error, backward, forward):

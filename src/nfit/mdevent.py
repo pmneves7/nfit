@@ -21,6 +21,22 @@ from .dgs_normalization import (
     trajectory_incident_energies,
     validated_trajectory_energy_policy,
 )
+from .dgs_reduction_policy import (
+    DEFAULT_EVENT_PRECISION_POLICY,
+    DEFAULT_SYMMETRY_VARIANCE_POLICY,
+    ENERGY_TO_K,
+    dgs_histogram_edges,
+    dgs_powder_coordinates,
+    dgs_trajectory_bin_indices,
+    dgs_uses_mantid_trajectory_grid,
+    prepare_dgs_event_projector,
+    resolved_dgs_reduction_policies,
+    validated_event_precision_policy,
+    validated_symmetry_variance_policy,
+)
+from .dgs_reduction_policy import (
+    ENERGY_TO_K2 as ENERGY_TO_K2,
+)
 from .event_covariance import accumulate_copy_covariance
 from .event_masks import reduce_masked_event_runs
 from .histogram_statistics import (
@@ -37,7 +53,6 @@ except Exception:
     _MDEVENT_NUMBA = None
 
 
-ENERGY_TO_K2 = 2.072124855  # meV Angstrom^2: E = ENERGY_TO_K2 * k^2
 # Feldman-Cousins Table II: n = 0, known background b = 0, 68.27% C.L.
 FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER = 1.29
 EVENT_COLUMNS = {
@@ -173,11 +188,15 @@ def mdevent_dataset_group(
     mask_path: str | Path | None = None,
     name: str | None = None,
     trajectory_energy_policy: str = DEFAULT_TRAJECTORY_ENERGY_POLICY,
+    event_precision_policy: str = DEFAULT_EVENT_PRECISION_POLICY,
+    symmetry_variance_policy: str = DEFAULT_SYMMETRY_VARIANCE_POLICY,
     progress_callback: Any | None = None,
 ) -> DatasetGroup:
     """Create lightweight run entries sharing one MDEvent source and setup."""
 
     trajectory_energy_policy = validated_trajectory_energy_policy(trajectory_energy_policy)
+    event_precision_policy = validated_event_precision_policy(event_precision_policy)
+    symmetry_variance_policy = validated_symmetry_variance_policy(symmetry_variance_policy)
     info = inspect_mdevent_workspace(path, progress_callback=progress_callback)
     shared = {
         "format": "mantid-mdevent",
@@ -192,6 +211,8 @@ def mdevent_dataset_group(
         "mask_file": None if mask_path is None else str(mask_path),
         "incident_energy_override": None,
         "trajectory_energy_policy": trajectory_energy_policy,
+        "event_precision_policy": event_precision_policy,
+        "symmetry_variance_policy": symmetry_variance_policy,
         "t0_override": None,
         "coordinate_frame": "HKL",
         "normalization": "proton_charge_and_detector_trajectory",
@@ -385,6 +406,8 @@ def bin_mdevent_group(
     import h5py
 
     config = group.metadata["mdevent"]
+    policies = resolved_dgs_reduction_policies(config, include_monitor=False)
+    precision = policies["event_precision_policy"]
     _require_qsample_momentum_dimensions(
         config.get("dimensions"), operation="native MDEvent HKLE binning"
     )
@@ -434,6 +457,8 @@ def bin_mdevent_group(
     edges = _requested_edges(
         lower_array, upper_array, bins_array, step_size, bin_edges=bin_edges
     )
+    requested_edges = edges
+    edges = dgs_histogram_edges(edges, precision)
     minimum_samples = _validated_minimum_samples(minimum_samples)
     shape = tuple(int(axis_edges.size - 1) for axis_edges in edges)
     if enforce_memory_limit:
@@ -449,6 +474,7 @@ def bin_mdevent_group(
         raise ValueError("MDEvent momentum axes cannot mix energy; the energy axis must be [0, 0, 0, 1]")
     basis_inverse = np.linalg.inv(basis)
     symmetry = _symmetry_matrices(symmetry_operations)
+    projectors = [prepare_dgs_event_projector(ub, basis, operation, requested_edges, precision) for operation in symmetry]
     names = (
         tuple(str(name) for name in axis_names)
         if axis_names is not None
@@ -456,7 +482,6 @@ def bin_mdevent_group(
     )
     if len(names) != 4:
         raise ValueError("MDEvent HKLE binning requires four axis names")
-    transform = np.linalg.inv(2.0 * np.pi * ub)
     sources = sorted({str(dataset.metadata["source_file"]) for dataset in selected_runs})
     source_sizes = {}
     for source_text in sources:
@@ -503,15 +528,13 @@ def bin_mdevent_group(
                         signal_factors, active_runs = _event_run_signal_factors(
                             wanted, chosen[:, 2].astype(np.int64)
                         )
-                        hkl = chosen[:, 5:8] @ transform.T
                         weights = chosen[:, 0] * signal_factors
                         variances = chosen[:, 1] * np.square(signal_factors)
-                        copy_bins = np.full((len(symmetry), len(chosen)), -1, dtype=np.int64) if len(symmetry) > 1 else None
-                        for copy_index, operation in enumerate(symmetry):
-                            transformed_hkl = hkl @ operation.T
-                            coords = np.column_stack((transformed_hkl, chosen[:, 8])) @ basis_inverse
+                        copy_bins = np.full((len(symmetry), len(chosen)), -1, dtype=np.int64) if len(symmetry) > 1 and policies["symmetry_variance_policy"] == "within_bin_covariance" else None
+                        for copy_index, projector in enumerate(projectors):
+                            coords, accumulation_edges = projector(chosen[:, 5:8], chosen[:, 8])
                             _accumulate_discrete_event_coordinates(
-                                coords, weights, variances, edges, shape,
+                                coords, weights, variances, accumulation_edges, shape,
                                 data_sum_flat, variance_sum_flat, event_count_flat,
                                 enabled=active_runs,
                                 bin_indices=None if copy_bins is None else copy_bins[copy_index],
@@ -544,6 +567,7 @@ def bin_mdevent_group(
         symmetry,
         progress_callback=progress_callback,
         reference_energy=_trajectory_reference_energy,
+        mantid_precision=dgs_uses_mantid_trajectory_grid(requested_edges, precision),
     )
     if progress_callback is not None:
         progress_callback(
@@ -596,6 +620,7 @@ def bin_mdevent_group(
         axes=axes, signal=signal, errors=errors, mask=mask, num_events=event_count,
         metadata={
             "mdevent": config,
+            "dgs_reduction_policies": policies,
             "lattice_parameters": dict(config.get("lattice_parameters", {})),
             "ub_matrix": config.get("ub_matrix"),
             "rebin": {
@@ -608,7 +633,11 @@ def bin_mdevent_group(
             "normalization_denominator": normalization,
             "zero_event_bins_are_measured": True,
             "zero_count_error_model": "observed_event_variance",
-            EVENT_STATISTICS_KEY: dict(EVENT_STATISTICS_METADATA),
+            EVENT_STATISTICS_KEY: {
+                **EVENT_STATISTICS_METADATA,
+                "covariance": "independent_copies" if policies["symmetry_variance_policy"] == "independent_copies" else "within_bin_event_copies",
+                "cross_bin_covariance": "not_stored",
+            },
             "symmetry_covariance": copy_covariance,
             "event_weight_rms": event_weight_rms,
             "symmetry_operations_hkl": [operation.tolist() for operation in symmetry],
@@ -770,6 +799,8 @@ def bin_mdevent_powder_group(
     import h5py
 
     config = group.metadata["mdevent"]
+    policies = resolved_dgs_reduction_policies(config, include_monitor=False)
+    precision = policies["event_precision_policy"]
     selected_runs = list(
         datasets
         if datasets is not None
@@ -815,6 +846,8 @@ def bin_mdevent_powder_group(
     edges = _requested_edges(
         lower_array, upper_array, bins_array, step_size, bin_edges=bin_edges
     )
+    requested_edges = edges
+    edges = dgs_histogram_edges(edges, precision)
     minimum_samples = _validated_minimum_samples(minimum_samples)
     shape = tuple(int(axis_edges.size - 1) for axis_edges in edges)
     data_sum = np.zeros(shape)
@@ -877,8 +910,10 @@ def bin_mdevent_powder_group(
                             ),
                         )
                         q_modulus = np.linalg.norm(chosen[:, 5:8], axis=1)
-                        coordinates = np.column_stack((q_modulus, chosen[:, 8]))
-                        flat = _flat_bin_indices(coordinates, edges, shape)
+                        coordinates, accumulation_edges = dgs_powder_coordinates(
+                            q_modulus, chosen[:, 8], requested_edges, precision
+                        )
+                        flat = _flat_bin_indices(coordinates, accumulation_edges, shape)
                         valid = (flat >= 0) & active_runs
                         data_sum.ravel()[:] += np.bincount(
                             flat[valid],
@@ -925,6 +960,7 @@ def bin_mdevent_powder_group(
         shape,
         progress_callback=progress_callback,
         reference_energy=_trajectory_reference_energy,
+        mantid_precision=dgs_uses_mantid_trajectory_grid(requested_edges, precision),
     )
     total_events = float(np.sum(event_count))
     event_weight_rms = (
@@ -964,6 +1000,7 @@ def bin_mdevent_powder_group(
         num_events=event_count,
         metadata={
             "mdevent": config,
+            "dgs_reduction_policies": policies,
             "lattice_parameters": dict(config.get("lattice_parameters", {})),
             "ub_matrix": config.get("ub_matrix"),
             "signal_semantics": "density",
@@ -1346,6 +1383,7 @@ def _trajectory_normalization(
     *,
     progress_callback=None,
     reference_energy=None,
+    mantid_precision=False,
 ):
     detector_payloads, run_payloads = _trajectory_payloads(
         group,
@@ -1358,6 +1396,7 @@ def _trajectory_normalization(
     return _trajectory_normalization_from_payloads(
         detector_payloads, run_payloads, edges, shape,
         progress_callback=progress_callback,
+        mantid_precision=mantid_precision,
     )
 
 
@@ -1369,6 +1408,7 @@ def _trajectory_normalization_from_payloads(
     *,
     progress_callback=None,
     max_batch_tasks=None,
+    mantid_precision=False,
 ):
     """Integrate prepared trajectories using the shared bounded reducer."""
     if (
@@ -1435,6 +1475,7 @@ def _trajectory_normalization_from_payloads(
                     np.asarray([payload[3] for payload in batch]),
                     *edge_arrays,
                     shape_array,
+                    mantid_precision,
                 )
                 completed += len(batch) * detector_count
                 if progress_callback is not None:
@@ -1487,6 +1528,7 @@ def _trajectory_normalization_from_payloads(
                 ei,
                 original_bounds,
                 charge * solid[detector_index],
+                mantid_precision=mantid_precision,
             )
         if progress_callback is not None and (
             payload_index == task_total or payload_index % report_stride == 0
@@ -1668,6 +1710,7 @@ def _powder_trajectory_normalization(
     *,
     progress_callback: Any | None = None,
     reference_energy=None,
+    mantid_precision=False,
 ):
     """Accumulate the radial detector-trajectory denominator."""
 
@@ -1798,6 +1841,7 @@ def _powder_trajectory_normalization(
                     np.asarray(edges[0], dtype=float),
                     np.asarray(edges[1], dtype=float),
                     np.asarray(shape, dtype=np.int64),
+                    mantid_precision,
                     workers=workers,
                 )
                 result += np.asarray(flat, dtype=float).reshape(shape)
@@ -1815,6 +1859,7 @@ def _powder_trajectory_normalization(
                 float(incident_energy),
                 energy_bounds,
                 charge * float(solid[detector_index]),
+                mantid_precision=mantid_precision,
             )
             completed += 1
             if progress_callback is not None and (
@@ -1861,9 +1906,9 @@ def _hkl_bounds(dimensions, ub):
     return bounds
 
 
-def _accumulate_detector_trajectory(output, edges, inverse, direction, ei, energy_bounds, weight):
-    ki = np.sqrt(max(ei, 0.0) / ENERGY_TO_K2)
-    kf_values = np.sqrt(np.maximum(ei - np.asarray(energy_bounds, dtype=float), 0.0) / ENERGY_TO_K2)
+def _accumulate_detector_trajectory(output, edges, inverse, direction, ei, energy_bounds, weight, mantid_precision=False):
+    ki = np.sqrt(max(ei, 0.0) * ENERGY_TO_K)
+    kf_values = np.sqrt(np.maximum(ei - np.asarray(energy_bounds, dtype=float), 0.0) * ENERGY_TO_K)
     low_kf, high_kf = float(np.min(kf_values)), float(np.max(kf_values))
     qin = inverse @ np.array([0.0, 0.0, ki])
     qout = inverse @ direction
@@ -1871,17 +1916,23 @@ def _accumulate_detector_trajectory(output, edges, inverse, direction, ei, energ
     for dim in range(3):
         if abs(qout[dim]) > 1e-14:
             intersections.extend((qin[dim] - boundary) / qout[dim] for boundary in edges[dim])
-    intersections.extend(np.sqrt(np.maximum(ei - edges[3], 0.0) / ENERGY_TO_K2))
+    intersections.extend(np.sqrt(np.maximum(ei - edges[3], 0.0) * ENERGY_TO_K))
     points = np.unique(np.clip(np.asarray(intersections), low_kf, high_kf))
     for first, second in zip(points[:-1], points[1:], strict=True):
-        if second - first <= 1e-12:
+        delta = (second * second - first * first) / ENERGY_TO_K
+        if (mantid_precision and delta < 1e-10) or (not mantid_precision and second - first <= 1e-12):
             continue
         middle = 0.5 * (first + second)
         hkl = qin - qout * middle
-        energy = ei - ENERGY_TO_K2 * middle * middle
-        flat = _flat_bin_indices(np.asarray([[*hkl, energy]]), edges, output.shape)[0]
+        energy = ei - middle * middle / ENERGY_TO_K
+        if mantid_precision:
+            midpoint32 = np.float32(middle)
+            energy = np.float32(ei - float(midpoint32 * midpoint32) / ENERGY_TO_K)
+            flat = dgs_trajectory_bin_indices([[*hkl, energy]], edges, output.shape)[0]
+        else:
+            flat = _flat_bin_indices(np.asarray([[*hkl, energy]]), edges, output.shape)[0]
         if flat >= 0:
-            output.ravel()[flat] += weight * ENERGY_TO_K2 * (second * second - first * first)
+            output.ravel()[flat] += weight * delta
 
 
 def _powder_background_point(
@@ -1962,9 +2013,9 @@ def _accumulate_projected_powder_detector_trajectory(
     """Reference implementation of sample-trajectory powder projection."""
 
     signal_sum, sigma_sum, valid_denominator, denominator = outputs
-    ki = np.sqrt(max(ei, 0.0) / ENERGY_TO_K2)
+    ki = np.sqrt(max(ei, 0.0) * ENERGY_TO_K)
     kf_values = np.sqrt(
-        np.maximum(ei - np.asarray(energy_bounds, dtype=float), 0.0) / ENERGY_TO_K2
+        np.maximum(ei - np.asarray(energy_bounds, dtype=float), 0.0) * ENERGY_TO_K
     )
     low_kf, high_kf = float(np.min(kf_values)), float(np.max(kf_values))
     qin = inverse @ np.array([0.0, 0.0, ki])
@@ -1985,7 +2036,7 @@ def _accumulate_projected_powder_detector_trajectory(
             return
     energy_kf = np.sqrt(
         np.maximum(ei - np.asarray([edges[3][-1], edges[3][0]]), 0.0)
-        / ENERGY_TO_K2
+        * ENERGY_TO_K
     )
     clipped_low = max(clipped_low, float(np.min(energy_kf)))
     clipped_high = min(clipped_high, float(np.max(energy_kf)))
@@ -2005,7 +2056,7 @@ def _accumulate_projected_powder_detector_trajectory(
         value
         for boundary in edges[3]
         if clipped_low
-        < (value := np.sqrt(max(ei - boundary, 0.0) / ENERGY_TO_K2))
+        < (value := np.sqrt(max(ei - boundary, 0.0) * ENERGY_TO_K))
         < clipped_high
     )
     cosine = float(direction[2])
@@ -2024,7 +2075,7 @@ def _accumulate_projected_powder_detector_trajectory(
         value
         for boundary in energy_centers
         if clipped_low
-        < (value := np.sqrt(max(ei - boundary, 0.0) / ENERGY_TO_K2))
+        < (value := np.sqrt(max(ei - boundary, 0.0) * ENERGY_TO_K))
         < clipped_high
     )
     points = np.unique(np.asarray(intersections, dtype=float))
@@ -2033,11 +2084,11 @@ def _accumulate_projected_powder_detector_trajectory(
             continue
         middle = 0.5 * (first + second)
         hkl = qin - qout * middle
-        energy = ei - ENERGY_TO_K2 * middle * middle
+        energy = ei - middle * middle / ENERGY_TO_K
         flat = _flat_bin_indices(np.asarray([[*hkl, energy]]), edges, denominator.shape)[0]
         if flat < 0:
             continue
-        segment_weight = weight * ENERGY_TO_K2 * (second * second - first * first)
+        segment_weight = weight * ((second * second - first * first) / ENERGY_TO_K)
         denominator.ravel()[flat] += segment_weight
         q_value = np.sqrt(
             max(ki * ki + middle * middle - 2.0 * ki * middle * cosine, 0.0)
@@ -2060,14 +2111,14 @@ def _accumulate_projected_powder_detector_trajectory(
 
 
 def _accumulate_powder_detector_trajectory(
-    output, edges, scattering_angle, incident_energy, energy_bounds, weight
+    output, edges, scattering_angle, incident_energy, energy_bounds, weight, mantid_precision=False
 ):
     """Integrate one detector trajectory through radial-Q/energy bins."""
 
-    ki = np.sqrt(max(incident_energy, 0.0) / ENERGY_TO_K2)
+    ki = np.sqrt(max(incident_energy, 0.0) * ENERGY_TO_K)
     kf_values = np.sqrt(
         np.maximum(incident_energy - np.asarray(energy_bounds, dtype=float), 0.0)
-        / ENERGY_TO_K2
+        * ENERGY_TO_K
     )
     low_kf, high_kf = float(np.min(kf_values)), float(np.max(kf_values))
     cosine = float(np.cos(scattering_angle))
@@ -2082,11 +2133,12 @@ def _accumulate_powder_detector_trajectory(
         root = np.sqrt(discriminant)
         intersections.extend((ki * cosine - root, ki * cosine + root))
     intersections.extend(
-        np.sqrt(np.maximum(incident_energy - edges[1], 0.0) / ENERGY_TO_K2)
+        np.sqrt(np.maximum(incident_energy - edges[1], 0.0) * ENERGY_TO_K)
     )
     points = np.unique(np.clip(np.asarray(intersections), low_kf, high_kf))
     for first, second in zip(points[:-1], points[1:], strict=True):
-        if second - first <= 1.0e-12:
+        delta = (second * second - first * first) / ENERGY_TO_K
+        if (mantid_precision and delta < 1e-10) or (not mantid_precision and second - first <= 1.0e-12):
             continue
         middle = 0.5 * (first + second)
         q_modulus = np.sqrt(
@@ -2095,13 +2147,18 @@ def _accumulate_powder_detector_trajectory(
                 0.0,
             )
         )
-        energy = incident_energy - ENERGY_TO_K2 * middle * middle
-        flat = _flat_bin_indices(
-            np.asarray([[q_modulus, energy]]), edges, output.shape
-        )[0]
+        energy = incident_energy - middle * middle / ENERGY_TO_K
+        if mantid_precision:
+            midpoint32 = np.float32(middle)
+            energy = np.float32(incident_energy - float(midpoint32 * midpoint32) / ENERGY_TO_K)
+            flat = dgs_trajectory_bin_indices([[q_modulus, energy]], edges, output.shape)[0]
+        else:
+            flat = _flat_bin_indices(
+                np.asarray([[q_modulus, energy]]), edges, output.shape
+            )[0]
         if flat >= 0:
             output.ravel()[flat] += (
-                weight * ENERGY_TO_K2 * (second * second - first * first)
+                weight * delta
             )
 
 

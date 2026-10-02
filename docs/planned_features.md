@@ -44,8 +44,9 @@ tracks the staged implementation and review checkpoints for these changes.
 - Propagate dependencies from fractional assignment, repeated symmetry copies,
   shared monitors/vanadium, backgrounds, and reconstruction hypotheses.
   CORELLI's reconstructed energy channels and symmetrized copies are not
-  independent measurements. Native DGS/MDE binning corrects same-event symmetry
-  copies within a bin, but the histogram retains no cross-bin covariance;
+  independent measurements. Native DGS/MDE binning offers covariance correction
+  for same-event symmetry copies within a bin, while the default follows Mantid's
+  independent-copy convention. The histogram retains no cross-bin covariance;
   subsequent diagonal pooling assumes independent cells and known exposure.
 - Retain sufficient statistics and provenance for counts, exposure, variance,
   and shared uncertainty sources through caches and subsequent reductions.
@@ -58,9 +59,11 @@ tracks the staged implementation and review checkpoints for these changes.
   future controls should show resolved per-run settings and uncertainty
   assumptions through the same public scripting APIs.
 - Complete workflow script export for grouped raw-DGS/MDE reductions. The
-  trajectory-energy setting has public import/setter APIs and project
-  persistence, but grouped reductions are not yet emitted by the workflow
-  renderer as a complete editable reduction script.
+  trajectory-energy, event-precision, symmetry-variance, and raw monitor-fitting
+  settings have public APIs and project persistence. **Copy policy script**
+  exports these choices for an already imported group. Grouped source imports
+  and complete reductions/binnings are not yet emitted by the workflow renderer
+  as a complete editable script.
 - For normalized count data, distinguish smoothing numerator and exposure
   before division from smoothing the divided intensity. Propagate the
   covariance introduced by smoothing and keep unsmoothed statistics available.

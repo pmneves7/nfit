@@ -29,6 +29,17 @@ from .dgs_normalization import (
     trajectory_incident_energies,
     validated_trajectory_energy_policy,
 )
+from .dgs_reduction_policy import (
+    DEFAULT_EVENT_PRECISION_POLICY,
+    DEFAULT_MONITOR_VARIANCE_POLICY,
+    DEFAULT_SYMMETRY_VARIANCE_POLICY,
+    dgs_histogram_edges,
+    dgs_powder_coordinates,
+    dgs_uses_mantid_trajectory_grid,
+    prepare_dgs_event_projector,
+    resolved_dgs_reduction_policies,
+    validated_monitor_variance_policy,
+)
 from .event_covariance import accumulate_copy_covariance
 from .histogram_statistics import (
     EVENT_STATISTICS_KEY,
@@ -56,6 +67,13 @@ from .raw_dgs_cache import (
     iter_cached_event_chunks,
     reduction_signature,
 )
+from .raw_dgs_geometry_precision import (
+    HE3_EFFICIENCY_EXPONENTIAL_CONSTANT as HE3_EFFICIENCY_EXPONENTIAL_CONSTANT,
+)
+from .raw_dgs_geometry_precision import (
+    mantid_cylinder_radius,
+    mantid_he3_exponent,
+)
 from .raw_dgs_monitors import (
     TOF_US_PER_M_SQRT_MEV,
     _mantid_getei_v2_peak,
@@ -65,8 +83,6 @@ from .raw_dgs_monitors import (
 )
 from .raw_dgs_pulses import select_pulses
 
-# Mantid He3TubeEfficiency's exponential constant in K / (m Angstrom atm).
-HE3_EFFICIENCY_EXPONENTIAL_CONSTANT = 2175.486863864
 # Mantid's parameter files select these formula-driven GetEi v2 paths instead
 # of fitting two monitor peaks. The formulas are instrument definitions, not
 # empirical corrections, and use incident energy in meV.
@@ -106,11 +122,14 @@ def is_raw_dgs_nexus_file(path: str | Path) -> bool:
         return False
 
 
-def inspect_raw_dgs_run(path: str | Path) -> RawDGSRunInfo:
+def inspect_raw_dgs_run(
+    path: str | Path, *, monitor_variance_policy: str = DEFAULT_MONITOR_VARIANCE_POLICY,
+) -> RawDGSRunInfo:
     """Read lightweight run metadata needed to reduce a direct-geometry run."""
 
     import h5py
 
+    monitor_variance_policy = validated_monitor_variance_policy(monitor_variance_policy)
     source = Path(path)
     with h5py.File(source, "r") as handle:
         entry = handle["entry"]
@@ -122,7 +141,7 @@ def inspect_raw_dgs_run(path: str | Path) -> RawDGSRunInfo:
         requested_ei = _log_value(entry, ("EnergyRequest", "Ei", "BL17:Det:TH:BL:Ei"), 0.0)
         calibration = {}
         calibrated_ei, calibrated_t0 = _monitor_ei_t0(
-            entry, requested_ei, diagnostics=calibration,
+            entry, requested_ei, diagnostics=calibration, variance_policy=monitor_variance_policy,
         )
         return RawDGSRunInfo(
             path=source,
@@ -148,11 +167,19 @@ def raw_dgs_dataset_group(
     mask_path: str | Path | None = None,
     name: str | None = None,
     trajectory_energy_policy: str = DEFAULT_TRAJECTORY_ENERGY_POLICY,
+    monitor_variance_policy: str = DEFAULT_MONITOR_VARIANCE_POLICY,
+    event_precision_policy: str = DEFAULT_EVENT_PRECISION_POLICY,
+    symmetry_variance_policy: str = DEFAULT_SYMMETRY_VARIANCE_POLICY,
     progress_callback: Any | None = None,
 ) -> DatasetGroup:
     """Create lightweight raw-run entries sharing reduction and sample setup."""
 
     trajectory_energy_policy = validated_trajectory_energy_policy(trajectory_energy_policy)
+    policies = resolved_dgs_reduction_policies({
+        "monitor_variance_policy": monitor_variance_policy,
+        "event_precision_policy": event_precision_policy,
+        "symmetry_variance_policy": symmetry_variance_policy,
+    })
     resolved_paths = [Path(path) for path in paths]
     if resolved_paths:
         from .corelli import (
@@ -205,7 +232,8 @@ def raw_dgs_dataset_group(
                 _run_infos=corelli_infos,
             )
 
-    infos = [inspect_raw_dgs_run(path) for path in resolved_paths]
+    infos = [inspect_raw_dgs_run(path, monitor_variance_policy=policies["monitor_variance_policy"])
+             for path in resolved_paths]
     if not infos:
         raise ValueError("select at least one raw direct-geometry NeXus file")
     first = infos[0]
@@ -227,6 +255,7 @@ def raw_dgs_dataset_group(
         "mask_file": None if mask_path is None else str(mask_path),
         "incident_energy_override": None,
         "trajectory_energy_policy": trajectory_energy_policy,
+        **policies,
         "t0_override": None,
         "energy_min_fraction": -0.95,
         "energy_max_fraction": 0.95,
@@ -336,6 +365,7 @@ def bin_raw_dgs_group(
             fractional_axes=fractional_axes,
             metadata_dimensions=metadata_dimensions,
         )
+    policies = resolved_dgs_reduction_policies(config)
     selected = list(group.datasets if datasets is None else datasets)
     for run in selected:
         if not np.isfinite(run.scale_factor) or not np.isfinite(run.fit_weight) or run.fit_weight < 0:
@@ -364,7 +394,11 @@ def bin_raw_dgs_group(
         )
     if powder and lo[0] < 0.0:
         raise ValueError("powder |Q| lower bound must be nonnegative")
-    edges = _requested_edges(lo, hi, bins, step_size, bin_edges=bin_edges)
+    requested_edges = _requested_edges(lo, hi, bins, step_size, bin_edges=bin_edges)
+    edges = dgs_histogram_edges(requested_edges, policy=policies["event_precision_policy"])
+    mantid_trajectory_precision = dgs_uses_mantid_trajectory_grid(
+        requested_edges, policies["event_precision_policy"]
+    )
     minimum_samples = _validated_minimum_samples(minimum_samples)
     shape = tuple(edge.size - 1 for edge in edges)
     basis = None
@@ -405,6 +439,11 @@ def bin_raw_dgs_group(
     cache_hits = 0
     cache_misses = 0
     copy_covariance = {"within_bin_pairs_corrected": 0, "cross_bin_pairs_unrepresented": 0, "cross_terms_added": 0.0}
+    projectors = () if powder else tuple(
+        prepare_dgs_event_projector(config["ub_matrix"], basis, operation, requested_edges,
+            policy=policies["event_precision_policy"])
+        for operation in symmetry
+    )
     for dataset in selected:
         source = Path(dataset.metadata["source_file"])
         use_cache = bool(config.get("cache_reduced_events", True))
@@ -428,7 +467,7 @@ def bin_raw_dgs_group(
                     )
                     detector_mask = _combined_detector_mask(config)
                     calibration_loaded = True
-                info = inspect_raw_dgs_run(source)
+                info = inspect_raw_dgs_run(source, monitor_variance_policy=policies["monitor_variance_policy"])
                 geometry = _detector_geometry(source)
                 normalization_payload = _run_normalization_payload(
                     info, geometry, detector_norm, detector_mask, config
@@ -455,35 +494,40 @@ def bin_raw_dgs_group(
                 }
             )
             gonio = _goniometer(info.omega, info.phi, info.chi)
-            hkl_transform = None if powder else np.linalg.inv(
-                2.0 * np.pi * np.asarray(config["ub_matrix"], dtype=float)
-            )
-
             signal_factor = float(dataset.scale_factor) * float(dataset.fit_weight)
 
-            def accumulate(chunks, *, gonio=gonio, hkl_transform=hkl_transform, cache=cache, signal_factor=signal_factor):
+            def accumulate(chunks, *, gonio=gonio, cache=cache, signal_factor=signal_factor):
                 nonlocal processed
                 for events, raw_count in chunks:
                     q_lab, energy, weights = events[:, :3], events[:, 3], events[:, 4] * signal_factor
+                    variances = events[:, 5] * signal_factor**2
                     if powder:
                         coordinate_blocks = (
-                            np.column_stack((np.linalg.norm(q_lab, axis=1), energy)),
+                            dgs_powder_coordinates(np.linalg.norm(q_lab, axis=1), energy,
+                                requested_edges, policy=policies["event_precision_policy"]),
                         )
                     else:
-                        hkl = (q_lab @ gonio) @ hkl_transform.T
+                        if policies["event_precision_policy"] == "mantid":
+                            q_sample = np.zeros_like(q_lab)
+                            for index in range(3):
+                                q_sample += q_lab[:, index, None] * gonio[index]
+                        else:
+                            q_sample = q_lab @ gonio
                         coordinate_blocks = (
-                            np.column_stack((hkl @ operation.T, energy)) @ basis_inverse
-                            for operation in symmetry
+                            projector(q_sample, energy) for projector in projectors
                         )
-                    copy_bins = np.full((len(symmetry), len(weights)), -1, dtype=np.int64) if not powder and len(symmetry) > 1 else None
-                    for copy_index, coords in enumerate(coordinate_blocks):
+                    copy_bins = np.full((len(symmetry), len(weights)), -1, dtype=np.int64) if (
+                        not powder and len(symmetry) > 1
+                        and policies["symmetry_variance_policy"] == "within_bin_covariance"
+                    ) else None
+                    for copy_index, (coords, accumulation_edges) in enumerate(coordinate_blocks):
                         _accumulate_discrete_event_coordinates(
-                            coords, weights, None, edges, shape,
+                            coords, weights, variances, accumulation_edges, shape,
                             data_sum, variance_sum, event_count,
                             bin_indices=None if copy_bins is None else copy_bins[copy_index],
                         )
                     if copy_bins is not None:
-                        terms = accumulate_copy_covariance(copy_bins, weights**2, variance_sum)
+                        terms = accumulate_copy_covariance(copy_bins, variances, variance_sum)
                         for key in copy_covariance:
                             copy_covariance[key] += terms[key]
                     processed += raw_count
@@ -527,6 +571,7 @@ def bin_raw_dgs_group(
             energy_bounds_by_dataset_id,
             run_infos_by_dataset_id=run_infos_by_dataset_id,
             normalization_payloads_by_dataset_id=normalization_payloads_by_dataset_id,
+            mantid_precision=mantid_trajectory_precision,
             **(
                 {"progress_callback": progress_callback}
                 if progress_callback is not None
@@ -546,6 +591,7 @@ def bin_raw_dgs_group(
             energy_bounds_by_dataset_id,
             run_infos_by_dataset_id=run_infos_by_dataset_id,
             normalization_payloads_by_dataset_id=normalization_payloads_by_dataset_id,
+            mantid_precision=mantid_trajectory_precision,
             **(
                 {"progress_callback": progress_callback}
                 if progress_callback is not None
@@ -585,6 +631,7 @@ def bin_raw_dgs_group(
         num_events=event_count,
         metadata={
             "raw_dgs": config,
+            "dgs_reduction_policies": policies,
             "reduced_event_cache": {"hits": cache_hits, "misses": cache_misses},
             "raw_dgs_energy_windows_meV": resolved_energy_windows,
             "raw_dgs_calibration": {
@@ -611,7 +658,7 @@ def bin_raw_dgs_group(
             "zero_event_bins_are_measured": True,
             "zero_count_error_model": "observed_event_variance",
             EVENT_STATISTICS_KEY: dict(EVENT_STATISTICS_METADATA),
-            "symmetry_covariance": copy_covariance,
+            "symmetry_covariance": {"policy": policies["symmetry_variance_policy"], **copy_covariance},
             "event_weight_rms": rms,
             **(
                 {
@@ -694,10 +741,11 @@ def _run_normalization_payload(info, geometry, detector_norm, detector_mask, con
 
 
 def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_batch_bytes):
-    """Yield Q_lab (inverse angstrom), DeltaE (meV), and corrected event weight."""
+    """Yield Q_lab (Å⁻¹), DeltaE (meV), corrected weight and its variance."""
     import h5py
 
     t0 = float(config.get("t0_override") if config.get("t0_override") is not None else info.t0)
+    mantid_precision = resolved_dgs_reduction_policies(config)["event_precision_policy"] == "mantid"
     rows = max(1, int(max_batch_bytes) // 96)
     with h5py.File(info.path, "r") as handle:
         pulse_selection = select_pulses(handle["entry"], float(config.get("bad_pulse_threshold", 95.0)))
@@ -714,7 +762,10 @@ def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_ba
                 stop = min(start + rows, ids.shape[0])
                 event_ids = np.asarray(ids[start:stop], dtype=np.int64)
                 event_tof = np.asarray(tofs[start:stop], dtype=float) - t0
-                positions, exponents, valid = geometry.event_geometry_for_ids(event_ids)
+                positions, exponents, valid = geometry.event_geometry_for_ids(
+                    event_ids, mantid_precision=mantid_precision
+                    and config.get("he3_detector_efficiency_correction", True),
+                )
                 if pulse_keep is not None:
                     pulse_index = np.searchsorted(event_index, np.arange(start, stop), side="right") - 1
                     valid &= pulse_keep[np.clip(pulse_index, 0, pulse_keep.size - 1)]
@@ -726,7 +777,8 @@ def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_ba
                 l2, final_tof = l2[good], final_tof[good]
                 ef = (TOF_US_PER_M_SQRT_MEV * l2 / final_tof) ** 2
                 energy = ei - ef
-                kf = np.sqrt(np.maximum(ef, 0.0) / ENERGY_TO_K2)
+                kf_energy = ei - energy if mantid_precision else ef
+                kf = np.sqrt(np.maximum(kf_energy, 0.0) / ENERGY_TO_K2)
                 keep = (energy >= energy_bounds[0]) & (energy <= energy_bounds[1])
                 direction = positions[keep] / l2[keep, None]
                 kf, energy, exponents = kf[keep], energy[keep], exponents[keep]
@@ -734,12 +786,21 @@ def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_ba
                     -kf * direction[:, 0], -kf * direction[:, 1],
                     math.sqrt(ei / ENERGY_TO_K2) - kf * direction[:, 2],
                 ))
-                weights = np.ones(energy.size)
+                weights = np.ones(energy.size, dtype=np.float32 if mantid_precision else float)
+                variances = np.ones_like(weights)
                 if config.get("he3_detector_efficiency_correction", True):
-                    weights *= _he3_tube_efficiency_correction(kf, exponents)
+                    correction = _he3_tube_efficiency_correction(kf, exponents, mantid_precision=mantid_precision)
+                    if mantid_precision:
+                        correction = correction.astype(np.float32)
+                    weights *= correction
+                    variances *= correction * correction
                 if _use_ki_kf_correction(config):
-                    weights *= math.sqrt(ei / ENERGY_TO_K2) / kf
-                yield np.column_stack((q_lab, energy, weights)), stop - start
+                    correction = np.sqrt(ei / (ei - energy))
+                    if mantid_precision:
+                        correction = correction.astype(np.float32)
+                    weights *= correction
+                    variances *= correction * correction
+                yield np.column_stack((q_lab, energy, weights, variances)), stop - start
 
 
 def _trajectory_normalization(
@@ -756,6 +817,7 @@ def _trajectory_normalization(
     progress_callback=None,
     run_infos_by_dataset_id=None,
     normalization_payloads_by_dataset_id=None,
+    mantid_precision=False,
 ):
     """Native MDNorm-style detector trajectories for compatible direct-geometry runs."""
     config = group.metadata["raw_dgs"]
@@ -766,7 +828,8 @@ def _trajectory_normalization(
     shared_detector_geometry = True
     datasets = list(datasets)
     infos = run_infos_by_dataset_id if run_infos_by_dataset_id is not None else {
-        dataset.id: inspect_raw_dgs_run(dataset.metadata["source_file"])
+        dataset.id: inspect_raw_dgs_run(dataset.metadata["source_file"],
+            monitor_variance_policy=resolved_dgs_reduction_policies(config)["monitor_variance_policy"])
         for dataset in datasets
     }
     trajectory_energies = trajectory_incident_energies(
@@ -850,7 +913,7 @@ def _trajectory_normalization(
                 np.asarray([item[1] for item in batch]),
                 np.asarray([item[2] for item in batch]),
                 np.asarray([item[3] for item in batch]),
-                *edge_arrays, shape_array,
+                *edge_arrays, shape_array, mantid_precision,
             )
             if accumulator is not None:
                 accumulator.accumulate(*args)
@@ -883,7 +946,8 @@ def _trajectory_normalization(
     for inverse, ei, energy_bounds, charge, direction, solid in payloads:
         for index in np.flatnonzero(solid > 0.0):
             _accumulate_detector_trajectory(
-                result, edges, inverse, direction[index], ei, energy_bounds, charge * solid[index]
+                result, edges, inverse, direction[index], ei, energy_bounds, charge * solid[index],
+                mantid_precision=mantid_precision,
             )
             completed += 1
             if completed == task_total or completed % report_stride == 0:
@@ -903,6 +967,7 @@ def _powder_trajectory_normalization(
     progress_callback=None,
     run_infos_by_dataset_id=None,
     normalization_payloads_by_dataset_id=None,
+    mantid_precision=False,
 ):
     """Accumulate the radial MDNorm-style denominator for raw runs."""
 
@@ -911,7 +976,8 @@ def _powder_trajectory_normalization(
     payloads = []
     datasets = list(datasets)
     infos = run_infos_by_dataset_id if run_infos_by_dataset_id is not None else {
-        dataset.id: inspect_raw_dgs_run(dataset.metadata["source_file"])
+        dataset.id: inspect_raw_dgs_run(dataset.metadata["source_file"],
+            monitor_variance_policy=resolved_dgs_reduction_policies(config)["monitor_variance_policy"])
         for dataset in datasets
     }
     trajectory_energies = trajectory_incident_energies(
@@ -967,6 +1033,7 @@ def _powder_trajectory_normalization(
                 np.asarray(edges[0]),
                 np.asarray(edges[1]),
                 np.asarray(shape, dtype=np.int64),
+                mantid_precision,
                 workers=workers,
             )
             result += np.asarray(flat).reshape(shape)
@@ -983,6 +1050,7 @@ def _powder_trajectory_normalization(
                 incident_energy,
                 energy_bounds,
                 charge * float(solid[detector_index]),
+                mantid_precision=mantid_precision,
             )
             completed += 1
             if completed == task_total or completed % report_stride == 0:
@@ -1074,10 +1142,13 @@ class _DetectorGeometry:
     detector_ids: np.ndarray
     positions: np.ndarray
     he3_exponents: np.ndarray
+    mantid_he3_exponents: np.ndarray | None = None
 
     def __post_init__(self):
+        if self.mantid_he3_exponents is None:
+            object.__setattr__(self, "mantid_he3_exponents", self.he3_exponents)
         for name, dtype in (("detector_ids", np.int64), ("positions", float),
-                            ("he3_exponents", float)):
+                            ("he3_exponents", float), ("mantid_he3_exponents", float)):
             values = np.asarray(getattr(self, name), dtype=dtype)
             if values.flags.writeable:
                 values = values.copy()
@@ -1092,7 +1163,9 @@ class _DetectorGeometry:
         sorted_ids.setflags(write=False)
         return sorted_ids, order
 
-    def event_geometry_for_ids(self, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def event_geometry_for_ids(
+        self, ids: np.ndarray, *, mantid_precision=False,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         sorted_ids, order = self._sorted_ids_and_order
         found = np.searchsorted(sorted_ids, ids)
         valid = found < sorted_ids.size
@@ -1100,7 +1173,13 @@ class _DetectorGeometry:
         positions = np.zeros((ids.size, 3), dtype=float)
         exponents = np.zeros(ids.size, dtype=float)
         positions[valid] = self.positions[order[found[valid]]]
-        exponents[valid] = self.he3_exponents[order[found[valid]]]
+        source = self.mantid_he3_exponents if mantid_precision else self.he3_exponents
+        exponents[valid] = source[order[found[valid]]]
+        if mantid_precision and np.any(~np.isfinite(exponents[valid])):
+            raise ValueError(
+                "Mantid He-3 precision does not support this detector cylinder shape; "
+                "select high_precision event precision to use nominal geometry."
+            )
         return positions, exponents, valid
 
 
@@ -1115,7 +1194,7 @@ def _masked_detector_geometry(geometry, detector_norm, detector_mask):
         return geometry
     return _DetectorGeometry(
         geometry.detector_ids[enabled], geometry.positions[enabled],
-        geometry.he3_exponents[enabled],
+        geometry.he3_exponents[enabled], geometry.mantid_he3_exponents[enabled],
     )
 
 
@@ -1143,6 +1222,8 @@ def _detector_geometry_from_xml(xml: bytes) -> _DetectorGeometry:
     ids: list[int] = []
     positions: list[np.ndarray] = []
     he3_exponents: list[float] = []
+    mantid_exponents: list[float] = []
+    cylinder_shapes = {}
     for component in root.findall(f"{namespace}component"):
         idname = component.get("idlist")
         if not idname or idname not in idlists:
@@ -1156,24 +1237,35 @@ def _detector_geometry_from_xml(xml: bytes) -> _DetectorGeometry:
             namespace,
             he3_parameters,
             he3_parameters.get(component.get("name") or component_type),
+            cylinder_shapes,
         )
         detector_ids = _expand_idlist(idlists[idname], namespace)
         if len(leaf_positions) != len(detector_ids):
             continue
         ids.extend(detector_ids)
         positions.extend(item[0] for item in leaf_positions)
-        he3_exponents.extend(_he3_exponent(*item) for item in leaf_positions)
+        for position, axis, radius, parameters, ray_radius in leaf_positions:
+            nominal_exponent = _he3_exponent(position, axis, radius, parameters)
+            he3_exponents.append(nominal_exponent)
+            if nominal_exponent == 0.0:
+                mantid_exponents.append(0.0)
+            elif ray_radius is None:
+                mantid_exponents.append(float("nan"))
+            else:
+                mantid_exponents.append(mantid_he3_exponent(position, axis, ray_radius, parameters))
     if not ids:
         raise ValueError("instrument XML did not define detector pixel positions")
     geometry = _DetectorGeometry(
         np.asarray(ids, dtype=np.int64),
         np.asarray(positions, dtype=float),
         np.asarray(he3_exponents, dtype=float),
+        np.asarray(mantid_exponents, dtype=float),
     )
     return geometry
 
 
-def _expand_type(name, types, rotation, translation, ns, he3_parameters, inherited_he3):
+def _expand_type(name, types, rotation, translation, ns, he3_parameters, inherited_he3,
+                 cylinder_shapes):
     item = types.get(name)
     if item is None:
         return []
@@ -1186,8 +1278,10 @@ def _expand_type(name, types, rotation, translation, ns, he3_parameters, inherit
             child_rotation = rotation @ local_rotation
             child_translation = translation + rotation @ local_translation
             if child in types and types[child].get("is") == "detector":
-                axis, radius = _idf_detector_cylinder(types[child])
-                leaves.append((child_translation, child_rotation @ axis, radius, child_he3))
+                if child not in cylinder_shapes:
+                    cylinder_shapes[child] = _idf_detector_cylinder_precisions(types[child])
+                axis, radius, ray_radius = cylinder_shapes[child]
+                leaves.append((child_translation, child_rotation @ axis, radius, child_he3, ray_radius))
             else:
                 leaves.extend(
                     _expand_type(
@@ -1198,6 +1292,7 @@ def _expand_type(name, types, rotation, translation, ns, he3_parameters, inherit
                         ns,
                         he3_parameters,
                         child_he3,
+                        cylinder_shapes,
                     )
                 )
     return leaves
@@ -1241,6 +1336,27 @@ def _idf_detector_cylinder(detector_type):
     return axis, float(radius.get("val", 0.0)) if radius is not None else 0.0
 
 
+def _idf_detector_cylinder_precisions(detector_type):
+    """Parse both nominal and compatibility radii once per detector type."""
+    axis, radius = _idf_detector_cylinder(detector_type)
+    cylinder = detector_type.find("{*}cylinder")
+    if cylinder is None:
+        return axis, radius, radius
+    if (cylinder.find("{*}rotate") is not None
+            or detector_type.find("{*}rotate-all") is not None):
+        return axis, radius, None
+    bottom = cylinder.find("{*}centre-of-bottom-base")
+    if bottom is not None and float(bottom.get("r", 0.0)) != 0.0:
+        return axis, radius, None
+    height = cylinder.find("{*}height")
+    # Historical/incomplete IDFs omit height. Keep their nominal-radius path.
+    if height is None:
+        return axis, radius, radius
+    centre_bottom = ([float(bottom.get(key, 0.0)) for key in ("x", "y", "z")]
+                     if bottom is not None else [0.0, 0.0, 0.0])
+    return axis, radius, mantid_cylinder_radius(radius, axis, centre_bottom, height.get("val"))
+
+
 def _he3_exponent(position, axis, radius, parameters):
     if parameters is None or radius <= 0.0:
         return 0.0
@@ -1263,14 +1379,16 @@ def _he3_exponent(position, axis, radius, parameters):
     return HE3_EFFICIENCY_EXPONENTIAL_CONSTANT * (pressure / temperature) * straight_path / sine
 
 
-def _he3_tube_efficiency_correction(kf, exponents):
+def _he3_tube_efficiency_correction(kf, exponents, *, mantid_precision=False):
     """Mantid He3TubeEfficiency correction at the final neutron wavelength."""
 
     correction = np.ones(np.asarray(kf).shape, dtype=float)
     active = np.isfinite(exponents) & (exponents > 0.0) & np.isfinite(kf) & (kf > 0.0)
     if np.any(active):
         wavelength = 2.0 * np.pi / np.asarray(kf)[active]
-        correction[active] = 1.0 / (-np.expm1(-np.asarray(exponents)[active] * wavelength))
+        alpha = np.asarray(exponents)[active] * wavelength
+        denominator = 1.0 - np.exp(-alpha) if mantid_precision else -np.expm1(-alpha)
+        correction[active] = 1.0 / denominator
     return correction
 
 
@@ -1336,7 +1454,7 @@ def _source_distance(entry):
     return 0.0
 
 
-def _monitor_ei_t0(entry, energy_guess, *, diagnostics=None):
+def _monitor_ei_t0(entry, energy_guess, *, diagnostics=None, variance_policy=DEFAULT_MONITOR_VARIANCE_POLICY):
     """Estimate Ei/T0 from an embedded-IDF direct-geometry monitor layout.
 
     This follows Shiver's Mantid ``GetEi`` route. The two monitor groups are
@@ -1407,7 +1525,8 @@ def _monitor_ei_t0(entry, energy_guess, *, diagnostics=None):
         grid_start = min(float(np.min(values)) for _, values, _ in monitor_data)
         peaks = []
         for name, values, distance in monitor_data:
-            peak_centre = _mantid_getei_v2_peak(values, distance, energy_guess, grid_start=grid_start)
+            peak_centre = _mantid_getei_v2_peak(values, distance, energy_guess,
+                grid_start=grid_start, variance_policy=variance_policy)
             if peak_centre is None:
                 continue
             peaks.append((name, distance, peak_centre))

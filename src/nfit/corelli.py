@@ -25,6 +25,12 @@ from typing import Any
 import numpy as np
 
 from . import _parallel
+from .corelli_constants import (
+    CORELLI_TOF_US_PER_M_SQRT_MEV as CORELLI_TOF_US_PER_M_SQRT_MEV,
+)
+from .corelli_constants import (
+    ENERGY_TO_K2 as ENERGY_TO_K2,
+)
 
 try:
     from . import _corelli_numba as _CORELLI_NUMBA
@@ -32,7 +38,6 @@ except Exception:  # Numba remains optional for portable source installations.
     _CORELLI_NUMBA = None
 
 from .mdevent import (
-    ENERGY_TO_K2,
     FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
     _requested_edges,
     _symmetry_matrices,
@@ -57,7 +62,6 @@ from .raw_dgs import (
 )
 
 ENERGY_FROM_WAVELENGTH_MEV_ANGSTROM_SQ = 81.80421036
-CORELLI_TOF_US_PER_M_SQRT_MEV = 2286.271549
 DEFAULT_WAVELENGTH_RANGE_ANGSTROM = (0.6, 2.5)
 DEFAULT_TIMING_OFFSET_NS = 14_000
 CORELLI_NUMBA_MIN_HYPOTHESES = 10_000

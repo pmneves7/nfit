@@ -83,6 +83,30 @@ changes the saved normalization convention. Raw/MDE group import functions also
 accept `trajectory_energy_policy`. The default first-run Ei matches Mantid MDNorm;
 event reconstruction remains per run. A positive Ei override takes precedence.
 
+`set_dgs_reduction_policies(group, *, event_precision_policy=...,
+symmetry_variance_policy=..., monitor_variance_policy=...)` atomically validates
+and saves numerical choices for the next reduction or histogram. Raw/MDE import
+functions accept the event and symmetry policies; only raw imports accept the
+monitor policy. Defaults are `"mantid"` event precision, `"independent_copies"`
+symmetry variance, and `"mantid"` monitor variance. Alternatives are
+`"high_precision"`, `"within_bin_covariance"`, and `"stable"`, respectively.
+Monitor and event-precision changes invalidate raw reduced-event caches;
+symmetry-variance and trajectory-energy changes retain those events.
+
+```python
+from nfit import dgs_reduction_policy_script, set_dgs_reduction_policies
+
+set_dgs_reduction_policies(group, event_precision_policy="mantid",
+                           symmetry_variance_policy="independent_copies")
+script = dgs_reduction_policy_script(group, group_variable="group")
+```
+
+The script uses public APIs to reproduce all effective policy choices, including
+trajectory Ei, on an already imported group. It does not export source imports
+or the complete binning configuration. See
+[numerical reduction policies](data_import.md#numerical-reduction-policies) for
+the conventions and cross-bin covariance limitation.
+
 The GUI module also provides `read_isaw_ub`, `write_isaw_ub`, and
 `ub_from_lattice_orientation` for scripting the same UB workflow. ISAW matrices
 are transposed on disk in the IPNS frame with beam `+x` and vertical `+z`.
@@ -488,7 +512,8 @@ Compatible direct-geometry spectrometer event NeXus files are supported through
 `nfit.raw_dgs`. This adapter expects compatible event banks and run logs plus an
 embedded Mantid instrument definition; it is not a generic importer for every
 direct-geometry instrument.
-`inspect_raw_dgs_run(path)` reads run metadata and monitor events without loading
+`inspect_raw_dgs_run(path, *, monitor_variance_policy="mantid")` reads run
+metadata and monitor events without loading
 detector-event arrays. Its `RawDGSRunInfo` includes resolved incident energy in
 meV, time zero in µs, `calibration_source`, and an optional
 `calibration_warning`. Available monitors that fail fitting issue a warning
@@ -510,15 +535,29 @@ An explicit mask file supplies additional detector exclusions. By default the
 reducer applies Mantid's wavelength-dependent He-3 tube-efficiency correction, when
 the embedded IDF supplies tube geometry and pressure, thickness, and
 temperature parameters, followed by the `ki/kf` direct-geometry correction.
-Both corrections multiply the event uncertainty by the same factor and are
-recorded in returned metadata. Incident energy and
-T0 follow Mantid GetEi v2 for each run from monitor locations in its embedded
+Each correction multiplies event weight by its factor and stored variance by
+the squared factor. Mantid precision rounds both channels independently as
+float32; reduced caches retain six float64 columns containing laboratory
+momentum, energy, weight, and variance. The optional high-precision policy uses
+float64 corrections. These choices are recorded in returned metadata. Incident
+energy and T0 follow Mantid GetEi v2 for each run from monitor locations in its embedded
 instrument definition. For parameter-defined paths such as CNCS and HYSPEC,
 nfit applies Mantid's published `t0_formula` using the requested incident
-energy; it does not use empirical per-instrument timing offsets.
+energy; it does not use empirical per-instrument timing offsets. The optional
+stable monitor policy changes derivative-variance arithmetic and can select a
+different peak tail.
 Covered bins with zero accepted events retain zero signal and observed event
 variance, with positive exposure. Confidence intervals are separate outputs.
 The reducer does not invoke Mantid. The full ordered raw-event reduction, including detector masking,
 bad-pulse charge selection, TOF-to-HKLE conversion, He-3 and `ki/kf` event
 weights, trajectory normalization, and measured-zero handling, is documented
 in [Raw TOF reduction sequence](data_import.md#raw-tof-reduction-sequence).
+
+The default He-3 correction derives Mantid's ray radius from supported cardinal,
+transversely centered local cylinders using their bottom and height. Unsupported
+active shapes raise an actionable error requiring `event_precision_policy="high_precision"`,
+which uses nominal-radius geometry and an `expm1` efficiency denominator.
+Definitions missing cylinder height retain a nominal-radius fallback without an
+exact shape-parity claim. Reduction cache version 5 invalidates earlier chunks,
+including version 4's six-column caches. See
+[numerical reduction policies](data_import.md#numerical-reduction-policies).

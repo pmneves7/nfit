@@ -11,6 +11,23 @@ import pytest
 PACKAGE_ROOT = Path(__file__).parents[1] / "src" / "nfit"
 
 
+def test_package_and_unit_tests_do_not_import_external_reduction_engines():
+    # Actual engine comparisons live in manual diagnostics outside pytest.
+    violations = []
+    for root in (PACKAGE_ROOT, Path(__file__).parent):
+        for path in root.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                modules = (
+                    [alias.name for alias in node.names] if isinstance(node, ast.Import)
+                    else [node.module or ""] if isinstance(node, ast.ImportFrom)
+                    else []
+                )
+                if any(module.split(".")[0] in {"mantid", "shiver"} for module in modules):
+                    violations.append(f"{path}:{node.lineno}")
+    assert not violations, "External reduction-engine imports: " + ", ".join(violations)
+
+
 def test_project_cache_facade_shares_authoritative_stores():
     from nfit import project_caches, project_gui
 
@@ -28,11 +45,15 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "array_archive.py",
     PACKAGE_ROOT / "analysis" / "artifacts.py",
     PACKAGE_ROOT / "corelli.py",
+    PACKAGE_ROOT / "corelli_constants.py",
     PACKAGE_ROOT / "raw_dgs_cache.py",
     PACKAGE_ROOT / "raw_dgs_monitors.py",
+    PACKAGE_ROOT / "raw_dgs_geometry_precision.py",
     PACKAGE_ROOT / "raw_dgs_pulses.py",
     PACKAGE_ROOT / "histogram_reduction.py",
     PACKAGE_ROOT / "dgs_normalization.py",
+    PACKAGE_ROOT / "dgs_reduction_policy.py",
+    PACKAGE_ROOT / "dgs_reduction_settings.py",
     PACKAGE_ROOT / "composite_spectral.py",
     PACKAGE_ROOT / "rebin_cache.py",
     PACKAGE_ROOT / "slice_viewer_cache.py",
@@ -64,6 +85,7 @@ PROJECT_GUI_CLIENT_MODULES = (
     PACKAGE_ROOT / "performance_benchmark.py",
     PACKAGE_ROOT / "performance_gui.py",
     PACKAGE_ROOT / "preferences_gui.py",
+    PACKAGE_ROOT / "dgs_reduction_policy_gui.py",
 )
 
 
@@ -276,3 +298,18 @@ def test_background_panel_builder_has_no_reverse_coordinator_import():
     coordinator = ast.parse((PACKAGE_ROOT / "project_gui.py").read_text())
     method = next(node for node in ast.walk(coordinator) if isinstance(node, ast.FunctionDef) and node.name == "_set_background_details")
     assert any(isinstance(node, ast.ImportFrom) and node.module == "project_background_panels" for node in ast.walk(method))
+
+
+def test_corelli_backends_share_independent_authoritative_kinematics():
+    from nfit import corelli, corelli_constants, dgs_reduction_policy
+
+    assert corelli.ENERGY_TO_K2 is corelli_constants.ENERGY_TO_K2
+    assert corelli.CORELLI_TOF_US_PER_M_SQRT_MEV is corelli_constants.CORELLI_TOF_US_PER_M_SQRT_MEV
+    assert corelli.ENERGY_TO_K2 == 2.072124855
+    assert corelli.ENERGY_TO_K2 != dgs_reduction_policy.ENERGY_TO_K2
+    if corelli._CORELLI_NUMBA is not None:
+        assert corelli._CORELLI_NUMBA.ENERGY_TO_K2 is corelli_constants.ENERGY_TO_K2
+        assert corelli._CORELLI_NUMBA.TOF_FACTOR is corelli_constants.CORELLI_TOF_US_PER_M_SQRT_MEV
+    tree = ast.parse((PACKAGE_ROOT / "corelli_constants.py").read_text())
+    imports = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    assert not imports.intersection({"corelli", "mdevent", "raw_dgs", "dgs_reduction_policy"})

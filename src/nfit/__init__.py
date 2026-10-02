@@ -101,6 +101,7 @@ from .crystal import (
 )
 from .dataset import PointData4D, PointListData, from_arrays
 from .dgs_normalization import set_dgs_trajectory_energy_policy
+from .dgs_reduction_settings import dgs_reduction_policy_script, set_dgs_reduction_policies
 from .electronic_backends import (
     ElectronicBackendValidation,
     ElectronicEigensystem,
@@ -1254,6 +1255,8 @@ __all__ = [
     "load_mdevent_run_points",
     "mdevent_dataset_group",
     "set_dgs_trajectory_energy_policy",
+    "set_dgs_reduction_policies",
+    "dgs_reduction_policy_script",
     "bin_mdevent_group",
     "bin_mdevent_powder_group",
     "project_powder_background_mdevent",

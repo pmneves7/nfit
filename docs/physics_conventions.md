@@ -53,6 +53,19 @@ $h,e,k_B,N_A,c$; $\mu_0$, particle masses, and magnetons remain measured
 quantities. See the [SI defining constants](https://www.nist.gov/pml/special-publication-330/sp-330-section-2)
 and [NIST CODATA tables](https://physics.nist.gov/cuu/Constants/).
 
+Native DGS/MDE conversion pins Mantid 6.16's numerical constants:
+$h_M=6.62606896\times10^{-34}$ J s, neutron mass
+$m_{n,M}=1.674927211\times10^{-27}$ kg, and energy conversion
+$J_M=1.602176487\times10^{-22}$ J/meV. For incident or final neutron
+kinetic energy $E_n$ in meV and wavevector magnitude $k$ in Å$^{-1}$,
+$E_n=A_M k^2$, where
+$A_M=10^{20}(h_M/(2\pi))^2/(2m_{n,M}J_M)$ has units meV Å$^2$.
+MDNorm's reciprocal coefficient is evaluated separately as
+$B_M=8\pi^2m_{n,M}J_M10^{-20}/h_M^2$, in Å$^{-2}$/meV, rather than computing
+$1/A_M$; algebraic cancellation can change floating-point rounding at bin
+boundaries. These pinned constants are used by both event-precision policies;
+high precision does not select a newer set of physical constants.
+
 Here $i^2=-1$, a star denotes complex conjugation, $X^T$ transpose, and
 $X^\dagger=(X^*)^T$ the Hermitian adjoint. $\mathbb1$ or $I_N$ is the
 identity on the stated $N$-dimensional space, $\operatorname{Tr}X=\sum_aX_{aa}$
@@ -536,6 +549,17 @@ direction: multiplying a cross section by $k_i/k_f$ removes the phase-space
 factor to obtain a dynamic structure factor
 ([Mantid `CorrectKiKf`](https://docs.mantidproject.org/nightly/algorithms/CorrectKiKf-v1.html)).
 
+For native DGS He-3 tube efficiency, the correction is
+$[1-\exp(-a\lambda)]^{-1}$, where final neutron wavelength $\lambda=2\pi/k_f$
+is in Å and absorption coefficient $a$ is in Å$^{-1}$. The instrument definition
+supplies tube pressure in atm, temperature in K, and wall thickness and cylinder
+dimensions in metres. Mantid precision uses source-ordered ray geometry for
+supported local cylinders; `high_precision` uses their nominal radius and the
+equivalent denominator $-\operatorname{expm1}(-a\lambda)$. These conventions can
+give different correction weights; neither alternative alone establishes
+physical calibration accuracy. Shape support and fallback behavior are listed
+under [numerical reduction policies](data_import.md#numerical-reduction-policies).
+
 ## SI bulk susceptibility and magnetization
 
 ### Microscopic-to-bulk SI relation
@@ -739,7 +763,11 @@ $\sum_i I_i$, is a different quantity and overweights weakly exposed cells.
 
 Native DGS and MDE histograms store additive count numerator $C$, numerator
 variance $V$, and known exposure $N$ as immutable channels. For independent
-corrected events, $C=\sum_j w_j$ and $V=\sum_j w_j^2$; $w_j$ is dimensionless.
+corrected events, $C=\sum_j w_j$ and $V=\sum_j v_j$, where $w_j$ is the
+dimensionless corrected weight and $v_j$ its separately stored variance. For
+known correction factors applied to unit-count events, $v_j=w_j^2$ before
+storage rounding. Mantid precision rounds weight and variance independently,
+so the stored variance must not be reconstructed by squaring the stored weight.
 The observed event standard error is $\sqrt{V}/N$. A covered empty cell has
 $C=V=0$ and positive $N$. Zero observed variance does not establish certainty
 about its unknown intensity. A barely exposed empty fringe cell can have a
@@ -769,20 +797,26 @@ See [Garwood's original construction](https://doi.org/10.1093/biomet/28.3-4.437)
 Copies of one event are perfectly correlated. If copies with coefficients
 $a_j$ fall in one output bin, their contribution to its variance is
 $V_{\mathrm{source}}(\sum_j a_j)^2$, including the cross terms
-$2a_ja_kV_{\mathrm{source}}$. Native raw-DGS and MDE symmetry binning adds these
-within-bin terms using the exact signal-kernel bin assignments. Two identical
-unit copies contribute $4V_{\mathrm{source}}$, not $2V_{\mathrm{source}}$.
-Event contributions are counted separately and are not independent observations.
+$2a_ja_kV_{\mathrm{source}}$. Native raw-DGS and MDE binning defaults to
+`independent_copies`, which follows Mantid's diagonal convention: two identical
+unit copies contribute $2V_{\mathrm{source}}$. This convention does not make
+copies physically independent. The optional `within_bin_covariance` policy adds
+these cross terms using the exact signal-kernel bin assignments, giving
+$4V_{\mathrm{source}}$ for the same two copies in one final bin.
+Event contributions are counted separately under either policy.
 
 The diagonal histogram does **not** retain covariance between different bins.
 If symmetry copies land in separate bins that are later integrated together,
 adding stored diagonal variances misses those cross terms. Fractional histogram
 assignment, shared monitors/vanadium, reused backgrounds, and CORELLI
 reconstruction also require dependencies beyond this representation. Metadata
-records corrected within-bin pairs and unrepresented cross-bin pairs. Do not
+records the selected policy and, for the covariance option, corrected within-bin
+pairs and unrepresented cross-bin pairs. Do not
 interpret diagonal pooling as exact uncertainty for correlated cells.
-Rebinning cached original events directly onto the final requested grid
-recovers same-event covariance within those final bins without a dense matrix.
+Rebinning cached original events directly onto the final requested grid with
+`within_bin_covariance` recovers same-event covariance within those final bins
+without a dense matrix. It does not supply the covariance needed when subsequent
+operations combine different bins.
 
 The diagnostics `benchmarks/benchmark_histogram_uncertainty.py` and
 `benchmarks/benchmark_uncertainty_paths.py` separate event variance, exposure,
