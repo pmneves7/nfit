@@ -445,13 +445,14 @@ finished all nine histograms, validated 2,775 v5 reduced-event caches and lazy
 archive backings, and installed the 89,869,291,072-byte result. The previous file
 is backed up in IPTS-37189; the separate NiO-and-sapphire project is unchanged.
 Task-owned scientific archives and diagnostics were moved from home and `/tmp`
-to IPTS diagnostics storage. Home usage is 7.9 GiB. The existing desktop launcher
-uses IPTS scratch via `TMPDIR`; `NFIT_TMPDIR` can select another validated SNS
-IPTS workspace. The launcher validates the canonical GPFS destination but retains
-the direct `/SNS/SEQ/IPTS-37189` path for directory creation and `TMPDIR`.
-Resolving to GPFS before creation failed on analysis-node23; its home-data alias
-also failed there. The corrected launcher passed an offscreen startup check on
-analysis-node01; direct node23 access was unavailable.
+to IPTS diagnostics storage. Home usage is 7.9 GiB. The desktop launcher now only
+starts the existing application. Scientific staging is allocated beside the
+owning project/source or selected output when needed,
+without cluster-specific paths or startup mkdir calls. An unavailable experiment
+mount affects the operation, not an empty application launch. Node23's home-data
+IPTS link was confirmed dangling; node01 can access the same experiment. Repair
+of that node's mount requires a working filesystem alias or administrators;
+direct node23 access remains unavailable for verification.
 
 Use the same GUI-independent services for rebinning, hidden-axis slicing,
 coarsening, regular/rotated cuts, region summaries, fits, and exported profiles.

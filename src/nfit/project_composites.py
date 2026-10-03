@@ -10,7 +10,6 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import tempfile
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -38,6 +37,7 @@ from .cache_utils import (
     lru_store as _lru_store,
 )
 from .composite_scaling import composite_scaling, scale_composite_data
+from .data_workspace import temporary_data_directory
 from .dataset import PointData4D, PointListData
 from .dgs_normalization import trajectory_normalization_signature
 from .dgs_reduction_policy import DGS_REDUCTION_POLICY_VERSION, resolved_dgs_reduction_policies
@@ -2312,7 +2312,7 @@ def materialize_composite_dataset(
             "import_status": "loaded",
         },
     )
-    with tempfile.TemporaryDirectory(prefix="nfit-materialized-dataset-") as temporary:
+    with temporary_data_directory(project_path, prefix="nfit-materialized-dataset-") as temporary:
         temporary_artifact = Path(temporary) / "data.npz"
         write_dataset_artifact(data, temporary_artifact)
         artifact_path = replace_dataset_artifact(

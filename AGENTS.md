@@ -111,6 +111,8 @@ different Python.
   serialization, fit-history snapshots, and model-state reconciliation.
 - `src/nfit/mapped_archive.py`: bounded temporary-disk array loading and
   accounting for heap and mapped numerical storage.
+- `src/nfit/data_workspace.py`: operation-owned temporary scientific storage
+  and save-destination ownership without startup filesystem dependencies.
 - `src/nfit/project_clipboard.py`: GUI-independent project clipboard validation,
   copying, and reference remapping.
 - `src/nfit/project_background_panels.py`: background link and shared source-symmetry controls.

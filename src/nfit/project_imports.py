@@ -16,6 +16,7 @@ from typing import Any, Literal
 import numpy as np
 
 from .analysis.artifacts import read_project_dataset_artifact
+from .data_workspace import inherit_data_workspace
 from .dataset import PointData4D, PointListData
 from .dgs_normalization import DEFAULT_TRAJECTORY_ENERGY_POLICY
 from .importers import IMPORTERS, import_with, importers_for_data_type, probe_importers
@@ -354,6 +355,7 @@ def import_dataset_paths(
                 SPECTRAL_CHANNEL_CONFIG_KEY,
                 default_spectral_channel_config(),
             )
+    inherit_data_workspace(group, group)
     return entries
 
 

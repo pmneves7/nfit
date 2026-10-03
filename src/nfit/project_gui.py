@@ -8,7 +8,6 @@ import platform
 import re
 import signal
 import subprocess
-import tempfile
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
@@ -39,6 +38,7 @@ from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
 from .application_preferences import application_settings, preload_viewer_data
 from .cache_utils import lru_store as _lru_store
+from .data_workspace import bind_data_workspace, project_data_workspace, temporary_data_directory
 from .dataset import PointData4D, PointListData
 from .file_dialogs import (
     get_open_file_name,
@@ -868,6 +868,9 @@ def create_data_group(project: NfitProject, name: str | None = None) -> DataGrou
     group = DataGroup(name=next_data_group_name(project.data_groups) if name is None else name)
     if group.name in {existing.name for existing in project.data_groups}:
         raise ValueError(f"duplicate data group name {group.name!r}")
+    owner = getattr(project, "_project_path", None)
+    if owner is not None:
+        bind_data_workspace(group, owner)
     project.data_groups.append(group)
     return group
 
@@ -6152,6 +6155,22 @@ def save_project(
 ) -> None:
     """Persist project state and analysis artifacts in one nfit archive."""
 
+    # Storage is selected only for this operation, never at application startup.
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with project_data_workspace(project, target):
+        _save_project_archive(
+            project, target, asset_source=asset_source, progress_callback=progress_callback
+        )
+
+
+def _save_project_archive(
+    project: NfitProject,
+    path: str | Path,
+    *,
+    asset_source: str | Path | None,
+    progress_callback: Any | None,
+) -> None:
     target = Path(path)
     if asset_source is None:
         asset_source = getattr(project, "_project_path", None)
@@ -6177,7 +6196,7 @@ def save_project(
             project,
             progress_callback=progress_callback,
         )
-        with tempfile.TemporaryDirectory(prefix="nfit-binning-cache-") as temporary:
+        with temporary_data_directory(target, prefix="nfit-binning-cache-") as temporary:
             artifacts, entries = _project_binning_artifacts(project, Path(temporary))
             project.settings[PROJECT_BINNING_CACHE_ENTRIES_KEY] = entries
             reduced_artifacts = project_reduced_event_artifacts(project)

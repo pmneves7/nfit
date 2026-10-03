@@ -64,22 +64,29 @@ def read_project_dataset_artifact(
     """Read an analysis dataset stored inside an nfit project."""
 
     with open_project_artifact(project_path, artifact_path) as stream:
-        return read_dataset_artifact(stream, memory_map=memory_map)
+        return read_dataset_artifact(
+            stream, memory_map=memory_map, temp_dir=Path(project_path).absolute().parent
+        )
 
 
 def read_dataset_artifact(
     source: str | PathLike[str] | bytes | BinaryIO,
     *,
     memory_map: bool | None = False,
+    temp_dir: str | PathLike[str] | None = None,
 ) -> MDHistoData | PointData4D | PointListData:
     """Read immutable data; ``None`` maps large histograms under RAM pressure.
 
     ``True`` requests mapping regardless of size, mainly for batch workflows.
-    Unavailable temporary disk storage falls back to the normal reader.
+    File-backed reads map beside their source by default. Stream/bytes callers
+    can supply ``temp_dir``. Unavailable disk storage falls back to the normal
+    resident reader, without choosing another temporary filesystem.
     """
 
     stream: str | PathLike[str] | BinaryIO
     stream = BytesIO(source) if isinstance(source, bytes) else source
+    if temp_dir is None and isinstance(source, (str, PathLike)):
+        temp_dir = Path(source).absolute().parent
     initial_position = stream.tell() if hasattr(stream, "tell") else None
     if memory_map is not False:
         with np.load(stream, allow_pickle=False) as archive:
@@ -96,7 +103,7 @@ def read_dataset_artifact(
         if use_mapping:
             try:
                 payload = read_mapped_array_archive(
-                    stream, mapped_min_bytes=_MAPPED_MEMBER_MIN_BYTES
+                    stream, mapped_min_bytes=_MAPPED_MEMBER_MIN_BYTES, temp_dir=temp_dir
                 )
             except MappedWorkspaceError:
                 if initial_position is not None:

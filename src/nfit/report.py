@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import tempfile
 from collections.abc import Iterable, Mapping
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from math import floor, log10
@@ -27,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+from .data_workspace import temporary_data_directory
 from .model_registry import model_definition
 
 __all__ = [
@@ -1908,7 +1908,8 @@ def compile_latex_pdf(tex_source: str, output_path: str | Path) -> None:
             engine=None,
         )
     output_path = Path(output_path)
-    with tempfile.TemporaryDirectory(prefix="nfit_report_") as tmp:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with temporary_data_directory(output_path, prefix="nfit_report_") as tmp:
         build_dir = Path(tmp)
         tex_path = build_dir / "report.tex"
         tex_path.write_text(tex_source, encoding="utf-8")

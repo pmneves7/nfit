@@ -87,7 +87,8 @@ A few of its main capabilities are:
 - save complete `.nfit` projects, load cached binnings on demand, reuse unchanged
   compressed artifacts when saving, and manage cached results through shared
   CPU/RAM preferences, memory estimates, automatic disk-backed loading of large
-  saved histograms under memory pressure, and optional session disk caching;
+  saved histograms under memory pressure, temporary scientific storage beside
+  the owning project or output, and optional session disk caching;
 - organize project items with drag and drop, batch copy, paste, and delete,
   including lazy run pages and nested collections;
 - guard editor and viewer interactions during rebinning, saves, and background

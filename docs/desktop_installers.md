@@ -74,6 +74,23 @@ SSH terminal needs a working graphical display to open the GUI.
 The application's **File → Check for updates…** can update a writable
 user-local tarball installation.
 
+### Temporary scientific storage
+
+Startup does not require a data directory, experiment mount, or scratch folder.
+For a user-local Linux installation, a shell launcher only needs to execute the
+installed application:
+
+```bash
+#!/usr/bin/env bash
+exec "$HOME/.local/opt/nfit/nfit" "$@"
+```
+
+File-backed operations allocate temporary scientific files when needed, beside
+the owning project or selected output. A missing mount or unwritable directory
+reports an operation error. It does not prevent an empty nfit window from opening
+or silently move scientific files into another filesystem. See
+[Performance and memory](performance.md) for cache lifetimes and unsaved inputs.
+
 ## Uninstalling nfit
 
 On macOS, quit nfit and move **nfit** from the Applications folder to the

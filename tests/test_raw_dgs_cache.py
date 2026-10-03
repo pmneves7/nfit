@@ -25,6 +25,46 @@ from tests.test_raw_dgs import _rewrite_instrument_xml, _write_raw_dgs
 OPTIONS = dict(lower=[-10, -10, -10, -100], upper=[10, 10, 10, 20], num_bins=[2]*4)
 
 
+def test_reduced_event_staging_follows_project_instead_of_source_or_tmp(tmp_path):
+    sources = tmp_path / "raw"
+    outputs = tmp_path / "projects"
+    sources.mkdir()
+    outputs.mkdir()
+    source = sources / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    project = NfitProject(data_groups=[DataGroup(name="runs", subgroups=[group])])
+    path = outputs / "project.nfit"
+    save_project(project, path)
+    loaded = load_project(path)
+    loaded_group = loaded.data_groups[0].subgroups[0]
+    bin_raw_dgs_group(loaded_group, **OPTIONS)
+    staged = loaded_group.datasets[0]._raw_dgs_reduction_cache.content
+    assert staged.parent.parent == outputs
+    assert not list(sources.glob("nfit-reduced-events-*"))
+    save_project(loaded, path)
+    assert not staged.exists()
+
+
+def test_new_imported_runs_inherit_saved_project_workspace(tmp_path):
+    from nfit import create_data_group, import_dataset_paths
+
+    raw = tmp_path / "raw"
+    outputs = tmp_path / "outputs"
+    raw.mkdir()
+    outputs.mkdir()
+    source = raw / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    project = NfitProject()
+    path = outputs / "project.nfit"
+    save_project(project, path)
+    group = create_data_group(project, "new runs")
+    entries = import_dataset_paths(group, [source], data_type="single_crystal_inelastic")
+    assert entries[0].metadata["_project_path"] == str(path)
+    bin_raw_dgs_group(group.subgroups[0], **OPTIONS)
+    assert entries[0]._raw_dgs_reduction_cache.content.parent.parent == outputs
+
+
 @pytest.mark.parametrize('empty', [False, True])
 def test_cache_stores_bounded_blocks_and_preserves_event_bits(tmp_path, monkeypatch, empty):
     from nfit import raw_dgs_cache

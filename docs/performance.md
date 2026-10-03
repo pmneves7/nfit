@@ -213,8 +213,8 @@ On macOS and Linux, large saved histogram caches can instead load into read-only
 This is automatic when an artifact's expanded size is at least 2 GiB and at
 least one quarter of the managed RAM allowance. Smaller results retain the
 in-memory loader. Compressed archive members are expanded into private files
-in the system temporary directory; the saved project remains unchanged. The
-files live as long as their arrays or views, then their storage is released.
+beside their owning project or source archive; the saved project remains
+unchanged. The files live as long as their arrays or views, then their storage is released.
 Their directory entries are removed immediately, so they
 also disappear after a process exit or crash. nfit requires free disk headroom
 of at least 1 GiB or 10% of current free space, whichever is larger. If temporary
@@ -222,26 +222,37 @@ storage is unavailable or Linux identifies the temporary directory as a
 RAM-backed filesystem, loading falls back to resident arrays. Other operating
 systems retain the resident loader.
 
-On clusters that require scientific data inside an experiment directory, set
-`TMPDIR` to a writable scratch directory in that experiment **before starting
-nfit or Python**. For example:
+Scientific temporary storage is allocated **when an operation needs it**, rather
+than at application startup. Saved histogram mapping uses the owning project's
+directory. Save staging uses the chosen output directory; materialized composites
+and analysis outputs stage beside their project. Reduced-event caches stage
+beside the loaded/saved project, or beside the raw source for an unsaved standalone
+input. Save a new project in a writable directory before reducing data from a
+read-only source location.
 
-```bash
-mkdir -p /path/to/IPTS/shared/nfit/.nfit-work
-TMPDIR=/path/to/IPTS/shared/nfit/.nfit-work nfit
-```
+These choices are per operation and per dataset, with no process-global active
+project, hard-coded experiment path, or instrument-specific storage policy.
+A save selects its destination before preparing caches; a failed save restores
+the previous dataset ownership. Retained reduced-event staging remains until the
+project adopts the saved archive references or the cache is released. Short-lived
+save and analysis staging is removed at the end of the operation.
 
-Keep the logical experiment path when the cluster uses automounts. Resolving an
-`/SNS/...` path to its physical `/gpfs/...` target before creating or accessing
-the directory can bypass node-local automounts. A launcher can validate the
-canonical destination after creation while exporting the original logical path
-as `TMPDIR`.
+If project storage is unavailable, mapped loading can use resident RAM instead;
+file-backed staging never silently falls back to another temporary filesystem.
+Opening an empty nfit window requires no scientific scratch storage. Filesystem
+errors occur when opening, saving, or reducing the affected data.
 
-This selects the temporary filesystem for mapped-array extraction, reduced-event
-staging and histogram staging. The session-cache folder preference controls a
-separate cache tier and does not replace `TMPDIR`. Keep diagnostics and retained
-project backups inside the experiment directory as well. Changing `TMPDIR` after
-Python has cached its temporary directory does not reliably move existing files.
+On clusters that require scientific data inside an experiment directory, save the
+project and its diagnostics there. Check that the **experiment directory itself**
+is accessible on the node where nfit runs; a parent containing dangling links is
+insufficient. nfit does not create or repair missing instrument mounts. Session
+disk-cache preferences control a separate cache tier: choose an allowed writable
+location for that tier as well.
+
+Standalone stream/bytes artifact reads have no inferred owner. Their scripting
+API accepts `read_dataset_artifact(..., temp_dir=...)`; without an explicit
+location, they retain Python's standard temporary-directory policy. Low-level
+mapped-array readers likewise accept an explicit `temp_dir`.
 
 Mapped arrays retain float64 precision and the ordinary NumPy interface. They
 avoid a permanent heap allocation for the expanded histogram, but initial

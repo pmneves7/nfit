@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+from ..data_workspace import temporary_data_directory
 from ..project_archive import replace_analysis_artifacts
 from .artifacts import output_data, write_dataset_artifact
 from .core import (
@@ -213,7 +213,7 @@ def execute_to_artifacts(
         for output in (analysis.result.outputs if analysis.result is not None else [])
         if output.dataset_id
     }
-    with tempfile.TemporaryDirectory(prefix="nfit-analysis-") as temporary:
+    with temporary_data_directory(project_path, prefix="nfit-analysis-") as temporary:
         staging = Path(temporary)
         artifact_payloads: dict[str, Path] = {}
         for key, output in execution.outputs.items():

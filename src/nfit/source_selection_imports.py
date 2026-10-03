@@ -347,6 +347,9 @@ def _import_source_selection(
                          "importer_options": copy.deepcopy(importer_options)},
     )
     collection.enabled = bool(collection.datasets) or any(child.enabled for child in collection.subgroups)
+    from .data_workspace import inherit_data_workspace
+
+    inherit_data_workspace(collection, parent)
     parent.subgroups.append(collection)
     if isinstance(parent, DataGroup):
         if parent.lattice_parameters is None:
@@ -640,6 +643,9 @@ def update_source_selection(
                     mark(node)
                 return found
             ancestors(parent)
+    from .data_workspace import inherit_data_workspace
+
+    inherit_data_workspace(group, parent if parent is not None else group)
     return SourceSelectionEdit(
         tuple(entry.id for entry in after if entry.id not in old_by_id),
         tuple(entry.id for entry in before if entry.id not in {item.id for item in after}),

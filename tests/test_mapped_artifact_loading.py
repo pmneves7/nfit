@@ -3,6 +3,7 @@
 import gc
 import io
 import zipfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -54,6 +55,32 @@ def test_point_list_artifacts_keep_the_existing_reader(tmp_path, mapped_policy):
     result = artifacts.read_dataset_artifact(source, memory_map=True)
     np.testing.assert_equal(result.column("signal"), original.column("signal"))
     assert not is_mapped_array(result.column("signal"))
+
+
+def test_file_and_project_mapping_use_owner_storage(tmp_path, mapped_policy, monkeypatch):
+    from nfit import mapped_archive
+
+    owner = tmp_path / "project-storage"
+    owner.mkdir()
+    source = owner / "data.npz"
+    artifacts.write_dataset_artifact(_tiny_mdhisto_data(3.0), source)
+    project = owner / "project.nfit"
+    member = "assets/binnings/test/data.npz"
+    with zipfile.ZipFile(project, "w") as archive:
+        archive.writestr(member, source.read_bytes())
+    mkstemp = mapped_archive.tempfile.mkstemp
+    destinations = []
+
+    def allocate(**kwargs):
+        destinations.append(kwargs["dir"])
+        return mkstemp(**kwargs)
+
+    monkeypatch.setattr(mapped_archive.tempfile, "tempdir", str(tmp_path / "missing-system-tmp"))
+    monkeypatch.setattr(mapped_archive.tempfile, "mkstemp", allocate)
+    data = artifacts.read_dataset_artifact(source, memory_map=True)
+    cached = artifacts.read_project_dataset_artifact(project, member, memory_map=True)
+    assert is_mapped_array(data.signal) and is_mapped_array(cached.signal)
+    assert destinations and all(Path(directory) == owner for directory in destinations)
 
 
 @pytest.mark.parametrize("outer_compression", [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED])

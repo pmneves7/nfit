@@ -8,7 +8,6 @@ are loaded when cache references are bound on project open.
 from __future__ import annotations
 
 import json
-import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +16,7 @@ from typing import Any
 import numpy as np
 
 from .array_archive import array_archive_writer
+from .data_workspace import bind_data_workspace, temporary_data_directory
 from .dgs_reduction_policy import (
     DEFAULT_EVENT_PRECISION_POLICY,
     DEFAULT_MONITOR_VARIANCE_POLICY,
@@ -114,7 +114,8 @@ def cached_reduction(dataset, signature):
 
 def cache_event_chunks(dataset, signature, header, normalization, chunks):
     """Write and yield chunks; publish a cache only after complete reduction."""
-    staging = tempfile.TemporaryDirectory(prefix="nfit-reduced-events-")
+    owner = dataset.metadata.get("_project_path") or dataset.metadata.get("source_file")
+    staging = temporary_data_directory(owner, prefix="nfit-reduced-events-")
     path = Path(staging.name) / "events.npz"
     chunk_count = 0
     # Column storage makes the coordinate/weight columns contiguous. Buffering
@@ -210,6 +211,7 @@ def project_reduced_event_artifacts(project):
 def bind_project_reduced_event_caches(project, path):
     """Attach lazy archive references after loading or saving a project."""
     for group in project.data_groups:
+        bind_data_workspace(group, path)
         for dataset in group.iter_datasets():
             payload = dataset.metadata.get(_CACHE_KEY)
             if isinstance(payload, dict) and payload.get("version") == RAW_DGS_REDUCTION_VERSION:
