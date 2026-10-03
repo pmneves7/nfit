@@ -56,7 +56,10 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 4B | Add grouped, repeated, and stacked run expressions | Complete |
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Complete |
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
-| 6A | Validate instrument families and continuous measurements | Pending |
+| 6A | Validate instrument families and continuous measurements | Survey complete; adapter follow-ups required |
+| 6A-R | Resolve raw-DGS geometry/timing and validate HYSPEC conversion | Pending review |
+| 6A-M | Preserve MACS count/exposure targets through final profiles | Pending review |
+| 6A-C | Supply CORELLI reconstruction/copy covariance or require replay | Pending review |
 | 6A1 | Validate optional numerical and statistical treatments | Pending |
 | 6A2 | Review and adopt future defaults | Pending |
 | 6B | Migrate projects, verify performance, and remove this plan | Pending |
@@ -661,8 +664,9 @@ self cycles, repeated root subtraction and squared reference result scales;
 versioned affected background caches recompute while reduced-event caches remain
 reusable. Genuine cycles still fail.
 
-Stage 6 awaits user review. Scientific alternative validation and default
-adoption remain 6A1–6A2; no main NiO project is rebuilt for this checkpoint.
+Paul authorized the representative-measurement survey in 6A. Scientific
+alternative validation and default adoption remain 6A1–6A2; no main NiO project
+is rebuilt for this checkpoint.
 
 ## 6. Cross-instrument acceptance and cleanup
 
@@ -674,6 +678,68 @@ temperature. Include uneven coverage, repeated measurements, independent and
 shared backgrounds, fractional/discrete binning, and symmetry. Match Mantid where
 it implements the same model; analytic and repeated-sampling references decide
 correctness when conventions differ.
+
+**Survey checkpoint (0.114.1):** analytic and repeated-acquisition tests validate
+continuous common-response and coordinate targets, uneven support, repeated
+temperatures, shared interpolation nodes, and independent/shared backgrounds
+through final cuts. Synthetic reduced CW tables exercise public import,
+coordinate preparation, binning and final cuts. Real MACS SPEC/DIFF, HYSPEC MDE,
+CORELLI raw data and SEQUOIA references are examined read-only; the bounded
+scripts and aggregate receipts are documented in
+`benchmarks/results/measurement-acceptance.md`.
+
+This survey does not establish complete cross-instrument acceptance. Native
+MACS histograms lose their count/exposure model before later profiles; native
+CORELLI omits reconstruction/copy covariance; raw HYSPEC needs run-log-dependent
+instrument geometry and correct evaluation of its T0 formula. These are adapter
+implementation gaps, distinct from optional estimator/default adoption. **6A needs the follow-ups below before it
+can be marked complete.** Existing compatibility defaults and original science
+projects remain unchanged. The viewer now exposes CORELLI's recorded covariance
+and normalization limitations through its metadata-only provenance report.
+
+The supplied DMC, D33, SANS-I, GP-SANS and raw WAND² files establish useful
+future adapter inputs. They do not have native reducers in nfit. Reduced WAND²
+histogram import is supported; MACS DIFF supplies the real CW diffraction
+example for this survey. Adding the other raw adapters is separate feature work.
+
+#### 6A-R — Dynamic raw-DGS geometry and timing
+
+Resolve instrument-definition locations/rotations from each run's referenced
+logs before conversion. Geometry reuse must compare complete resolved geometry,
+including logged moderator/detector positions, rather than static XML alone.
+Qualify raw-DGS detection by measurement type: WAND², CORELLI, MACS and SANS
+must retain their separate reduction paths even when they store event banks.
+Validate synthetic same-XML/different-log and mixed-instrument cases, then the
+available HYSPEC raw runs against their saved reduction with identical
+Ei/T0, goniometer, energy window, filters and corrections. Unsupported dynamic
+definitions must fail explicitly. Correct the HYSPEC T0 formula's exponent
+syntax and make failed automatic timing evaluation visible rather than silently
+returning zero. Preserve SEQUOIA parity.
+
+#### 6A-M — Native MACS statistical payloads
+
+Retain original numerator, its explicitly declared variance, exposure and source
+identity through the native point histogram and every final-cut path. Present
+the target as an acquisition choice rather than inferring it from the instrument
+name. Validate SPEC and DIFF against original counts, covered zeros and exposure;
+direct/staged/profile estimates of the same target must agree. Keep the legacy
+error-floor/weighting treatment reproducible. Any new default and its migration
+remain a separate decision in 6A2.
+
+#### 6A-C — CORELLI reconstruction dependencies
+
+Accumulate coefficients of each physical neutron before squaring when
+fractional/symmetry copies meet. Represent dependencies across reconstructed
+energy channels or require source replay for final scientific cuts that need
+them. A wider energy bin reconstructs a new channel at a different center; it
+does not by itself replay a linear sum of previous energy hypotheses. Validate
+signed cancellation, positive covariance, overlapping copies, final cuts and
+fringes against independent primitive references. Keep charge/duty and pointwise
+calibration normalization distinct from full trajectory coverage.
+
+**Review gate:** complete the survey commit and synchronize local/ORNL code and
+help. Await Paul's choice of the adapter follow-up order before implementation;
+6A1 and 6A2 remain unstarted.
 
 ### 6A1 — Validate alternatives
 

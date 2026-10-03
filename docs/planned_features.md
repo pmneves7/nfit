@@ -40,6 +40,18 @@ tracks the staged implementation and review checkpoints for these changes.
   resolved calibration values and lazy caches are already available. Unmarked
   saved statistical workflows retain compatibility provenance. Controls should
   explain common-response means versus coordinate averages and their assumptions.
+- Preserve native MACS count/exposure statistics and an explicit target through
+  histograms and final profiles. The current point importer retains its effective
+  denominator, but legacy point histograms discard it and later precision profiles
+  can estimate a different target. Review the zero-count error floor separately
+  from adding source-statistic propagation.
+- Resolve run-log-dependent instrument-definition locations and rotations before
+  raw-DGS conversion or geometry reuse. HYSPEC's moderator distance and detector
+  tank rotation require these values; a matching static definition alone does
+  not establish matching geometry. Correct the HYSPEC automatic T0 exponent
+  evaluation and disclose failed calibration evaluation. Qualify raw-DGS source
+  detection by measurement type; event banks must not route CW diffraction,
+  correlation-chopper reconstruction or SANS through DGS.
 - Extend source-aware combination to repeated aliases across expression
   subfolders and repeated CORELLI/ordinary sources within a summed subfolder.
   Numbered-source selection and grouping already use ordinary dataset groups;

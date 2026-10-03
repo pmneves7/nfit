@@ -1,0 +1,229 @@
+{
+  "host": "analysis-node01.sns.gov",
+  "python": "3.14.7",
+  "numpy": "2.5.3",
+  "source_commit": "a6f10f8068f0d4059632c08792d173b6a7fdcc11",
+  "source_modules": {
+    "raw_dgs": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs.py",
+      "sha256": "f7c1d6440d4cc0bfd68ae839d73a0b4004b86675170d551faf45c7df8068d249"
+    },
+    "raw_dgs_monitors": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs_monitors.py",
+      "sha256": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229"
+    },
+    "mdevent": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/mdevent.py",
+      "sha256": "12ae74576e1e51ac6aa39bf7e9f1febbd174d1f8729719dbc6d00ed7b0918557"
+    },
+    "plotting_core": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/plotting_core.py",
+      "sha256": "b87138ad024aad9c3fa0748d52c787cbaa1ec8b8edfeecf2fb5192073d484494"
+    },
+    "measurement_profiles": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/measurement_profiles.py",
+      "sha256": "9236ad8103a43eb832df60a819a96eec656bb92786269e5c86ef8f0d9688c6f1"
+    }
+  },
+  "script_sha256": "47b1585106f11e14112b186e73611734d56853da9b42fb70b69af85323d2cd40",
+  "full_mde_runs": 617,
+  "grid_shape": [
+    61,
+    7,
+    5,
+    61
+  ],
+  "symmetry_operations": "x,y,z;y,z,x;z,x,y;y,x,z;x,z,y;z,y,x;-x,-y,-z;-y,-z,-x;-z,-x,-y;-y,-x,-z;-x,-z,-y;-z,-y,-x",
+  "policies": {
+    "event_precision_policy": "mantid",
+    "symmetry_variance_policy": "independent_copies"
+  },
+  "stored_mantid_reference": "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/.nfit-diagnostics/archive/converter-1d/parity-final/mantid_mde_fine_3barm.h5",
+  "comparison": {
+    "all": {
+      "numerator": {
+        "cells": 130235,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "variance": {
+        "cells": 130235,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "norm": {
+        "cells": 130235,
+        "exact": false,
+        "max_absolute": 4.586661361827282e-05,
+        "max_relative": 1.0017538283662204e-08,
+        "finite_support_equal": true
+      },
+      "counts": {
+        "cells": 130235,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      }
+    },
+    "lowest_exposure_decile": {
+      "numerator": {
+        "cells": 10563,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "variance": {
+        "cells": 10563,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "norm": {
+        "cells": 10563,
+        "exact": false,
+        "max_absolute": 1.2471446098061278e-10,
+        "max_relative": 4.748609463940391e-10,
+        "finite_support_equal": true
+      },
+      "counts": {
+        "cells": 10563,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      }
+    },
+    "coverage_fringe": {
+      "numerator": {
+        "cells": 15372,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "variance": {
+        "cells": 15372,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "norm": {
+        "cells": 15372,
+        "exact": false,
+        "max_absolute": 8.149072527885437e-10,
+        "max_relative": 4.748609463940391e-10,
+        "finite_support_equal": true
+      },
+      "counts": {
+        "cells": 15372,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      }
+    }
+  },
+  "final_cuts": {
+    "view_pooling_verified": true,
+    "box_cut_statistics_verified": true,
+    "region": [
+      0.13,
+      0.23,
+      3.5,
+      25.0
+    ],
+    "numerator": 3938.2198145389557,
+    "variance_numerator": 4984.845650911331,
+    "exposure": 76305026.80787289,
+    "signal": 5.161153831260595e-05,
+    "uncertainty": 9.252790061661435e-07
+  },
+  "mde_seconds": 386.538881010958,
+  "fresh_raw_three_runs_seconds": 5.552690209005959,
+  "fresh_raw_vs_stored_mantid_mde": {
+    "numerator": {
+      "cells": 130235,
+      "exact": true,
+      "max_absolute": 0.0,
+      "max_relative": 0.0,
+      "finite_support_equal": true
+    },
+    "variance": {
+      "cells": 130235,
+      "exact": true,
+      "max_absolute": 0.0,
+      "max_relative": 0.0,
+      "finite_support_equal": true
+    },
+    "norm": {
+      "cells": 130235,
+      "exact": false,
+      "max_absolute": 2.568185664131306e-10,
+      "max_relative": 6.860258550821171e-10,
+      "finite_support_equal": true
+    },
+    "counts": {
+      "cells": 130235,
+      "exact": true,
+      "max_absolute": 0.0,
+      "max_relative": 0.0,
+      "finite_support_equal": true
+    }
+  },
+  "raw_reduction_recipe_replay": {
+    "numerator": {
+      "cells": 130235,
+      "exact": true,
+      "max_absolute": 0.0,
+      "max_relative": 0.0,
+      "finite_support_equal": true
+    },
+    "variance": {
+      "cells": 130235,
+      "exact": true,
+      "max_absolute": 0.0,
+      "max_relative": 0.0,
+      "finite_support_equal": true
+    },
+    "norm": {
+      "cells": 130235,
+      "exact": false,
+      "max_absolute": 2.2737367544323206e-13,
+      "max_relative": 4.2481133711084427e-16,
+      "finite_support_equal": true
+    },
+    "counts": {
+      "cells": 130235,
+      "exact": true,
+      "max_absolute": 0.0,
+      "max_relative": 0.0,
+      "finite_support_equal": true
+    }
+  },
+  "raw_reduction_recipe_replay_verified": true,
+  "original_projects_unchanged": true,
+  "project_size_mtime": {
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/SEQUOIA_Ei60_NiO_and_sapphire.nfit": [
+      27249243628,
+      1790794507596832834
+    ],
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/SEQUOIA_Ei60_NiO_minus_Al2O3_binning_backgrounds.nfit": [
+      91156232095,
+      1790980802385040818
+    ]
+  },
+  "timing_scope": "Acceptance timings only; concurrent jobs, OS cache and JIT uncontrolled, not a speed comparison",
+  "limits": [
+    "Mantid-compatible independent symmetry-copy diagonal variance; full cross-bin covariance not inferred",
+    "No calibration uncertainty in native DGS exposure",
+    "Only stored Mantid references; no current Mantid process"
+  ]
+}

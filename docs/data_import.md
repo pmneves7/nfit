@@ -166,8 +166,12 @@ slices. This avoids allocating a complete multidimensional grid for every
 worker, which is especially important for fine reciprocal-space grids.
 
 All requested energy channels reuse the same measured neutrons, so their
-statistical errors are correlated. `MDHistoData.errors` stores the propagated
-diagonal variance only; the returned metadata records this limitation. Optional
+statistical errors are correlated. `MDHistoData.errors` stores diagonal variance
+only. Fractional contributions and symmetry copies are accumulated separately;
+copies of the same event can therefore omit cross terms even inside one bin.
+The **Statistics and provenance** report exposes the reconstruction and
+normalization limitations. Do not interpret later diagonal-only cuts as complete
+shared-event uncertainty. Optional
 solid-angle and flux files provide pointwise event corrections, followed by
 retained proton-charge and chopper-duty normalization. The current native path
 does not construct Mantid's full four-dimensional MDNorm trajectory
@@ -254,6 +258,14 @@ target, and $c$ is the multiplicative detector-efficiency correction. The
 central nfit rebinner always includes $D$ in the data weight. Uniform averaging
 therefore uses $D$, while inverse-variance averaging uses $D/\sigma^2$.
 
+Native MACS points currently have no explicit measurement contract or retained
+count-numerator/variance payload. Their legacy point histograms also do not retain
+$D$. A later precision-weighted profile can consequently estimate a different
+target from the original exposure-pooled intensity. Direct source-point pooling
+and an explicitly declared count model are distinct from this legacy profile
+path; do not assume they are interchangeable. Monitor and detector-efficiency
+uncertainty are not represented. These adapter limitations apply to SPEC and DIFF.
+
 ### MACS detector masks
 
 File masks remain part of the immutable imported point mask. SPEC additionally
@@ -310,9 +322,20 @@ scripts.
 ## Compatible direct-geometry spectrometer data
 
 This importer supports raw event NeXus files from compatible direct-geometry
-spectrometers, including ARCS, CNCS, HYSPEC, and SEQUOIA. It requires the expected
+spectrometers, including ARCS, CNCS, and SEQUOIA. It requires the expected
 event banks and run logs plus an embedded Mantid instrument definition. It is
 not a universal direct-geometry NeXus importer.
+
+WAND², CORELLI and MACS do not use this DGS reduction. WAND² requires
+continuous-wave diffraction reduction; CORELLI uses its correlation-chopper
+reconstruction; MACS uses measured-point normalization. Event banks alone do
+not identify the measurement type. GP-SANS also requires a separate SANS path.
+
+Raw HYSPEC definitions with run-log-dependent moderator positions and detector
+tank rotations are not supported by the current static geometry parser. Its
+automatic T0 formula also needs correction before raw HYSPEC acceptance.
+Import already reduced HYSPEC MDE data instead. A saved reduction's physical
+geometry must not be inferred from the instrument's name alone.
 
 Compatible runs are stored as a file-backed dataset group. The shared setup
 holds the UB matrix, detector mask, processed vanadium file, and optional

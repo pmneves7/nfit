@@ -41,12 +41,13 @@ A few of its main capabilities are:
 - select numbered runs with directory/naming patterns, bounded run expressions,
   metadata previews, editable group membership, and optional ordinary dataset subfolders;
 - separate Sources, Reduction, Binning and combination, and Plots and cuts,
-  with editable standalone composite workflows and statistical provenance reports;
+  with editable standalone composite workflows and statistical provenance reports,
+  including recorded CORELLI covariance and normalization limitations;
 - import, combine, mask, rebin, and visualize multidimensional neutron data,
   with confirmed project-wide clearing of computed data and model caches,
   with parent-owned hierarchical binning, explicit background recipe context,
   and shared source-group symmetry controls in the background editor,
-  including raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data
+  including compatible raw ARCS, CNCS, and SEQUOIA single-crystal or powder data
   with SNS monitor and beam-interval reduction, lazy per-run reduced-event caches
   for repeated binnings, editable shared and per-run reduction recipes with
   resolved calibration provenance, and exposure-pooled normalized histogram slices,

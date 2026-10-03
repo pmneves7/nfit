@@ -940,6 +940,16 @@ Rebinning cached original events directly onto the final requested grid with
 without a dense matrix. It does not supply the covariance needed when subsequent
 operations combine different bins.
 
+Native CORELLI finite-energy reconstruction currently accumulates fractional
+and symmetry contributions separately. Two identical copies of one reconstructed
+event contribute twice the diagonal variance; physically their shared-event
+variance is four times the single-copy variance. Different energy hypotheses
+also share measured neutrons. If signed reconstruction weights cancel, omitted
+covariance can instead overstate the uncertainty of a final cut. CORELLI has no
+native complete source-dependency payload or corresponding DGS
+`within_bin_covariance` treatment. Its charge/duty normalization and optional
+pointwise corrections are separate from four-dimensional trajectory exposure.
+
 The diagnostics `benchmarks/benchmark_histogram_uncertainty.py` and
 `benchmarks/benchmark_uncertainty_paths.py` separate event variance, exposure,
 confidence inference, and estimator behavior. Their unit tests neither import

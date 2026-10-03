@@ -1,0 +1,178 @@
+{
+  "hyspec": {
+    "container_runs": 361,
+    "covered_zero_bins": 410,
+    "duplicate_guard": true,
+    "event_count": 855993,
+    "event_statistics": {
+      "covariance": "independent_copies",
+      "cross_bin_covariance": "not_stored",
+      "exposure": "known",
+      "variance": "accumulated_event_variance",
+      "version": 1
+    },
+    "event_variance_numerator_sum": 909533.422044754,
+    "event_weighted_numerator_sum": 876984.5904089212,
+    "exposed_bins": 1376,
+    "final_replay_seconds": 0.5938799169380218,
+    "fine_seconds": 2.0501009169965982,
+    "histogram_shape": [
+      120,
+      120,
+      1,
+      40
+    ],
+    "identity_inversion_recorded_independent_copy_policy": "passed",
+    "incident_energy_unit": "meV",
+    "instrument": "HYSPEC",
+    "limitations": [
+      "source is already reduced MDEvent data, not raw HYSPEC DGS events",
+      "no independent HYSPEC Mantid reduction reference was available in this local example",
+      "identity/inversion sigma halving tests recorded independent-copy compatibility convention, not physical covariance accuracy"
+    ],
+    "lowest_exposure_decile_bins": 138,
+    "lowest_exposure_decile_threshold": 790.4371370611475,
+    "lowest_exposure_decile_zero_bins": 134,
+    "max_count_sum_difference": 0.0,
+    "max_final_cut_signal_difference": 7.701245197111461e-11,
+    "max_final_cut_variance_difference": 8.41365502743781e-17,
+    "max_variance_sum_difference": 0.0,
+    "normalization_sum": 52315834.750719965,
+    "normalization_treated_as_known": true,
+    "policies": {
+      "event_precision_policy": "mantid",
+      "format": "mantid-mdevent",
+      "normalization": "proton_charge_and_detector_trajectory",
+      "symmetry_variance_policy": "independent_copies",
+      "trajectory_energy_policy": "first_run"
+    },
+    "qlab_background_frame_guard": "passed",
+    "run_count": 2,
+    "selected_runs": [
+      {
+        "duration": 104.501702,
+        "incident_energy": 15.0,
+        "proton_charge": 44.82411789166667,
+        "run_number": "506277",
+        "t0": 100.11159018271724
+      },
+      {
+        "duration": 104.468368,
+        "incident_energy": 15.0,
+        "proton_charge": 44.80690381666666,
+        "run_number": "506278",
+        "t0": 100.11159018271724
+      }
+    ],
+    "source": "Ei15meV_50K_240Hz_s2_70.nxs",
+    "t0_unit": "microsecond",
+    "unexposed_bins": 574624
+  },
+  "macs": {
+    "duplicate_guard": true,
+    "limitations": [
+      "known monitor and detector-efficiency normalization; their calibration uncertainty is not represented",
+      "native MACS importer retains legacy sqrt(max(counts,1)) errors and no explicit measurement contract",
+      "native point histogram drops exposure/count payload; later legacy precision profile estimates a different target than direct exposure pooling",
+      "explicit raw-Poisson reference is a validation-only construction, not a scientific default change"
+    ],
+    "streams": [
+      {
+        "accepted_points": 855,
+        "compatibility_variance_sum": 9888620.0,
+        "coordinate_approximation": null,
+        "covered_zero_points": 0,
+        "direct_count_pool_sigma": 73.5583069897952,
+        "direct_count_pool_signal": 231312.74853801169,
+        "elapsed_seconds": 0.01984604191966355,
+        "energy_analysis": "fixed final energy",
+        "exposed_bins": 9,
+        "fractional_count_and_exposure_conservation": "passed",
+        "max_sigma_difference": 4.973799150320701e-13,
+        "max_signal_difference": 1.6007106751203537e-09,
+        "native_contract": null,
+        "native_histogram_retains_count_payload": false,
+        "native_histogram_retains_exposure": false,
+        "native_profile_estimator": "inverse_variance_mean",
+        "native_profile_sigma": 25.894563649409942,
+        "native_profile_signal": 28665.090236865344,
+        "native_profile_vs_direct_count_pool_difference": -202647.65830114635,
+        "normalization_sum": 42.75,
+        "points": 900,
+        "poisson_reference_variance": 5410.824527204952,
+        "raw_count_sum": 9888620.0,
+        "recipe_replay": "passed",
+        "source": "Ef3p7_et_0.1_261.nxs.ng0",
+        "stream": "spec",
+        "unexposed_bins": 72
+      },
+      {
+        "accepted_points": 900,
+        "compatibility_variance_sum": 29703676.0,
+        "coordinate_approximation": "DAVE-compatible elastic projection: Ef=Ei and DeltaE=0; DIFF accepts the unanalysed scattered-energy distribution",
+        "covered_zero_points": 0,
+        "direct_count_pool_sigma": 121.11350864089705,
+        "direct_count_pool_signal": 660081.6888888889,
+        "elapsed_seconds": 0.011177791049703956,
+        "energy_analysis": "none",
+        "exposed_bins": 9,
+        "fractional_count_and_exposure_conservation": "passed",
+        "max_sigma_difference": 1.1226575225009583e-12,
+        "max_signal_difference": 6.170012056827545e-09,
+        "native_contract": null,
+        "native_histogram_retains_count_payload": false,
+        "native_histogram_retains_exposure": false,
+        "native_profile_estimator": "inverse_variance_mean",
+        "native_profile_sigma": 44.72490884800335,
+        "native_profile_signal": 90014.28621579922,
+        "native_profile_vs_direct_count_pool_difference": -570067.4026730896,
+        "normalization_sum": 45.0,
+        "points": 900,
+        "poisson_reference_variance": 14668.481975308641,
+        "raw_count_sum": 29703676.0,
+        "recipe_replay": "passed",
+        "source": "Ef3p7_et_0.1_261.nxs.ng0",
+        "stream": "diff",
+        "unexposed_bins": 72
+      }
+    ]
+  },
+  "nfit_version": "0.114.0",
+  "numpy_version": "2.5.3",
+  "peak_rss_mib": 873.65625,
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "project_after": {
+    "hyspec": {
+      "inode": 180616219,
+      "mtime_ns": 1790612467117415358,
+      "project_metadata_sha256": "67279ffb6cfd544dcf66b03c16568f2d4723d56cde141a21a1cf696b01138a70",
+      "size_bytes": 2272042112
+    },
+    "macs": {
+      "inode": 175808704,
+      "mtime_ns": 1790112434863774869,
+      "project_metadata_sha256": "bbc3e242031bc003576f176bf534a4d5a3a6ea0aa6891bbb3b2ccd63b2d4e85b",
+      "size_bytes": 17890156
+    }
+  },
+  "project_before": {
+    "hyspec": {
+      "inode": 180616219,
+      "mtime_ns": 1790612467117415358,
+      "project_metadata_sha256": "67279ffb6cfd544dcf66b03c16568f2d4723d56cde141a21a1cf696b01138a70",
+      "size_bytes": 2272042112
+    },
+    "macs": {
+      "inode": 175808704,
+      "mtime_ns": 1790112434863774869,
+      "project_metadata_sha256": "bbc3e242031bc003576f176bf534a4d5a3a6ea0aa6891bbb3b2ccd63b2d4e85b",
+      "size_bytes": 17890156
+    }
+  },
+  "python": "3.14.7 | packaged by conda-forge | (main, Sep  2 2026, 21:04:32) [Clang 20.1.8 ]",
+  "schema_version": 1,
+  "scientific_defaults_changed": false,
+  "script_sha256": "88b1473f5d0555646bd55fbd409c1524e645b28e081fc0860e6e482de1ea4bfe",
+  "source_commit": "a6f10f8068f0d4059632c08792d173b6a7fdcc11",
+  "timing_notes": "single manual invocation; reducer dispatch timings exclude importer scan and independent reference read; not a performance comparison"
+}

@@ -146,7 +146,10 @@ intervals require a declared measurement model; see
 **Statistics and provenance** opens a metadata report containing the declared
 statistical target, retained channels and units, reduction settings and resolved
 run provenance, dependency availability, and confidence-interval assumptions.
-It does not read the full numerical volume. The same report is available through
+For CORELLI it also reports the reconstruction's shared-event covariance and
+normalization limitations. This report reads metadata rather than loading the
+full numerical volume.
+The same report is available through
 `measurement_diagnostics(data)` and `measurement_diagnostics_text(data)`.
 
 Histograms carrying an audited `PoissonCountModel` with independent,

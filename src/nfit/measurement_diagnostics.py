@@ -116,7 +116,7 @@ def measurement_diagnostics(data):
     for key in ("measurement_contract", "event_statistics", "measurement_statistics",
                 "measurement_derivation", "poisson_count_model", "counting_uncertainty",
                 "num_events_semantics", "dgs_reduction_policies", "resolved_run_reductions",
-                "raw_dgs_calibration", "measurement_smoothing"):
+                "raw_dgs_calibration", "corelli_reconstruction", "measurement_smoothing"):
         if key in metadata:
             result[key] = _bounded_description(metadata[key])
     result["source_dependencies"] = getattr(data, "source_dependencies", None) is not None

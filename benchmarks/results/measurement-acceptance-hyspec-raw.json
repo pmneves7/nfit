@@ -1,0 +1,219 @@
+{
+  "host": "analysis-node01.sns.gov",
+  "python": "3.14.7",
+  "numpy": "2.5.3",
+  "source_commit": null,
+  "raw_sources": [
+    "/SNS/HYS/IPTS-36860/nexus/HYS_506277.nxs.h5",
+    "/SNS/HYS/IPTS-36860/nexus/HYS_506278.nxs.h5"
+  ],
+  "stored_mde": "/SNS/HYS/IPTS-36860/shared/Ei15meV_50K_240Hz_s2_70.nxs",
+  "script_sha256": "b4afd6485542802bf9c95656453b9a3d7e89d46331cf53ecb31dd93ffa1a6fdf",
+  "limits": [
+    "Stored Mantid/Shiver MDE reference only; no current Mantid process",
+    "Only the first two logical runs, not the whole acquisition",
+    "Native DGS calibration covariance is not represented",
+    "Acceptance timings are not controlled performance comparisons"
+  ],
+  "source_modules": {
+    "raw_dgs": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs.py",
+      "sha256": "f7c1d6440d4cc0bfd68ae839d73a0b4004b86675170d551faf45c7df8068d249"
+    },
+    "raw_dgs_monitors": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs_monitors.py",
+      "sha256": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229"
+    },
+    "mdevent": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/mdevent.py",
+      "sha256": "12ae74576e1e51ac6aa39bf7e9f1febbd174d1f8729719dbc6d00ed7b0918557"
+    }
+  },
+  "raw_metadata": [
+    {
+      "run_number": "506277",
+      "event_count": 389282,
+      "Ei_meV": 15.0,
+      "T0_us": 0.0,
+      "L1_m": 0.0,
+      "omega_degrees": 0.0,
+      "charge_uAh": 44.83127585,
+      "calibration_source": "instrument_t0_formula",
+      "calibration_warning": null,
+      "geometry": {
+        "dynamic_idf_components": [
+          "<ns0:component xmlns:ns0=\"http://www.mantidproject.org/IDF/1.0\" type=\"moderator\">\n    <ns0:location>\n      <ns0:parameter name=\"z\">\n        <ns0:logfile eq=\"-0.001*value-38.980\" id=\"msd\" />\n      </ns0:parameter>\n    </ns0:location>\n  </ns0:component>\n  ",
+          "<ns0:component xmlns:ns0=\"http://www.mantidproject.org/IDF/1.0\" type=\"Tank\" idlist=\"Tank\">\n    <ns0:location>\n      <ns0:parameter name=\"r-position\">\n        <ns0:value val=\"0\" />\n      </ns0:parameter>\n      <ns0:parameter name=\"t-position\">\n        <ns0:logfile id=\"s2\" eq=\"0.0+value\" />\n      </ns0:parameter>\n      <ns0:parameter name=\"p-position\">\n        <ns0:value val=\"0\" />\n      </ns0:parameter>\n      <ns0:parameter name=\"rotx\">\n        <ns0:value val=\"0\" />\n      </ns0:parameter>\n      <ns0:parameter name=\"roty\">\n        <ns0:logfile id=\"s2\" eq=\"0.0+value\" />\n      </ns0:parameter>\n      <ns0:parameter name=\"rotz\">\n        <ns0:value val=\"0\" />\n      </ns0:parameter>\n    </ns0:location>\n  </ns0:component>\n  "
+        ],
+        "logs": {
+          "msd": 1803.0,
+          "s2": -69.9898681640625,
+          "s1": 0.0,
+          "omega": 0.0,
+          "chi": 0.0,
+          "phi": 0.0
+        },
+        "source_distance_from_recorded_idf_formula_m": 40.782999999999994,
+        "matching_detector_ids": 20480,
+        "direction_difference_degrees": {
+          "min": 69.30239709316629,
+          "max": 69.98985739500272,
+          "median": 69.81469561621898
+        },
+        "distance_difference_max_m": 1.7763568394002505e-15
+      }
+    },
+    {
+      "run_number": "506278",
+      "event_count": 487182,
+      "Ei_meV": 15.0,
+      "T0_us": 0.0,
+      "L1_m": 0.0,
+      "omega_degrees": 0.993733662,
+      "charge_uAh": 44.814064297222224,
+      "calibration_source": "instrument_t0_formula",
+      "calibration_warning": null,
+      "geometry": {
+        "dynamic_idf_components": [
+          "<ns0:component xmlns:ns0=\"http://www.mantidproject.org/IDF/1.0\" type=\"moderator\">\n    <ns0:location>\n      <ns0:parameter name=\"z\">\n        <ns0:logfile eq=\"-0.001*value-38.980\" id=\"msd\" />\n      </ns0:parameter>\n    </ns0:location>\n  </ns0:component>\n  ",
+          "<ns0:component xmlns:ns0=\"http://www.mantidproject.org/IDF/1.0\" type=\"Tank\" idlist=\"Tank\">\n    <ns0:location>\n      <ns0:parameter name=\"r-position\">\n        <ns0:value val=\"0\" />\n      </ns0:parameter>\n      <ns0:parameter name=\"t-position\">\n        <ns0:logfile id=\"s2\" eq=\"0.0+value\" />\n      </ns0:parameter>\n      <ns0:parameter name=\"p-position\">\n        <ns0:value val=\"0\" />\n      </ns0:parameter>\n      <ns0:parameter name=\"rotx\">\n        <ns0:value val=\"0\" />\n      </ns0:parameter>\n      <ns0:parameter name=\"roty\">\n        <ns0:logfile id=\"s2\" eq=\"0.0+value\" />\n      </ns0:parameter>\n      <ns0:parameter name=\"rotz\">\n        <ns0:value val=\"0\" />\n      </ns0:parameter>\n    </ns0:location>\n  </ns0:component>\n  "
+        ],
+        "logs": {
+          "msd": 1803.0,
+          "s2": -69.9898681640625,
+          "s1": 0.0,
+          "omega": 0.993733662,
+          "chi": 0.0,
+          "phi": 0.0
+        },
+        "source_distance_from_recorded_idf_formula_m": 40.782999999999994,
+        "matching_detector_ids": 20480,
+        "direction_difference_degrees": {
+          "min": 69.30239709316629,
+          "max": 69.98985739500272,
+          "median": 69.81469561621898
+        },
+        "distance_difference_max_m": 1.7763568394002505e-15
+      }
+    }
+  ],
+  "reference_metadata": [
+    {
+      "run_number": "506277",
+      "Ei_meV": 15.0,
+      "T0_us": 100.11159018271724,
+      "charge_uAh": 44.82411789166667,
+      "goniometer_matrix": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "energy_bounds_meV": [
+        -14.25,
+        14.25
+      ]
+    },
+    {
+      "run_number": "506278",
+      "Ei_meV": 15.0,
+      "T0_us": 100.11159018271724,
+      "charge_uAh": 44.80690381666666,
+      "goniometer_matrix": [
+        [
+          0.9998495979153972,
+          0.0,
+          0.01734305476029217
+        ],
+        [
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          -0.01734305476029217,
+          0.0,
+          0.9998495979153972
+        ]
+      ],
+      "energy_bounds_meV": [
+        -14.25,
+        14.25
+      ]
+    }
+  ],
+  "stored_reduction_config": {
+    "mde_name": "Ei15meV_50K_240Hz_s2_70",
+    "mde_type": "Data",
+    "Ei": "15",
+    "AdvancedOptions": {},
+    "SampleParameters": {
+      "a": "8.22700",
+      "b": "8.22700",
+      "c": "8.22700",
+      "alpha": "90.00000",
+      "beta": "90.00000",
+      "gamma": "90.00000",
+      "u": "4.78264,4.72812,4.73864",
+      "v": "-3.45969,-3.23980,6.72442"
+    },
+    "PolarizedOptions": {},
+    "DetectorGroupingFile": "",
+    "PercentMin": "0",
+    "PercentMax": "20"
+  },
+  "grid": {
+    "lower": [
+      -15,
+      -15,
+      -15,
+      -20
+    ],
+    "upper": [
+      15,
+      15,
+      15,
+      20
+    ],
+    "num_bins": [
+      120,
+      120,
+      1,
+      40
+    ],
+    "max_batch_bytes": 134217728
+  },
+  "mde_seconds": 5.010567115037702,
+  "mde_histogram": {
+    "numerator": 876984.5904089212,
+    "variance": 909533.422044754,
+    "exposure": 52315834.75071999,
+    "counts": 855993.0,
+    "shape": [
+      120,
+      120,
+      1,
+      40
+    ],
+    "measured_cells": 1376
+  },
+  "raw_reduction": {
+    "status": "unsupported",
+    "exception": "ValueError",
+    "message": "HYS_506277.nxs.h5 has no usable incident energy or source distance"
+  },
+  "raw_seconds": 0.008733268012292683,
+  "verified_source_commit": "a6f10f8068f0d4059632c08792d173b6a7fdcc11",
+  "source_commit_verification": "Recorded scientific module hashes matched these files in the named Git commit; runtime commit environment was unset."
+}

@@ -106,6 +106,27 @@ def test_metadata_report_does_not_read_lazy_arrays():
     assert report["measurement_contract"]["exposure_units"] == "s"
 
 
+def test_corelli_report_discloses_correlations_and_normalization_without_loading_arrays():
+    class LazyTrap:
+        def __array__(self, *args, **kwargs):
+            raise AssertionError("CORELLI diagnostic loaded lazy numerical data")
+
+    reconstruction = {
+        "method": "correlation_chopper_finite_energy",
+        "channel_covariance": "Energy channels reuse measured events; stored errors are diagonal only.",
+        "normalization_limit": "Charge and duty-cycle normalization does not apply 4D trajectory normalization.",
+        "metadata_exposure_uah": LazyTrap(),
+    }
+    lazy = SimpleNamespace(metadata={"corelli_reconstruction": reconstruction},
+        signal=LazyTrap(), errors=LazyTrap(), num_events=LazyTrap(),
+        source_dependencies=None, counting_dependencies=None, auxiliary_channels={})
+    report = measurement_diagnostics(lazy)
+    assert report["corelli_reconstruction"]["channel_covariance"] == reconstruction["channel_covariance"]
+    assert report["corelli_reconstruction"]["normalization_limit"] == reconstruction["normalization_limit"]
+    assert report["corelli_reconstruction"]["metadata_exposure_uah"] == "[LazyTrap payload omitted]"
+    assert isinstance(report["confidence_intervals"], str)
+
+
 def test_scientific_smoothing_matches_explicit_linear_covariance_and_later_pooling():
     data = counts_histogram((3,), dependencies=True)
     changed = smooth_count_histogram(data, .6, truncate=2.)

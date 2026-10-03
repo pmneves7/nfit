@@ -1,0 +1,274 @@
+{
+  "host": "analysis-node01.sns.gov",
+  "python": "3.14.7",
+  "numpy": "2.5.3",
+  "source_commit": "a6f10f8068f0d4059632c08792d173b6a7fdcc11",
+  "source_modules": {
+    "corelli": {
+      "path": "/SNS/users/paulneves/.local/opt/nfit/_internal/nfit/corelli.py",
+      "sha256": "43ad1833aff753d2f058b742a19c2175bbb9ed4f78d2fcdd6f2838ea75780f6d"
+    },
+    "_corelli_numba": {
+      "path": "/SNS/users/paulneves/.local/opt/nfit/_internal/nfit/_corelli_numba.py",
+      "sha256": "2909120d7b1baea55a491c9b6a0caa76d8a641977ce1c7fe1c1f4d92383eb0dd"
+    },
+    "corelli_constants": {
+      "path": "/SNS/users/paulneves/.local/opt/nfit/_internal/nfit/corelli_constants.py",
+      "sha256": "68ad149f84f099e9a726aad112a37ec967215d72a7100ab7de7cbdcea127fdd0"
+    },
+    "raw_dgs": {
+      "path": "/SNS/users/paulneves/.local/opt/nfit/_internal/nfit/raw_dgs.py",
+      "sha256": "f7c1d6440d4cc0bfd68ae839d73a0b4004b86675170d551faf45c7df8068d249"
+    },
+    "reduction_recipes": {
+      "path": "/SNS/users/paulneves/.local/opt/nfit/_internal/nfit/reduction_recipes.py",
+      "sha256": "151d4f19c0fc73c7340b9100241c8da92694d1d9c601aeb61721bb2ae2c825fa"
+    }
+  },
+  "script_sha256": "9e81b3fc80432a5f82997ca1077922ae72e58463c1c2fee1468fd45b7ac35a7d",
+  "schema_version": 1,
+  "instrument": "CORELLI",
+  "project": "/SNS/users/paulneves/data/SNS/CORELLI/IPTS-32964/shared/nfit/YMn2_150K_CORELLI_403634-403669_10percent.nfit",
+  "original_run": "/SNS/CORELLI/IPTS-32964/nexus/CORELLI_403634.nxs.h5",
+  "sample_events": 315392,
+  "sample_policy": "first 4096 events per bank; original full-run charge",
+  "project_reopen_seconds": 2.8644260719884187,
+  "grid": {
+    "lower": [
+      -8.0,
+      -8.0,
+      -8.0,
+      -1.5
+    ],
+    "upper": [
+      8.0,
+      8.0,
+      8.0,
+      1.5
+    ],
+    "num_bins": [
+      8,
+      8,
+      8,
+      3
+    ],
+    "fractional_axes": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "checks": {
+    "discrete_compiled_backend_exercised": true,
+    "discrete_compiled_python": {
+      "signal": {
+        "allclose": true,
+        "max_abs_error": 5.684341886080802e-14
+      },
+      "errors": {
+        "allclose": true,
+        "max_abs_error": 1.7763568394002505e-15
+      },
+      "num_events": {
+        "allclose": true,
+        "max_abs_error": 0.0
+      },
+      "mask_equal": true,
+      "passed": true
+    },
+    "discrete_confidence_channels_absent": true,
+    "portable_recipe_replay": {
+      "signal": {
+        "allclose": true,
+        "max_abs_error": 0.0
+      },
+      "errors": {
+        "allclose": true,
+        "max_abs_error": 0.0
+      },
+      "num_events": {
+        "allclose": true,
+        "max_abs_error": 0.0
+      },
+      "mask_equal": true,
+      "passed": true
+    },
+    "fractional_compiled_backend_exercised": true,
+    "fractional_compiled_python": {
+      "signal": {
+        "allclose": true,
+        "max_abs_error": 2.5579538487363607e-13
+      },
+      "errors": {
+        "allclose": true,
+        "max_abs_error": 5.329070518200751e-15
+      },
+      "num_events": {
+        "allclose": true,
+        "max_abs_error": 7.275957614183426e-12
+      },
+      "mask_equal": true,
+      "passed": true
+    },
+    "fractional_confidence_channels_absent": true,
+    "symmetry_compiled_python": {
+      "signal": {
+        "allclose": true,
+        "max_abs_error": 1.1368683772161603e-13
+      },
+      "errors": {
+        "allclose": true,
+        "max_abs_error": 1.7763568394002505e-15
+      },
+      "num_events": {
+        "allclose": true,
+        "max_abs_error": 0.0
+      },
+      "mask_equal": true,
+      "passed": true
+    },
+    "explicit_shared_region_rejected_without_covariance": "Shared region uncertainty requires source dependencies or source replay",
+    "original_projects_unchanged": true
+  },
+  "timings_seconds": {
+    "discrete_compiled_including_first_jit": 15.985469038016163,
+    "discrete_python": 3.9743167649721727,
+    "fractional_compiled_including_first_jit": 3.765652674017474,
+    "fractional_python": 3.9586401059059426,
+    "symmetry_compiled": 4.218488226993941,
+    "unmodified_full_run_compiled": 7.8855102569796145
+  },
+  "limitations": [
+    "Finite-energy CORELLI is not Mantid elastic CorelliCrossCorrelate equivalence; no Mantid parity claim here.",
+    "Energy hypotheses from one neutron share covariance; source-level final-cut covariance is not retained by current CORELLI adapter.",
+    "Pointwise solid-angle/flux correction and charge/duty normalization are not full 4D MDNorm trajectory normalization.",
+    "Probe timings include metadata/calibration reads and possible first JIT; not full-run throughput timings.",
+    "No exact Poisson likelihood/confidence interval is justified for signed reconstructed intensity."
+  ],
+  "timing_context": "Same process after probe reductions: full-run timing is warmed for JIT, geometry and filesystem cache; only three energy hypotheses.",
+  "acceptance_status": "Numerical reconstruction/replay parity passed; physical final-cut covariance and trajectory-coverage acceptance incomplete.",
+  "signed_bins": 14,
+  "occupied_bins": 255,
+  "reconstruction_metadata": {
+    "method": "correlation_chopper_finite_energy",
+    "energy_sampling": "requested_DeltaE_bin_centres",
+    "timing_offset_ns": 18000.0,
+    "wavelength_range_angstrom": [
+      0.6,
+      2.5
+    ],
+    "duty_cycle": 0.498475,
+    "retained_proton_charge_uah": 63.287688555555555,
+    "metadata_exposure_uah": null,
+    "channel_covariance": "DeltaE channels reconstructed from the same measured events are correlated; MDHisto errors contain diagonal variances only.",
+    "fractional_axes": [
+      false,
+      false,
+      false,
+      false
+    ],
+    "event_metadata_dimensions": [],
+    "normalization_limit": "Counts include optional pointwise solid-angle and incident-flux corrections and are normalized by retained proton charge and chopper duty cycle. Event-time metadata slices are normalized by their own retained charge exposure; full four-dimensional MDNorm trajectory normalization is not applied.",
+    "solid_angle_file": "/SNS/CORELLI/shared/Vanadium/2024A_0706_CCR_5x8/solid_angle.nxs",
+    "flux_file": "/SNS/CORELLI/shared/Vanadium/2024A_0706_CCR_5x8/flux.nxs"
+  },
+  "symmetry_overlap_reference": {
+    "signal_double_max_abs_error": 1.8189894035458565e-12,
+    "reported_variance_ratio": [
+      1.9999999999999993,
+      1.9999999999999996,
+      2.0000000000000018
+    ],
+    "physical_shared_event_variance_ratio": 4.0,
+    "status": "limitation: symmetry copies counted as independent in diagonal variance"
+  },
+  "full_run": {
+    "source_events": 6713729,
+    "occupied_bins": 261,
+    "signed_bins": 6,
+    "signal_sum": 315567.13892197865,
+    "diagonal_variance_sum": 175475.85957701778,
+    "reconstruction_metadata": {
+      "method": "correlation_chopper_finite_energy",
+      "energy_sampling": "requested_DeltaE_bin_centres",
+      "timing_offset_ns": 18000.0,
+      "wavelength_range_angstrom": [
+        0.6,
+        2.5
+      ],
+      "duty_cycle": 0.498475,
+      "retained_proton_charge_uah": 63.287688555555555,
+      "metadata_exposure_uah": null,
+      "channel_covariance": "DeltaE channels reconstructed from the same measured events are correlated; MDHisto errors contain diagonal variances only.",
+      "fractional_axes": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "event_metadata_dimensions": [],
+      "normalization_limit": "Counts include optional pointwise solid-angle and incident-flux corrections and are normalized by retained proton charge and chopper duty cycle. Event-time metadata slices are normalized by their own retained charge exposure; full four-dimensional MDNorm trajectory normalization is not applied.",
+      "solid_angle_file": "/SNS/CORELLI/shared/Vanadium/2024A_0706_CCR_5x8/solid_angle.nxs",
+      "flux_file": "/SNS/CORELLI/shared/Vanadium/2024A_0706_CCR_5x8/flux.nxs"
+    },
+    "finite_unmasked_values": true,
+    "confidence_channels_absent": true
+  },
+  "independent_primitive_reference": {
+    "seed": 32964,
+    "repetitions": 200000,
+    "cases": {
+      "positive_channel_correlation": {
+        "exact_channel_covariance": [
+          [
+            9.05,
+            6.95
+          ],
+          [
+            6.95,
+            11.05
+          ]
+        ],
+        "naive_diagonal_final_variance": 20.1,
+        "correct_final_variance": 34.0,
+        "repeated_sampling_final_variance": 34.01677474164871,
+        "relative_error": 0.000493374754373832,
+        "passed": true
+      },
+      "negative_channel_correlation": {
+        "exact_channel_covariance": [
+          [
+            9.05,
+            -8.55
+          ],
+          [
+            -8.55,
+            11.05
+          ]
+        ],
+        "naive_diagonal_final_variance": 20.1,
+        "correct_final_variance": 3.0,
+        "repeated_sampling_final_variance": 2.984156910559553,
+        "relative_error": 0.00528102981348233,
+        "passed": true
+      }
+    },
+    "passed": true
+  },
+  "project_size_mtime": {
+    "YMn2_150K_CORELLI_403634-403993.nfit": [
+      614398031,
+      1789385248257992701
+    ],
+    "YMn2_150K_CORELLI_403634-403669_10percent.nfit": [
+      263915236,
+      1789385247456259810
+    ],
+    "YMn2_cooling_and_fixed_temperature_CORELLI.nfit": [
+      739540088,
+      1790370178844248653
+    ]
+  },
+  "elapsed_seconds": 60.20807300193701
+}

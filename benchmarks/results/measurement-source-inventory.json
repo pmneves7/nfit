@@ -1,0 +1,57 @@
+{
+  "source_commit": "a6f10f8068f0d4059632c08792d173b6a7fdcc11",
+  "scope": "metadata-only adapter inventory; no reduction accuracy claim",
+  "formats": {
+    "DMC": {
+      "example": "finished_projects/NdIn3/DMC_2024_06/data/dmc2024n001169.hdf",
+      "detector_array": "entry/DMC/detector/data",
+      "shape": [
+        128,
+        1152
+      ],
+      "dtype": "float64",
+      "file_bytes": 52824,
+      "registered_importer_matches": [],
+      "status": "no current instrument adapter; MACS DIFF supplies stage6A real CW coverage"
+    },
+    "D33": {
+      "example": "EuAg4Sb2/D33_2025_06/data/547150.nxs",
+      "detector_array": "entry0/D33/detector/data1",
+      "shape": [
+        256,
+        128,
+        1
+      ],
+      "dtype": "int32",
+      "file_bytes": 141336,
+      "registered_importer_matches": [],
+      "status": "no current instrument adapter; MACS DIFF supplies stage6A real CW coverage"
+    },
+    "SANS-I": {
+      "example": "EuAg4Sb2/PSI_SANS_Jun23/data_nov/sans2023n065765.hdf",
+      "detector_array": "entry1/SANS/detector/counts",
+      "shape": [
+        128,
+        128
+      ],
+      "dtype": "uint32",
+      "file_bytes": 84984,
+      "registered_importer_matches": [],
+      "status": "no current instrument adapter; MACS DIFF supplies stage6A real CW coverage"
+    },
+    "WAND2": {
+      "example": "/SNS/users/paulneves/data/HFIR/HB2C/IPTS-35621/nexus/HB2C_1708935.nxs.h5",
+      "instrument_name": "WAND",
+      "raw_event_banks": 8,
+      "fixed_Ei_request_present": false,
+      "status": "no native raw WAND2 reducer; reduced MDHisto import supported"
+    },
+    "GP-SANS": {
+      "example": "/SNS/users/paulneves/data/HFIR/CG2/IPTS-32248/nexus/CG2_136690.nxs.h5",
+      "instrument_name": "CG2",
+      "wavelength_request_angstrom": 4.0,
+      "fixed_Ei_request_present": false,
+      "status": "no native raw GP-SANS reducer; raw event-bank layout alone does not establish DGS compatibility"
+    }
+  }
+}
