@@ -17,7 +17,7 @@ from ..mapped_archive import MappedWorkspaceError, read_mapped_array_archive
 from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from ..performance import operation_worker_count, scientific_memory_limit_bytes
 from ..point_data_archive import point_data_archive_payload, restore_point_data_archive
-from ..project_archive import open_project_artifact
+from ..project_archive import _project_artifact_reader_factory, open_project_artifact
 from .core import DatasetOutput, TableOutput
 
 # Mapping is a pressure relief path for large saved histograms. Ordinary
@@ -125,6 +125,8 @@ class _OwnedArchiveArrays:
         self.archive = archive
         self.files = set(archive.files)
         self.loaded: dict[str, np.ndarray] = {}
+        self.independent_reader_factory = None
+        self.parallel_names: frozenset[str] = frozenset()
         kind = str(np.asarray(archive["container"]).item())
         if kind == "mdhisto":
             names = ["signal", "errors", "mask", "num_events"]
@@ -148,13 +150,21 @@ class _OwnedArchiveArrays:
             min_parallel_bytes=32 * 1024**2,
         ))
         if workers > 1:
-            # ZipFile synchronizes seeks on its underlying file while each
-            # member owns its decompressor. Inflation can run concurrently.
+            # Stored project members can share the validated open descriptor
+            # with independent positional readers. Generic streams and older
+            # compressed outer members retain ZipFile's shared seek lock.
+            self.independent_reader_factory = _project_artifact_reader_factory(archive.zip.fp)
+            self.parallel_names = frozenset(names)
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 self.loaded.update(zip(names, executor.map(self._read, names), strict=True))
 
     def _read(self, name: str) -> np.ndarray:
-        array = np.asarray(self.archive[name])
+        if self.independent_reader_factory is not None and name in self.parallel_names:
+            with self.independent_reader_factory() as stream:
+                with np.load(stream, allow_pickle=False) as archive:
+                    array = np.asarray(archive[name])
+        else:
+            array = np.asarray(self.archive[name])
         array.setflags(write=False)
         return array
 

@@ -16,11 +16,13 @@ import math
 import re
 import warnings
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
 from collections.abc import Iterable
 from contextlib import nullcontext
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from functools import cached_property, lru_cache
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 import numpy as np
@@ -133,6 +135,11 @@ class RawDGSRunInfo:
     geometry_signature: str | None = None
 
 
+_RUN_INFO_CACHE_MAXSIZE = 2048
+_RUN_INFO_CACHE: OrderedDict[tuple, tuple[RawDGSRunInfo, bool]] = OrderedDict()
+_RUN_INFO_CACHE_LOCK = RLock()
+
+
 def is_raw_dgs_nexus_file(path: str | Path) -> bool:
     """Identify compatible DGS acquisitions rather than arbitrary event banks."""
     try:
@@ -160,11 +167,53 @@ def is_raw_dgs_nexus_file(path: str | Path) -> bool:
 def inspect_raw_dgs_run(
     path: str | Path, *, monitor_variance_policy: str = DEFAULT_MONITOR_VARIANCE_POLICY,
 ) -> RawDGSRunInfo:
-    """Read lightweight run metadata needed to reduce a direct-geometry run."""
+    """Read metadata, reusing successful calibration for an unchanged source.
+
+    File identity is checked on every call. Returned UB matrices remain private,
+    writable copies; the bounded cache retains no monitor or detector arrays.
+    Failed calibration is retried so its warning behavior remains unchanged.
+    """
+
+    monitor_variance_policy = validated_monitor_variance_policy(monitor_variance_policy)
+    source = Path(path)
+    resolved = source.resolve()
+    stat = resolved.stat()
+    key = (
+        str(resolved), stat.st_dev, stat.st_ino, stat.st_size,
+        stat.st_mtime_ns, stat.st_ctime_ns, monitor_variance_policy,
+    )
+    with _RUN_INFO_CACHE_LOCK:
+        cached = _RUN_INFO_CACHE.get(key)
+        if cached is not None:
+            _RUN_INFO_CACHE.move_to_end(key)
+    if cached is None:
+        info, filename_run_number = _inspect_raw_dgs_run_uncached(
+            source, monitor_variance_policy=monitor_variance_policy,
+        )
+        if info.calibration_warning is None:
+            ub_matrix = info.ub_matrix.copy()
+            ub_matrix.setflags(write=False)
+            retained = replace(info, path=resolved, ub_matrix=ub_matrix)
+            with _RUN_INFO_CACHE_LOCK:
+                _RUN_INFO_CACHE[key] = retained, filename_run_number
+                _RUN_INFO_CACHE.move_to_end(key)
+                while len(_RUN_INFO_CACHE) > _RUN_INFO_CACHE_MAXSIZE:
+                    _RUN_INFO_CACHE.popitem(last=False)
+    else:
+        info, filename_run_number = cached
+    return replace(
+        info, path=source, ub_matrix=info.ub_matrix.copy(),
+        run_number=source.stem if filename_run_number else info.run_number,
+    )
+
+
+def _inspect_raw_dgs_run_uncached(
+    path: str | Path, *, monitor_variance_policy: str,
+) -> tuple[RawDGSRunInfo, bool]:
+    """Inspect and calibrate one run without retaining its HDF5 arrays."""
 
     import h5py
 
-    monitor_variance_policy = validated_monitor_variance_policy(monitor_variance_policy)
     source = Path(path)
     with h5py.File(source, "r") as handle:
         entry = handle["entry"]
@@ -180,9 +229,12 @@ def inspect_raw_dgs_run(
         )
         identity = acquisition_identity(entry)
         identity["geometry_signature"] = resolved_geometry_signature(entry)
+        missing_run_number = object()
+        run_number = _text_scalar(entry.get("run_number"), missing_run_number)
+        filename_run_number = run_number is missing_run_number
         return RawDGSRunInfo(
             path=source,
-            run_number=_text_scalar(entry.get("run_number"), source.stem),
+            run_number=source.stem if filename_run_number else run_number,
             event_count=event_count,
             incident_energy=calibrated_ei,
             proton_charge=_raw_proton_charge_uah(entry),
@@ -195,7 +247,7 @@ def inspect_raw_dgs_run(
             calibration_source=calibration["source"],
             calibration_warning=calibration.get("warning"),
             **identity,
-        )
+        ), filename_run_number
 
 
 def raw_dgs_dataset_group(
@@ -841,7 +893,7 @@ def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_ba
                 event_ids = np.asarray(ids[start:stop], dtype=np.int64)
                 raw_tof = np.asarray(tofs[start:stop], dtype=float)
                 event_tof = raw_tof - t0
-                positions, exponents, valid = geometry.event_geometry_for_ids(
+                indices, exponents, valid = geometry.event_indices_for_ids(
                     event_ids, mantid_precision=mantid_precision
                     and config.get("he3_detector_efficiency_correction", True),
                 )
@@ -850,18 +902,25 @@ def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_ba
                 if pulse_keep is not None:
                     pulse_index = np.searchsorted(event_index, np.arange(start, stop), side="right") - 1
                     valid &= pulse_keep[np.clip(pulse_index, 0, pulse_keep.size - 1)]
-                positions, exponents, tof = positions[valid], exponents[valid], event_tof[valid]
-                l2 = np.linalg.norm(positions, axis=1)
+                indices, exponents, tof = indices[valid], exponents[valid], event_tof[valid]
+                exceptional_geometry = geometry.has_exceptional_positions
+                l2 = (
+                    np.linalg.norm(geometry.positions[indices], axis=1)
+                    if exceptional_geometry else geometry.distances[indices]
+                )
                 final_tof = tof - TOF_US_PER_M_SQRT_MEV * info.l1 / math.sqrt(ei)
                 good = final_tof > 0.0
-                positions, exponents = positions[good], exponents[good]
+                indices, exponents = indices[good], exponents[good]
                 l2, final_tof = l2[good], final_tof[good]
                 ef = (TOF_US_PER_M_SQRT_MEV * l2 / final_tof) ** 2
                 energy = ei - ef
                 kf_energy = ei - energy if mantid_precision else ef
                 kf = np.sqrt(np.maximum(kf_energy, 0.0) / ENERGY_TO_K2)
                 keep = (energy >= energy_bounds[0]) & (energy <= energy_bounds[1])
-                direction = positions[keep] / l2[keep, None]
+                direction = (
+                    geometry.positions[indices[keep]] / l2[keep, None]
+                    if exceptional_geometry else geometry.directions[indices[keep]]
+                )
                 kf, energy, exponents = kf[keep], energy[keep], exponents[keep]
                 q_lab = np.column_stack((
                     -kf * direction[:, 0], -kf * direction[:, 1],
@@ -1250,23 +1309,79 @@ class _DetectorGeometry:
         sorted_ids.setflags(write=False)
         return sorted_ids, order
 
-    def event_geometry_for_ids(
+    @cached_property
+    def _event_geometry(self):
+        """Precompute exact arithmetic without changing selected-event errors."""
+
+        # An unused exceptional pixel must not raise or warn during lookup.
+        # Those snapshots retain the original selected-event arithmetic below.
+        exceptional = False
+        with np.errstate(all="raise"):
+            try:
+                distances = np.linalg.norm(self.positions, axis=1)
+                directions = self.positions / distances[:, None]
+            except FloatingPointError:
+                exceptional = True
+                with np.errstate(all="ignore"):
+                    distances = np.linalg.norm(self.positions, axis=1)
+                    directions = self.positions / distances[:, None]
+        distances.setflags(write=False)
+        directions.setflags(write=False)
+        exceptional |= bool(np.any(~np.isfinite(distances) | (distances == 0)))
+        return distances, directions, exceptional
+
+    @property
+    def distances(self):
+        """Sample-to-detector distances for this immutable geometry snapshot."""
+
+        return self._event_geometry[0]
+
+    @property
+    def directions(self):
+        """Detector unit directions, using the event converter's arithmetic."""
+
+        return self._event_geometry[1]
+
+    @property
+    def has_exceptional_positions(self):
+        """Whether selected events need the original geometry error handling."""
+
+        return self._event_geometry[2]
+
+    def event_indices_for_ids(
         self, ids: np.ndarray, *, mantid_precision=False,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Resolve event membership and validate shape before event filtering.
+
+        Indices address only this geometry's immutable rows. Complete resolved
+        geometry and static detector selection determine the owning snapshot;
+        detector IDs or instrument names never identify these cached values.
+        """
+
         sorted_ids, order = self._sorted_ids_and_order
         found = np.searchsorted(sorted_ids, ids)
         valid = found < sorted_ids.size
         valid[valid] &= sorted_ids[found[valid]] == ids[valid]
-        positions = np.zeros((ids.size, 3), dtype=float)
+        indices = np.zeros(ids.size, dtype=np.int64)
         exponents = np.zeros(ids.size, dtype=float)
-        positions[valid] = self.positions[order[found[valid]]]
+        indices[valid] = order[found[valid]]
         source = self.mantid_he3_exponents if mantid_precision else self.he3_exponents
-        exponents[valid] = source[order[found[valid]]]
+        exponents[valid] = source[indices[valid]]
         if mantid_precision and np.any(~np.isfinite(exponents[valid])):
             raise ValueError(
                 "Mantid He-3 precision does not support this detector cylinder shape; "
                 "select high_precision event precision to use nominal geometry."
             )
+        return indices, exponents, valid
+
+    def event_geometry_for_ids(
+        self, ids: np.ndarray, *, mantid_precision=False,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        indices, exponents, valid = self.event_indices_for_ids(
+            ids, mantid_precision=mantid_precision,
+        )
+        positions = np.zeros((ids.size, 3), dtype=float)
+        positions[valid] = self.positions[indices[valid]]
         return positions, exponents, valid
 
 

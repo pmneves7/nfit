@@ -410,6 +410,9 @@ rotations and any HYSPEC Tank offset. The bounded cache checks these values on
 each new reduction, so mixed instruments, changed log values and edited
 definitions retain their own detector positions and efficiency parameters.
 Unsupported or missing geometry parameters fail explicitly.
+Detector distances and unit directions are calculated once per immutable
+resolved geometry and detector selection. Changed geometry or masks use their
+own values, including when datasets combine instruments.
 Detector masks are applied to the geometry before event lookup, and sorted
 detector indices are reused across event chunks. Each reduction reads fresh run
 metadata once and uses that snapshot for both events and normalization.
@@ -567,6 +570,13 @@ nfit warns and records the reason before falling back to requested $E_i$ and
 $T_0=0$; check these runs and supply explicit overrides as appropriate. Missing
 monitor data also has an explicit provenance marker. Reduced-event caches made
 with an earlier monitor-calibration implementation regenerate on the next binning.
+
+Successful calibration and scalar run metadata are reused within the running
+application after checking the source file's identity, size, modification/change
+times, and monitor policy. This avoids repeating calibration between import and
+reduction. Changed sources or policies trigger a fresh read; failed calibration
+is retried and warns on each attempt. This bounded memory cache retains scalar
+metadata and a 3×3 UB matrix, without monitor or detector-event arrays.
 
 Beam filtering uses half-open time intervals for both detector events and
 integrated proton charge. This removes dead beam periods and excludes the last

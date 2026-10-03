@@ -1,5 +1,52 @@
 # Numerical benchmarks
 
+## DGS user workflows
+
+`benchmark_dgs_settings.py` defines matched SEQUOIA and HYSPEC sources, grids,
+symmetry and resource ceilings for the manual engine comparisons.
+`benchmark_dgs_nfit_workflow.py` measures native raw import, reduction and
+event-cache construction, histogramming, project saving, lazy reopening,
+cached histogram access, and a later saved-event rebin and save.
+`benchmark_dgs_mantid_workflow.py` invokes the installed ordinary sequential
+Shiver reduction and Mantid MDNorm, including real MDE/histogram saves and
+separately measured reopening and saved-MDE rebins. It requires the existing
+Shiver environment; neither production nfit nor pytest imports Mantid.
+
+Use a shared JSON configuration and new job tags. `--plan-only` validates a
+Mantid job's configuration without importing the engine or reading data:
+
+```bash
+/Users/pmneves/anaconda3/envs/nfit/bin/python benchmarks/benchmark_dgs_mantid_workflow.py \
+  --plan-only --first-runs 16 --rebin-copies
+```
+
+For the bundled nfit runtime, set `NFIT_DGS_BENCHMARK_CONFIG` to the JSON file
+and `NFIT_DGS_BENCHMARK_ARGS` to a JSON argument list; the application resets
+ordinary script arguments. `launch_dgs_workflow.py` provides the existing ORNL
+runtime commands and process-level wall/RSS evidence. Store configurations,
+logs, preferences and scientific temporary files in the selected experiment's
+`shared/nfit/benchmarks` folder. Existing output directories are refused.
+Coordinate engines sequentially on the same node to avoid contention.
+
+Report initial saved-dataset time separately from later reopening and rebinning.
+An ordinary single Shiver job can still use internal Mantid threads; do not
+equate it with a one-core job. Record thread limits, CPU model, library versions,
+source membership, settings, module hashes and filesystem cache state. Do not
+describe an unflushed OS cache as cold disk. Profiling adds overhead and belongs
+in a separate job. Process-level totals include diagnostic work; use the
+declared scientific workflow intervals for user-workflow comparisons.
+
+Both harnesses write untimed HDF comparison channels after real saves.
+`benchmark_dgs_compare.py` streams C (event numerator), V (event variance),
+N (exposure) and event counts, and can compare the NiO coverage-fringe cut.
+Use `--require-native-parity` for a candidate against its unchanged native
+baseline: C/V/counts and edges must match literally, with roundoff tolerance
+for exposure. Cross-engine reports retain cell discrepancies rather than
+assuming that matching aggregate totals proves numerical agreement.
+
+See [current node19 workflow measurements](results/dgs-user-workflows-node19.md)
+for completed timings, numerical comparisons and the scope of pending jobs.
+
 ## Lindhard acceleration
 
 The three Lindhard scripts compare existing exact CPU backends, shifted-q

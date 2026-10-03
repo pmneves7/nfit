@@ -70,7 +70,9 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 6A1 | Validate optional numerical and statistical treatments | DGS investigation in progress; other families deferred |
 | 6A-P | Profile current HYSPEC/SEQUOIA workflows and adopt verified major speedups | In progress |
 | 6A-P1 | Fuse DGS projection and ordered accumulation with numerical parity | Complete; includes exact-text mask parsing reuse |
-| 6A-P2 | Measure current raw reduction and SEQUOIA workflows on ORNL | Blocked by node23 experiment mount; local investigations continue |
+| 6A-P2 | Measure current raw reduction and SEQUOIA workflows on ORNL | Native full workflow and matched pilot complete; full Shiver reference pending |
+| 6A-P3 | Reuse scalar inspection and geometry arithmetic; parallel snapshot reads | Complete; full SEQUOIA and both HYSPEC bank checks passed |
+| 6A-P4 | Correct HYSPEC run-angle averaging and isolate reference boundary differences | Pending scientific checkpoint review |
 | 6A2 | Review and adopt future defaults | Pending |
 | 6B | Migrate projects, verify performance, and remove this plan | Pending |
 
@@ -975,6 +977,22 @@ This gate follows complete dependency propagation and cross-instrument validatio
 
 ### 6A-P — DGS performance
 
+**Authorized 2026-10-03; in progress:** With experiment mounts restored on
+node19, run realistic current-build SEQUOIA and HYSPEC workflows on the same
+hardware. Use the installed ordinary sequential Shiver reduction, allowing its
+normal internal threading. Include source loading, reduction, event-cache or MDE
+persistence, native histogramming, saved result reopening, and subsequent rebins.
+Separate first saved-dataset time from later reuse workflows; do not force an
+extra MDE reload into a resident Shiver reduction-to-histogram headline.
+The remembered two-hour reduction and thirty-minute binning are informal context,
+not measured benchmark inputs. Begin with a bounded matched pilot, then measure
+the full 617-run NiO workflow and representative HYSPEC configurations. Preserve
+original projects and keep all scientific artifacts in IPTS benchmark folders.
+Profile separately from ordinary timings. Validate every C/V/count/exposure cell
+and low-coverage cuts before attributing improvements to a candidate. Report
+rounding/boundary differences explicitly. Commit coherent validated changes,
+update both installations and review this checkpoint before proceeding.
+
 Profile matched inputs and policies before diagnosing a regression. Separate
 event reconstruction, event projection/accumulation, trajectory normalization,
 background replay, archive I/O, and first-call compilation. The fused uniform-grid
@@ -988,11 +1006,56 @@ algorithm; differences are at its existing parallel addition precision.
 
 `benchmarks/results/dgs-fused-event-performance.md` records the scope, scalar
 receipts and fallback coverage. These timings exclude raw reconstruction and
-archive persistence. Current raw/SEQUOIA and matched Mantid measurements remain
-pending a working ORNL experiment mount; older benchmarks cannot establish a
+archive persistence. Current raw/SEQUOIA and matched Mantid measurements use
+restored experiment mounts on node19; older benchmarks cannot establish a
 current regression. Remaining event reads/filtering, raw reconstruction, and
 full-volume normalization require fresh isolated cluster profiles before adding
 more cache machinery. Do not adopt speculative micro-optimizations.
+
+**P2/P3 current evidence:** On node19, the matched 24-run saved-dataset workflow
+takes 51.066 s in nfit 0.116.0 versus 565.660 s in one ordinary Shiver job.
+C/V/counts and coverage support agree exactly for six/twelve copies. The
+low-coverage cut agrees near 10⁻¹³; tiny whole-cube exposure differences remain
+documented separately. Full 617-run native candidate acceptance preserves
+literal C/V/counts/edges and every-cell exposure within 10⁻¹² relative. Initial
+saved-dataset time improves 567.152 → 503.554 s, and saved histogram access
+39.706 → 7.926 s. Subsequent twelve-copy binning remains approximately 258–263 s;
+its 172–173 s trajectory interval remains the main cost.
+
+The validated candidates cache only successfully inspected scalar metadata and
+the geometry's exact distances/directions, with source identity, monitor policy,
+mask and complete geometry checks. Parallel cached-array reads retain the
+validated original descriptor across atomic saves. No numerical convention,
+saved schema or compression choice changes. The fused projector dispatches for
+the full SEQUOIA grid; rounded output edges do not disable it. Metadata threading
+is not adopted: its local smoke was slower and HDF5/Python serialization limits
+the plausible gain. Full-suite acceptance: 3113 passed, one optional GPU skip.
+
+Both HYSPEC detector-bank twelve-run pilots pass the same original-cell
+six/twelve-copy gate, with identical C/V/counts/coverage and roundoff-only N
+differences. Their roughly nine-second initial workflows show no material total
+speedup; small pilots are dominated by setup and first-call compilation. Their
+matched Shiver pilot receipts and the full SEQUOIA reference remain separate
+measurements, rather than extrapolated full-job claims.
+
+The ordinary Shiver HYSPEC pilots finish in 47.220/49.820 s, but reference
+parity is incomplete: 34° has count migrations and approximately 3×10⁻⁴
+relative-L2 exposure differences, and 70° twelve-copy exposure differs in two
+support cells. These differences also exist in the unchanged native baseline.
+Run 505784 exposes one concrete cause: native omega uses the arithmetic
+48.5016271525° average, while Mantid's time-weighted average is 48.5043924634°.
+The raw timestamps reproduce Mantid's value. Other 23 pilot rotations and Ei,
+T0 and UB agree. P4 must reproduce duration/accepted-time averaging through a
+public reduction convention, invalidate affected caches, isolate that run's
+histogram change, and then classify remaining clipping/support differences.
+Do not present the performance result as completed HYSPEC cross-engine parity.
+
+`benchmarks/results/dgs-user-workflows-node19.md` records complete scope, actual
+saves/reopens, scalar evidence locations and unresolved full-reference work.
+Launch the full ordinary Shiver reduction and one/six/twelve-copy bins last,
+with timings/progress/resource logs inside the IPTS folder. Keep 6A-P open
+until its full-job comparison and HYSPEC scope have been reviewed; do not proceed
+to selecting alternative defaults.
 
 ### 6B — Migration, performance, and completion
 

@@ -59,13 +59,27 @@ compiled acceleration retain the reference path.
 Saved detector masks reuse an immutable parsed result for exactly identical
 instrument-parameter text. The cache holds at most 16 texts, accepts texts up
 to 1 MiB, and reads source metadata on every request. Changed masks and distinct
-instrument text miss the cache; geometry, incident energy, calibration, charge,
-and run settings are still resolved for each operation.
+instrument text miss the cache. Source checks and numerical run settings still
+apply on every operation.
+
+Raw reduction reuses successful scalar run inspection between import and
+binning after checking complete file identity and the monitor policy. It retains
+no monitor or event arrays. Detector distances and directions are calculated
+once per immutable resolved geometry and static detector selection; changed
+run-log geometry, masks, and mixed instruments retain separate snapshots.
 
 `benchmarks/profile_dgs_workflow.py` measures a real MDE source, including reads,
 run selection, trajectory normalization, and finalization. It reports first and
 repeated calls separately and can compare every output cell with the reference
 path. `benchmarks/profile_dgs_event_kernels.py` isolates projection and accumulation.
+
+For raw-DGS comparisons, `benchmarks/benchmark_dgs_nfit_workflow.py` measures
+import, reduction/cache construction, binning, native project saving, lazy
+reopening, and later rebins. The separate manual
+`benchmark_dgs_mantid_workflow.py` uses an installed Shiver environment and
+actual MDE/histogram files. Run both sequentially on the same hardware with
+one shared configuration. First saved-dataset time and later reuse workflows
+are reported separately; diagnostic array scans and exports are excluded.
 Kernel speedups should not be interpreted as reduction or whole-project speedups;
 raw reconstruction, background replay, and archive I/O require separate timings.
 
@@ -407,6 +421,13 @@ NPZ artifacts readable by existing nfit versions and NumPy. Opening a nested
 artifact reads directly from its project member instead of first allocating a
 copy of the entire compressed artifact. Decoded histogram arrays transfer to
 the immutable container without a second full-array copy.
+
+On systems with positional file reads, large channels use independent cursors
+on one validated project snapshot. This avoids serializing their reads through
+a shared seek lock and keeps the original file open if another operation
+atomically replaces the project. Member checksums and NumPy header validation
+remain active. Other systems and older compressed outer project members use
+the shared reader.
 
 Saving still writes and atomically replaces the complete project archive. A
 large unchanged project therefore still incurs sequential file I/O, but no

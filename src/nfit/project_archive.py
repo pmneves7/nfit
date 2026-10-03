@@ -34,11 +34,26 @@ ArchiveContent = bytes | Path | ArchiveMember
 class _StoredMemberView(io.RawIOBase):
     """Seekable, bounded view of one uncompressed ZIP member."""
 
-    def __init__(self, stream: BinaryIO, offset: int, size: int):
+    def __init__(self, stream: BinaryIO, offset: int, size: int, *, positional_read=None):
         self._stream = stream
         self._offset = int(offset)
         self._size = int(size)
         self._position = 0
+        self._positional_read = positional_read
+
+    def independent_reader(self) -> BinaryIO:
+        """Clone the validated range, retaining the original open-file snapshot.
+
+        Positional reads have independent cursors without reopening the path or
+        duplicating a file descriptor's shared seek position. The owner keeps
+        the underlying descriptor open until its parallel readers have joined.
+        """
+        return io.BufferedReader(
+            _StoredMemberView(
+                self._stream, self._offset, self._size, positional_read=os.pread
+            ),
+            buffer_size=1024 * 1024,
+        )
 
     def readable(self) -> bool:
         return True
@@ -69,11 +84,24 @@ class _StoredMemberView(io.RawIOBase):
             return 0
         view = memoryview(buffer).cast("B")
         count = min(len(view), remaining)
-        self._stream.seek(self._offset + self._position)
-        data = self._stream.read(count)
+        if self._positional_read is None:
+            self._stream.seek(self._offset + self._position)
+            data = self._stream.read(count)
+        else:
+            data = self._positional_read(
+                self._stream.fileno(), count, self._offset + self._position
+            )
         view[: len(data)] = data
         self._position += len(data)
         return len(data)
+
+
+def _project_artifact_reader_factory(stream: BinaryIO):
+    """Return independent readers only for a validated stored-project view."""
+    raw = getattr(stream, "raw", None)
+    if isinstance(raw, _StoredMemberView) and callable(getattr(os, "pread", None)):
+        return raw.independent_reader
+    return None
 
 
 @contextmanager
@@ -100,23 +128,25 @@ def open_project_artifact(path: str | Path, member: str) -> Iterator[BinaryIO]:
         # view intentionally does not scan the whole outer member up front.
         with archive.open(info, "r"):
             pass
-        with Path(path).open("rb") as raw:
-            raw.seek(info.header_offset)
-            header = raw.read(30)
-            if len(header) != 30:
-                raise ValueError(f"truncated ZIP header for {normalized!r}")
-            fields = struct.unpack("<4s5H3L2H", header)
-            if fields[0] != b"PK\x03\x04":
-                raise ValueError(f"invalid ZIP header for {normalized!r}")
-            data_offset = info.header_offset + 30 + fields[-2] + fields[-1]
-            view = io.BufferedReader(
-                _StoredMemberView(raw, data_offset, info.file_size),
-                buffer_size=1024 * 1024,
-            )
-            try:
-                yield view
-            finally:
-                view.close()
+        # Reuse the descriptor whose ZIP header was validated. Reopening the
+        # path here could select a newly replaced project with different data.
+        raw = archive.fp
+        raw.seek(info.header_offset)
+        header = raw.read(30)
+        if len(header) != 30:
+            raise ValueError(f"truncated ZIP header for {normalized!r}")
+        fields = struct.unpack("<4s5H3L2H", header)
+        if fields[0] != b"PK\x03\x04":
+            raise ValueError(f"invalid ZIP header for {normalized!r}")
+        data_offset = info.header_offset + 30 + fields[-2] + fields[-1]
+        view = io.BufferedReader(
+            _StoredMemberView(raw, data_offset, info.file_size),
+            buffer_size=1024 * 1024,
+        )
+        try:
+            yield view
+        finally:
+            view.close()
 
 
 def analysis_artifact_member(analysis_id: str, filename: str) -> str:
