@@ -22,11 +22,12 @@ from .histogram_statistics import (
     EVENT_STATISTICS_METADATA,
     NORMALIZATION_DENOMINATOR,
     event_statistics_channels,
+    has_event_statistics,
 )
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from .measurement_contracts import MeasurementContract
 from .measurement_dependencies import SourceReplayRequired
-from .source_lineage import tracked_source_ids
+from .source_lineage import merge_source_lineage_metadata, tracked_source_ids
 
 CACHED_BACKGROUND_REPLAY = "cached_background_replay"
 CACHED_BACKGROUND_REPLAY_VERSION = 1
@@ -209,8 +210,23 @@ def background_replay_subtraction(data, background, result, scale):
     for term in background_payload["terms"]:
         name = f"background_replay_exposure_{len(payload['terms'])}"
         channels[name] = background.auxiliary_channels[term["denominator_channel"]]
-        payload["terms"].append({**copy.deepcopy(term), "scale": -float(scale) * term["scale"],
-                                 "denominator_channel": name})
+        inherited = {**copy.deepcopy(term), "scale": -float(scale) * term["scale"],
+                     "denominator_channel": name}
+        if "weight_channel" in term:
+            weight_name = f"background_replay_weight_{len(payload['terms'])}"
+            background_weight = background.auxiliary_channels[term["weight_channel"]].values
+            background_exposure = background.auxiliary_channels[background_payload["weight_channel"]].values
+            transferred = np.zeros(data.signal.size)
+            for start in range(0, data.signal.size, 65_536):
+                region = slice(start, min(start+65_536, data.signal.size))
+                np.divide(background_weight.ravel()[region]*channel.values.ravel()[region],
+                          background_exposure.ravel()[region], out=transferred[region],
+                          where=background_exposure.ravel()[region] > 0)
+            transferred = transferred.reshape(data.shape)
+            transferred.setflags(write=False)
+            channels[weight_name] = MDHistoChannel(transferred, label="Transferred background component numerator weight")
+            inherited["weight_channel"] = weight_name
+        payload["terms"].append(inherited)
     payload.update(target="sample_exposure_weighted_subtracted_field_mean",
                    weight_channel=NORMALIZATION_DENOMINATOR,
                    independent_variance_channel=REPLAY_INDEPENDENT_VARIANCE,
@@ -236,6 +252,190 @@ def merge_background_replay_partitions(partitions, metadata, channels):
     return metadata, channels
 
 
+def invalidate_cached_background_replay(data, reason):
+    """Keep a preview result while refusing unavailable exact source covariance."""
+    metadata = dict(data.metadata)
+    metadata.pop(CACHED_BACKGROUND_REPLAY, None)
+    metadata["background_replay_unavailable_reason"] = str(reason)
+    metadata["background_profile_uncertainty"] = "diagonal_approximation_replay_recipe_unavailable"
+    return data.with_updates(metadata=metadata)
+
+
+def preserve_cached_background_replay(original, result):
+    """Restore provenance only for an owning mask/coverage-only transformation."""
+    if not _has_replay(original):
+        return result
+    payload = original.metadata[CACHED_BACKGROUND_REPLAY]
+    names = {payload["weight_channel"], payload["independent_variance_channel"]}
+    names.update(term["denominator_channel"] for term in payload["terms"])
+    names.update(term["weight_channel"] for term in payload["terms"] if "weight_channel" in term)
+    def same(a, b):
+        return a is b or np.array_equal(a, b, equal_nan=True)
+    unchanged = (original.shape == result.shape
+                 and all(np.array_equal(a.values, b.values) for a, b in zip(original.axes, result.axes, strict=True))
+                 and same(original.signal, result.signal)
+                 and same(original.errors, result.errors)
+                 and all(name in result.auxiliary_channels and same(
+                     original.auxiliary_channels[name].values, result.auxiliary_channels[name].values)
+                     for name in names))
+    if not unchanged:
+        return invalidate_cached_background_replay(result, "Scientific payload changed in a mask/coverage-only producer")
+    return result.with_updates(metadata=background_replay_metadata(result.metadata, payload))
+
+
+def scale_cached_background_replay(original, result, factor):
+    """Propagate a known signed scalar calibration through an owning producer."""
+    if not _has_replay(original):
+        return result
+    factor = float(factor)
+    if not np.isfinite(factor):
+        return invalidate_cached_background_replay(result, "Nonfinite composite calibration requires source replay")
+    payload = copy.deepcopy(original.metadata[CACHED_BACKGROUND_REPLAY])
+    for term in payload["terms"]:
+        term["scale"] *= factor
+    channels = dict(result.auxiliary_channels)
+    names = {payload["weight_channel"], *(term["denominator_channel"] for term in payload["terms"]),
+             *(term["weight_channel"] for term in payload["terms"] if "weight_channel" in term)}
+    channels.update({name: original.auxiliary_channels[name] for name in names})
+    name = payload["independent_variance_channel"]
+    channels[name] = MDHistoChannel(original.auxiliary_channels[name].values * factor**2,
+                                   label="Scaled independent sample variance")
+    metadata = background_replay_metadata(result.metadata, payload)
+    metadata["normalization_denominator"] = channels[payload["weight_channel"]].values
+    return result.with_updates(metadata=metadata, auxiliary_channels=channels)
+
+
+def inherit_cached_background_composite(sources, result, *, aligned, weighting):
+    """Retain the actual aligned exposure-weighted composite field estimator.
+
+    ``sources`` contains (histogram, accepted_cells, signed_scale, fit_weight).
+    No event payload is read. Term-specific acquisition weights preserve nested
+    child estimators; the explicit profile query merges shared source primitives.
+    Other grids/estimators keep their ordinary previews with an unavailable reason.
+    """
+    sources = [(data, valid, float(scale), float(weight)) for data, valid, scale, weight in sources if weight != 0]
+    if not any(_has_replay(data) or data.metadata.get("background_profile_uncertainty")
+               for data, _, _, _ in sources):
+        return result
+    def unavailable(reason):
+        return invalidate_cached_background_replay(result, reason)
+    if not aligned or any(data.shape != result.shape or any(
+        not np.array_equal(a.values, b.values) for a, b in zip(data.axes, result.axes, strict=True))
+        for data, _, _, _ in sources):
+        return unavailable("Composite source grids or physical bases differ; replay original components on the final grid")
+    if weighting != "uniform" or NORMALIZATION_DENOMINATOR not in result.auxiliary_channels:
+        return unavailable("Exact cached composite replay requires the aligned exposure-weighted estimator")
+    exposure = result.auxiliary_channels[NORMALIZATION_DENOMINATOR].values
+    independent_components = []
+    channels = dict(result.auxiliary_channels)
+    first_payload = next(data.metadata[CACHED_BACKGROUND_REPLAY] for data, _, _, _ in sources if _has_replay(data)) if any(_has_replay(data) for data, _, _, _ in sources) else None
+    if first_payload is None:
+        return unavailable("A composite component lacks its original background replay recipe")
+    payload = copy.deepcopy(first_payload)
+    payload.update(shape=list(result.shape), edges=[axis.values.tolist() for axis in result.axes],
+                   weight_channel=NORMALIZATION_DENOMINATOR,
+                   independent_variance_channel=REPLAY_INDEPENDENT_VARIANCE, terms=[])
+    independent_ids, background_ids, independent_objects = set(), set(), set()
+    targets = []
+    for child, (data, valid, scale, fit_weight) in enumerate(sources):
+        if not np.isfinite(scale) or not np.isfinite(fit_weight) or fit_weight < 0:
+            return unavailable("Composite coefficient weights must be finite with nonnegative acquisition weights")
+        if data.source_dependencies is not None or data.counting_dependencies is not None:
+            return unavailable("Composite sample source dependencies require joint propagation before background replay")
+        if NORMALIZATION_DENOMINATOR not in data.auxiliary_channels:
+            return unavailable("A composite component lacks known sample exposure")
+        normalizer = data.auxiliary_channels[NORMALIZATION_DENOMINATOR].values
+        valid = np.asarray(valid, bool)
+        if _has_replay(data):
+            try:
+                source_payload = _validate_payload(data)
+            except SourceReplayRequired as error:
+                return unavailable(str(error))
+            targets.append(source_payload["target"])
+            independent = data.auxiliary_channels[source_payload["independent_variance_channel"]].values
+            source_ids = set(source_payload.get("independent_source_ids", []))
+            has_independent = source_payload.get("sample_uncertainty") is not None
+        else:
+            if data.metadata.get("background_profile_uncertainty") or not has_event_statistics(data):
+                return unavailable("A composite component has unrepresented background or independent sample statistics")
+            independent = None
+            source_ids = set(tracked_source_ids(data))
+            has_independent = True
+            source_payload = None
+            targets.append("sample_field")
+        if has_independent:
+            if source_ids & independent_ids or id(data) in independent_objects:
+                return unavailable("Composite children reuse independent sample primitives; joint sample covariance is not represented")
+            independent_ids.update(source_ids)
+            independent_objects.add(id(data))
+        independent_components.append((data, valid, scale, fit_weight, independent))
+        if source_payload is None:
+            continue
+        channel_names = {}
+        def retain(name, channel_names=channel_names, child=child, data=data):
+            if name not in channel_names:
+                destination = f"background_replay_child_{child}_{len(channel_names)}"
+                channels[destination] = data.auxiliary_channels[name]
+                channel_names[name] = destination
+            return channel_names[name]
+        for term in source_payload["terms"]:
+            previous = _unpack(term.get("excluded"), data.signal.size)
+            excluded = ~valid.ravel()
+            if previous is not None:
+                excluded |= previous
+            inherited = {**copy.deepcopy(term),
+                "scale": term["scale"] * scale * fit_weight,
+                "weight_channel": retain(term.get("weight_channel", source_payload["weight_channel"])),
+                "denominator_channel": retain(term["denominator_channel"]),
+                "excluded": packed_replay_mask(excluded)}
+            payload["terms"].append(inherited)
+            background_ids.update(identity for recipe in term["sources"] for identity in recipe.get("source_lineage_ids", []))
+    if independent_ids & background_ids:
+        return unavailable("A composite sample primitive also appears in a background source; joint covariance requires full replay")
+    # Only the retained independent variance needs a full-grid output array.
+    # Expected coefficient checks and child arithmetic use bounded scratch.
+    independent = np.zeros(result.signal.size)
+    tolerance = 128 * np.finfo(float).eps
+    for start in range(0, result.signal.size, 65_536):
+        stop = min(start+65_536, result.signal.size)
+        region = slice(start, stop)
+        expected_exposure = np.zeros(stop-start)
+        expected_numerator = np.zeros(stop-start)
+        numerator_scale = np.zeros(stop-start)
+        independent_numerator = np.zeros(stop-start)
+        for data, valid, scale, fit_weight, source_variance in independent_components:
+            accepted = valid.ravel()[region]
+            normalizer = data.auxiliary_channels[NORMALIZATION_DENOMINATOR].values.ravel()[region]
+            weight = np.where(accepted, normalizer*fit_weight, 0.)
+            expected_exposure += weight
+            contribution = weight*np.where(accepted, data.signal.ravel()[region]*scale, 0.)
+            expected_numerator += contribution
+            numerator_scale += np.abs(contribution)
+            variance = data.errors.ravel()[region]**2 if source_variance is None else source_variance.ravel()[region]
+            independent_numerator += np.where(accepted, variance, 0.)*(weight*scale)**2
+        actual_exposure = exposure.ravel()[region]
+        good = ~result.mask.ravel()[region] & (actual_exposure > 0)
+        if not np.allclose(expected_exposure, actual_exposure, rtol=tolerance, atol=0) or np.any(
+            np.abs(expected_numerator[good] - (result.signal.ravel()[region]*actual_exposure)[good])
+            > tolerance*numerator_scale[good]):
+            return unavailable("Composite numerical coefficients differ from aligned exposure pooling; replay the actual grid mapping")
+        np.divide(independent_numerator, actual_exposure**2,
+                  out=independent[region], where=actual_exposure > 0)
+    independent = independent.reshape(result.shape)
+    independent.setflags(write=False)
+    channels[REPLAY_INDEPENDENT_VARIANCE] = MDHistoChannel(independent, label="Independent composite sample variance")
+    target = "sample_exposure_weighted_subtracted_field_mean" if any("subtracted" in target for target in targets) else "background_exposure_weighted_field_mean" if all(target == "background_exposure_weighted_field_mean" for target in targets) else "exposure_weighted_composite_field_mean"
+    payload.update(target=target, independent_source_ids=sorted(independent_ids),
+                   composite_estimator="aligned_exposure_weighted_mean",
+                   sample_uncertainty="recorded_histogram_variance")
+    if not independent_objects:
+        payload.pop("sample_uncertainty", None)
+    metadata = {**result.metadata, **merge_source_lineage_metadata(*(data for data, _, _, _ in sources))}
+    metadata = background_replay_metadata(metadata, payload)
+    metadata["normalization_denominator"] = exposure
+    return result.with_updates(metadata=metadata, auxiliary_channels=channels)
+
+
 def _validate_payload(data):
     if not _has_replay(data):
         reason = data.metadata.get("background_replay_unavailable_reason", "recompute the background or replay directly on the final grid")
@@ -247,7 +447,8 @@ def _validate_payload(data):
     ):
         raise SourceReplayRequired("Cached background grid changed; replay its sources on the requested grid")
     for name in (payload["weight_channel"], payload["independent_variance_channel"],
-                 *(term["denominator_channel"] for term in payload["terms"])):
+                 *(term["denominator_channel"] for term in payload["terms"]),
+                 *(term["weight_channel"] for term in payload["terms"] if "weight_channel" in term)):
         if name not in data.auxiliary_channels:
             raise SourceReplayRequired("Cached background replay is missing its exposure/variance payload")
     return payload
@@ -268,7 +469,10 @@ def _projection_variance(data, payload, selected, indices, weights, bins, progre
         if excluded is not None:
             included &= ~excluded
         coefficient = np.zeros(size)
-        coefficient[included] = float(term["scale"]) * weights.ravel()[included] / denominator[included]
+        term_weights = weights if "weight_channel" not in term else data.auxiliary_channels[term["weight_channel"]].values
+        if np.any(included & (~np.isfinite(term_weights.ravel()) | (term_weights.ravel() < 0))):
+            raise SourceReplayRequired("Background replay component has invalid acquisition coefficient weights")
+        coefficient[included] = float(term["scale"]) * term_weights.ravel()[included] / denominator[included]
         for source in term["sources"]:
             key = (source["source_file"], source["workspace_path"])
             grouped.setdefault(key, []).append((source, coefficient))
@@ -417,6 +621,10 @@ def replay_cached_background_profile(
         signature.update(np.ascontiguousarray(
             data.auxiliary_channels[term["denominator_channel"]].values[good]
         ).tobytes())
+        if "weight_channel" in term:
+            signature.update(np.ascontiguousarray(
+                data.auxiliary_channels[term["weight_channel"]].values[good]
+            ).tobytes())
     signature.update(str(bins).encode())
     cache_key = signature.hexdigest()
     with _QUERY_CACHE_LOCK:

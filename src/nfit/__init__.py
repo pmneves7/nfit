@@ -40,6 +40,12 @@ from .analysis.spectral import (
 )
 from .axes import AxisRole, infer_axis_role
 from .background_channels import available_background_channels, background_channel
+from .background_profile_queries import (
+    CachedBackgroundSliceSelection,
+    background_profile_slice_selection,
+    replay_cached_background_box_profiles,
+    replay_cached_background_slice_profile,
+)
 from .box_cuts import histogram_box_profiles
 from .brillouin_zone import (
     BrillouinZoneNode,
@@ -771,6 +777,10 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "CachedBackgroundSliceSelection",
+    "background_profile_slice_selection",
+    "replay_cached_background_box_profiles",
+    "replay_cached_background_slice_profile",
     "replay_measurement_histogram",
     "replay_cached_background_profile",
     "clear_cached_background_profile_queries",

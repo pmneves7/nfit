@@ -329,13 +329,59 @@ reason and diagonal preview errors. Exact profile requests then require direct
 source replay. Legacy cached
 histograms need their backgrounds recomputed to obtain a recipe.
 
-Ordinary GUI slice and box-cut previews keep their existing estimator and mark
-background uncertainty as a **diagonal approximation**. They do not trigger a
-full source stream on every pointer or slider movement. Use the explicit API for
-quantitative final background errors until asynchronous GUI replay and
-parent-composite recipe propagation are available. A profile API request with
-`require_exact_background_uncertainty=True` rejects such a preview instead of
-claiming exact uncertainty.
+Ordinary GUI slices and initial box-cut previews keep their existing estimator
+and mark background uncertainty as a **diagonal approximation**. Native-grid
+signal box cuts replay asynchronously after the selection settles. The completed
+cut replaces the preview with the explicitly sample-exposure-weighted field target
+above; it does not retain precision weights from an approximate preview. This can
+change both the displayed mean and its uncertainty. Stale results are discarded
+when the dataset or selection changes. Profile CSV export waits for the completed
+cut; its JSON sidecar records the source replay and remaining uncertainty limits.
+
+Aligned hierarchical bank composites with uniform weighting preserve each
+child's exposure and signed source coefficients. A background observation shared
+by banks remains one primitive; coefficients combine before variance propagation.
+Dataset scale changes its signal and source coefficients, while fit weight changes
+its contribution to the parent exposure. Independent sample variance propagates
+under each child's recorded policy. Recorded source identities reject reused
+sample acquisitions whose joint covariance is unavailable. Separately materialized
+legacy aliases without acquisition identities retain their recorded independence
+assumption; background replay cannot establish their sample independence.
+Regridded, inverse-variance, metadata-stacked, or unsupported dependent composites
+require source replay instead of silently
+retaining an exact recipe.
+
+Missing original sources, legacy caches without recipes, fit overlays, disabled
+masks, smoothing and displayed-grid coarsening retain explicitly approximate
+previews with a reason. They cannot claim exact source covariance. The displayed
+box sum is a separate quantity; its error remains labeled diagonal even when the
+profile mean has replayed background covariance. Maps, waterfalls and subsequent
+cross-profile aggregation also retain their documented uncertainty limits.
+
+For headless scripts, use the same regular/rotated selection operation:
+
+```python
+from nfit import replay_cached_background_box_profiles, save_measurement_profile_csv
+
+profiles = replay_cached_background_box_profiles(
+    data, x_dim=0, y_dim=3, selections={1: (0, 1), 2: 0},
+    extents=(0, 0.6, 0, 30), angle=0, coverage_threshold=0.1,
+)
+save_measurement_profile_csv(
+    "x_cut.csv", profiles.x_measurement, coordinate_name="x",
+    require_exact_background_uncertainty=True,
+)
+```
+
+`selections` uses original-grid indices: an integer selects one hidden cell and
+an inclusive pair integrates a hidden range. Visible and hidden cell centers
+control inclusion; the function never invents a distribution inside a cached
+cell. `replay_cached_background_slice_profile` prepares a one-dimensional native
+slice using the same original-grid target. `plot_mdhisto_slice` accepts
+`background_uncertainty="replay"` to reproduce completed box cuts in static
+figures. Replay is explicit and synchronous in scripts, and uses no Qt widgets.
+A profile or CSV API request with `require_exact_background_uncertainty=True`
+rejects a marked approximate preview instead of claiming exact uncertainty.
 
 ### Sampled functions
 

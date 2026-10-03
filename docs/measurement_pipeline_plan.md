@@ -62,9 +62,9 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 6A | Validate instrument families and continuous measurements | Survey complete; adapter follow-ups required |
 | 6A-R | Resolve raw-DGS geometry/timing and validate HYSPEC conversion | Core complete; historical subtraction split into 6A-R2 |
 | 6A-R2 | Validate directional HYSPEC background reconstruction and uncertainties | Analysis complete; cached final-cut dependencies split into 6A-R3 |
-| 6A-R3 | Preserve background source correlations and target through final cuts | R3a complete; R3b awaits review |
+| 6A-R3 | Preserve background source correlations and target through final cuts | Complete within the declared cached-field scope |
 | 6A-R3a | Persist bounded replay recipes and expose exact cached-field aggregation | Complete |
-| 6A-R3b | Integrate parent composites and asynchronous GUI cuts/exports | Pending review of R3a |
+| 6A-R3b | Integrate parent composites and asynchronous GUI cuts/exports | Complete; checkpoint review |
 | 6A-M | Preserve MACS count/exposure targets through final profiles | Deferred by Paul |
 | 6A-C | Supply CORELLI reconstruction/copy covariance or require replay | Deferred by Paul |
 | 6A1 | Validate optional numerical and statistical treatments | DGS investigation in progress; other families deferred |
@@ -872,10 +872,46 @@ optional recipes preserve ordinary histograms with an explicit replay-unavailabl
 reason. Unsupported derived background operands require complete source replay.
 Final validation includes the full 2,948-test suite and focused post-review gates.
 
-**R3b:** Propagate these recipes through hierarchical bank composites and
-integrate asynchronous viewer cuts and exports. Do not replay large sources
-synchronously on every interaction. Review R3a before beginning this extension;
-cached previews must not claim exact source covariance meanwhile.
+**Geometry assessment — complete, accepted 2026-10-03:** Paul confirmed that
+sample and dummy bank angles differ because the bank was repositioned and its
+encoder reaches each target within the instrument tolerance. Retain sample
+geometry for sample events and normalization, and dummy geometry for dummy
+events and normalization. Replay the orientation-averaged dummy at each sample
+rotation. These small positioning differences do not justify detector remapping
+or mixing source-event geometry with another acquisition's normalization.
+
+**R3b — complete 2026-10-03:** Aligned exposure-weighted hierarchical bank
+composites preserve each component's exposure, signed scale and shared background
+source coefficients. Native-grid regular and rotated viewer box cuts replay
+asynchronously after a debounced selection; obsolete results are discarded and
+pending exports are disabled. Completed profile exports and editable figure
+scripts use the public original-grid selection API. Unsupported treatments retain
+explicit diagonal previews and reasons. Construction and project loading do not
+read event sources.
+
+**R3b acceptance:** A nested public dataset-group composite of both 50 K HYSPEC
+banks reads the complete 4,744,544-event and 4,624,140-event dummy sources, with
+nine sample rotations per bank. Eight regular/12°-rotated x/y profiles across
+support and projected coverage fringes agree with an independent primitive
+coefficient oracle: variance discrepancies are at most 2.073 × 10⁻¹⁴ relative
+to the peak, and 1.089 × 10⁻¹⁵ at projected fringes. Exposure and masks agree
+literally. Both banks contribute event counts and variance to unmasked support
+bins; only the 34° bank contributes to the selected outer union fringe.
+Source files and scientific module hashes remain unchanged during validation.
+The bounded grid, acceptance masks, component contributions and scalar receipt
+are recorded in `benchmarks/results/hyspec-bank-background-profiles.json`. The
+full local suite passes with 3,024 tests and one unavailable CuPy backend skip;
+GUI/script round trips, export guards, metadata stacking and public API regression
+checks pass. Ruff, compilation, diff checks and the strict Sphinx build pass.
+
+The replay target is the sample-exposure-weighted cached subtracted field, so
+both mean and uncertainty can differ from a precision-weighted preview. Exact
+claims concern represented background covariance within each final profile bin.
+Sample uncertainty retains its recorded policy; covariance between final bins
+and unrecorded source/calibration dependencies remain unavailable. Regridded,
+metadata-stacked, inverse-variance and unsupported dependent composites require
+full source replay. Box sums remain labeled diagonal. These remaining treatments
+are tracked in `docs/planned_features.md` and are outside this checkpoint.
 
 Paul clarified that the HYSPEC background is a dummy sample: the same mount,
 glue and aluminum without crystals. The coarse 180° sweep intentionally averages

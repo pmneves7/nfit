@@ -77,14 +77,84 @@ def box_membership(
     return (u >= x0) & (u <= x1) & (v >= y0) & (v <= y1)
 
 
-def _profile(view, coordinates, values, errors, selected, edges, threshold,
-             *, centers=None, coverage_weights=None, channel="signal", reference_values=None):
-    indices = np.clip(np.searchsorted(edges, coordinates, side="right") - 1, 0, len(edges) - 2)
-    return prepare_measurement_profile(
-        view, values, errors, selected=selected, indices=indices, edges=edges,
-        centers=centers, coverage_weights=coverage_weights,
-        coverage_threshold=threshold, channel=channel, reference_values=reference_values,
-    )
+@dataclass(frozen=True)
+class BoxProfileSelection:
+    """Center membership and output bins shared by previews and explicit replay."""
+
+    selected: np.ndarray
+    x_indices: np.ndarray
+    y_indices: np.ndarray
+    x_edges: np.ndarray
+    y_edges: np.ndarray
+    x_centers: np.ndarray | None = None
+    y_centers: np.ndarray | None = None
+    x_coverage_weights: np.ndarray | None = None
+    y_coverage_weights: np.ndarray | None = None
+
+
+def box_profile_selection(view, extents, angle=0.0, *, force_rotated=False):
+    """Build the regular/rotated center-selection rule without estimating data.
+
+    Regular bins retain the displayed edges and centers. Rotated pitch follows
+    the existing grid resolution and remains bounded to 4096 output bins.
+    """
+    x, y = np.asarray(view["x_centers"]), np.asarray(view["y_centers"])
+    if len(extents) != 4 or not np.all(np.isfinite(extents)) or not np.isfinite(angle):
+        raise ValueError("Box extents and angle must be finite")
+    x0, x1, y0, y1 = extents
+    if x1 < x0 or y1 < y0:
+        raise ValueError("Box extents must be ordered")
+    rotated = force_rotated or not np.isclose(float(angle) % 360, 0.0, atol=1e-10)
+    if rotated and (x1 == x0 or y1 == y0):
+        raise ValueError("Rotated box extents must have positive width and height")
+    if not rotated:
+        xm, ym = (x >= x0) & (x <= x1), (y >= y0) & (y <= y1)
+        selected = ym[:, None] & xm[None, :]
+        if not np.any(xm) or not np.any(ym):
+            return BoxProfileSelection(selected, np.zeros(selected.shape, int),
+                np.zeros(selected.shape, int), np.array([]), np.array([]))
+        xe, ye = np.asarray(view["x_edges"]), np.asarray(view["y_edges"])
+        xi, yi = np.flatnonzero(xm), np.flatnonzero(ym)
+        x_edges, y_edges = xe[xi[0]:xi[-1]+2], ye[yi[0]:yi[-1]+2]
+        u, v = np.broadcast_to(x[None, :], selected.shape), np.broadcast_to(y[:, None], selected.shape)
+        x_centers, y_centers = x[xm], y[ym]
+        x_weights, y_weights = np.diff(ye)[:, None], np.diff(xe)[None, :]
+    else:
+        selected = box_membership(x, y, extents, angle)
+        u, v = box_coordinates(x[None, :], y[:, None], extents, angle)
+        u, v = np.broadcast_to(u, selected.shape), np.broadcast_to(v, selected.shape)
+        theta = np.deg2rad(float(angle))
+        xstep = float(np.median(np.diff(x))) if len(x) > 1 else abs(x1-x0)
+        ystep = float(np.median(np.diff(y))) if len(y) > 1 else abs(y1-y0)
+        upitch = np.hypot(xstep * np.cos(theta), ystep * np.sin(theta))
+        vpitch = np.hypot(xstep * np.sin(theta), ystep * np.cos(theta))
+        def edges(low, high, pitch):
+            count = int(np.clip(np.ceil((high-low) / max(abs(pitch), 1e-12)), 1, 4096))
+            return np.linspace(low, high, count+1)
+        x_edges, y_edges = edges(x0, x1, upitch), edges(y0, y1, vpitch)
+        x_centers = y_centers = x_weights = y_weights = None
+    x_indices = np.clip(np.searchsorted(x_edges, u, side="right")-1, 0, len(x_edges)-2)
+    y_indices = np.clip(np.searchsorted(y_edges, v, side="right")-1, 0, len(y_edges)-2)
+    return BoxProfileSelection(selected, x_indices, y_indices, x_edges, y_edges,
+        x_centers, y_centers, x_weights, y_weights)
+
+
+def _selected_profiles(view, values, errors, selection, coverage_threshold, channel, reference_values):
+    z, e = np.asarray(values), np.asarray(errors)
+    if z.shape != selection.selected.shape or e.shape != z.shape:
+        raise ValueError("box profiles require matching 2D values and errors")
+    if not len(selection.x_edges):
+        empty = (np.array([]), np.array([]), np.array([]))
+        return BoxProfiles(empty, empty, selection.selected)
+    xp, yp = [prepare_measurement_profile(
+        view, z, e, selected=selection.selected, indices=indices, edges=edges,
+        centers=centers, coverage_weights=weights, coverage_threshold=coverage_threshold,
+        channel=channel, reference_values=reference_values,
+    ) for indices, edges, centers, weights in (
+        (selection.x_indices, selection.x_edges, selection.x_centers, selection.x_coverage_weights),
+        (selection.y_indices, selection.y_edges, selection.y_centers, selection.y_coverage_weights),
+    )]
+    return BoxProfiles(xp.arrays, yp.arrays, selection.selected, xp, yp)
 
 
 def histogram_box_profiles(
@@ -98,75 +168,17 @@ def histogram_box_profiles(
     cuts retain source centers/edges; rotated cuts select centers and project them
     to the box axes. No subpixel or missing source covariance is invented.
     """
-    if not np.isclose(float(angle) % 360, 0.0, atol=1e-10):
-        return rotated_box_profiles(view, values, errors, extents, angle,
-            coverage_threshold=coverage_threshold, channel=channel, reference_values=reference_values)
-    x, y = np.asarray(view["x_centers"]), np.asarray(view["y_centers"])
-    z, e = np.asarray(values), np.asarray(errors)
-    if z.shape != (len(y), len(x)) or e.shape != z.shape:
-        raise ValueError("box profiles require matching 2D values and errors")
-    x0, x1, y0, y1 = extents
-    xm, ym = (x >= x0) & (x <= x1), (y >= y0) & (y <= y1)
-    selected = ym[:, None] & xm[None, :]
-    if not np.any(xm) or not np.any(ym):
-        empty = (np.array([]), np.array([]), np.array([]))
-        return BoxProfiles(empty, empty, selected)
-    xe, ye = np.asarray(view["x_edges"]), np.asarray(view["y_edges"])
-    xi, yi = np.flatnonzero(xm), np.flatnonzero(ym)
-    xp = _profile(view, np.broadcast_to(x[None, :], z.shape), z, e, selected,
-        xe[xi[0]:xi[-1]+2], coverage_threshold, centers=x[xm],
-        coverage_weights=np.diff(ye)[:, None], channel=channel, reference_values=reference_values)
-    yp = _profile(view, np.broadcast_to(y[:, None], z.shape), z, e, selected,
-        ye[yi[0]:yi[-1]+2], coverage_threshold, centers=y[ym],
-        coverage_weights=np.diff(xe)[None, :], channel=channel, reference_values=reference_values)
-    return BoxProfiles(xp.arrays, yp.arrays, selected, xp, yp)
+    selection = box_profile_selection(view, extents, angle)
+    return _selected_profiles(view, values, errors, selection, coverage_threshold, channel, reference_values)
 
 
 def rotated_box_profiles(
-    view: dict[str, np.ndarray],
-    values: np.ndarray,
-    errors: np.ndarray,
-    extents: tuple[float, float, float, float],
-    angle: float = 0.0,
-    *,
-    coverage_threshold: float = 0.0,
-    channel: str = "signal",
-    reference_values=None,
+    view, values, errors, extents, angle=0.0, *, coverage_threshold=0.0,
+    channel="signal", reference_values=None,
 ) -> BoxProfiles:
-    """Measurement-aware cuts along a box's two principal axes.
-
-    Bin centers determine membership. For a rotated box, each selected pixel
-    contributes to one projected bin on each axis. The projected pitch follows
-    the source grid resolution, keeping the result bounded by 4096 bins.
-    """
-
-    x = np.asarray(view["x_centers"], dtype=float)
-    y = np.asarray(view["y_centers"], dtype=float)
-    z = np.asarray(values, dtype=float)
-    e = np.asarray(errors, dtype=float)
-    if z.shape != (len(y), len(x)) or e.shape != z.shape:
-        raise ValueError("box profiles require matching 2D values and errors")
-    selected = box_membership(x, y, extents, angle)
-    u, v = box_coordinates(x[None, :], y[:, None], extents, angle)
-    u = np.broadcast_to(u, z.shape)
-    v = np.broadcast_to(v, z.shape)
-    theta = np.deg2rad(float(angle))
-    xstep = float(np.median(np.diff(x))) if len(x) > 1 else abs(extents[1] - extents[0])
-    ystep = float(np.median(np.diff(y))) if len(y) > 1 else abs(extents[3] - extents[2])
-    upitch = np.hypot(xstep * np.cos(theta), ystep * np.sin(theta))
-    vpitch = np.hypot(xstep * np.sin(theta), ystep * np.cos(theta))
-
-    def edges(low: float, high: float, pitch: float) -> np.ndarray:
-        count = int(np.clip(np.ceil((high - low) / max(abs(pitch), 1e-12)), 1, 4096))
-        return np.linspace(low, high, count + 1)
-
-    x_edges = edges(extents[0], extents[1], upitch)
-    y_edges = edges(extents[2], extents[3], vpitch)
-    xp = _profile(view, u, z, e, selected, x_edges, coverage_threshold,
-        channel=channel, reference_values=reference_values)
-    yp = _profile(view, v, z, e, selected, y_edges, coverage_threshold,
-        channel=channel, reference_values=reference_values)
-    return BoxProfiles(xp.arrays, yp.arrays, selected, xp, yp)
+    """Prepare cuts using rotated center membership and projected output bins."""
+    selection = box_profile_selection(view, extents, angle, force_rotated=True)
+    return _selected_profiles(view, values, errors, selection, coverage_threshold, channel, reference_values)
 
 
 def rotated_box_sum_profile(

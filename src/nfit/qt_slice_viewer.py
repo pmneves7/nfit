@@ -471,6 +471,7 @@ class QtMDHistoSliceViewer:
         self._current_x_cut: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._current_y_cut: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._current_box_profiles = None
+        self._background_profiles = None
         self._view_limit_callback_ids: list[int] = []
         self.bragg_peak_overlay: dict[str, Any] | None = None
         self.display_step_factors: dict[int, int] = {}
@@ -1310,30 +1311,38 @@ class QtMDHistoSliceViewer:
     def save_x_cut(self) -> None:
         """Save the current horizontal box profile as CSV."""
 
-        if self._current_x_cut is None:
+        if self._current_x_cut is None or (self._background_profiles is not None
+                and not self._background_profiles.export_allowed()):
             return
         path = self._csv_export_path("Save x profile", "x_cut.csv")
         if path:
+            if self._background_profiles is not None and not self._background_profiles.export_allowed():
+                return
             measurement = getattr(self._current_box_profiles, "x_measurement", None)
             if measurement is None:
                 save_profile_csv(path, *self._current_x_cut, coordinate_name="x")
             else:
                 save_measurement_profile_csv(path, measurement, coordinate_name="x",
+                    require_exact_background_uncertainty=self._background_profiles is not None and self._background_profiles.status == "exact",
                     coordinate_unit=self.data.axes[self.model.x_dim].units if isinstance(self.data, MDHistoData) else "",
                     include_statistics=measurement.data.metadata.get("measurement_contract_origin") != "legacy_precision_mean")
 
     def save_y_cut(self) -> None:
         """Save the current vertical box profile as CSV."""
 
-        if self._current_y_cut is None:
+        if self._current_y_cut is None or (self._background_profiles is not None
+                and not self._background_profiles.export_allowed()):
             return
         path = self._csv_export_path("Save y profile", "y_cut.csv")
         if path:
+            if self._background_profiles is not None and not self._background_profiles.export_allowed():
+                return
             measurement = getattr(self._current_box_profiles, "y_measurement", None)
             if measurement is None:
                 save_profile_csv(path, *self._current_y_cut, coordinate_name="y")
             else:
                 save_measurement_profile_csv(path, measurement, coordinate_name="y",
+                    require_exact_background_uncertainty=self._background_profiles is not None and self._background_profiles.status == "exact",
                     coordinate_unit=self.data.axes[self.model.y_dim].units if isinstance(self.data, MDHistoData) else "",
                     include_statistics=measurement.data.metadata.get("measurement_contract_origin") != "legacy_precision_mean")
 
@@ -1483,6 +1492,7 @@ class QtMDHistoSliceViewer:
                 f"    show_histogram_axes={self.hist_axes_check.isChecked()!r},",
                 f"    roi_extents={self._roi_extents!r},",
                 f"    roi_angle={self._roi_angle!r},",
+                f"    background_uncertainty={'replay' if self._background_profiles is not None and self._background_profiles.status in {'exact', 'pending'} else 'diagonal'!r},",
                 f"    xcut_percent={self.xcut_percent!r},",
                 f"    ycut_percent={self.ycut_percent!r},",
                 f"    show_brillouin_zone_boundaries={self.show_brillouin_zone_boundaries!r},",
@@ -4224,9 +4234,15 @@ class QtMDHistoSliceViewer:
             )
             self.save_model_button.setEnabled(bool(has_model))
         if self.save_x_cut_button is not None:
-            self.save_x_cut_button.setEnabled(self._current_x_cut is not None)
+            self.save_x_cut_button.setEnabled(self._current_x_cut is not None
+                and (self._background_profiles is None or self._background_profiles.export_allowed()))
+            if self._background_profiles is not None:
+                self.save_x_cut_button.setToolTip(self._background_profiles.export_tooltip())
         if self.save_y_cut_button is not None:
-            self.save_y_cut_button.setEnabled(self._current_y_cut is not None)
+            self.save_y_cut_button.setEnabled(self._current_y_cut is not None
+                and (self._background_profiles is None or self._background_profiles.export_allowed()))
+            if self._background_profiles is not None:
+                self.save_y_cut_button.setToolTip(self._background_profiles.export_tooltip())
 
     def _suppress_matplotlib_coordinate_status(self) -> None:
         axes = (
@@ -4350,6 +4366,9 @@ class QtMDHistoSliceViewer:
         reuse_slice: bool = False,
     ) -> None:
         self._sync_fit_channel_controls()
+        if self._background_profiles is not None and (
+                self._waterfall_mode_active() or self._tiled_mode_active() or self._is_effective_1d()):
+            self._background_profiles.update(None)
         previous_xlim = self.ax_image.get_xlim() if preserve_view and self._current_slice is not None else None
         previous_ylim = self.ax_image.get_ylim() if preserve_view and self._current_slice is not None else None
         previous_dims = getattr(self, "_last_plot_dims", None)
@@ -4767,6 +4786,7 @@ class QtMDHistoSliceViewer:
             self._clear_roi_sum_annotation()
             self._current_x_cut = None
             self._current_y_cut = None
+            self._update_background_profiles(None)
             self._sync_export_controls()
         elif self._roi_extents is not None:
             self._update_histogram_cuts_from_extents(self._roi_extents)
@@ -4960,11 +4980,14 @@ class QtMDHistoSliceViewer:
             self._apply_figure_font_size()
             self._apply_axis_linewidth()
             self._sync_cut_viewers()
+            self._update_background_profiles(extents)
             self.canvas.draw_idle()
             return
         if self.ax_xcut is None or self.ax_ycut is None:
+            self._update_background_profiles(None)
             return
         if self._current_slice is None or extents is None:
+            self._update_background_profiles(None)
             return
         view = self._current_slice
         self.ax_xcut.clear()
@@ -4991,6 +5014,14 @@ class QtMDHistoSliceViewer:
         self._apply_axis_linewidth()
         self._sync_export_controls()
         self._sync_cut_viewers()
+        self._update_background_profiles(extents)
+
+    def _update_background_profiles(self, extents) -> None:
+        from .qt_background_profiles import BackgroundProfileReplay
+
+        if self._background_profiles is None:
+            self._background_profiles = BackgroundProfileReplay(self)
+        self._background_profiles.update(extents)
 
     def _clear_roi_sum_annotation(self) -> None:
         annotation = self.roi_sum_text
@@ -5022,6 +5053,7 @@ class QtMDHistoSliceViewer:
             extents,
             total,
             uncertainty,
+            uncertainty_label="diagonal uncertainty" if (self._current_slice or {}).get("background_profile_uncertainty") else None,
         )
 
     def _histogram_cut_coverage(

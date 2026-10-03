@@ -77,6 +77,7 @@ def save_profile_csv(
 def save_measurement_profile_csv(
     path: str | Path, profile: MeasurementProfile, *, coordinate_name: str,
     coordinate_unit: str = "", include_statistics: bool = True,
+    require_exact_background_uncertainty: bool = False,
 ) -> Path:
     """Export a prepared profile and its versioned declaration in ``.csv.json``.
 
@@ -84,6 +85,12 @@ def save_measurement_profile_csv(
     ``include_statistics=False`` preserves the historical three-column CSV;
     the JSON sidecar still records its estimator and uncertainty assumptions.
     """
+    if require_exact_background_uncertainty:
+        uncertainty = profile.data.metadata.get("background_profile_uncertainty")
+        if uncertainty and uncertainty != "source_covariance":
+            from .measurement_dependencies import SourceReplayRequired
+
+            raise SourceReplayRequired("This profile retains approximate background uncertainty; replay its sources before exporting")
     coordinate, values, errors = profile.arrays
     columns = {coordinate_name: coordinate, "intensity": values, "uncertainty": errors}
     data = profile.data

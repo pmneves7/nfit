@@ -363,6 +363,23 @@ Copied figure scripts preserve the angle through `roi_angle` in
 profiles without Qt. Each prepared result retains its statistics and contract;
 popped-out cut viewers keep that payload rather than assigning invented events.
 
+For a cached measured-background subtraction, regular and rotated signal box
+cuts replay background uncertainty asynchronously after the selection settles.
+The initial cut is labeled **diagonal uncertainty**; a completed replay uses the
+sample-exposure-weighted mean and accounts for background events reused across
+selected cells or aligned banks. Save controls are unavailable while replay is
+pending. The source files are opened by the worker, not by project loading, and
+changing a selection discards obsolete results.
+
+Legacy caches without replay recipes, unavailable sources, fit overlays,
+disabled masks, smoothing and display coarsening retain approximate cuts with a
+reason. Their CSV declarations retain that approximation. Completed replay only
+recovers background covariance within each final bin; sample correlations,
+calibration uncertainty and covariance between final bins remain separate.
+The box sum retains a labeled diagonal error. See
+[exact cached-field profiles](measurement_statistics.md#exact-background-uncertainty-for-a-cached-field)
+for the target and public scripting APIs.
+
 ### Two-dimensional axes ratio
 
 Use **Swap x/y** beside the displayed-axis selectors to exchange the plot

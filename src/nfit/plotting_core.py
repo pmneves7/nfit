@@ -361,6 +361,7 @@ def plot_mdhisto_slice(
     show_histogram_axes: bool = False,
     roi_extents: tuple[float, float, float, float] | None = None,
     roi_angle: float = 0.0,
+    background_uncertainty: str = "diagonal",
     xcut_percent: float = 20.0,
     ycut_percent: float = 16.0,
     axes_linewidth: float = 1.0,
@@ -384,6 +385,12 @@ def plot_mdhisto_slice(
 
     import matplotlib.pyplot as plt
 
+    if background_uncertainty not in {"diagonal", "replay"}:
+        raise ValueError("Background uncertainty must be 'diagonal' or 'replay'")
+    if background_uncertainty == "replay" and (
+        channel != "signal" or smoothing_sigma_x != 0 or smoothing_sigma_y != 0
+    ):
+        raise ValueError("Background covariance replay requires an unsmoothed signal cut")
     _validate_gridline_modes(
         show_brillouin_zone_boundaries,
         show_major_gridlines,
@@ -500,6 +507,7 @@ def plot_mdhisto_slice(
                 ax_ycut,
                 ax_image=ax_image,
                 roi_angle=roi_angle,
+                background_uncertainty=background_uncertainty,
             )
             _apply_axes_linewidth((ax_image, ax_colorbar, ax_xcut, ax_ycut), colorbar, axes_linewidth)
 
@@ -2255,10 +2263,12 @@ def _draw_box_sum_annotation(
     roi_extents: tuple[float, float, float, float],
     total: float,
     uncertainty: float,
+    *, uncertainty_label: str | None = None,
 ):
     del roi_extents  # Kept in the helper signature for compatibility.
     annotation = ax_image.set_title(
-        _format_box_sum(total, uncertainty),
+        _format_box_sum(total, uncertainty)
+        + (f" ({uncertainty_label})" if uncertainty_label else ""),
         loc="left",
         pad=6.0,
     )
@@ -2275,16 +2285,31 @@ def _draw_mdhisto_roi_cuts(
     *,
     ax_image=None,
     roi_angle: float = 0.0,
+    background_uncertainty: str = "diagonal",
 ) -> None:
     from .box_cuts import box_corners, histogram_box_profiles
 
     values = model._display_values(view)
     errors = np.asarray(view["errors"], dtype=float)
-    profiles = histogram_box_profiles(view, values, errors, roi_extents, roi_angle,
-        coverage_threshold=model.coverage_threshold, channel=model.channel)
+    if background_uncertainty == "replay":
+        from .background_profile_queries import replay_cached_background_box_profiles
+
+        if not (np.array_equal(view["x_centers"], model.data.axes[model.x_dim].centers)
+                and np.array_equal(view["y_centers"], model.data.axes[model.y_dim].centers)):
+            raise ValueError("Background covariance replay requires the original displayed grid")
+        visible = np.isfinite(values) & np.isfinite(errors)
+        visible &= np.asarray(view["coverage_fraction"]) >= model.coverage_threshold
+        profiles = replay_cached_background_box_profiles(
+            model.data, x_dim=model.x_dim, y_dim=model.y_dim,
+            selections=model._normalized_selections(), extents=roi_extents, angle=roi_angle,
+            display_selected=visible, coverage_threshold=model.coverage_threshold,
+        )
+    else:
+        profiles = histogram_box_profiles(view, values, errors, roi_extents, roi_angle,
+            coverage_threshold=model.coverage_threshold, channel=model.channel)
     ax_xcut.errorbar(*profiles.x[:2], yerr=profiles.x[2], fmt="-", lw=1.2, capsize=0)
     ax_ycut.errorbar(profiles.y[1], profiles.y[0], xerr=profiles.y[2], fmt="-", lw=1.2, capsize=0)
-    label = profiles.value_label
+    label = profiles.value_label + (" (background covariance replay)" if background_uncertainty == "replay" else "")
     rotated = not np.isclose(float(roi_angle) % 360, 0.0, atol=1e-10)
     ax_xcut.set_ylabel(label)
     ax_xcut.set_xlabel(("Box x · " if rotated else "") + model._axis_label(model.x_dim))
@@ -2297,7 +2322,8 @@ def _draw_mdhisto_roi_cuts(
                 closed=True, fill=False, edgecolor="#4f8bd6", lw=1.5))
         total, uncertainty, _ = integrated_box_sum(values, errors, mask=~profiles.selected,
             source_dependencies=view.get("source_dependencies") if model.channel == "signal" else None)
-        _draw_box_sum_annotation(ax_image, roi_extents, total, uncertainty)
+        _draw_box_sum_annotation(ax_image, roi_extents, total, uncertainty,
+            uncertainty_label="diagonal uncertainty" if view.get("background_profile_uncertainty") else None)
 
 
 def _apply_axes_linewidth(axes, colorbar, linewidth: float) -> None:
@@ -2788,6 +2814,15 @@ class MDHistoSliceViewer:
         dependencies = getattr(self.data, "source_dependencies", None)
         bundle = getattr(self.data, "counting_dependencies", None)
         source_weight = None
+        # Displaying already-replayed marginal cells does not combine their
+        # unrepresented cross-bin sources. Any actual cell aggregation still
+        # requires the dependency payload or another original-source replay.
+        replayed_marginals = (
+            contract is not None and contract.kind == "counting"
+            and contract.normalizer == "known" and not aggregates_cells
+            and event_statistics is not None
+            and self.data.metadata.get("background_profile_uncertainty") == "source_covariance"
+        )
         if contract is not None and contract.kind == "continuous":
             if contract.dependence != "independent" and dependencies is None:
                 raise ValueError("Shared-source slicing requires a dependency payload or source replay")
@@ -2807,7 +2842,7 @@ class MDHistoSliceViewer:
             signal, variance = normalized_measurement_statistics(*generic_statistics)
             self._reduced_measurement_statistics = generic_statistics
             self._reduced_measurement_marker = marker
-        elif contract is not None and not (contract.kind == "sampled_function" and not aggregates_cells) and (contract.kind != "counting" or (contract.dependence != "independent" and dependencies is None)
+        elif contract is not None and not replayed_marginals and not (contract.kind == "sampled_function" and not aggregates_cells) and (contract.kind != "counting" or (contract.dependence != "independent" and dependencies is None)
                                        or (contract.normalizer != "known" and bundle is None)):
             raise ValueError("This histogram contract requires its measurement payload or source replay")
         if contract is not None and contract.kind == "counting" and event_statistics is None:

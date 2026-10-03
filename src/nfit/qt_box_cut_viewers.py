@@ -95,6 +95,13 @@ class LiveBoxCutViewers:
         for axis in ("x", "y"):
             cut = cuts.get(axis)
             if cut is None or len(cut[0]) == 0:
+                viewer = self.viewers.pop(axis, None)
+                if viewer is not None:
+                    # An empty selection invalidates this side only. Its close
+                    # must not toggle the parent's popout choice for the other
+                    # side or leave the last nonempty profile visible.
+                    viewer.set_close_callback(None)
+                    viewer.window.close()
                 continue
             data = _profile_dataset(context, axis, cut, (measurements or {}).get(axis))
             name = f"{context.dataset_name} — {axis} box cut"

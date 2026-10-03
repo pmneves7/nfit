@@ -121,9 +121,12 @@ source-geometry rate is exactly the sample-geometry background prediction.
 The 0.1° compatibility tolerance is not an error bound for these assumptions.
 Pixel transfer requires stable detector IDs, compatible energy reconstruction,
 efficiency/solid-angle correction and masks. Changed flight paths, calibration,
-grouping or acquisition state can require raw re-reduction. The offset's meaning
-(physical motion versus calibration/readback variation) remains relevant before
-adopting a remapping default; no default was changed.
+grouping or acquisition state can require raw re-reduction. Paul confirmed that
+the bank was moved repeatedly between temperatures and sample/dummy acquisitions. The encoder reaches each target within the instrument's
+positioning tolerance; these offsets are expected physical acquisition differences,
+not evidence of faulty alignment. The accepted treatment retains each acquisition's
+own geometry for both events and normalization and replays the averaged dummy at
+sample rotations. Detector remapping is not adopted.
 
 ### Controlled truth, rather than appearance
 

@@ -1205,7 +1205,12 @@ the same HYSPEC bank setting), QSample or QLab MDEvents with one goniometer matr
 experiment, and an unsubtracted source group. QLab coordinates are already in
 the laboratory frame and are not rotated back. Small calibration differences
 are accepted (detector directions within 0.1°, incident energy within 0.1%);
-the replay retains the measured background geometry. The source's private powder
+the replay retains the measured background geometry for both event coordinates
+and trajectory normalization. The sample retains its own geometry. Small bank
+positioning differences within instrument tolerance do not require remapping
+background detector pixels onto the sample bank. For an orientation-averaged
+dummy mount, average its rotations while retaining laboratory direction and
+energy, then replay that average at each sample rotation. The source's private powder
 binning and the interpolation selector are not used. Source user masks still
 apply at reconstructed output-bin centers; sample masks and both detector masks
 restrict the replay acceptance. With Numba enabled, event replay uses a compiled
@@ -1224,8 +1229,10 @@ Alternatively, replay directly onto a final physical grid to pool its components
 that is a distinct statistical target. See
 [exact cached-field background profiles](measurement_statistics.md#exact-background-uncertainty-for-a-cached-field)
 for the API and uncertainty boundaries. Ordinary interactive previews mark their
-background uncertainty as a diagonal approximation. Asynchronous GUI replay and
-parent-composite recipe propagation remain pending. Covered-zero display
+background uncertainty as a diagonal approximation. Native-grid signal box cuts
+replay background covariance asynchronously after the selection settles. Aligned
+exposure-weighted bank composites retain the recipes needed for this operation;
+unsupported transformations remain explicitly approximate. Covered-zero display
 intervals are not observed count variances.
 
 Each source and sample group resolves its selected first-run incident energy

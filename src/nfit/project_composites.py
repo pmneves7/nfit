@@ -36,6 +36,11 @@ from .cache_utils import (
 from .cache_utils import (
     lru_store as _lru_store,
 )
+from .cached_background_replay import (
+    inherit_cached_background_composite,
+    preserve_cached_background_replay,
+    scale_cached_background_replay,
+)
 from .composite_scaling import composite_scaling, scale_composite_data
 from .data_workspace import temporary_data_directory
 from .dataset import PointData4D, PointListData
@@ -1094,7 +1099,7 @@ def composite_dataset_data(
     )
     if apply_backgrounds:
         settings = composite_scaling(group)
-        result = scale_composite_data(result, settings["result_scale"], _apply_dataset_scale)
+        result = _scale_composite_with_replay(result, settings["result_scale"])
     if not apply_spectral_channels:
         return result
     from .composite_spectral import apply_composite_spectral_channels
@@ -1329,7 +1334,7 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
     )
     if not apply_backgrounds:
         return data
-    data = scale_composite_data(data, composite_scaling(group)["data_scale"], _apply_dataset_scale)
+    data = _scale_composite_with_replay(data, composite_scaling(group)["data_scale"])
     return _apply_composite_backgrounds(
         group,
         data,
@@ -1593,13 +1598,20 @@ def _composite_dataset_data(
         result = _apply_mdhisto_coverage_threshold(result, config)
     if not apply_backgrounds:
         return result
-    result = scale_composite_data(result, composite_scaling(group)["data_scale"], _apply_dataset_scale)
+    result = _scale_composite_with_replay(result, composite_scaling(group)["data_scale"])
     return _apply_composite_backgrounds(
         group,
         result,
         config=config,
         progress_callback=progress_callback,
     )
+
+
+def _scale_composite_with_replay(data, factor):
+    result = scale_composite_data(data, factor, _apply_dataset_scale)
+    if isinstance(data, MDHistoData) and result is not data:
+        return scale_cached_background_replay(data, result, factor)
+    return result
 
 
 def _apply_mdhisto_coverage_threshold(
@@ -1619,11 +1631,12 @@ def _apply_mdhisto_coverage_threshold(
     rebin_metadata = dict(metadata.get("rebin", {}))
     rebin_metadata["minimum_coverage"] = _rebin_minimum_coverage(config)
     metadata["rebin"] = rebin_metadata
-    return data.with_updates(
+    result = data.with_updates(
         mask=np.asarray(data.mask, dtype=bool) | coverage_mask,
         metadata=metadata,
         auxiliary_channels=channels,
     )
+    return preserve_cached_background_replay(data, result)
 
 
 def _broadcast_background_over_metadata(
@@ -2154,11 +2167,11 @@ def _cached_composite_dataset_data(
         or settings["result_scale"] != 1
     ):
         _COMPOSITE_DATA_CACHE[base_key] = (base_signature, base)
-    result = scale_composite_data(base, settings["data_scale"], _apply_dataset_scale)
+    result = _scale_composite_with_replay(base, settings["data_scale"])
     result = _apply_composite_backgrounds(
         group, result, config=config, progress_callback=progress_callback
     )
-    result = scale_composite_data(result, settings["result_scale"], _apply_dataset_scale)
+    result = _scale_composite_with_replay(result, settings["result_scale"])
     config["stale"] = False
     signature = _composite_cache_signature(group, config_override=config, binning_id=binning_id)
     binning_names = data_group_composite_binnings(group)
@@ -2397,6 +2410,7 @@ def _composite_mdhisto_data(
     source_datasets = datasets if datasets is not None else _composite_candidates(group)
     report_sources = datasets is None
     prepared_sources = []
+    replay_sources = []
     for dataset_index, dataset in enumerate(source_datasets):
         data = (
             dataset.data
@@ -2507,6 +2521,7 @@ def _composite_mdhisto_data(
             weights = normalization_values[valid] * float(dataset.fit_weight)
         else:
             weights = _dataset_statistical_weight(dataset, signal.size)
+        replay_sources.append((data, valid, scale, float(dataset.fit_weight)))
         coords_parts.append(coords[valid])
         signal_parts.append(signal)
         error_parts.append(errors)
@@ -2794,6 +2809,16 @@ def _composite_mdhisto_data(
         auxiliary_channels=auxiliary_channels,
     )
 
+    aligned_basis = not metadata_dimensions and all(
+        len(data.axes) != 4 or np.allclose(
+            np.vstack(_mdhisto_rebin_source_axis_vectors(data)),
+            output_basis if output_basis is not None else np.eye(4), rtol=0, atol=16*np.finfo(float).eps,
+        ) for data, _, _, _ in replay_sources
+    )
+    output = inherit_cached_background_composite(
+        replay_sources, output, aligned=aligned_basis,
+        weighting=weighting_mode,
+    )
     if original_result is not None:
         original_result.binned_data.setflags(write=False)
         original_result.binned_data_errs.setflags(write=False)

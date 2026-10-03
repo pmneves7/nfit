@@ -71,7 +71,8 @@ A few of its main capabilities are:
   continuous means, coordinate integrals, and shared-source linear uncertainty;
 - replay original measured-background observations for sample-exposure-weighted
   cached-field profiles and statistical CSV exports, with lazy source recipes,
-  reused query results and explicitly approximate interactive preview errors;
+  aligned bank-composite propagation, asynchronous box cuts, reused query results
+  and explicitly approximate interactive preview errors;
 - smooth count numerator and exposure through an optional bounded Python API
   that retains primitive covariance for subsequent cuts;
 - preserve count and continuous-mean statistics through binning, slices, box

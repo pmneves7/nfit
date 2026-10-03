@@ -89,8 +89,11 @@ different Python.
   trajectory normalization, and retained detector-mask metadata.
 - `src/nfit/event_bin_indices.py`: shared arbitrary-edge event membership,
   explicitly re-exported by the MDE importer for compatibility.
-- `src/nfit/cached_background_replay.py`: bounded measured-background source
-  recipes and explicit cached-field profile covariance replay.
+- `src/nfit/cached_background_replay.py` and `background_profile_queries.py`:
+  bounded measured-background recipes, aligned composite propagation, and
+  original-grid profile selection and covariance replay.
+- `src/nfit/qt_background_profiles.py`: asynchronous background box-profile
+  replay, stale-result guards, and viewer export readiness.
 - `src/nfit/dgs_reduction_policy.py` and `dgs_reduction_settings.py`: shared DGS
   numerical conventions and public policy configuration; the focused
   `dgs_reduction_policy_gui.py` presents those choices.
