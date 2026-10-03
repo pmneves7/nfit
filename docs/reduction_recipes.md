@@ -60,10 +60,16 @@ or efficiency calibration discards only that run's reduced cache. Other runs
 remain reusable. Calibration file identities participate in histogram signatures
 as well as event-cache signatures.
 
-Raw geometry reuse checks the complete current embedded instrument definition.
+Raw geometry reuse checks the complete resolved instrument definition, including
+referenced log values and any HYSPEC Tank offset. HYSPEC preprocessing controls
+are retained in shared defaults or per-run overrides; resolved TOF windows and
+automatic offsets are recorded with each run.
 CORELLI also checks each run before reusing detector geometry. MDEvent trajectory
-batching compares actual detector arrays and calibration values. The cache
-signature includes file path, size and nanosecond modification/change times;
+batching compares actual detector arrays and calibration values. nfit also reads
+masks serialized in each MDE experiment's instrument parameter map;
+masked detectors contribute no trajectory exposure even without a separate mask
+file. Numerical policy version 3 invalidates earlier DGS/MDE histogram signatures.
+The file signature includes file path, size and nanosecond modification/change times;
 these are lightweight fingerprints, not checksums of entire acquisition files.
 
 Adding and removing runs changes histogram membership without discarding the

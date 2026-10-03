@@ -82,8 +82,11 @@ different Python.
   masks, and coordinate projection services.
 - `src/nfit/project_rebinning.py`: numerical grid configuration, symmetry-aware
   rebinning, and histogram construction.
-- `src/nfit/raw_dgs.py`, `raw_dgs_geometry_precision.py`, and `raw_dgs_cache.py`:
-  direct-geometry reduction and streamed, dataset-owned reduced-event project caches.
+- `src/nfit/raw_dgs.py`, `raw_dgs_geometry.py`, `raw_dgs_geometry_precision.py`,
+  `raw_dgs_hyspec.py`, and `raw_dgs_cache.py`: direct-geometry reduction, resolved
+  instrument geometry, HYSPEC preprocessing, and dataset-owned reduced-event caches.
+- `src/nfit/mdevent.py` and `mdevent_detector_masks.py`: reduced-event import,
+  trajectory normalization, and retained detector-mask metadata.
 - `src/nfit/dgs_reduction_policy.py` and `dgs_reduction_settings.py`: shared DGS
   numerical conventions and public policy configuration; the focused
   `dgs_reduction_policy_gui.py` presents those choices.

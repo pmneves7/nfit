@@ -45,13 +45,12 @@ tracks the staged implementation and review checkpoints for these changes.
   denominator, but legacy point histograms discard it and later precision profiles
   can estimate a different target. Review the zero-count error floor separately
   from adding source-statistic propagation.
-- Resolve run-log-dependent instrument-definition locations and rotations before
-  raw-DGS conversion or geometry reuse. HYSPEC's moderator distance and detector
-  tank rotation require these values; a matching static definition alone does
-  not establish matching geometry. Correct the HYSPEC automatic T0 exponent
-  evaluation and disclose failed calibration evaluation. Qualify raw-DGS source
-  detection by measurement type; event banks must not route CW diffraction,
-  correlation-chopper reconstruction or SANS through DGS.
+- Extend native HYSPEC raw reduction beyond Shiver's ungrouped data-to-MDE
+  workflow when required: time-independent background, polarization/transmission
+  corrections and detector grouping need explicit settings and reference tests.
+- Review a strict Shiver observed-extrema compatibility option separately from
+  retaining valid raw events across the configured energy window. Float32 MD
+  events can be rounded outside Shiver's observed-extrema box.
 - Extend source-aware combination to repeated aliases across expression
   subfolders and repeated CORELLI/ordinary sources within a summed subfolder.
   Numbered-source selection and grouping already use ordinary dataset groups;

@@ -60,6 +60,27 @@ def test_negative_time_zero_uses_explicit_automatic_mode(recipe_explorer):
     assert group.metadata["raw_dgs"]["t0_override"] is None
 
 
+def test_hyspec_window_and_zero_offset_controls_update_public_recipe(recipe_explorer):
+    from PySide6 import QtWidgets
+
+    from nfit.reduction_recipes import effective_reduction_config
+
+    explorer, group = recipe_explorer
+    crop = explorer.details_widget.findChild(QtWidgets.QCheckBox, "raw_dgs_hyspec_tof_crop")
+    crop.setChecked(False)
+    assert effective_reduction_config(group)["hyspec_tof_crop"] is False
+    automatic = explorer.details_widget.findChild(QtWidgets.QCheckBox, "raw_dgs_hyspec_tank_offset_override_automatic")
+    value = explorer.details_widget.findChild(QtWidgets.QDoubleSpinBox, "raw_dgs_hyspec_tank_offset_override")
+    assert automatic.isChecked() and not value.isEnabled()
+    automatic.setChecked(False)
+    value.setValue(-1.25)
+    assert effective_reduction_config(group)["hyspec_tank_offset_override"] == -1.25
+    value.setValue(0.)
+    assert effective_reduction_config(group)["hyspec_tank_offset_override"] == 0.
+    automatic.setChecked(True)
+    assert effective_reduction_config(group)["hyspec_tank_offset_override"] is None
+
+
 def test_run_override_is_explicit_and_reinherits_shared_setting(recipe_explorer):
     from PySide6 import QtWidgets
 

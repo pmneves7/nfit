@@ -1,0 +1,405 @@
+{
+  "host": "analysis-node01.sns.gov",
+  "python": "3.14.7",
+  "numpy": "2.5.3",
+  "source_modules": {
+    "raw_dgs": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs.py",
+      "sha256": "9102883ff47e68b50ecbf3699cc1c76dad9d24507fa210a7734929f9b4c8d220"
+    },
+    "raw_dgs_geometry": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs_geometry.py",
+      "sha256": "9009e2aa3c6103e69c3f5b7cf6b94031620c0c2a5bd17e98ebfe69d6f976752b"
+    },
+    "raw_dgs_geometry_precision": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs_geometry_precision.py",
+      "sha256": "c519fd8baa722b21cb2d65e4d16a54f7d16d96a353d647efedb75773df7ccb39"
+    },
+    "raw_dgs_hyspec": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs_hyspec.py",
+      "sha256": "b5a3e153b9920e493525c4a46a9a38726cedd8b75bf1ac6b3d561986ddef0fb9"
+    },
+    "raw_dgs_cache": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs_cache.py",
+      "sha256": "c92336bf5efd7ba3b9c667f280b0cb52dd3114868dc5dd7f44d5f7a2356f22c7"
+    },
+    "raw_dgs_monitors": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs_monitors.py",
+      "sha256": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229"
+    },
+    "raw_dgs_pulses": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/raw_dgs_pulses.py",
+      "sha256": "3c5d4cc9a0d4d23aae2cf67f8473a55ea25cd7fbfdc1fe542b10f4bcae883e9b"
+    },
+    "mdevent": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/mdevent.py",
+      "sha256": "955cf18417db72d7291babf78b8fb35d2929972d513c93f20e2cbf7344c2f14f"
+    },
+    "dgs_reduction_policy": {
+      "path": "/tmp/nfit-rhel9-build-validation-5x68_ap7/source/src/nfit/dgs_reduction_policy.py",
+      "sha256": "52ac5a3151feca35e2395f5df5e36ca24bf4b3c9fa1a62e7e6f995f1a761830b"
+    }
+  },
+  "script_sha256": "d1f7d80181c1f91e53a5576ce7df90032bf5b173468e518335eb9861f2882758",
+  "runs": [
+    392985,
+    393089,
+    393387
+  ],
+  "grid_shape": [
+    160,
+    228
+  ],
+  "coordinate_mode": "powder",
+  "symmetry_operations": "none",
+  "options": {
+    "lower": [
+      0.0,
+      -56.0
+    ],
+    "upper": [
+      8.0,
+      58.0
+    ],
+    "num_bins": [
+      160,
+      228
+    ],
+    "max_batch_bytes": 134217728
+  },
+  "comparison": {
+    "all": {
+      "numerator": {
+        "cells": 36480,
+        "exact": false,
+        "max_absolute": 4.472160339355469,
+        "max_relative": 0.10151624158900804,
+        "finite_support_equal": true
+      },
+      "variance": {
+        "cells": 36480,
+        "exact": false,
+        "max_absolute": 20.00021743774414,
+        "max_relative": 0.10305067812562796,
+        "finite_support_equal": true
+      },
+      "norm": {
+        "cells": 36480,
+        "exact": false,
+        "max_absolute": 2.523884177207947e-07,
+        "max_relative": 8.205070201045735e-11,
+        "finite_support_equal": true
+      },
+      "counts": {
+        "cells": 36480,
+        "exact": false,
+        "max_absolute": 1.0,
+        "max_relative": 0.1,
+        "finite_support_equal": true
+      }
+    },
+    "lowest_exposure_decile": {
+      "numerator": {
+        "cells": 1857,
+        "exact": false,
+        "max_absolute": 0.957685112953186,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "variance": {
+        "cells": 1857,
+        "exact": false,
+        "max_absolute": 0.9171607494354248,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "norm": {
+        "cells": 1857,
+        "exact": false,
+        "max_absolute": 6.367190508171916e-08,
+        "max_relative": 8.205070201045735e-11,
+        "finite_support_equal": true
+      },
+      "counts": {
+        "cells": 1857,
+        "exact": false,
+        "max_absolute": 1.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      }
+    },
+    "coverage_fringe": {
+      "numerator": {
+        "cells": 924,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "variance": {
+        "cells": 924,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "norm": {
+        "cells": 924,
+        "exact": false,
+        "max_absolute": 2.523884177207947e-07,
+        "max_relative": 8.205070201045735e-11,
+        "finite_support_equal": true
+      },
+      "counts": {
+        "cells": 924,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      }
+    }
+  },
+  "boundary_adjusted_comparison": {
+    "numerator": {
+      "cells": 36480,
+      "exact": true,
+      "max_absolute": 0.0,
+      "max_relative": 0.0,
+      "finite_support_equal": true
+    },
+    "variance": {
+      "cells": 36480,
+      "exact": true,
+      "max_absolute": 0.0,
+      "max_relative": 0.0,
+      "finite_support_equal": true
+    },
+    "norm": {
+      "cells": 36480,
+      "exact": false,
+      "max_absolute": 2.523884177207947e-07,
+      "max_relative": 8.205070201045735e-11,
+      "finite_support_equal": true
+    },
+    "counts": {
+      "cells": 36480,
+      "exact": true,
+      "max_absolute": 0.0,
+      "max_relative": 0.0,
+      "finite_support_equal": true
+    }
+  },
+  "event_comparison": [
+    {
+      "run": "392985",
+      "events": 25569,
+      "reference_events": 25568,
+      "stored_float32_QLab_weight_variance_multiset_exact_subset": true,
+      "energy_difference": {
+        "cells": 25568,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "energy_absolute_tolerance_meV": 4e-09,
+      "QLab_difference": {
+        "cells": 76704,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "QLab_absolute_tolerance_inverse_angstrom": 2e-06,
+      "boundary_exclusions": 1,
+      "excluded_float32_events": [
+        [
+          -0.2718915641307831,
+          0.29347747564315796,
+          4.269355773925781,
+          57.71657943725586,
+          4.4613823890686035,
+          19.9039306640625
+        ]
+      ],
+      "columns": [
+        "Q_lab_x",
+        "Q_lab_y",
+        "Q_lab_z",
+        "DeltaE",
+        "weight",
+        "variance"
+      ]
+    },
+    {
+      "run": "393089",
+      "events": 7878,
+      "reference_events": 7876,
+      "stored_float32_QLab_weight_variance_multiset_exact_subset": true,
+      "energy_difference": {
+        "cells": 7876,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "energy_absolute_tolerance_meV": 4e-09,
+      "QLab_difference": {
+        "cells": 23628,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "QLab_absolute_tolerance_inverse_angstrom": 2e-06,
+      "boundary_exclusions": 2,
+      "excluded_float32_events": [
+        [
+          -0.5855216979980469,
+          0.2237221747636795,
+          4.377688884735107,
+          57.714359283447266,
+          4.468402862548828,
+          19.96662139892578
+        ],
+        [
+          -5.878625392913818,
+          -0.45176973938941956,
+          1.41358482837677,
+          -44.45042419433594,
+          0.957685112953186,
+          0.9171607494354248
+        ]
+      ],
+      "columns": [
+        "Q_lab_x",
+        "Q_lab_y",
+        "Q_lab_z",
+        "DeltaE",
+        "weight",
+        "variance"
+      ]
+    },
+    {
+      "run": "393387",
+      "events": 421781,
+      "reference_events": 421780,
+      "stored_float32_QLab_weight_variance_multiset_exact_subset": true,
+      "energy_difference": {
+        "cells": 421780,
+        "exact": false,
+        "max_absolute": 3.725290298461914e-09,
+        "max_relative": 1.8549317815086397e-07,
+        "finite_support_equal": true
+      },
+      "energy_absolute_tolerance_meV": 4e-09,
+      "QLab_difference": {
+        "cells": 1265340,
+        "exact": true,
+        "max_absolute": 0.0,
+        "max_relative": 0.0,
+        "finite_support_equal": true
+      },
+      "QLab_absolute_tolerance_inverse_angstrom": 2e-06,
+      "boundary_exclusions": 1,
+      "excluded_float32_events": [
+        [
+          0.44126638770103455,
+          -0.029548125341534615,
+          4.289717197418213,
+          57.777156829833984,
+          4.472160339355469,
+          20.00021743774414
+        ]
+      ],
+      "columns": [
+        "Q_lab_x",
+        "Q_lab_y",
+        "Q_lab_z",
+        "DeltaE",
+        "weight",
+        "variance"
+      ]
+    }
+  ],
+  "final_cuts": {
+    "view_statistics_verified": true,
+    "box_cut_statistics_verified": true,
+    "region": [
+      1.0,
+      4.0,
+      3.5,
+      25.0
+    ],
+    "numerator": 20848.87009060383,
+    "variance_numerator": 26675.72064626217,
+    "exposure": 298148679.87255085,
+    "signal": 6.992776254959795e-05,
+    "uncertainty": 5.478039880651963e-07
+  },
+  "raw_three_runs_seconds": 9.922788138967007,
+  "reference_three_runs_seconds": 7.014759460929781,
+  "source_size_mtime": {
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/SEQUOIA_Ei60_NiO_and_sapphire.nfit": {
+      "bytes": 27249243628,
+      "mtime_ns": 1790794507596832834
+    },
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/SEQUOIA_Ei60_NiO_minus_Al2O3_binning_backgrounds.nfit": {
+      "bytes": 91156232095,
+      "mtime_ns": 1790980802385040818
+    },
+    "/SNS/SEQ/IPTS-37189/nexus/SEQ_392985.nxs.h5": {
+      "bytes": 8730898,
+      "mtime_ns": 1775622915888936886
+    },
+    "/SNS/SEQ/IPTS-37189/nexus/SEQ_393089.nxs.h5": {
+      "bytes": 23750690,
+      "mtime_ns": 1775625306007020135
+    },
+    "/SNS/SEQ/IPTS-37189/nexus/SEQ_393387.nxs.h5": {
+      "bytes": 123666062,
+      "mtime_ns": 1775632321134290941
+    },
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/.nfit-diagnostics/archive/converter-1d/parity-final/mantid_mde_392985.nxs": {
+      "bytes": 11510393,
+      "mtime_ns": 1790958361847122000
+    },
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/.nfit-diagnostics/archive/converter-1d/parity-final/mantid_mde_393089.nxs": {
+      "bytes": 10560132,
+      "mtime_ns": 1790958376148072000
+    },
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/.nfit-diagnostics/archive/converter-1d/parity-final/mantid_mde_393387.nxs": {
+      "bytes": 37066676,
+      "mtime_ns": 1790958392391040000
+    },
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/tempMDE/All_Ei60_T5K_all_617_runs.nxs": {
+      "bytes": 11271026040,
+      "mtime_ns": 1790725678596553281
+    },
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/tempMDE/van382236_D": {
+      "bytes": 174203830,
+      "mtime_ns": 1775611308496780000
+    },
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/.nfit-diagnostics/archive/converter-1d/parity-final/mantid_mde_fine_3barm.h5": {
+      "bytes": 1228714,
+      "mtime_ns": 1790960948653795000
+    }
+  },
+  "original_sources_and_projects_unchanged": true,
+  "source_modules_unchanged_during_run": true,
+  "normalization_relative_tolerance": 3e-08,
+  "stored_mantid_references": [
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/.nfit-diagnostics/archive/converter-1d/parity-final/mantid_mde_392985.nxs",
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/.nfit-diagnostics/archive/converter-1d/parity-final/mantid_mde_393089.nxs",
+    "/SNS/users/paulneves/data/SNS/SEQ/IPTS-37189/shared/nfit/.nfit-diagnostics/archive/converter-1d/parity-final/mantid_mde_393387.nxs"
+  ],
+  "proxy_description": "IPTS-local metadata-only external links; event arrays read from stored per-run Mantid sources; oriented lattice linked from merged reference",
+  "timing_scope": "Acceptance timings; concurrent jobs, OS cache and JIT uncontrolled; not a performance comparison",
+  "limits": [
+    "Stored independent Mantid reduction references, no fresh Mantid process",
+    "Four recorded per-run ConvertToMD boundary exclusions are audited separately; nfit retains these events",
+    "Three representative SEQUOIA runs, not all617",
+    "Radial Q/E regression plus QLab event audit; not a new HKLE/symmetry certification",
+    "Recorded independent symmetry-copy diagonal variance; calibration covariance not inferred"
+  ]
+}

@@ -52,7 +52,8 @@ def record_resolved_reduction(dataset, config, *, automatic=None, provenance=Non
     values = dict(automatic)
     for key, value in config.items():
         if key.endswith("_override"):
-            target = {"incident_energy_override": "incident_energy_meV", "t0_override": "t0_microseconds"}.get(key, key)
+            target = {"incident_energy_override": "incident_energy_meV", "t0_override": "t0_microseconds",
+                      "hyspec_tank_offset_override": "hyspec_tank_offset_degrees"}.get(key, key)
             if value is not None:
                 values[target] = value
     dataset.metadata["resolved_reduction"] = {"version": 1, "values": values,

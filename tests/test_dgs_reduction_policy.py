@@ -21,6 +21,18 @@ def test_effective_defaults_and_invalid_choices():
     assert "monitor_variance_policy" not in policy.resolved_dgs_reduction_policies({}, include_monitor=False)
 
 
+def test_numerical_policy_version_invalidates_saved_mde_histogram_signature(tmp_path, monkeypatch):
+    from nfit import mdevent_dataset_group, project_composites
+    from tests.test_mdevent import _write_mdevent
+
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+    before = project_composites._composite_cache_signature(group)
+    monkeypatch.setattr(project_composites, "DGS_REDUCTION_POLICY_VERSION", policy.DGS_REDUCTION_POLICY_VERSION + 1)
+    assert project_composites._composite_cache_signature(group) != before
+
+
 def test_mantid_energy_coefficients_preserve_reference_evaluation_order():
     assert policy.ENERGY_TO_K2 == 2.0721246560534285
     assert policy.ENERGY_TO_K == 0.48259644856724077

@@ -28,7 +28,7 @@ SYMMETRY_VARIANCE_POLICIES = (
     ("independent_copies", "Independent symmetry copies (Mantid)"),
     ("within_bin_covariance", "Correlated copies within each final bin"),
 )
-DGS_REDUCTION_POLICY_VERSION = 2
+DGS_REDUCTION_POLICY_VERSION = 3
 
 # Mantid v6.16 PhysicalConstants (SI units). Keep these coefficients distinct:
 # ConvertToMD uses NeutronEToKSqr, while MDNorm constructs energyToK in the

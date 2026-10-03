@@ -153,6 +153,11 @@ def reduction_settings_schema(group_or_format) -> tuple[ReductionSetting, ...]:
                                  "Upper reconstructed energy-transfer bound divided by Ei; must be below one and above Emin / Ei.", maximum=1.0),
                 ReductionSetting("monitor_variance_policy", "Monitor variance convention", "choice", DEFAULT_MONITOR_VARIANCE_POLICY,
                                  "Convention used when fitting run monitors to determine Ei and T0.", choices=MONITOR_VARIANCE_POLICIES),
+                ReductionSetting("hyspec_tof_crop", "HYSPEC raw TOF window", "bool", True,
+                                 "Apply Shiver's HYSPEC TOF frame window before time-zero correction. Uses the run msd and effective Ei; other instruments are unaffected."),
+                ReductionSetting("hyspec_tank_offset_override", "HYSPEC Tank Y offset", "float", None,
+                                 "Additional HYSPEC Tank rotation in degrees. Automatic uses mean(psda)*(1-mean(psr)/4200); zero explicitly disables this rotation. Other instruments are unaffected.",
+                                 units="deg", automatic=True),
             ]
         result += [
             ReductionSetting("trajectory_energy_policy", "Trajectory incident energy", "choice", DEFAULT_TRAJECTORY_ENERGY_POLICY,
@@ -312,13 +317,20 @@ def resolved_reduction_values(group, dataset) -> dict[str, Any]:
     resolved = dataset.metadata.get("resolved_reduction", {})
     automatic_values = resolved.get("automatic_values", {})
     values = {}
-    for key, metadata_key in (("incident_energy_override", "incident_energy"), ("t0_override", "t0")):
-        if metadata_key in dataset.metadata or key in config:
+    for key, metadata_key in (("incident_energy_override", "incident_energy"), ("t0_override", "t0"),
+                              ("hyspec_tank_offset_override", "hyspec_tank_offset")):
+        if (metadata_key in dataset.metadata or key in config
+                or (key == "hyspec_tank_offset_override"
+                    and "hyspec_tank_offset_degrees" in automatic_values)):
             automatic = config.get(key) is None
-            recorded_key = "incident_energy_meV" if metadata_key == "incident_energy" else "t0_microseconds"
+            recorded_key, units = {
+                "incident_energy": ("incident_energy_meV", "meV"),
+                "t0": ("t0_microseconds", "us"),
+                "hyspec_tank_offset": ("hyspec_tank_offset_degrees", "deg"),
+            }[metadata_key]
             values[key] = {"automatic": automatic,
                            "value": automatic_values.get(recorded_key, automatic_values.get(metadata_key, automatic_values.get(key, dataset.metadata.get(metadata_key)))) if automatic else config[key],
-                           "units": "meV" if metadata_key == "incident_energy" else "us"}
+                           "units": units}
             if resolved.get("stale"):
                 values[key]["stale"] = True
     return values

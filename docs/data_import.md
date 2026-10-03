@@ -322,7 +322,7 @@ scripts.
 ## Compatible direct-geometry spectrometer data
 
 This importer supports raw event NeXus files from compatible direct-geometry
-spectrometers, including ARCS, CNCS, and SEQUOIA. It requires the expected
+spectrometers, including ARCS, CNCS, HYSPEC, and SEQUOIA. It requires the expected
 event banks and run logs plus an embedded Mantid instrument definition. It is
 not a universal direct-geometry NeXus importer.
 
@@ -331,11 +331,39 @@ continuous-wave diffraction reduction; CORELLI uses its correlation-chopper
 reconstruction; MACS uses measured-point normalization. Event banks alone do
 not identify the measurement type. GP-SANS also requires a separate SANS path.
 
-Raw HYSPEC definitions with run-log-dependent moderator positions and detector
-tank rotations are not supported by the current static geometry parser. Its
-automatic T0 formula also needs correction before raw HYSPEC acceptance.
-Import already reduced HYSPEC MDE data instead. A saved reduction's physical
-geometry must not be inferred from the instrument's name alone.
+HYSPEC remains a direct-geometry reduction. Moderator positions and detector
+rotations are resolved from the instrument definition and each run's logs.
+Automatic time zero uses the Mantid HYSPEC incident-energy formula. Failed
+calibration evaluation produces a warning and records the failure in the run's
+resolved reduction; explicit incident-energy and time-zero overrides remain
+available.
+
+**HYSPEC raw TOF window** applies Shiver's flight-path window to recorded TOFs
+before time-zero subtraction. **HYSPEC Tank Y offset** defaults to the offset
+from polarization logs; an explicit zero disables that additional rotation.
+Both controls are saved, editable per run, and exported with reduction recipes.
+They have no effect on other instruments. The resolved window, log means and
+offset are retained in reduction provenance and lazy reduced-event caches.
+See [HYSPEC conventions](physics_conventions.md#hyspec-raw-event-preprocessing).
+
+To reproduce a particular Shiver recipe, also match its bad-pulse threshold,
+mask, normalization, energy limits and UB. Shiver's data-to-MDE recipe and the
+HYSPEC histogram autoreduction can differ in background subtraction, pulse
+filtering and grouping. nfit does not silently infer these choices. In
+particular, select an explicit tube-tip mask when reproducing a Shiver recipe
+that used its default tip masking.
+The native HYSPEC path covers ungrouped data-to-MDE reduction. Time-independent
+background subtraction, polarization/transmission corrections and grouped
+histogram autoreduction require their own reduction steps; they are not inferred
+from the HYSPEC source. Already reduced MDE files can still be imported directly.
+
+Native raw reduction retains valid events throughout the configured energy
+window. Shiver's observed-extrema MD bounds can discard an extreme event when
+conversion to float32 rounds its energy outside those bounds. This is distinct
+from a reconstruction or normalization difference: the common event fields can
+agree exactly while the retained event counts differ. Importing the saved MDE
+reproduces its retained events. Native raw conversion does not currently emulate
+that observed-extrema loss.
 
 Compatible runs are stored as a file-backed dataset group. The shared setup
 holds the UB matrix, detector mask, processed vanadium file, and optional
@@ -374,10 +402,12 @@ piecewise trajectory integral without repeatedly sorting every crossing. The
 final merge processes independent output tiles in parallel while retaining
 each bin's worker addition order.
 
-Detector geometry is reused across runs only when their complete embedded
-instrument XML definitions are identical. The bounded cache checks the XML
-contents on each read, so mixed instruments and edited definitions retain
-their own detector positions and efficiency parameters.
+Detector geometry is reused across runs only when their complete resolved
+instrument definitions are identical, including referenced run-log positions,
+rotations and any HYSPEC Tank offset. The bounded cache checks these values on
+each new reduction, so mixed instruments, changed log values and edited
+definitions retain their own detector positions and efficiency parameters.
+Unsupported or missing geometry parameters fail explicitly.
 Detector masks are applied to the geometry before event lookup, and sorted
 detector indices are reused across event chunks. Each reduction reads fresh run
 metadata once and uses that snapshot for both events and normalization.
@@ -477,9 +507,10 @@ lossless NPZ compression.
 The cache signature includes the raw, vanadium, and mask file paths, sizes, and
 nanosecond modification/change times, together with incident-energy/time-zero
 overrides, reduction energy bounds, pulse filtering, efficiency settings, and
-the monitor and event-precision policies. Current reduction version 5 records
-the six-column independent-variance format and the He-3 geometry convention.
-Earlier caches, including the interim six-column version 4, regenerate.
+the monitor and event-precision policies, and HYSPEC preprocessing settings.
+Current reduction version 6 includes resolved run-log geometry, corrected T0
+formula evaluation, and HYSPEC preprocessing. Earlier reduced-event caches
+regenerate when binning is requested.
 Changes to these inputs regenerate affected caches. If a source file is absent,
 its last saved signature is retained so the cached reduction remains usable.
 Changed reduction settings still require the original inputs for regeneration.
@@ -558,6 +589,14 @@ HKLE dataset.
 nfit reads Mantid's saved goniometer rotation matrix when present. For MDEvent
 files that store only named goniometer axes and angles, including some SEQUOIA
 reductions, it reconstructs the same rotation from that axis metadata.
+
+Detector masks saved in an experiment's instrument parameter map constrain its
+normalization trajectories, including powder and background projection. They
+combine with an optional external detector mask and normalization workspace.
+Masked detector trajectories contribute zero exposure even when no separate mask
+file is supplied. The saved event signal and variance remain the reduced source
+measurements. Updated numerical policy signatures regenerate older cached
+histograms when requested.
 
 Each coordinate-axis row is an HKLE basis vector. The four rows must be linearly
 independent; momentum rows use only H, K, and L, while the energy row uses E.

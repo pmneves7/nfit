@@ -560,6 +560,42 @@ give different correction weights; neither alternative alone establishes
 physical calibration accuracy. Shape support and fallback behavior are listed
 under [numerical reduction policies](data_import.md#numerical-reduction-policies).
 
+### HYSPEC raw-event preprocessing
+
+For HYSPEC, incident energy $E_i$ is in meV and automatic time zero $T_0$ is
+in microseconds:
+
+$$
+T_0=4+\frac{107}{1+(E_i/31)^3}.
+$$
+
+The numerical constants use these units; at $E_i=15$ meV,
+$T_0=100.11159018271724$ µs. This is the Mantid instrument-parameter convention.
+Shiver's raw TOF window is centered at
+
+$$
+t_{\mathrm{el}}=
+\frac{(39000+\overline{m_{sd}}+4500)\,1000}
+{\sqrt{E_i/(5.227\times10^{-6})}},
+$$
+
+where $\overline{m_{sd}}$ is the arithmetic mean of the `msd` log in millimetres,
+and $t_{\mathrm{el}}$ is in microseconds. Here $5.227\times10^{-6}$ has units
+meV·s²/m² and 1000 converts the numerator in millimetres to metres and the
+result in seconds to microseconds. Accepted recorded TOFs span
+$t_{\mathrm{el}}\pm(10^6/120+470)$ µs, before subtracting $T_0$.
+
+The additional Tank rotation about Y is
+$\delta\theta=\overline{\mathrm{psda}}(1-\overline{\mathrm{psr}}/4200)$,
+where `psda` is in degrees and `psr` in millimetres. These preprocessing log
+means use full-precision arithmetic means. Instrument-definition geometry
+parameters follow Mantid's extraction convention instead: default time-weighted
+means, converted to six significant digits before evaluating the specified
+expression. Parameterized Euler rotations replace the static component
+rotation and compose as $R_xR_yR_z$. Unsupported definitions fail explicitly.
+UB transforms the reduced momentum coordinates and does not change these TOF
+or detector corrections.
+
 ## SI bulk susceptibility and magnetization
 
 ### Microscopic-to-bulk SI relation

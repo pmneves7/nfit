@@ -2479,11 +2479,10 @@ def test_raw_dgs_nexus_import_creates_a_file_backed_reduction_group(
 ):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-    h5py = pytest.importorskip("h5py")
+    from tests.test_raw_dgs import _write_raw_dgs
+
     source = tmp_path / "SEQ_409981.nxs.h5"
-    with h5py.File(source, "w") as handle:
-        entry = handle.create_group("entry")
-        entry.create_group("bank1_events")
+    _write_raw_dgs(source)
     group = DataGroup("sample")
 
     entries = project_gui.import_dataset_paths(

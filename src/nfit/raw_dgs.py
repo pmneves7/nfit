@@ -68,6 +68,13 @@ from .raw_dgs_cache import (
     iter_cached_event_chunks,
     reduction_signature,
 )
+from .raw_dgs_geometry import (
+    evaluate_log_expression,
+    location_transform,
+    resolved_geometry_signature,
+    resolved_idf_xml,
+    source_distance,
+)
 from .raw_dgs_geometry_precision import (
     HE3_EFFICIENCY_EXPONENTIAL_CONSTANT as HE3_EFFICIENCY_EXPONENTIAL_CONSTANT,
 )
@@ -75,6 +82,7 @@ from .raw_dgs_geometry_precision import (
     mantid_cylinder_radius,
     mantid_he3_exponent,
 )
+from .raw_dgs_hyspec import raw_hyspec_tof_keep, resolved_hyspec_preprocessing
 from .raw_dgs_monitors import (
     TOF_US_PER_M_SQRT_MEV,
     _mantid_getei_v2_peak,
@@ -98,6 +106,12 @@ MANTID_T0_FORMULAS = {
     "HYSPEC": "4.0 + (107.0 / (1.0 + (incidentEnergy / 31.0)^3))",
 }
 
+_DGS_INSTRUMENT_NAMES = frozenset({"ARCS", "CNCS", "HYSPEC", "SEQUOIA"})
+_NON_DGS_INSTRUMENT_NAMES = frozenset({
+    "WAND", "WAND2", "WAND^2", "HB2C", "HB2A", "CORELLI", "MACS",
+    "CG2", "CG3", "GP-SANS", "BIOSANS", "DMC", "D33", "SANS-I", "SANS1",
+})
+
 
 @dataclass(frozen=True)
 class RawDGSRunInfo:
@@ -119,15 +133,26 @@ class RawDGSRunInfo:
 
 
 def is_raw_dgs_nexus_file(path: str | Path) -> bool:
+    """Identify compatible DGS acquisitions rather than arbitrary event banks."""
     try:
         import h5py
 
         with h5py.File(path, "r") as handle:
             entry = handle.get("entry")
-            return entry is not None and any(
-                name.startswith("bank") and name.endswith("_events") for name in entry
-            )
-    except (ImportError, OSError):
+            if entry is None or not any(
+                name.startswith("bank") and name.endswith("_events") and "event_id" in entry[name]
+                for name in entry
+            ):
+                return False
+            root = ET.fromstring(entry["instrument/instrument_xml/data"][()].tobytes())
+            name = str(root.get("name", "")).upper()
+            if name in _NON_DGS_INSTRUMENT_NAMES:
+                return False
+            # Classification precedes numerical validation: a malformed Ei
+            # must fail in the DGS importer, rather than become ordinary data.
+            energy = _log_value(entry, ("EnergyRequest", "Ei", "BL17:Det:TH:BL:Ei"), None)
+            return name in _DGS_INSTRUMENT_NAMES or energy is not None
+    except (ImportError, OSError, KeyError, TypeError, ValueError, ET.ParseError):
         return False
 
 
@@ -152,6 +177,8 @@ def inspect_raw_dgs_run(
         calibrated_ei, calibrated_t0 = _monitor_ei_t0(
             entry, requested_ei, diagnostics=calibration, variance_policy=monitor_variance_policy,
         )
+        identity = acquisition_identity(entry)
+        identity["geometry_signature"] = resolved_geometry_signature(entry)
         return RawDGSRunInfo(
             path=source,
             run_number=_text_scalar(entry.get("run_number"), source.stem),
@@ -166,7 +193,7 @@ def inspect_raw_dgs_run(
             ub_matrix=_ub_from_logs(entry),
             calibration_source=calibration["source"],
             calibration_warning=calibration.get("warning"),
-            **acquisition_identity(entry),
+            **identity,
         )
 
 
@@ -267,6 +294,8 @@ def raw_dgs_dataset_group(
         "trajectory_energy_policy": trajectory_energy_policy,
         **policies,
         "t0_override": None,
+        "hyspec_tof_crop": True,
+        "hyspec_tank_offset_override": None,
         "energy_min_fraction": -0.95,
         "energy_max_fraction": 0.95,
         "bad_pulse_threshold": 95.0,
@@ -473,6 +502,7 @@ def bin_raw_dgs_group(
             if cache is not None:
                 header = json.loads(str(archive["header_json"].item()))
                 info = _run_info_from_cache(header["run_info"])
+                hyspec_setup = header.get("hyspec_preprocessing")
                 normalization_payload = {
                     key: np.asarray(archive[key])
                     for key in ("detector_ids", "direction", "solid", "charge")
@@ -488,7 +518,17 @@ def bin_raw_dgs_group(
                     )
                 detector_norm, detector_mask = calibration_payloads[calibration_key]
                 info = inspect_raw_dgs_run(source, monitor_variance_policy=run_policies["monitor_variance_policy"])
-                geometry = _detector_geometry(source)
+                hyspec_setup = None
+                if str(info.instrument_name).upper() == "HYSPEC":
+                    import h5py
+
+                    with h5py.File(source, "r") as handle:
+                        hyspec_setup = resolved_hyspec_preprocessing(
+                            handle["entry"], run_config,
+                            float(run_config.get("incident_energy_override") or info.incident_energy),
+                            instrument_name=info.instrument_name,
+                        )
+                geometry = _detector_geometry(source, hyspec_preprocessing=hyspec_setup)
                 normalization_payload = _run_normalization_payload(
                     info, geometry, detector_norm, detector_mask, run_config
                 )
@@ -504,10 +544,13 @@ def bin_raw_dgs_group(
                 raise ValueError(f"{source.name} has no usable incident energy or source distance")
             energy_bounds = _energy_transfer_bounds(run_config, ei)
             record_resolved_reduction(dataset, run_config,
-                automatic={"incident_energy_meV": info.incident_energy, "t0_microseconds": info.t0},
+                automatic={"incident_energy_meV": info.incident_energy, "t0_microseconds": info.t0,
+                    **({"hyspec_tank_offset_degrees": hyspec_setup["tank_offset_degrees"]}
+                       if hyspec_setup is not None else {})},
                 provenance={"algorithm_version": RAW_DGS_REDUCTION_VERSION, "calibration_source": info.calibration_source,
                     "calibration_warning": info.calibration_warning, "instrument_name": info.instrument_name,
-                    "geometry_signature": info.geometry_signature, "reduction_signature": signature})
+                    "geometry_signature": info.geometry_signature, "reduction_signature": signature,
+                    **({"hyspec_preprocessing": hyspec_setup} if hyspec_setup is not None else {})})
             energy_bounds_by_dataset_id[dataset.id] = energy_bounds
             resolved_energy_windows.append(
                 {
@@ -576,11 +619,12 @@ def bin_raw_dgs_group(
                 chunks = _iter_reduced_event_chunks(
                     info, run_config, _masked_detector_geometry(geometry, detector_norm, detector_mask),
                     ei, energy_bounds, max_batch_bytes,
+                    hyspec_preprocessing=hyspec_setup,
                 )
                 if use_cache:
                     header = {"run_info": {
                         **asdict(info), "path": str(info.path), "ub_matrix": info.ub_matrix.tolist(),
-                    }}
+                    }, "hyspec_preprocessing": hyspec_setup}
                     chunks = cache_event_chunks(
                         dataset, signature, header, normalization_payload, chunks
                     )
@@ -767,7 +811,8 @@ def _run_normalization_payload(info, geometry, detector_norm, detector_mask, con
             "solid": solid, "charge": np.asarray(charge)}
 
 
-def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_batch_bytes):
+def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_batch_bytes,
+                               *, hyspec_preprocessing=None):
     """Yield Q_lab (Å⁻¹), DeltaE (meV), corrected weight and its variance."""
     import h5py
 
@@ -788,11 +833,14 @@ def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_ba
             for start in range(0, ids.shape[0], rows):
                 stop = min(start + rows, ids.shape[0])
                 event_ids = np.asarray(ids[start:stop], dtype=np.int64)
-                event_tof = np.asarray(tofs[start:stop], dtype=float) - t0
+                raw_tof = np.asarray(tofs[start:stop], dtype=float)
+                event_tof = raw_tof - t0
                 positions, exponents, valid = geometry.event_geometry_for_ids(
                     event_ids, mantid_precision=mantid_precision
                     and config.get("he3_detector_efficiency_correction", True),
                 )
+                if hyspec_preprocessing is not None:
+                    valid &= raw_hyspec_tof_keep(raw_tof, hyspec_preprocessing)
                 if pulse_keep is not None:
                     pulse_index = np.searchsorted(event_index, np.arange(start, stop), side="right") - 1
                     valid &= pulse_keep[np.clip(pulse_index, 0, pulse_keep.size - 1)]
@@ -1231,13 +1279,17 @@ def _masked_detector_geometry(geometry, detector_norm, detector_mask):
     )
 
 
-def _detector_geometry(path: Path) -> _DetectorGeometry:
-    """Read the current IDF and reuse geometry only for identical XML contents."""
+def _detector_geometry(path: Path, *, hyspec_preprocessing=None) -> _DetectorGeometry:
+    """Resolve run geometry and reuse it only for identical complete definitions."""
     import h5py
 
-    with h5py.File(path, "r") as handle:
-        xml = handle["entry/instrument/instrument_xml/data"][()].tobytes()
     try:
+        with h5py.File(path, "r") as handle:
+            xml = resolved_idf_xml(handle["entry"])
+        if hyspec_preprocessing is not None and hyspec_preprocessing["tank_offset_degrees"]:
+            from .raw_dgs_hyspec import rotated_hyspec_idf_xml
+
+            xml = rotated_hyspec_idf_xml(xml, hyspec_preprocessing["tank_offset_degrees"])
         return _detector_geometry_from_xml(xml)
     except ValueError as error:
         raise ValueError(f"{path.name}: {error}") from error
@@ -1262,16 +1314,14 @@ def _detector_geometry_from_xml(xml: bytes) -> _DetectorGeometry:
         if not idname or idname not in idlists:
             continue
         component_type = component.get("type")
-        leaf_positions = _expand_type(
-            component_type,
-            types,
-            np.eye(3),
-            np.zeros(3),
-            namespace,
-            he3_parameters,
-            he3_parameters.get(component.get("name") or component_type),
-            cylinder_shapes,
-        )
+        leaf_positions = []
+        for location in component.findall(f"{namespace}location") or [None]:
+            translation, rotation = _location_transform(location)
+            leaf_positions.extend(_expand_type(
+                component_type, types, rotation, translation, namespace,
+                he3_parameters, he3_parameters.get(component.get("name") or component_type),
+                cylinder_shapes,
+            ))
         detector_ids = _expand_idlist(idlists[idname], namespace)
         if len(leaf_positions) != len(detector_ids):
             continue
@@ -1426,23 +1476,8 @@ def _he3_tube_efficiency_correction(kf, exponents, *, mantid_precision=False):
 
 
 def _location_transform(location):
-    if location is None:
-        return np.zeros(3), np.eye(3)
-    translation = np.array([float(location.get(axis, 0.0)) for axis in ("x", "y", "z")])
-    rotation = np.eye(3)
-    for element in location.findall("{*}rot"):
-        axis = np.array([float(element.get(f"axis-{key}", 0.0)) for key in ("x", "y", "z")])
-        length = np.linalg.norm(axis)
-        if length:
-            axis /= length
-            angle = math.radians(float(element.get("val", 0.0)))
-            cross = np.array(
-                [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]]
-            )
-            rotation = rotation @ (
-                np.eye(3) + math.sin(angle) * cross + (1 - math.cos(angle)) * (cross @ cross)
-            )
-    return translation, rotation
+    """Compatibility wrapper for the authoritative IDF location service."""
+    return location_transform(location)
 
 
 def _expand_idlist(item, ns):
@@ -1473,18 +1508,8 @@ def _log_value(entry, names, default):
 
 
 def _source_distance(entry):
-    # Raw SNS files normally encode this in their IDF.  The SEQUOIA moderator is
-    # on the beam axis at z=-20.0114 m.
-    try:
-        xml_data = entry["instrument/instrument_xml/data"][()]
-        root = ET.fromstring(xml_data.tobytes().decode())
-        for component in root.findall("{*}component"):
-            if component.get("type") == "moderator":
-                location = component.find("{*}location")
-                return float(abs(float(location.get("z", 0.0))))
-    except (KeyError, ET.ParseError, TypeError, ValueError):
-        pass
-    return 0.0
+    """Compatibility wrapper for the resolved moderator position service."""
+    return source_distance(entry)
 
 
 def _monitor_ei_t0(entry, energy_guess, *, diagnostics=None, variance_policy=DEFAULT_MONITOR_VARIANCE_POLICY):
@@ -1500,13 +1525,13 @@ def _monitor_ei_t0(entry, energy_guess, *, diagnostics=None, variance_policy=DEF
     diagnostics["source"] = "requested_energy_no_usable_monitors"
     has_monitor_data = False
 
-    def failed_calibration(reason):
+    def failed_calibration(reason, *, source="requested_energy_failed_monitor_calibration"):
         message = (
-            f"Monitor Ei/T0 calibration failed for {entry.file.filename}: {reason}; "
+            f"Ei/T0 calibration failed for {entry.file.filename}: {reason}; "
             f"using requested Ei={energy_guess:g} meV and T0=0 microseconds. "
             "Set explicit Ei/T0 overrides before reducing this run."
         )
-        diagnostics.update(source="requested_energy_failed_monitor_calibration", warning=message)
+        diagnostics.update(source=source, warning=message)
         warnings.warn(message, RuntimeWarning, stacklevel=3)
         return float(energy_guess), 0.0
 
@@ -1518,8 +1543,15 @@ def _monitor_ei_t0(entry, energy_guess, *, diagnostics=None, variance_policy=DEF
         instrument_name = str(root.get("name", "")).upper()
         formula = _mantid_t0_formula(root, instrument_name)
         if formula is not None:
+            try:
+                t0 = _evaluate_mantid_t0_formula(formula, energy_guess)
+            except (SyntaxError, TypeError, ValueError, ArithmeticError) as error:
+                return failed_calibration(
+                    f"instrument T0 formula could not be evaluated: {error}",
+                    source="requested_energy_failed_t0_formula",
+                )
             diagnostics["source"] = "instrument_t0_formula"
-            return float(energy_guess), _evaluate_mantid_t0_formula(formula, energy_guess)
+            return float(energy_guess), t0
         locations = []
         for component in root.findall(".//{*}component[@type='monitor']"):
             for location in component.findall("{*}location"):
@@ -1596,9 +1628,9 @@ def _mantid_t0_formula(root, instrument_name):
 
 
 def _evaluate_mantid_t0_formula(formula, incident_energy):
-    """Evaluate Mantid's arithmetic t0_formula with only ``sqrt`` enabled."""
+    """Evaluate Mantid's arithmetic t0_formula, including muParser's power syntax."""
 
-    tree = ast.parse(str(formula), mode="eval")
+    tree = ast.parse(str(formula).replace("^", "**"), mode="eval")
     allowed = (
         ast.Expression,
         ast.BinOp,
@@ -1624,7 +1656,7 @@ def _evaluate_mantid_t0_formula(formula, incident_energy):
             not isinstance(node.func, ast.Name) or node.func.id != "sqrt"
         ):
             raise ValueError(f"unsupported Mantid t0_formula call: {formula!r}")
-    return float(
+    result = float(
         eval(
             compile(tree, "<mantid-t0-formula>", "eval"),
             {"__builtins__": {}},
@@ -1634,53 +1666,21 @@ def _evaluate_mantid_t0_formula(formula, incident_energy):
             },
         )
     )
+    if not math.isfinite(result):
+        raise ValueError(f"nonfinite Mantid t0_formula result: {formula!r}")
+    return result
 
 
 
 
 def _idf_location(entry, location):
-    """Resolve a static or log-driven IDF location into lab-frame metres."""
-
-    values = []
-    for coordinate in ("x", "y", "z"):
-        value = location.get(coordinate)
-        parameter = location.find(f"{{*}}parameter[@name='{coordinate}']")
-        if parameter is not None:
-            logfile = parameter.find("{*}logfile")
-            if logfile is not None:
-                log_value = _log_value(entry, (str(logfile.get("id", "")),), None)
-                if log_value is not None:
-                    value = _evaluate_idf_log_expression(logfile.get("eq"), log_value)
-        values.append(float(value or 0.0))
-    return np.asarray(values, dtype=float)
+    """Compatibility wrapper for static and run-log-driven IDF positions."""
+    return location_transform(location, entry=entry)[0]
 
 
 def _evaluate_idf_log_expression(expression, value):
-    """Evaluate Mantid IDF's arithmetic ``value`` expression without calls."""
-
-    if not expression:
-        return float(value)
-    tree = ast.parse(str(expression), mode="eval")
-    allowed = (
-        ast.Expression,
-        ast.BinOp,
-        ast.UnaryOp,
-        ast.Add,
-        ast.Sub,
-        ast.Mult,
-        ast.Div,
-        ast.Pow,
-        ast.USub,
-        ast.UAdd,
-        ast.Constant,
-        ast.Name,
-        ast.Load,
-    )
-    if not all(isinstance(node, allowed) for node in ast.walk(tree)):
-        raise ValueError(f"unsupported IDF logfile expression: {expression!r}")
-    return float(
-        eval(compile(tree, "<idf-logfile>", "eval"), {"__builtins__": {}}, {"value": float(value)})
-    )
+    """Compatibility wrapper for supported IDF logfile arithmetic."""
+    return evaluate_log_expression(expression, value)
 
 
 def _natural_sort_key(name):

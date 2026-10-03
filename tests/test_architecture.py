@@ -36,6 +36,18 @@ def test_project_cache_facade_shares_authoritative_stores():
     assert project_gui.clear_project_caches is project_caches.clear_project_caches
 
 
+def test_raw_geometry_service_is_authoritative_and_has_no_reducer_dependencies():
+    from nfit import raw_dgs, raw_dgs_geometry
+
+    for name in ("evaluate_log_expression", "location_transform", "resolved_idf_xml",
+                 "resolved_geometry_signature", "source_distance"):
+        assert getattr(raw_dgs, name) is getattr(raw_dgs_geometry, name)
+    tree = ast.parse((PACKAGE_ROOT / "raw_dgs_geometry.py").read_text())
+    modules = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+    modules.extend(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names)
+    assert not any(module.startswith(("raw_dgs", "project_", "PySide", "PyQt", "qt_")) for module in modules)
+
+
 GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "measurement_contracts.py",
     PACKAGE_ROOT / "measurement_statistics.py",
@@ -66,7 +78,10 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "raw_dgs_cache.py",
     PACKAGE_ROOT / "raw_dgs_monitors.py",
     PACKAGE_ROOT / "raw_dgs_geometry_precision.py",
+    PACKAGE_ROOT / "raw_dgs_geometry.py",
+    PACKAGE_ROOT / "raw_dgs_hyspec.py",
     PACKAGE_ROOT / "raw_dgs_pulses.py",
+    PACKAGE_ROOT / "mdevent_detector_masks.py",
     PACKAGE_ROOT / "histogram_reduction.py",
     PACKAGE_ROOT / "dgs_normalization.py",
     PACKAGE_ROOT / "dgs_reduction_policy.py",

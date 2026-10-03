@@ -152,6 +152,28 @@ def test_negative_t0_explicit_automatic_and_inherit_are_distinct(tmp_path):
     assert effective_reduction_config(group, first)["t0_override"] == -10
 
 
+def test_hyspec_controls_export_automatic_resolution_and_targeted_replay(tmp_path):
+    group = _group(tmp_path)
+    first, second = group.datasets
+    first.metadata["resolved_reduction"] = {"automatic_values": {"hyspec_tank_offset_degrees": 1.25}}
+    settings = {item.key: item for item in reduction_settings_schema(group)}
+    assert settings["hyspec_tof_crop"].default is True
+    assert settings["hyspec_tank_offset_override"].automatic
+    set_reduction_settings(group, {"hyspec_tof_crop": False})
+    set_reduction_settings(group, {"hyspec_tank_offset_override": 0.}, dataset_ids=[second.id])
+    resolved = resolved_reduction_values(group, first)["hyspec_tank_offset_override"]
+    assert resolved["automatic"] and resolved["value"] == 1.25
+    assert resolved["units"] == "deg"
+    assert resolved_reduction_values(group, second)["hyspec_tank_offset_override"]["value"] == 0.
+    recipe = export_reduction_recipe(group)
+    replay = _group(tmp_path)
+    for current, original in zip(replay.datasets, group.datasets, strict=True):
+        current.id = original.id
+    apply_reduction_recipe(replay, recipe)
+    assert effective_reduction_config(replay, replay.datasets[0])["hyspec_tof_crop"] is False
+    assert effective_reduction_config(replay, replay.datasets[1])["hyspec_tank_offset_override"] == 0.
+
+
 def test_only_effectively_affected_run_caches_are_removed(tmp_path):
     group = _group(tmp_path)
     first, second = group.datasets

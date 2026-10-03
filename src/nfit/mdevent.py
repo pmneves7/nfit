@@ -44,6 +44,7 @@ from .histogram_statistics import (
     EVENT_STATISTICS_METADATA,
     event_statistics_channels,
 )
+from .mdevent_detector_masks import apply_saved_detector_mask, saved_detector_mask_ids
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, mdhisto_measured_bins
 from .pipeline import DatasetEntry, DatasetGroup, MaskSpec
 from .reduction_runtime import (
@@ -1329,6 +1330,7 @@ def _trajectory_payloads(
                 solid = np.ones(detector_ids.size) if detector_norm is None else detector_norm.value_for_ids(detector_ids)
                 if detector_mask is not None:
                     solid[detector_mask.value_for_ids(detector_ids) <= 0.0] = 0.0
+                solid = apply_saved_detector_mask(experiment, detector_ids, solid)
                 charge = (
                     float(dataset.metadata["proton_charge"])
                     * float(dataset.fit_weight)
@@ -1768,6 +1770,7 @@ def _powder_trajectory_normalization(
                 )
                 if detector_mask is not None:
                     solid[detector_mask.value_for_ids(detector_ids) <= 0.0] = 0.0
+                solid = apply_saved_detector_mask(experiment, detector_ids, solid)
                 charge = (
                     float(dataset.metadata["proton_charge"])
                     * float(dataset.fit_weight)
@@ -2217,6 +2220,8 @@ def _read_run(group, index):
                 digest.update(name.encode())
                 digest.update(str((array.shape, array.dtype.str)).encode())
                 digest.update(array.tobytes())
+        digest.update(b"saved_detector_mask_ids")
+        digest.update(saved_detector_mask_ids(group).tobytes())
     instrument = group.get("instrument/name")
     instrument_name = "unknown" if instrument is None else str(_scalar(instrument))
     return MDEventRunInfo(

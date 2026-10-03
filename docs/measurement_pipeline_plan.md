@@ -57,7 +57,8 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Complete |
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
 | 6A | Validate instrument families and continuous measurements | Survey complete; adapter follow-ups required |
-| 6A-R | Resolve raw-DGS geometry/timing and validate HYSPEC conversion | Pending review |
+| 6A-R | Resolve raw-DGS geometry/timing and validate HYSPEC conversion | Core complete; historical subtraction split into 6A-R2 |
+| 6A-R2 | Reproduce historical HYSPEC background recipes and review extrema compatibility | Pending review |
 | 6A-M | Preserve MACS count/exposure targets through final profiles | Pending review |
 | 6A-C | Supply CORELLI reconstruction/copy covariance or require replay | Pending review |
 | 6A1 | Validate optional numerical and statistical treatments | Pending |
@@ -704,6 +705,10 @@ example for this survey. Adding the other raw adapters is separate feature work.
 
 #### 6A-R — Dynamic raw-DGS geometry and timing
 
+Paul authorized this checkpoint with HYSPEC remaining in the DGS workflow.
+Use HYSPEC's saved reduction recipes and fresh Mantid reference jobs to validate
+the same acquisition and settings; reduced MDE-only checks are insufficient.
+
 Resolve instrument-definition locations/rotations from each run's referenced
 logs before conversion. Geometry reuse must compare complete resolved geometry,
 including logged moderator/detector positions, rather than static XML alone.
@@ -715,6 +720,56 @@ Ei/T0, goniometer, energy window, filters and corrections. Unsupported dynamic
 definitions must fail explicitly. Correct the HYSPEC T0 formula's exponent
 syntax and make failed automatic timing evaluation visible rather than silently
 returning zero. Preserve SEQUOIA parity.
+
+Implemented run-log geometry resolution, corrected HYSPEC timing, raw TOF
+selection and relative Tank rotation. Reduction controls, script replay and
+resolved provenance cover the HYSPEC window and optional offset. Geometry reuse
+checks complete resolved definitions. Saved MDE detector masks now constrain
+HKLE, powder and background normalization trajectories; their omission had
+allowed exposure from masked tube tips. Reduced-event version 6 and DGS/MDE
+numerical-policy version 3 invalidate affected older caches on demand.
+
+Fresh references use the installed Shiver data-to-MDE recipe with UB, rather
+than HYSPEC histogram autoreduction. Runs 506277, 506278 and 505555 cover the
+70° and 34° detector settings. Common energy, QSample, signal and variance
+event fields agree bit for bit. Loading the original MDE reproduces its
+histogram numerator, variance and event counts exactly. Native raw reduction
+also agrees exactly when Mantid uses the requested physical energy bounds.
+Normalization differs by at most $2.15\times10^{-11}$ relative and final-cut
+signal/uncertainty by at most $2.28\times10^{-13}$ relative.
+
+The unmodified Shiver recipe excludes 1–2 events per run when float32 energies
+round outside its observed-extrema MD box. Widening only Mantid's energy box
+restores precisely the native events. This is documented separately from
+reconstruction accuracy; a strict loss-emulation option remains a review
+decision. Original scientific projects and inputs remain unchanged.
+
+The three-run SEQUOIA powder regression preserves signal, variance and counts
+after accounting for four already documented Mantid conversion-boundary
+omissions; fringe bins agree without that adjustment. Exposure differs by at
+most $8.21\times10^{-11}$ relative. Five event energies differ by at most
+$3.73\times10^{-9}$ meV; QLab, weights and variances agree exactly. This bounded
+regression does not replace the earlier full HKLE validation.
+
+Detailed receipts and the unresolved saved-histogram comparison are in
+`benchmarks/results/hyspec-dgs-parity.md`, its aggregate JSON, and
+`measurement-acceptance-sequoia-raw-regression.json`. No scientific original was
+saved or rebuilt during this checkpoint.
+
+Validation: 2,895 tests passed; one CuPy availability test skipped. Ruff,
+byte-compilation, diff checks and warning-as-error Sphinx build passed. Manual
+engine comparisons remain outside pytest and production code.
+
+#### 6A-R2 — Historical HYSPEC background recipes
+
+The four saved HYSPEC histograms use refined UB, actual serialized grid edges,
+angle-integrated backgrounds and temperature-specific source sets. Reproducing
+their subtraction requires matching the historical angle weighting and
+independent-copy variance convention. Native measured-background projection
+uses sample-exposure weights and groups copies of the same source event before
+variance propagation. Quantify these differences before choosing an explicit
+compatibility recipe. Keep optional treatment/default adoption in 6A1/6A2.
+Start this follow-up only after Paul reviews the 6A-R result.
 
 #### 6A-M — Native MACS statistical payloads
 
@@ -737,9 +792,9 @@ signed cancellation, positive covariance, overlapping copies, final cuts and
 fringes against independent primitive references. Keep charge/duty and pointwise
 calibration normalization distinct from full trajectory coverage.
 
-**Review gate:** complete the survey commit and synchronize local/ORNL code and
-help. Await Paul's choice of the adapter follow-up order before implementation;
-6A1 and 6A2 remain unstarted.
+**Review gate:** 6A-R core is complete. Synchronize local/ORNL code and help, then
+check back with Paul before 6A-R2, 6A-M or 6A-C. Strict extrema compatibility is
+also a pending review decision. 6A1 and 6A2 remain unstarted.
 
 ### 6A1 — Validate alternatives
 

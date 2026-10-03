@@ -71,6 +71,71 @@ def _rewrite_instrument_xml(path, old, new):
         group.create_dataset("data", data=np.frombuffer(xml.encode(), dtype="u1"))
 
 
+@pytest.mark.parametrize("instrument", ["ARCS", "CNCS", "HYSPEC", "SEQUOIA", ""])
+def test_dgs_source_probe_keeps_direct_geometry_runs(tmp_path, instrument):
+    path = tmp_path / "events.nxs.h5"
+    _write_raw_dgs(path)
+    _rewrite_instrument_xml(path, '<instrument xmlns=', f'<instrument name="{instrument}" xmlns=')
+    assert raw_dgs.is_raw_dgs_nexus_file(path)
+
+
+@pytest.mark.parametrize("instrument", ["WAND", "HB2C", "CORELLI", "MACS", "CG2", "D33"])
+def test_event_banks_and_energy_log_do_not_route_other_measurements_through_dgs(tmp_path, instrument):
+    path = tmp_path / "other_measurement.nxs.h5"
+    _write_raw_dgs(path)  # Deliberately retain a positive energy log as well.
+    _rewrite_instrument_xml(path, '<instrument xmlns=', f'<instrument name="{instrument}" xmlns=')
+    assert not raw_dgs.is_raw_dgs_nexus_file(path)
+
+
+def test_unnamed_event_banks_without_fixed_incident_energy_are_not_dgs(tmp_path):
+    path = tmp_path / "unclassified.nxs.h5"
+    _write_raw_dgs(path)
+    with pytest.importorskip("h5py").File(path, "r+") as handle:
+        del handle["entry/DASlogs/BL17:Det:TH:BL:Ei"]
+    assert not raw_dgs.is_raw_dgs_nexus_file(path)
+
+
+def test_hyspec_crop_cache_and_reduction_settings_use_the_same_raw_events(tmp_path, monkeypatch):
+    import json
+
+    from nfit.raw_dgs_hyspec import resolved_hyspec_preprocessing
+    from nfit.reduction_recipes import set_reduction_settings
+
+    h5py = pytest.importorskip("h5py")
+    path = tmp_path / "HYS_42.nxs.h5"
+    _write_raw_dgs(path)
+    _rewrite_instrument_xml(path, '<instrument xmlns=', '<instrument name="HYSPEC" xmlns=')
+    _rewrite_instrument_xml(path, 'z="-10"', 'z="-40.803"')
+    _rewrite_instrument_xml(path, 'x="1" y="0" z="2"', 'x="2.7" y="0" z="3.6"')
+    with h5py.File(path, "r+") as handle:
+        entry = handle["entry"]
+        for name, values in (("msd", [1803.]), ("psda", [0.])):
+            entry["DASlogs"].create_group(name).create_dataset("value", data=values)
+        setup = resolved_hyspec_preprocessing(entry, {}, 20., instrument_name="HYSPEC")
+        upper = setup["raw_tof_bounds_microseconds"][1]
+        entry["bank1_events/event_time_offset"][:] = [upper - 100., upper + 100.]
+    group = raw_dgs_dataset_group([path])
+    set_reduction_settings(group, {"t0_override": 0., "bad_pulse_threshold": 0., "energy_max_fraction": .99})
+    options = {"vectors": np.eye(4), "num_bins": [2, 2, 2, 2],
+               "lower": [-10., -10., -10., -19.], "upper": [10., 10., 10., 19.8]}
+    cropped = bin_raw_dgs_group(group, **options)
+    assert cropped.num_events.sum() == 1
+    dataset = group.datasets[0]
+    with dataset._raw_dgs_reduction_cache.open() as archive:
+        header = json.loads(str(archive["header_json"].item()))
+    assert header["hyspec_preprocessing"] == setup
+    assert dataset.metadata["resolved_reduction"]["automatic_values"]["hyspec_tank_offset_degrees"] == 0.
+    with monkeypatch.context() as context:
+        context.setattr(raw_dgs, "inspect_raw_dgs_run", lambda *args, **kwargs: pytest.fail("cache reopened run"))
+        cached = bin_raw_dgs_group(group, **options)
+    np.testing.assert_array_equal(cached.signal, cropped.signal)
+    assert cached.metadata["reduced_event_cache"]["hits"] == 1
+    set_reduction_settings(group, {"hyspec_tof_crop": False})
+    uncropped = bin_raw_dgs_group(group, **options)
+    assert uncropped.num_events.sum() == 2
+    assert uncropped.metadata["reduced_event_cache"]["misses"] == 1
+
+
 def test_raw_detector_geometry_reuses_only_identical_xml(tmp_path, geometry_cache):
     first_path, second_path = (tmp_path / name for name in ("SEQ_42.nxs.h5", "SEQ_43.nxs.h5"))
     _write_raw_dgs(first_path, with_he3=True)
@@ -707,6 +772,43 @@ def test_mantid_cncs_t0_formula_uses_requested_incident_energy():
         + 1.89672170078 * energy
     )
     assert _evaluate_mantid_t0_formula(formula, energy) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("energy", [3.8, 15., 31., 60.])
+def test_mantid_hyspec_t0_power_syntax_and_automatic_provenance(tmp_path, energy):
+    h5py = pytest.importorskip("h5py")
+    path = tmp_path / "HYS_42.nxs.h5"
+    _write_raw_dgs(path)
+    _rewrite_instrument_xml(path, '<instrument xmlns=', '<instrument name="HYSPEC" xmlns=')
+    with h5py.File(path, "r+") as handle:
+        handle["entry/DASlogs/BL17:Det:TH:BL:Ei/average_value"][:] = energy
+    expected = 4. + 107. / (1. + (energy / 31.)**3)
+    assert _evaluate_mantid_t0_formula(raw_dgs.MANTID_T0_FORMULAS["HYSPEC"], energy) == expected
+    info = inspect_raw_dgs_run(path)
+    assert info.incident_energy == energy
+    assert info.t0 == expected
+    assert info.calibration_source == "instrument_t0_formula"
+    assert info.calibration_warning is None
+    if energy == 15.:
+        # Recorded Mantid HYSPEC value, independent of a Mantid runtime.
+        assert info.t0 == 100.11159018271724
+
+
+@pytest.mark.parametrize("formula", ["unknown(incidentEnergy)", "1/0", "sqrt(-1)", "1e999", "("])
+def test_failed_instrument_t0_formula_is_warned_and_recorded(tmp_path, formula):
+    from xml.sax.saxutils import escape
+
+    path = tmp_path / "bad_formula.nxs.h5"
+    _write_raw_dgs(path)
+    _rewrite_instrument_xml(path, '</instrument>',
+        '<component-link name="instrument"><parameter name="t0_formula">'
+        f'<value val="{escape(formula)}"/></parameter></component-link></instrument>')
+    with pytest.warns(RuntimeWarning, match="instrument T0 formula could not be evaluated"):
+        info = inspect_raw_dgs_run(path)
+    assert info.calibration_source == "requested_energy_failed_t0_formula"
+    assert "Set explicit Ei/T0 overrides" in info.calibration_warning
+    assert info.incident_energy == 20.
+    assert info.t0 == 0.
 
 
 def test_raw_dgs_streamed_symmetry_matches_separate_operations(tmp_path):
