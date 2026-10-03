@@ -46,6 +46,29 @@ disables enforcement.
 Use `benchmarks/benchmark_rebin.py` to measure representative grids on the
 target machine.
 
+### Native DGS event projection
+
+Uniform HKLE grids with the Mantid precision policy combine coordinate
+projection and ordered event accumulation in one compiled pass. The transform
+coefficients and float32 multiply/add rounding are shared with the reference
+projector. No projected-coordinate table is allocated for each symmetry copy.
+The optional same-event variance treatment and detector-trajectory exposure
+calculation are unchanged. Nonuniform grids, high precision, and unavailable
+compiled acceleration retain the reference path.
+
+Saved detector masks reuse an immutable parsed result for exactly identical
+instrument-parameter text. The cache holds at most 16 texts, accepts texts up
+to 1 MiB, and reads source metadata on every request. Changed masks and distinct
+instrument text miss the cache; geometry, incident energy, calibration, charge,
+and run settings are still resolved for each operation.
+
+`benchmarks/profile_dgs_workflow.py` measures a real MDE source, including reads,
+run selection, trajectory normalization, and finalization. It reports first and
+repeated calls separately and can compare every output cell with the reference
+path. `benchmarks/profile_dgs_event_kernels.py` isolates projection and accumulation.
+Kernel speedups should not be interpreted as reduction or whole-project speedups;
+raw reconstruction, background replay, and archive I/O require separate timings.
+
 ### Measured-background replay
 
 Measured-event background replay uses a compiled parallel Numba kernel when

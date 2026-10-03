@@ -266,7 +266,8 @@ def prepare_dgs_event_projector(ub, basis, operation, edges,
     columns = np.zeros((4, 4))
     columns[:3, :3] = 2 * np.pi * np.asarray(ub) @ np.linalg.inv(operation) @ basis[:3, :3].T
     columns[3, 3] = 1
-    if not all(_uniform(np.asarray(edge)) for edge in edges):
+    uniform = all(_uniform(np.asarray(edge)) for edge in edges)
+    if not uniform:
         # Explicit nonuniform grids retain their boundaries; round the physical
         # projection using the same affine convention without uniformizing it.
         matrix, offset = _mantid_affine(columns, tuple(np.array([0., 1.]) for _ in edges))
@@ -283,6 +284,12 @@ def prepare_dgs_event_projector(ub, basis, operation, edges,
         for index, edge in enumerate(accumulation_edges):
             coordinates[coordinates[:, index] >= edge[-1], index] = np.nan
         return coordinates, accumulation_edges
+    if uniform:
+        # The fused event accumulator consumes these same prepared coefficients,
+        # retaining this module as the single definition of affine arithmetic.
+        matrix.setflags(write=False)
+        offset.setflags(write=False)
+        project._dgs_uniform_affine = (matrix, offset, tuple(len(edge)-1 for edge in edges))
     return project
 
 

@@ -8,9 +8,11 @@ temperature. Instrument names alone must not determine the statistical estimator
 
 ## Working agreement
 
-- Paul authorized completing all remaining stage 2 checkpoints on 2026-10-02.
-  Report evidence and limitations after stage 2, then **wait for authorization
-  before stage 3**. Later stages still require their agreed review gates.
+- Paul authorized the current DGS-focused work on 2026-10-03: investigate HYSPEC
+  background correctness, assess the statistical motivation of departures from
+  Mantid, and profile/improve HYSPEC and SEQUOIA reduction and binning. CORELLI
+  and MACS adapter work is deferred. Review completed checkpoints and remaining
+  decisions with Paul; new scientific defaults still need an explicit decision.
 - Keep the table below current. Split a checkpoint before proceeding if its
   scope cannot be validated in one coherent change.
 - Update focused user/developer documentation, scripting APIs, and meaningful
@@ -27,9 +29,10 @@ temperature. Instrument names alone must not determine the statistical estimator
   a pared-down selection is appropriate for interactive checks.
 - Check speed, peak memory, lazy loading, and reuse when changing numerical payloads
   or caching. Reject small speed gains that require disproportionate complexity.
-- Defer validation and adoption of alternative DGS precision, monitor-fitting,
-  trajectory-energy and symmetry-variance defaults to 6A1 and 6A2. Existing
-  compatibility defaults stay fixed during the contract/workflow refactor.
+- Assess optional DGS precision, monitor-fitting, trajectory-energy and
+  symmetry-variance treatments in the authorized DGS investigation. Existing
+  compatibility defaults stay fixed until the 6A2 decision; mathematical
+  correctness fixes and performance improvements must state their assumptions.
 - Remove this page and its navigation links after all checkpoints are accepted.
   Keep the resulting scientific conventions and workflows in permanent docs.
 
@@ -59,15 +62,20 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 6A | Validate instrument families and continuous measurements | Survey complete; adapter follow-ups required |
 | 6A-R | Resolve raw-DGS geometry/timing and validate HYSPEC conversion | Core complete; historical subtraction split into 6A-R2 |
 | 6A-R2 | Validate directional HYSPEC background reconstruction and uncertainties | Analysis complete; cached final-cut dependencies split into 6A-R3 |
-| 6A-R3 | Preserve background source correlations and target through final cuts | Pending review |
-| 6A-M | Preserve MACS count/exposure targets through final profiles | Pending review |
-| 6A-C | Supply CORELLI reconstruction/copy covariance or require replay | Pending review |
-| 6A1 | Validate optional numerical and statistical treatments | Pending |
+| 6A-R3 | Preserve background source correlations and target through final cuts | In progress; split into R3a/R3b |
+| 6A-R3a | Persist bounded replay recipes and expose exact cached-field aggregation | In progress |
+| 6A-R3b | Integrate parent composites and asynchronous GUI cuts/exports | Pending review of R3a |
+| 6A-M | Preserve MACS count/exposure targets through final profiles | Deferred by Paul |
+| 6A-C | Supply CORELLI reconstruction/copy covariance or require replay | Deferred by Paul |
+| 6A1 | Validate optional numerical and statistical treatments | DGS investigation in progress; other families deferred |
+| 6A-P | Profile current HYSPEC/SEQUOIA workflows and adopt verified major speedups | In progress |
+| 6A-P1 | Fuse DGS projection and ordered accumulation with numerical parity | Complete; includes exact-text mask parsing reuse |
+| 6A-P2 | Measure current raw reduction and SEQUOIA workflows on ORNL | Blocked by node23 experiment mount; local investigations continue |
 | 6A2 | Review and adopt future defaults | Pending |
 | 6B | Migrate projects, verify performance, and remove this plan | Pending |
 
-Statuses are **Pending**, **Pending review**, **In progress**, **Complete**, or
-**Needs subdivision**.
+Statuses are **Pending**, **Pending review**, **In progress**, **Complete**,
+**Deferred**, or **Needs subdivision**.
 Completion means the stated deliverables have passed their checks and have been
 committed, pushed, and synchronized. It does not mean the next checkpoint may
 start automatically.
@@ -833,6 +841,30 @@ separate diagonal pooling gives 1.25; the real sparse 50 K / 34° energy-profile
 uncertainty is up to 2.12 times the diagonal result. Do not apply a fixed empirical
 correction. Start this implementation after Paul's checkpoint review.
 
+**R3a, authorized 2026-10-03:** Newly computed directional backgrounds retain
+bounded source/transform/mask recipes, source-event digests, and lazy exposure
+channels. An explicit scripting operation aggregates the original cached cells
+with sample exposure after subtraction, combining each background primitive's
+signed coefficients before squaring. Preserve the field target
+`sum(N_sample * (I_sample - B)) / sum(N_sample)`; separately pooling background
+and sample components is a distinct target. Ordinary previews remain responsive
+and identify diagonal uncertainty. Validate analytic truth, masked/low-exposure
+regions, serialization, stale sources and bounded repeated-query caching.
+
+**R3b:** Propagate these recipes through hierarchical bank composites and
+integrate asynchronous viewer cuts and exports. Do not replay large sources
+synchronously on every interaction. Review R3a before beginning this extension;
+cached previews must not claim exact source covariance meanwhile.
+
+Paul clarified that the HYSPEC background is a dummy sample: the same mount,
+glue and aluminum without crystals. The coarse 180° sweep intentionally averages
+orientation-dependent effects. Retain detector direction and energy dependence
+while averaging dummy orientations. The current merge is charge weighted; the
+50 K / 34° background differs modestly from equal-angle weighting. Physical
+assessment and controlled geometry/calibration tests are recorded in
+`benchmarks/results/hyspec-background-physical-assumptions.md`. New scientific
+defaults remain gated by 6A2.
+
 #### 6A-M — Native MACS statistical payloads
 
 Retain original numerator, its explicitly declared variance, exposure and source
@@ -854,9 +886,13 @@ signed cancellation, positive covariance, overlapping copies, final cuts and
 fringes against independent primitive references. Keep charge/duty and pointwise
 calibration normalization distinct from full trajectory coverage.
 
-**Review gate:** 6A-R core and 6A-R2 analysis are complete. Synchronize local/ORNL
-code and help, then check back with Paul before 6A-R3, 6A-M or 6A-C. Strict
-extrema compatibility is also a pending review decision. 6A1 and 6A2 remain unstarted.
+**Current authorization:** 6A-R core and 6A-R2 analysis are complete. Paul
+authorized DGS background follow-up, assessment of alternatives, and performance
+work on 2026-10-03. CORELLI and MACS are deferred. R3a supplies exact scientific
+aggregation without synchronous event replay on every GUI interaction; R3b
+integrates asynchronous consumers and parent-composite propagation. Review each
+coherent completion with Paul. Strict extrema compatibility and future default
+changes remain explicit decisions in 6A2.
 
 ### 6A1 — Validate alternatives
 
@@ -879,6 +915,27 @@ measurement assumptions behind each choice and retain a reproducible compatibili
 path. Preserve previously resolved settings through explicit project migration;
 changing a default must not silently reinterpret projects with absent legacy fields.
 This gate follows complete dependency propagation and cross-instrument validation.
+
+### 6A-P — DGS performance
+
+Profile matched inputs and policies before diagnosing a regression. Separate
+event reconstruction, event projection/accumulation, trajectory normalization,
+background replay, archive I/O, and first-call compilation. The fused uniform-grid
+Mantid projector preserves literal C/V/count/mask results. Complete local HYSPEC
+histogramming of 49.4 million events and 361 runs improved from 16.485 to 3.913 s
+with six symmetry copies, or 6.001 to 2.899 s without symmetry, on the same
+bounded grid and eight-worker budget. An exact-text bounded mask parse cache
+removes repeated parsing while retaining all source and geometry checks.
+Exposure is computed by the unchanged
+algorithm; differences are at its existing parallel addition precision.
+
+`benchmarks/results/dgs-fused-event-performance.md` records the scope, scalar
+receipts and fallback coverage. These timings exclude raw reconstruction and
+archive persistence. Current raw/SEQUOIA and matched Mantid measurements remain
+pending a working ORNL experiment mount; older benchmarks cannot establish a
+current regression. Remaining event reads/filtering, raw reconstruction, and
+full-volume normalization require fresh isolated cluster profiles before adding
+more cache machinery. Do not adopt speculative micro-optimizations.
 
 ### 6B — Migration, performance, and completion
 

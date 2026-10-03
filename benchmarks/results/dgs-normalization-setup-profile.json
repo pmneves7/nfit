@@ -1,0 +1,503 @@
+{
+  "source": "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70.nxs",
+  "original_unchanged": true,
+  "profiled": true,
+  "results": [
+    {
+      "repeat": 0,
+      "total_seconds": 3.9466135000111535,
+      "unique_geometry_payloads": 1,
+      "run_payloads": 361,
+      "hot": [
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+          "line": 1282,
+          "function": "_trajectory_payloads",
+          "calls": 1,
+          "self_seconds": 0.040693649000000005,
+          "cumulative_seconds": 3.946514125
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent_detector_masks.py",
+          "line": 57,
+          "function": "apply_saved_detector_mask",
+          "calls": 361,
+          "self_seconds": 0.017545538,
+          "cumulative_seconds": 3.6245328750000003
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent_detector_masks.py",
+          "line": 15,
+          "function": "saved_detector_mask_ids",
+          "calls": 361,
+          "self_seconds": 1.640007121,
+          "cumulative_seconds": 3.5761979150000003
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/re/__init__.py",
+          "line": 169,
+          "function": "fullmatch",
+          "calls": 924160,
+          "self_seconds": 0.194748471,
+          "cumulative_seconds": 0.569559982
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/getlimits.py",
+          "line": 399,
+          "function": "__init__",
+          "calls": 1848681,
+          "self_seconds": 0.42995908800000004,
+          "cumulative_seconds": 0.42995908800000004
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'strip' of 'str' objects>",
+          "calls": 4711411,
+          "self_seconds": 0.27156462200000003,
+          "cumulative_seconds": 0.27156462200000003
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/re/__init__.py",
+          "line": 330,
+          "function": "_compile",
+          "calls": 924160,
+          "self_seconds": 0.172268698,
+          "cumulative_seconds": 0.24092190300000002
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'split' of 'str' objects>",
+          "calls": 942932,
+          "self_seconds": 0.14962936400000001,
+          "cumulative_seconds": 0.14962936400000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'fullmatch' of 're.Pattern' objects>",
+          "calls": 924160,
+          "self_seconds": 0.13388960800000002,
+          "cumulative_seconds": 0.13388960800000002
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method builtins.sorted>",
+          "calls": 362,
+          "self_seconds": 0.093317275,
+          "cumulative_seconds": 0.130528
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/group.py",
+          "line": 409,
+          "function": "_get",
+          "calls": 2889,
+          "self_seconds": 0.065640775,
+          "cumulative_seconds": 0.123606433
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/dataset.py",
+          "line": 853,
+          "function": "__getitem__",
+          "calls": 2166,
+          "self_seconds": 0.049254476000000005,
+          "cumulative_seconds": 0.115406831
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/group.py",
+          "line": 405,
+          "function": "__getitem__",
+          "calls": 2528,
+          "self_seconds": 0.0011948260000000002,
+          "cumulative_seconds": 0.107601499
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method builtins.len>",
+          "calls": 1867456,
+          "self_seconds": 0.086630072,
+          "cumulative_seconds": 0.086630072
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/getlimits.py",
+          "line": 410,
+          "function": "min",
+          "calls": 924160,
+          "self_seconds": 0.077323732,
+          "cumulative_seconds": 0.077323732
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'lower' of 'str' objects>",
+          "calls": 924160,
+          "self_seconds": 0.072370845,
+          "cumulative_seconds": 0.072370845
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method builtins.isinstance>",
+          "calls": 969300,
+          "self_seconds": 0.072020002,
+          "cumulative_seconds": 0.07236759000000001
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/getlimits.py",
+          "line": 423,
+          "function": "max",
+          "calls": 924521,
+          "self_seconds": 0.067255438,
+          "cumulative_seconds": 0.067255438
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/reduction_recipes.py",
+          "line": 299,
+          "function": "effective_reduction_config",
+          "calls": 723,
+          "self_seconds": 0.0012047330000000001,
+          "cumulative_seconds": 0.063794366
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+          "line": 2226,
+          "function": "_read_goniometer_matrix",
+          "calls": 361,
+          "self_seconds": 0.0055792820000000005,
+          "cumulative_seconds": 0.044459330000000005
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent_detector_masks.py",
+          "line": 52,
+          "function": "<genexpr>",
+          "calls": 924521,
+          "self_seconds": 0.037210725,
+          "cumulative_seconds": 0.037210725
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/reduction_runtime.py",
+          "line": 63,
+          "function": "run_calibrations",
+          "calls": 361,
+          "self_seconds": 0.000685638,
+          "cumulative_seconds": 0.037020629
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/copy.py",
+          "line": 110,
+          "function": "deepcopy",
+          "calls": 96158,
+          "self_seconds": 0.013828875000000001,
+          "cumulative_seconds": 0.036593608
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/copy.py",
+          "line": 198,
+          "function": "_deepcopy_dict",
+          "calls": 5060,
+          "self_seconds": 0.008758095,
+          "cumulative_seconds": 0.034784055
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/dataset.py",
+          "line": 604,
+          "function": "_fast_reader",
+          "calls": 1805,
+          "self_seconds": 0.023737853000000003,
+          "cumulative_seconds": 0.028691934000000002
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/reduction_runtime.py",
+          "line": 24,
+          "function": "effective_trajectory_energies",
+          "calls": 1,
+          "self_seconds": 0.00034957600000000004,
+          "cumulative_seconds": 0.028264625
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/lib/_arraysetops_impl.py",
+          "line": 958,
+          "function": "isin",
+          "calls": 361,
+          "self_seconds": 0.00098628,
+          "cumulative_seconds": 0.027993041000000003
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/lib/_arraysetops_impl.py",
+          "line": 806,
+          "function": "_isin",
+          "calls": 361,
+          "self_seconds": 0.022589411,
+          "cumulative_seconds": 0.026809036
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/dataset.py",
+          "line": 749,
+          "function": "__init__",
+          "calls": 2166,
+          "self_seconds": 0.022679677000000002,
+          "cumulative_seconds": 0.024996308000000002
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/base.py",
+          "line": 530,
+          "function": "__get__",
+          "calls": 4693,
+          "self_seconds": 0.001892601,
+          "cumulative_seconds": 0.024515745000000002
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "total_seconds": 4.01587537501473,
+      "unique_geometry_payloads": 1,
+      "run_payloads": 361,
+      "hot": [
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+          "line": 1282,
+          "function": "_trajectory_payloads",
+          "calls": 1,
+          "self_seconds": 0.043149915000000004,
+          "cumulative_seconds": 4.015493625
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent_detector_masks.py",
+          "line": 57,
+          "function": "apply_saved_detector_mask",
+          "calls": 361,
+          "self_seconds": 0.018075273000000003,
+          "cumulative_seconds": 3.680766161
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent_detector_masks.py",
+          "line": 15,
+          "function": "saved_detector_mask_ids",
+          "calls": 361,
+          "self_seconds": 1.664995419,
+          "cumulative_seconds": 3.631203208
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/re/__init__.py",
+          "line": 169,
+          "function": "fullmatch",
+          "calls": 924160,
+          "self_seconds": 0.197938692,
+          "cumulative_seconds": 0.577868774
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/getlimits.py",
+          "line": 399,
+          "function": "__init__",
+          "calls": 1848681,
+          "self_seconds": 0.43265495800000003,
+          "cumulative_seconds": 0.43265495800000003
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'strip' of 'str' objects>",
+          "calls": 4711411,
+          "self_seconds": 0.276724992,
+          "cumulative_seconds": 0.276724992
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/re/__init__.py",
+          "line": 330,
+          "function": "_compile",
+          "calls": 924160,
+          "self_seconds": 0.175204557,
+          "cumulative_seconds": 0.24469564300000002
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'split' of 'str' objects>",
+          "calls": 942932,
+          "self_seconds": 0.153162243,
+          "cumulative_seconds": 0.153162243
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'fullmatch' of 're.Pattern' objects>",
+          "calls": 924160,
+          "self_seconds": 0.135234439,
+          "cumulative_seconds": 0.135234439
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method builtins.sorted>",
+          "calls": 362,
+          "self_seconds": 0.09495839,
+          "cumulative_seconds": 0.13326679
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/group.py",
+          "line": 409,
+          "function": "_get",
+          "calls": 2889,
+          "self_seconds": 0.06781680500000001,
+          "cumulative_seconds": 0.127675476
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/dataset.py",
+          "line": 853,
+          "function": "__getitem__",
+          "calls": 2166,
+          "self_seconds": 0.051309356,
+          "cumulative_seconds": 0.11992496400000001
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/group.py",
+          "line": 405,
+          "function": "__getitem__",
+          "calls": 2528,
+          "self_seconds": 0.001246416,
+          "cumulative_seconds": 0.11102582600000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method builtins.len>",
+          "calls": 1867456,
+          "self_seconds": 0.087669167,
+          "cumulative_seconds": 0.087669167
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/getlimits.py",
+          "line": 410,
+          "function": "min",
+          "calls": 924160,
+          "self_seconds": 0.078600866,
+          "cumulative_seconds": 0.078600866
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'lower' of 'str' objects>",
+          "calls": 924160,
+          "self_seconds": 0.07342583100000001,
+          "cumulative_seconds": 0.07342583100000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method builtins.isinstance>",
+          "calls": 969300,
+          "self_seconds": 0.072912405,
+          "cumulative_seconds": 0.07327201900000001
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/getlimits.py",
+          "line": 423,
+          "function": "max",
+          "calls": 924521,
+          "self_seconds": 0.068347948,
+          "cumulative_seconds": 0.068347948
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/reduction_recipes.py",
+          "line": 299,
+          "function": "effective_reduction_config",
+          "calls": 723,
+          "self_seconds": 0.001246434,
+          "cumulative_seconds": 0.066812336
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+          "line": 2226,
+          "function": "_read_goniometer_matrix",
+          "calls": 361,
+          "self_seconds": 0.005759724000000001,
+          "cumulative_seconds": 0.04603995
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/reduction_runtime.py",
+          "line": 63,
+          "function": "run_calibrations",
+          "calls": 361,
+          "self_seconds": 0.0007652280000000001,
+          "cumulative_seconds": 0.038877115000000004
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/copy.py",
+          "line": 110,
+          "function": "deepcopy",
+          "calls": 96158,
+          "self_seconds": 0.014595673000000002,
+          "cumulative_seconds": 0.038375976
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent_detector_masks.py",
+          "line": 52,
+          "function": "<genexpr>",
+          "calls": 924521,
+          "self_seconds": 0.0383084,
+          "cumulative_seconds": 0.0383084
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/copy.py",
+          "line": 198,
+          "function": "_deepcopy_dict",
+          "calls": 5060,
+          "self_seconds": 0.00906936,
+          "cumulative_seconds": 0.036492349
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/dataset.py",
+          "line": 604,
+          "function": "_fast_reader",
+          "calls": 1805,
+          "self_seconds": 0.02452247,
+          "cumulative_seconds": 0.029639670000000003
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/reduction_runtime.py",
+          "line": 24,
+          "function": "effective_trajectory_energies",
+          "calls": 1,
+          "self_seconds": 0.00013596700000000002,
+          "cumulative_seconds": 0.029244917000000002
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/lib/_arraysetops_impl.py",
+          "line": 958,
+          "function": "isin",
+          "calls": 361,
+          "self_seconds": 0.0017881070000000002,
+          "cumulative_seconds": 0.028726695000000003
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/lib/_arraysetops_impl.py",
+          "line": 806,
+          "function": "_isin",
+          "calls": 361,
+          "self_seconds": 0.022298056,
+          "cumulative_seconds": 0.026716003000000002
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/dataset.py",
+          "line": 749,
+          "function": "__init__",
+          "calls": 2166,
+          "self_seconds": 0.023443597,
+          "cumulative_seconds": 0.025778242000000003
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/h5py/_hl/base.py",
+          "line": 530,
+          "function": "__get__",
+          "calls": 4693,
+          "self_seconds": 0.002036352,
+          "cumulative_seconds": 0.025404218000000003
+        }
+      ]
+    }
+  ]
+}

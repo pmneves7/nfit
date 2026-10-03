@@ -90,6 +90,8 @@ different Python.
 - `src/nfit/dgs_reduction_policy.py` and `dgs_reduction_settings.py`: shared DGS
   numerical conventions and public policy configuration; the focused
   `dgs_reduction_policy_gui.py` presents those choices.
+- `src/nfit/dgs_event_accumulation.py` and `_dgs_event_numba.py`: shared ordered
+  event projection/accumulation using the policy-owned affine transform.
 - `src/nfit/reduction_recipes.py`, `reduction_runtime.py`, and
   `reduction_recipe_gui.py`: source/reduction schemas, execution provenance,
   targeted edits, public replay, and focused Qt controls.

@@ -101,3 +101,57 @@ def test_saved_mask_service_is_gui_independent_and_does_not_import_facade():
     tree = ast.parse(inspect.getsource(mdevent_detector_masks))
     modules = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
     assert not any(module in ("mdevent", "raw_dgs") or "gui" in module or "Qt" in module for module in modules)
+
+
+def test_exact_text_cache_reuses_parse_but_source_edits_and_instrument_differences_miss(tmp_path, monkeypatch):
+    mdevent_detector_masks._cached_mask_ids.cache_clear()
+    original = mdevent_detector_masks._parse_mask_ids
+    parsed = []
+    def record(text):
+        parsed.append(text)
+        return original(text)
+    monkeypatch.setattr(mdevent_detector_masks, "_parse_mask_ids", record)
+    with h5py.File(tmp_path / "metadata.h5", "w") as handle:
+        text = "HYSPEC;string;name;HYSPEC|detID:10;bool;masked;1|"
+        source = _parameter_map(handle, text)
+        np.testing.assert_array_equal(saved_detector_mask_ids(handle), [10])
+        np.testing.assert_array_equal(saved_detector_mask_ids(handle), [10])
+        assert len(parsed) == 1
+        source[...] = [text.replace("masked;1", "masked;0").encode()]
+        assert saved_detector_mask_ids(handle).size == 0
+        assert len(parsed) == 2
+        source[...] = [text.replace("HYSPEC", "ARCS__").encode()]
+        np.testing.assert_array_equal(saved_detector_mask_ids(handle), [10])
+        assert len(parsed) == 3
+
+
+def test_cached_parse_value_is_immutable_even_when_caller_resets_array_write_flag(tmp_path):
+    mdevent_detector_masks._cached_mask_ids.cache_clear()
+    with h5py.File(tmp_path / "metadata.h5", "w") as handle:
+        text = "detID:10;bool;masked;1|detID:10;bool;masked;0|detID:11;bool;masked;1|"
+        _parameter_map(handle, text)
+        first = saved_detector_mask_ids(handle)
+        assert isinstance(mdevent_detector_masks._cached_mask_ids(text), tuple)
+        first.setflags(write=True)
+        first[0] = 999
+        second = saved_detector_mask_ids(handle)
+        np.testing.assert_array_equal(second, [11])
+        assert not second.flags.writeable and second is not first
+
+
+def test_oversized_parameter_maps_skip_cache_without_changing_mask_interpretation(tmp_path, monkeypatch):
+    mdevent_detector_masks._cached_mask_ids.cache_clear()
+    monkeypatch.setattr(mdevent_detector_masks, "_MASK_CACHE_MAX_TEXT_BYTES", 50)
+    text = "HYSPEC;string;label;" + "x"*60 + "|detID:10;bool;masked;1|"
+    with h5py.File(tmp_path / "metadata.h5", "w") as handle:
+        _parameter_map(handle, text)
+        for _ in range(2):
+            np.testing.assert_array_equal(saved_detector_mask_ids(handle), [10])
+    assert mdevent_detector_masks._cached_mask_ids.cache_info().currsize == 0
+
+
+def test_saved_mask_parse_cache_has_bounded_entry_count():
+    mdevent_detector_masks._cached_mask_ids.cache_clear()
+    for index in range(25):
+        mdevent_detector_masks._cached_mask_ids(f"detID:{index};bool;masked;1|")
+    assert mdevent_detector_masks._cached_mask_ids.cache_info().currsize == 16

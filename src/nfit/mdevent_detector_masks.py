@@ -8,8 +8,12 @@ than the physical-detector angle arrays. This reader interprets only boolean
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 import numpy as np
+
+_MASK_CACHE_MAX_TEXT_BYTES = 1 << 20
+_MASK_CACHE_MAX_ENTRIES = 16
 
 
 def saved_detector_mask_ids(experiment):
@@ -32,6 +36,21 @@ def saved_detector_mask_ids(experiment):
                        for value in values.reshape(-1))
     else:
         raise ValueError("Saved instrument parameter map must contain text")
+    # Re-read source metadata on every request. Only the pure parse result is
+    # reused by exact text, so source edits and geometry/mask changes miss.
+    parser = _cached_mask_ids if len(text.encode("utf-8")) <= _MASK_CACHE_MAX_TEXT_BYTES else _parse_mask_ids
+    # Cache immutable tuples, not arrays whose write flags a caller can reset.
+    result = np.asarray(parser(text), dtype=np.int64)
+    result.setflags(write=False)
+    return result
+
+
+@lru_cache(maxsize=_MASK_CACHE_MAX_ENTRIES)
+def _cached_mask_ids(text):
+    return _parse_mask_ids(text)
+
+
+def _parse_mask_ids(text):
     masks = {}
     for record in text.split("|"):
         fields = [field.strip() for field in record.split(";")]
@@ -49,9 +68,7 @@ def saved_detector_mask_ids(experiment):
         if flag not in ("0", "1", "false", "true"):
             raise ValueError("Saved detector masked flag must be boolean")
         masks[detector_id] = flag in ("1", "true")
-    result = np.asarray(sorted(detector_id for detector_id, masked in masks.items() if masked), dtype=np.int64)
-    result.setflags(write=False)
-    return result
+    return tuple(sorted(detector_id for detector_id, masked in masks.items() if masked))
 
 
 def apply_saved_detector_mask(experiment, detector_ids, weights):

@@ -25,6 +25,7 @@ from typing import Any
 
 import numpy as np
 
+from .dgs_event_accumulation import accumulate_projected_dgs_events
 from .dgs_normalization import (
     DEFAULT_TRAJECTORY_ENERGY_POLICY,
     validated_trajectory_energy_policy,
@@ -581,19 +582,24 @@ def bin_raw_dgs_group(
                                 q_sample += q_lab[:, index, None] * gonio[index]
                         else:
                             q_sample = q_lab @ gonio
-                        coordinate_blocks = (
-                            projector(q_sample, energy) for projector in projectors
-                        )
                     copy_bins = np.full((len(symmetry), len(weights)), -1, dtype=np.int64) if (
                         not powder and len(symmetry) > 1
                         and policies["symmetry_variance_policy"] == "within_bin_covariance"
                     ) else None
-                    for copy_index, (coords, accumulation_edges) in enumerate(coordinate_blocks):
-                        _accumulate_discrete_event_coordinates(
-                            coords, weights, variances, accumulation_edges, shape,
-                            data_sum, variance_sum, event_count,
-                            bin_indices=None if copy_bins is None else copy_bins[copy_index],
-                        )
+                    if powder:
+                        for coords, accumulation_edges in coordinate_blocks:
+                            _accumulate_discrete_event_coordinates(
+                                coords, weights, variances, accumulation_edges, shape,
+                                data_sum, variance_sum, event_count,
+                            )
+                    else:
+                        for copy_index, projector in enumerate(projectors):
+                            accumulate_projected_dgs_events(
+                                projector, q_sample, energy, weights, variances, shape,
+                                data_sum, variance_sum, event_count,
+                                fallback_accumulator=_accumulate_discrete_event_coordinates,
+                                bin_indices=None if copy_bins is None else copy_bins[copy_index],
+                            )
                     if copy_bins is not None:
                         terms = accumulate_copy_covariance(copy_bins, variances, variance_sum)
                         for key in copy_covariance:

@@ -388,12 +388,14 @@ for every bank.
 The powder path bins radially from detector events without first allocating an
 intermediate four-dimensional volume.
 
-Native raw-event and HKLE MDE binning use an ordered compiled pass for bin lookup
-and the signal, variance, and event-count updates when Numba is available.
-Uniform output grids use arithmetic bin lookup corrected against their actual
-edges; nonuniform grids retain binary search. The default event policy follows
-Mantid's float32 projection and bin-boundary arithmetic; the optional high-precision
-policy uses float64 projection. Event accumulation
+Native raw-event and HKLE MDE binning use an ordered compiled pass when Numba
+is available. Uniform grids under the Mantid precision policy fuse coordinate
+projection, bin lookup, and signal, variance, and event-count updates. Each
+float32 multiplication and addition keeps its original rounding order; events
+and symmetry copies accumulate in source order. This avoids allocating the
+full projected event-coordinate arrays. Nonuniform grids and the optional
+float64 high-precision policy retain separate projection and accumulation;
+nonuniform bin lookup uses binary search. Event accumulation
 does not allocate worker-sized copies of the output volume. Trajectory
 normalization reuses its worker grids across batches and supplies each
 instrument geometry's own detector angles and solid-angle weights. Momentum

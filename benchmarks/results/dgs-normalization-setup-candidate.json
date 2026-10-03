@@ -1,0 +1,83 @@
+{
+  "source": "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70.nxs",
+  "source_size_bytes": 2356544664,
+  "source_mtime_ns": 1784639414000000000,
+  "original_input_unchanged": true,
+  "python": "3.14.7",
+  "numpy": "2.5.3",
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "nfit_module": "/Users/pmneves/code/nfit/src/nfit/__init__.py",
+  "script_sha256": "edb04b81ffbee1374a74b94391606a5b709e75b4969efc1b81ef3087efbc35b4",
+  "mask_module_sha256": "38a94f10c63c5832a0a4dd5ad14b173f45b12525b4b17c6e3b5b830b70c4e242",
+  "run_count": 361,
+  "unique_geometry_payloads": 1,
+  "inspection_seconds": 0.8213859999086708,
+  "cache_after_inspection": {
+    "hits": 360,
+    "misses": 1,
+    "maxsize": 16,
+    "currsize": 1
+  },
+  "cache_after_setup": {
+    "hits": 2165,
+    "misses": 1,
+    "maxsize": 16,
+    "currsize": 1
+  },
+  "results": [
+    {
+      "repeat": 0,
+      "order": [
+        "cached",
+        "uncached"
+      ],
+      "cached": 0.3782029579160735,
+      "uncached": 1.72756537492387,
+      "all_payloads_literal": true
+    },
+    {
+      "repeat": 1,
+      "order": [
+        "uncached",
+        "cached"
+      ],
+      "uncached": 1.646138749900274,
+      "cached": 0.33190504100639373,
+      "all_payloads_literal": true
+    },
+    {
+      "repeat": 2,
+      "order": [
+        "cached",
+        "uncached"
+      ],
+      "cached": 0.323120207991451,
+      "uncached": 1.577908125007525,
+      "all_payloads_literal": true
+    },
+    {
+      "repeat": 3,
+      "order": [
+        "uncached",
+        "cached"
+      ],
+      "uncached": 1.5990737080574036,
+      "cached": 0.3443762499373406,
+      "all_payloads_literal": true
+    },
+    {
+      "repeat": 4,
+      "order": [
+        "cached",
+        "uncached"
+      ],
+      "cached": 0.33689333393704146,
+      "uncached": 1.659712209017016,
+      "all_payloads_literal": true
+    }
+  ],
+  "cached_median_seconds": 0.33689333393704146,
+  "uncached_median_seconds": 1.646138749900274,
+  "setup_speedup": 4.8862312906669265,
+  "scope": "Metadata setup only; no event reads, trajectory integration or histogram allocation"
+}

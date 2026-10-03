@@ -17,6 +17,7 @@ import numpy as np
 from . import _parallel
 from .backgrounds import background_with_user_mask_zeros
 from .dataset import PointData4D
+from .dgs_event_accumulation import accumulate_projected_dgs_events
 from .dgs_normalization import (
     DEFAULT_TRAJECTORY_ENERGY_POLICY,
     validated_trajectory_energy_policy,
@@ -548,10 +549,10 @@ def bin_mdevent_group(
                         variances = chosen[:, 1] * np.square(signal_factors)
                         copy_bins = np.full((len(symmetry), len(chosen)), -1, dtype=np.int64) if len(symmetry) > 1 and policies["symmetry_variance_policy"] == "within_bin_covariance" else None
                         for copy_index, projector in enumerate(projectors):
-                            coords, accumulation_edges = projector(chosen[:, 5:8], chosen[:, 8])
-                            _accumulate_discrete_event_coordinates(
-                                coords, weights, variances, accumulation_edges, shape,
+                            accumulate_projected_dgs_events(
+                                projector, chosen[:, 5:8], chosen[:, 8], weights, variances, shape,
                                 data_sum_flat, variance_sum_flat, event_count_flat,
+                                fallback_accumulator=_accumulate_discrete_event_coordinates,
                                 enabled=active_runs,
                                 bin_indices=None if copy_bins is None else copy_bins[copy_index],
                             )

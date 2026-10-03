@@ -1,0 +1,841 @@
+{
+  "source": "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70.nxs",
+  "original_input_unchanged": true,
+  "rows": 600000,
+  "read_seconds": 0.005994874984025955,
+  "first_accumulator_seconds": 0.054051624960266054,
+  "python": "3.14.7",
+  "numpy": "2.5.3",
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "script_sha256": "9d5161a540e568e28e52749dbbd7dada08d93a77bc8ed5f4575069868caeaa70",
+  "results": [
+    {
+      "grid": "slab",
+      "shape": [
+        80,
+        80,
+        1,
+        57
+      ],
+      "copies": 1,
+      "projection_seconds": 0.02168116602115333,
+      "accumulation_seconds": 0.004105582949705422,
+      "covariance_seconds": 0.0011984159937128425,
+      "covariance": {
+        "within_bin_pairs_corrected": 0,
+        "cross_bin_pairs_unrepresented": 0,
+        "cross_terms_added": 0.0
+      },
+      "accepted_contributions": 1887,
+      "reference_event_seconds": [
+        0.024958750000223517,
+        0.025749958003871143,
+        0.02443941601086408,
+        0.02537183405365795,
+        0.025371500058099627
+      ],
+      "fused_event_seconds": [
+        0.0014292079722508788,
+        0.0014827080303803086,
+        0.0014440830564126372,
+        0.0013438749592751265,
+        0.0013390000676736236
+      ],
+      "reference_median_seconds": 0.025371500058099627,
+      "fused_median_seconds": 0.0014292079722508788,
+      "kernel_speedup": 17.752140031895927,
+      "C_V_counts_assignments_covariance_literal": true,
+      "hot_functions": [
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/dgs_reduction_policy.py",
+          "line": 278,
+          "function": "project",
+          "calls": 1,
+          "self_seconds": 0.017624166,
+          "cumulative_seconds": 0.021675333
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+          "line": 2169,
+          "function": "_accumulate_discrete_event_coordinates",
+          "calls": 1,
+          "self_seconds": 0.004089667,
+          "cumulative_seconds": 0.004098667
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/lib/_shape_base_impl.py",
+          "line": 607,
+          "function": "column_stack",
+          "calls": 1,
+          "self_seconds": 0.0027796260000000003,
+          "cumulative_seconds": 0.002780542
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/event_covariance.py",
+          "line": 15,
+          "function": "accumulate_copy_covariance",
+          "calls": 1,
+          "self_seconds": 0.001130373,
+          "cumulative_seconds": 0.0011935420000000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'astype' of 'numpy.ndarray' objects>",
+          "calls": 1,
+          "self_seconds": 0.000728042,
+          "cumulative_seconds": 0.000728042
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numeric.py",
+          "line": 97,
+          "function": "zeros_like",
+          "calls": 1,
+          "self_seconds": 0.0005389980000000001,
+          "cumulative_seconds": 0.000540166
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 86,
+          "function": "_wrapreduction_any_all",
+          "calls": 4,
+          "self_seconds": 9.044e-06,
+          "cumulative_seconds": 4.3e-05
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'reduce' of 'numpy.ufunc' objects>",
+          "calls": 4,
+          "self_seconds": 3.3207e-05,
+          "cumulative_seconds": 3.3207e-05
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 2474,
+          "function": "any",
+          "calls": 3,
+          "self_seconds": 2.917e-06,
+          "cumulative_seconds": 2.9334e-05
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 2586,
+          "function": "all",
+          "calls": 1,
+          "self_seconds": 3.334e-06,
+          "cumulative_seconds": 1.9917000000000003e-05
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'disable' of '_lsprof.Profiler' objects>",
+          "calls": 1,
+          "self_seconds": 1.4084000000000001e-05,
+          "cumulative_seconds": 1.4084000000000001e-05
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numerictypes.py",
+          "line": 418,
+          "function": "issubdtype",
+          "calls": 2,
+          "self_seconds": 4.417e-06,
+          "cumulative_seconds": 1.1208e-05
+        }
+      ]
+    },
+    {
+      "grid": "slab",
+      "shape": [
+        80,
+        80,
+        1,
+        57
+      ],
+      "copies": 6,
+      "projection_seconds": 0.10797879192978144,
+      "accumulation_seconds": 0.018752834061160684,
+      "covariance_seconds": 0.008388292044401169,
+      "covariance": {
+        "within_bin_pairs_corrected": 1910,
+        "cross_bin_pairs_unrepresented": 3756,
+        "cross_terms_added": 3947.4415780305862
+      },
+      "accepted_contributions": 5707,
+      "reference_event_seconds": [
+        0.12541679199784994,
+        0.12731104204431176,
+        0.12522112496662885,
+        0.12552500003948808,
+        0.12541420804336667
+      ],
+      "fused_event_seconds": [
+        0.005691166035830975,
+        0.00574258400592953,
+        0.005746458075009286,
+        0.00565620802808553,
+        0.005689040990546346
+      ],
+      "reference_median_seconds": 0.12541679199784994,
+      "fused_median_seconds": 0.005691166035830975,
+      "kernel_speedup": 22.037099464018304,
+      "C_V_counts_assignments_covariance_literal": true,
+      "hot_functions": [
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/dgs_reduction_policy.py",
+          "line": 278,
+          "function": "project",
+          "calls": 6,
+          "self_seconds": 0.088453707,
+          "cumulative_seconds": 0.107951959
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+          "line": 2169,
+          "function": "_accumulate_discrete_event_coordinates",
+          "calls": 6,
+          "self_seconds": 0.018699240000000002,
+          "cumulative_seconds": 0.018728791
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/lib/_shape_base_impl.py",
+          "line": 607,
+          "function": "column_stack",
+          "calls": 6,
+          "self_seconds": 0.017416,
+          "cumulative_seconds": 0.01742246
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/event_covariance.py",
+          "line": 15,
+          "function": "accumulate_copy_covariance",
+          "calls": 1,
+          "self_seconds": 0.007615954,
+          "cumulative_seconds": 0.008382500000000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'astype' of 'numpy.ndarray' objects>",
+          "calls": 6,
+          "self_seconds": 0.00155525,
+          "cumulative_seconds": 0.00155525
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numeric.py",
+          "line": 483,
+          "function": "count_nonzero",
+          "calls": 30,
+          "self_seconds": 8.5e-06,
+          "cumulative_seconds": 0.000521084
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method numpy._core._multiarray_umath.count_nonzero>",
+          "calls": 30,
+          "self_seconds": 0.0005125840000000001,
+          "cumulative_seconds": 0.0005125840000000001
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numeric.py",
+          "line": 97,
+          "function": "zeros_like",
+          "calls": 6,
+          "self_seconds": 0.000503334,
+          "cumulative_seconds": 0.000508125
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 86,
+          "function": "_wrapreduction_any_all",
+          "calls": 19,
+          "self_seconds": 2.0206000000000003e-05,
+          "cumulative_seconds": 0.000204539
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 2474,
+          "function": "any",
+          "calls": 18,
+          "self_seconds": 8.380000000000001e-06,
+          "cumulative_seconds": 0.00019762700000000002
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'reduce' of 'numpy.ufunc' objects>",
+          "calls": 20,
+          "self_seconds": 0.00018325,
+          "cumulative_seconds": 0.00018325
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 2586,
+          "function": "all",
+          "calls": 1,
+          "self_seconds": 2.542e-06,
+          "cumulative_seconds": 1.7834000000000002e-05
+        }
+      ]
+    },
+    {
+      "grid": "slab",
+      "shape": [
+        80,
+        80,
+        1,
+        57
+      ],
+      "copies": 12,
+      "projection_seconds": 0.21793996030464768,
+      "accumulation_seconds": 0.03635578916873783,
+      "covariance_seconds": 0.02587870799470693,
+      "covariance": {
+        "within_bin_pairs_corrected": 3797,
+        "cross_bin_pairs_unrepresented": 7512,
+        "cross_terms_added": 7935.20840215683
+      },
+      "accepted_contributions": 7594,
+      "reference_event_seconds": [
+        0.2545152090024203,
+        0.2619762079557404,
+        0.26000720902811736,
+        0.26070858305320144,
+        0.2624487499706447
+      ],
+      "fused_event_seconds": [
+        0.011814041994512081,
+        0.011752999969758093,
+        0.011818500002846122,
+        0.011817167047411203,
+        0.011924625025130808
+      ],
+      "reference_median_seconds": 0.26070858305320144,
+      "fused_median_seconds": 0.011817167047411203,
+      "kernel_speedup": 22.061851373279442,
+      "C_V_counts_assignments_covariance_literal": true,
+      "hot_functions": [
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/dgs_reduction_policy.py",
+          "line": 278,
+          "function": "project",
+          "calls": 12,
+          "self_seconds": 0.179987417,
+          "cumulative_seconds": 0.217893206
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+          "line": 2169,
+          "function": "_accumulate_discrete_event_coordinates",
+          "calls": 12,
+          "self_seconds": 0.036268299000000004,
+          "cumulative_seconds": 0.036318582
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/lib/_shape_base_impl.py",
+          "line": 607,
+          "function": "column_stack",
+          "calls": 12,
+          "self_seconds": 0.033842958,
+          "cumulative_seconds": 0.033853248
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/event_covariance.py",
+          "line": 15,
+          "function": "accumulate_copy_covariance",
+          "calls": 1,
+          "self_seconds": 0.022958778000000003,
+          "cumulative_seconds": 0.025872458
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'astype' of 'numpy.ndarray' objects>",
+          "calls": 12,
+          "self_seconds": 0.0030392080000000003,
+          "cumulative_seconds": 0.0030392080000000003
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numeric.py",
+          "line": 483,
+          "function": "count_nonzero",
+          "calls": 132,
+          "self_seconds": 2.4348e-05,
+          "cumulative_seconds": 0.00222197
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method numpy._core._multiarray_umath.count_nonzero>",
+          "calls": 132,
+          "self_seconds": 0.002197622,
+          "cumulative_seconds": 0.002197622
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numeric.py",
+          "line": 97,
+          "function": "zeros_like",
+          "calls": 12,
+          "self_seconds": 0.0009864140000000001,
+          "cumulative_seconds": 0.000993415
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 2474,
+          "function": "any",
+          "calls": 69,
+          "self_seconds": 2.317e-05,
+          "cumulative_seconds": 0.000630669
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 86,
+          "function": "_wrapreduction_any_all",
+          "calls": 70,
+          "self_seconds": 4.4417000000000005e-05,
+          "cumulative_seconds": 0.0006223740000000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'reduce' of 'numpy.ufunc' objects>",
+          "calls": 72,
+          "self_seconds": 0.000573251,
+          "cumulative_seconds": 0.000573251
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'disable' of '_lsprof.Profiler' objects>",
+          "calls": 1,
+          "self_seconds": 2.5292e-05,
+          "cumulative_seconds": 2.5292e-05
+        }
+      ]
+    },
+    {
+      "grid": "cube",
+      "shape": [
+        40,
+        50,
+        25,
+        57
+      ],
+      "copies": 1,
+      "projection_seconds": 0.01939179201144725,
+      "accumulation_seconds": 0.004579333937726915,
+      "covariance_seconds": 0.0011691669933497906,
+      "covariance": {
+        "within_bin_pairs_corrected": 0,
+        "cross_bin_pairs_unrepresented": 0,
+        "cross_terms_added": 0.0
+      },
+      "accepted_contributions": 12304,
+      "reference_event_seconds": [
+        0.02313466602936387,
+        0.023978249984793365,
+        0.023840874899178743,
+        0.02311058295890689,
+        0.023659124970436096
+      ],
+      "fused_event_seconds": [
+        0.001528915949165821,
+        0.0013705419842153788,
+        0.0013661249540746212,
+        0.0013869169633835554,
+        0.0014095420483499765
+      ],
+      "reference_median_seconds": 0.023659124970436096,
+      "fused_median_seconds": 0.0013869169633835554,
+      "kernel_speedup": 17.05878981587819,
+      "C_V_counts_assignments_covariance_literal": true,
+      "hot_functions": [
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/dgs_reduction_policy.py",
+          "line": 278,
+          "function": "project",
+          "calls": 1,
+          "self_seconds": 0.016008958,
+          "cumulative_seconds": 0.019386125
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+          "line": 2169,
+          "function": "_accumulate_discrete_event_coordinates",
+          "calls": 1,
+          "self_seconds": 0.004565498,
+          "cumulative_seconds": 0.004572667
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/lib/_shape_base_impl.py",
+          "line": 607,
+          "function": "column_stack",
+          "calls": 1,
+          "self_seconds": 0.0030256650000000003,
+          "cumulative_seconds": 0.0030266670000000002
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/event_covariance.py",
+          "line": 15,
+          "function": "accumulate_copy_covariance",
+          "calls": 1,
+          "self_seconds": 0.001106126,
+          "cumulative_seconds": 0.0011649590000000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'astype' of 'numpy.ndarray' objects>",
+          "calls": 1,
+          "self_seconds": 0.00026175,
+          "cumulative_seconds": 0.00026175
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numeric.py",
+          "line": 97,
+          "function": "zeros_like",
+          "calls": 1,
+          "self_seconds": 8.479100000000001e-05,
+          "cumulative_seconds": 8.6166e-05
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 86,
+          "function": "_wrapreduction_any_all",
+          "calls": 4,
+          "self_seconds": 9.666e-06,
+          "cumulative_seconds": 3.9750000000000004e-05
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'reduce' of 'numpy.ufunc' objects>",
+          "calls": 4,
+          "self_seconds": 2.9334e-05,
+          "cumulative_seconds": 2.9334e-05
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 2474,
+          "function": "any",
+          "calls": 3,
+          "self_seconds": 2.5410000000000003e-06,
+          "cumulative_seconds": 2.6457e-05
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 2586,
+          "function": "all",
+          "calls": 1,
+          "self_seconds": 2.7500000000000004e-06,
+          "cumulative_seconds": 1.8584e-05
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'disable' of '_lsprof.Profiler' objects>",
+          "calls": 1,
+          "self_seconds": 1.3709e-05,
+          "cumulative_seconds": 1.3709e-05
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numerictypes.py",
+          "line": 418,
+          "function": "issubdtype",
+          "calls": 2,
+          "self_seconds": 5.167000000000001e-06,
+          "cumulative_seconds": 1.1084000000000001e-05
+        }
+      ]
+    },
+    {
+      "grid": "cube",
+      "shape": [
+        40,
+        50,
+        25,
+        57
+      ],
+      "copies": 6,
+      "projection_seconds": 0.1046692100353539,
+      "accumulation_seconds": 0.019373416900634766,
+      "covariance_seconds": 0.00846591591835022,
+      "covariance": {
+        "within_bin_pairs_corrected": 1272,
+        "cross_bin_pairs_unrepresented": 35747,
+        "cross_terms_added": 2629.4807217121124
+      },
+      "accepted_contributions": 37270,
+      "reference_event_seconds": [
+        0.12325529102236032,
+        0.12223204108886421,
+        0.12307816697284579,
+        0.12334716704208404,
+        0.12841074995230883
+      ],
+      "fused_event_seconds": [
+        0.005858332966454327,
+        0.0058704589027911425,
+        0.0059077920159325,
+        0.0061456249095499516,
+        0.0058039159048348665
+      ],
+      "reference_median_seconds": 0.12325529102236032,
+      "fused_median_seconds": 0.0058704589027911425,
+      "kernel_speedup": 20.995852805265002,
+      "C_V_counts_assignments_covariance_literal": true,
+      "hot_functions": [
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/dgs_reduction_policy.py",
+          "line": 278,
+          "function": "project",
+          "calls": 6,
+          "self_seconds": 0.08554528800000001,
+          "cumulative_seconds": 0.10464375000000001
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+          "line": 2169,
+          "function": "_accumulate_discrete_event_coordinates",
+          "calls": 6,
+          "self_seconds": 0.019320292000000003,
+          "cumulative_seconds": 0.019349207
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/lib/_shape_base_impl.py",
+          "line": 607,
+          "function": "column_stack",
+          "calls": 6,
+          "self_seconds": 0.017016334,
+          "cumulative_seconds": 0.017022584
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/event_covariance.py",
+          "line": 15,
+          "function": "accumulate_copy_covariance",
+          "calls": 1,
+          "self_seconds": 0.007679246000000001,
+          "cumulative_seconds": 0.008451667000000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'astype' of 'numpy.ndarray' objects>",
+          "calls": 6,
+          "self_seconds": 0.0015417520000000002,
+          "cumulative_seconds": 0.0015417520000000002
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numeric.py",
+          "line": 483,
+          "function": "count_nonzero",
+          "calls": 30,
+          "self_seconds": 7.88e-06,
+          "cumulative_seconds": 0.000532837
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method numpy._core._multiarray_umath.count_nonzero>",
+          "calls": 30,
+          "self_seconds": 0.000524957,
+          "cumulative_seconds": 0.000524957
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numeric.py",
+          "line": 97,
+          "function": "zeros_like",
+          "calls": 6,
+          "self_seconds": 0.0005177910000000001,
+          "cumulative_seconds": 0.000523
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 86,
+          "function": "_wrapreduction_any_all",
+          "calls": 19,
+          "self_seconds": 1.9583000000000002e-05,
+          "cumulative_seconds": 0.000200626
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 2474,
+          "function": "any",
+          "calls": 18,
+          "self_seconds": 8.206e-06,
+          "cumulative_seconds": 0.000193666
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'reduce' of 'numpy.ufunc' objects>",
+          "calls": 20,
+          "self_seconds": 0.00017979200000000002,
+          "cumulative_seconds": 0.00017979200000000002
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 2586,
+          "function": "all",
+          "calls": 1,
+          "self_seconds": 3.0420000000000003e-06,
+          "cumulative_seconds": 1.8208000000000003e-05
+        }
+      ]
+    },
+    {
+      "grid": "cube",
+      "shape": [
+        40,
+        50,
+        25,
+        57
+      ],
+      "copies": 12,
+      "projection_seconds": 0.21525316697079688,
+      "accumulation_seconds": 0.03726970893330872,
+      "covariance_seconds": 0.027326124953106046,
+      "covariance": {
+        "within_bin_pairs_corrected": 2536,
+        "cross_bin_pairs_unrepresented": 71323,
+        "cross_terms_added": 5308.299465894699
+      },
+      "accepted_contributions": 49574,
+      "reference_event_seconds": [
+        0.25369691604282707,
+        0.25594212498981506,
+        0.25505854189395905,
+        0.2551342500373721,
+        0.25542116595897824
+      ],
+      "fused_event_seconds": [
+        0.01194891706109047,
+        0.011861292063258588,
+        0.01189241698011756,
+        0.011946249986067414,
+        0.01196645898744464
+      ],
+      "reference_median_seconds": 0.2551342500373721,
+      "fused_median_seconds": 0.011946249986067414,
+      "kernel_speedup": 21.356848411420174,
+      "C_V_counts_assignments_covariance_literal": true,
+      "hot_functions": [
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/dgs_reduction_policy.py",
+          "line": 278,
+          "function": "project",
+          "calls": 12,
+          "self_seconds": 0.17653000000000002,
+          "cumulative_seconds": 0.21520883400000002
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+          "line": 2169,
+          "function": "_accumulate_discrete_event_coordinates",
+          "calls": 12,
+          "self_seconds": 0.037173997,
+          "cumulative_seconds": 0.03723025
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/lib/_shape_base_impl.py",
+          "line": 607,
+          "function": "column_stack",
+          "calls": 12,
+          "self_seconds": 0.034625213,
+          "cumulative_seconds": 0.034635125
+        },
+        {
+          "file": "/Users/pmneves/code/nfit/src/nfit/event_covariance.py",
+          "line": 15,
+          "function": "accumulate_copy_covariance",
+          "calls": 1,
+          "self_seconds": 0.024354197,
+          "cumulative_seconds": 0.027307041
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'astype' of 'numpy.ndarray' objects>",
+          "calls": 12,
+          "self_seconds": 0.0030225010000000004,
+          "cumulative_seconds": 0.0030225010000000004
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numeric.py",
+          "line": 483,
+          "function": "count_nonzero",
+          "calls": 132,
+          "self_seconds": 2.6379000000000003e-05,
+          "cumulative_seconds": 0.00225271
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method numpy._core._multiarray_umath.count_nonzero>",
+          "calls": 132,
+          "self_seconds": 0.0022263310000000002,
+          "cumulative_seconds": 0.0022263310000000002
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/numeric.py",
+          "line": 97,
+          "function": "zeros_like",
+          "calls": 12,
+          "self_seconds": 0.000992918,
+          "cumulative_seconds": 0.0010016250000000001
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 2474,
+          "function": "any",
+          "calls": 69,
+          "self_seconds": 2.3584e-05,
+          "cumulative_seconds": 0.000640376
+        },
+        {
+          "file": "/Users/pmneves/anaconda3/envs/nfit/lib/python3.14/site-packages/numpy/_core/fromnumeric.py",
+          "line": 86,
+          "function": "_wrapreduction_any_all",
+          "calls": 70,
+          "self_seconds": 4.8414e-05,
+          "cumulative_seconds": 0.0006328750000000001
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<method 'reduce' of 'numpy.ufunc' objects>",
+          "calls": 72,
+          "self_seconds": 0.000580292,
+          "cumulative_seconds": 0.000580292
+        },
+        {
+          "file": "~",
+          "line": 0,
+          "function": "<built-in method numpy.asarray>",
+          "calls": 63,
+          "self_seconds": 2.5753000000000002e-05,
+          "cumulative_seconds": 2.5753000000000002e-05
+        }
+      ]
+    }
+  ],
+  "source_modules": {
+    "dgs_reduction_policy": {
+      "path": "/Users/pmneves/code/nfit/src/nfit/dgs_reduction_policy.py",
+      "sha256": "42dc703f4a7be40ff08a488bc7c03a6b680069d408a9dec88812970c9a2b5d2c"
+    },
+    "dgs_event_accumulation": {
+      "path": "/Users/pmneves/code/nfit/src/nfit/dgs_event_accumulation.py",
+      "sha256": "d5664f3550118f9d4860fa22d434991642169b97663bdc532249c36a20999957"
+    },
+    "_dgs_event_numba": {
+      "path": "/Users/pmneves/code/nfit/src/nfit/_dgs_event_numba.py",
+      "sha256": "b8286d18a394374d80af3f86adbdf19bd230da2c530a08bb00920e37db92fbf4"
+    },
+    "mdevent": {
+      "path": "/Users/pmneves/code/nfit/src/nfit/mdevent.py",
+      "sha256": "32742a6ef1e2d63d9f8dd473f6c90b92a285ada238c4f7eaf0e5ed813e83a68b"
+    }
+  }
+}
