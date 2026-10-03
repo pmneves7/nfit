@@ -364,6 +364,20 @@ class MDHistoData:
             values["metadata"].pop("measurement_contract", None)
             if "measurement_contract" in self.metadata:
                 values["metadata"]["measurement_target_required"] = True
+        replay_payload_changed = primary_changed or any(
+            name in changes and changes[name] is not getattr(self, name)
+            for name in ("auxiliary_channels", "axes")
+        )
+        replay_recipe_updated = (
+            "metadata" in changes
+            and values["metadata"].get("cached_background_replay")
+            != self.metadata.get("cached_background_replay")
+        )
+        if replay_payload_changed and not replay_recipe_updated:
+            values["metadata"] = dict(values["metadata"])
+            values["metadata"].pop("cached_background_replay", None)
+            if "cached_background_replay" in self.metadata:
+                values["metadata"]["background_profile_uncertainty"] = "diagonal_approximation_replay_recipe_invalidated_by_payload_change"
         return MDHistoData(**values)
 
 
@@ -379,7 +393,7 @@ def _without_primary_statistics(metadata, channels):
     metadata = dict(metadata)
     declared = "measurement_contract" in metadata
     for key in ("measurement_contract", EVENT_STATISTICS_KEY, MEASUREMENT_STATISTICS_KEY,
-                "counting_uncertainty", "poisson_count_model"):
+                "counting_uncertainty", "poisson_count_model", "cached_background_replay"):
         metadata.pop(key, None)
     excluded = (*EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR, *MEASUREMENT_STATISTICS_CHANNELS)
     if declared:

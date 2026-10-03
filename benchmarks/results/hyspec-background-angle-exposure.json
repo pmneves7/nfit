@@ -1,0 +1,217 @@
+{
+  "acquisition_context": "User: dummy copy of mount, glue and aluminum without crystals, no can; coarse 180-degree sweep intended to average small orientation-dependent effects.",
+  "method": "Pulse-charge log totals assigned by last-held omega, rounded to nominal 18-degree steps; pC converted to microamp hours.",
+  "original_files_unchanged": true,
+  "qualification": "Proxy for angle exposure, not exact pause-filtered per-run good-charge reconstruction. Event membership by original dummy angle is absent after QLab merging.",
+  "script_sha256": "8e7b74231248c6bca9b73cd0ec6c8c57ec2a2550a89a878583c990fb955ae7b1",
+  "sources": {
+    "Ei15meV_1p8K_240Hz_s2_34_bkg.nxs": {
+      "charge_by_angle_microamp_hours": [
+        166.98730433055556,
+        166.93650097222223,
+        166.94073097777778,
+        166.94209773333333,
+        166.98175397222224,
+        166.98100509722224,
+        166.87311531111112,
+        167.01661668055556,
+        166.9280041111111,
+        166.90498859722223,
+        166.95805145833333
+      ],
+      "charge_fractions": [
+        0.09092939581339708,
+        0.09090173192183922,
+        0.09090403528167244,
+        0.09090477951942985,
+        0.09092637348345517,
+        0.0909259656994529,
+        0.09086721660409591,
+        0.09094535723205735,
+        0.09089710513628661,
+        0.090884572526214,
+        0.09091346678209954
+      ],
+      "equal_angle_fraction": 0.09090909090909091,
+      "input_size_and_mtime_ns": [
+        190768848,
+        1784638971000000000
+      ],
+      "max_relative_deviation_from_equal": 0.0004606173549449588,
+      "nominal_angles_degrees": [
+        0.0,
+        18.0,
+        36.0,
+        54.0,
+        72.0,
+        90.0,
+        108.0,
+        126.0,
+        144.0,
+        162.0,
+        180.0
+      ],
+      "pulse_charge_total_microamp_hours": 1836.4501692416666,
+      "relative_total_difference": 2.340705919312569e-05,
+      "source_log_arrays_sha256": "dbf6cf549e753b7805302c8cb61d56458cf8b25efbeec56a6f5e7f363c9573fc",
+      "stored_good_charge_microamp_hours": 1836.4071843499999,
+      "total_variation_distance_to_equal": 9.510446500745479e-05
+    },
+    "Ei15meV_1p8K_240Hz_s2_70_bkg.nxs": {
+      "charge_by_angle_microamp_hours": [
+        166.93724334166666,
+        166.95421862222224,
+        167.02395446944445,
+        166.99911717777778,
+        166.9719014611111,
+        166.86405966666666,
+        166.97742988888888,
+        166.95013844722223,
+        166.90587145,
+        166.948121925,
+        166.903764475
+      ],
+      "charge_fractions": [
+        0.0909028463938269,
+        0.09091208999513448,
+        0.09095006346876618,
+        0.09093653874256356,
+        0.09092171888533981,
+        0.09086299546401704,
+        0.09092472929698328,
+        0.09090986820499429,
+        0.09088576336195113,
+        0.0909087701419968,
+        0.09088461604442662
+      ],
+      "equal_angle_fraction": 0.09090909090909091,
+      "input_size_and_mtime_ns": [
+        186736480,
+        1784638961000000000
+      ],
+      "max_relative_deviation_from_equal": 0.0005070498958126279,
+      "nominal_angles_degrees": [
+        0.0,
+        18.0,
+        36.0,
+        54.0,
+        72.0,
+        90.0,
+        108.0,
+        126.0,
+        144.0,
+        162.0,
+        180.0
+      ],
+      "pulse_charge_total_microamp_hours": 1836.435820925,
+      "relative_total_difference": 3.9051688129898565e-06,
+      "source_log_arrays_sha256": "196299a4dea27ea2d7b6276e81072e690adee82a062160da53b5218dc67bf973",
+      "stored_good_charge_microamp_hours": 1836.428649361111,
+      "total_variation_distance_to_equal": 0.00010046313923610384
+    },
+    "Ei15meV_50K_240Hz_s2_34_bkg.nxs": {
+      "charge_by_angle_microamp_hours": [
+        155.73380821111112,
+        155.75621865,
+        155.69263937777777,
+        155.78944038055556,
+        155.82706354444446,
+        155.72529958611113,
+        155.79823434166667,
+        155.79769090555556,
+        155.67959199722225,
+        155.73580750833332,
+        177.20227096666667
+      ],
+      "charge_fractions": [
+        0.08977367321963235,
+        0.08978659184944451,
+        0.08974994120259022,
+        0.08980574271216947,
+        0.08982743080712617,
+        0.08976876837251488,
+        0.08981081204297287,
+        0.08981049877601809,
+        0.08974241996303525,
+        0.08977482572632024,
+        0.1021492953281758
+      ],
+      "equal_angle_fraction": 0.09090909090909091,
+      "input_size_and_mtime_ns": [
+        178297738,
+        1784638933000000000
+      ],
+      "max_relative_deviation_from_equal": 0.12364224860993378,
+      "nominal_angles_degrees": [
+        0.0,
+        18.0,
+        36.0,
+        54.0,
+        72.0,
+        90.0,
+        108.0,
+        126.0,
+        144.0,
+        162.0,
+        180.0
+      ],
+      "pulse_charge_total_microamp_hours": 1734.7380654694443,
+      "relative_total_difference": 4.13325235326667e-06,
+      "source_log_arrays_sha256": "46664839bf2df59af9d78300dd103b50d3845a41e11f55f9a3a50e5af0e74468",
+      "stored_good_charge_microamp_hours": 1734.7308953888887,
+      "total_variation_distance_to_equal": 0.011240204419084972
+    },
+    "Ei15meV_50K_240Hz_s2_70_bkg.nxs": {
+      "charge_by_angle_microamp_hours": [
+        155.80191389722222,
+        155.72703815555556,
+        155.77556965000002,
+        155.76471258055557,
+        155.7810710888889,
+        155.7834816222222,
+        155.75569977222224,
+        155.7448661916667,
+        155.76913338888886,
+        155.79577485555558,
+        155.81233021388888
+      ],
+      "charge_fractions": [
+        0.09092550915772395,
+        0.09088181190931213,
+        0.090910134737525,
+        0.09090379858578909,
+        0.09091334536003635,
+        0.09091475213974266,
+        0.09089853873906353,
+        0.09089221629536964,
+        0.0909063785556915,
+        0.09092192643222773,
+        0.09093158808751867
+      ],
+      "equal_angle_fraction": 0.09090909090909091,
+      "input_size_and_mtime_ns": [
+        173858391,
+        1784638933000000000
+      ],
+      "max_relative_deviation_from_equal": 0.00030006899756651606,
+      "nominal_angles_degrees": [
+        0.0,
+        18.0,
+        36.0,
+        54.0,
+        72.0,
+        90.0,
+        108.0,
+        126.0,
+        144.0,
+        162.0,
+        180.0
+      ],
+      "pulse_charge_total_microamp_hours": 1713.5115914166668,
+      "relative_total_difference": 4.179619905508858e-06,
+      "source_log_arrays_sha256": "78dbed9e005d26e47651afeb444f584468036fbf67dc5f5eef488f2875e3739c",
+      "stored_good_charge_microamp_hours": 1713.5044296194444,
+      "total_variation_distance_to_equal": 6.27104602287723e-05
+    }
+  }
+}

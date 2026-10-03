@@ -72,6 +72,7 @@ def prepare_measurement_profile(
     view: Mapping[str, Any], values, errors, *, selected, indices, edges,
     centers=None, coverage_weights=None, coverage_threshold=0.0,
     channel="signal", reference_values=None,
+    require_exact_background_uncertainty=False,
 ) -> MeasurementProfile:
     """Reduce center-selected pixels into declared profile bins.
 
@@ -81,6 +82,9 @@ def prepare_measurement_profile(
     and inclusion rule. It does not assign a counting likelihood to predictions.
     Covered count zeros contribute exposure; unexposed/invalid observations do
     not. Coverage is geometric support, separate from normalization exposure.
+    Cached directional-background previews retain their existing estimator and
+    label their diagonal uncertainty approximation. Exact background uncertainty
+    requires the explicit original-grid source replay API.
     """
     values, errors = np.asarray(values, dtype=float), np.asarray(errors, dtype=float)
     selected, indices = np.asarray(selected, dtype=bool), np.asarray(indices, dtype=int)
@@ -97,6 +101,11 @@ def prepare_measurement_profile(
         raise ValueError("Reference values must match observations")
     if not np.isfinite(coverage_threshold) or not 0 <= coverage_threshold <= 1:
         raise ValueError("Coverage threshold must be between zero and one")
+    approximation = view.get("background_profile_uncertainty") if channel == "signal" else None
+    if require_exact_background_uncertainty and approximation and approximation != "source_covariance":
+        from .measurement_dependencies import SourceReplayRequired
+
+        raise SourceReplayRequired("This cached background preview has diagonal uncertainty; use replay_cached_background_profile on the original histogram for exact background covariance")
     statistics = _view_statistics(view, reference, errors, channel)
     declared = view.get("measurement_contract") if channel == "signal" else None
     if declared is None and channel == "signal" and view.get("measurement_target_required"):
@@ -212,6 +221,10 @@ def prepare_measurement_profile(
         metadata[EVENT_STATISTICS_KEY] = dict(view[EVENT_STATISTICS_KEY])
     else:
         metadata[MEASUREMENT_STATISTICS_KEY] = dict(generic_marker)
+    if approximation:
+        metadata["background_profile_uncertainty"] = approximation
+        metadata["background_profile_target"] = "exposure_weighted_preview_field" if statistics is not None else contract.estimator + "_of_preview_pixels"
+        metadata["exact_background_profile_target"] = view.get("exact_background_profile_target")
     if reference_values is not None:
         metadata.pop(EVENT_STATISTICS_KEY, None)
         metadata.pop(MEASUREMENT_STATISTICS_KEY, None)

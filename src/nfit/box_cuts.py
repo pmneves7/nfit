@@ -19,6 +19,10 @@ class BoxProfiles:
 
     @property
     def value_label(self) -> str:
+        if self.x_measurement is not None and self.x_measurement.data.metadata.get(
+            "background_profile_uncertainty", ""
+        ).startswith("diagonal_approximation"):
+            return "Weighted mean (diagonal uncertainty)"
         if self.x_measurement is not None and self.x_measurement.contract.kind == "counting":
             return "Pooled intensity"
         return "Weighted mean"

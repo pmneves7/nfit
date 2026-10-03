@@ -48,13 +48,14 @@ tracks the staged implementation and review checkpoints for these changes.
 - Extend native HYSPEC raw reduction beyond Shiver's ungrouped data-to-MDE
   workflow when required: time-independent background, polarization/transmission
   corrections and detector grouping need explicit settings and reference tests.
-- Carry measured-event background source correlations and an explicit statistical
-  target through cached profiles, cuts and exports, or route those operations
-  through final-grid source replay. Current replay combines correlated copies
-  within each output voxel; its cached voxel errors omit covariance across
-  voxels and its normalized background is not a certified additive count payload.
-  Final-grid replay is available in scripts; automatic GUI cut replay remains
-  incomplete.
+- Integrate measured-event background covariance replay asynchronously into GUI
+  profiles, regular and rotated cuts, and exports; propagate compact recipes
+  through parent composites. Explicit cached-field profile replay already preserves
+  the sample-exposure-weighted subtraction target and background source reuse.
+  Interactive previews retain marked diagonal uncertainty approximations. Exact
+  profile marginal errors still omit covariance between final bins; subsequent
+  coarsening, combination and joint GLS fits need original-source replay or a
+  represented joint dependency model.
 - Review a strict Shiver observed-extrema compatibility option separately from
   retaining valid raw events across the configured energy window. Float32 MD
   events can be rounded outside Shiver's observed-extrema box.

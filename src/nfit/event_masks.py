@@ -57,11 +57,13 @@ def reduce_masked_event_runs(
 
     first = None
     have_statistics = True
+    replay_partitions = []
     for subset, masks in partitions.values():
         data = reduce(subset)
         masked = _mdhisto_with_nfit_masks(DatasetEntry("Event masks", None, masks=masks), data=data)
         if len(partitions) == 1:
             return finish(masked)
+        replay_partitions.append(masked)
         if first is None:
             first = data
             numerator = np.zeros(data.shape)
@@ -114,6 +116,9 @@ def reduce_masked_event_runs(
         metadata.pop(EVENT_STATISTICS_KEY, None)
         channels.pop(EVENT_SIGNAL_NUMERATOR, None)
         channels.pop(EVENT_VARIANCE_NUMERATOR, None)
+    from .cached_background_replay import merge_background_replay_partitions
+
+    metadata, channels = merge_background_replay_partitions(replay_partitions, metadata, channels)
     return finish(first.with_updates(
         signal=signal, errors=errors, mask=~measured, num_events=events,
         metadata=metadata, auxiliary_channels=channels,

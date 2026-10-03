@@ -1,0 +1,87 @@
+{
+  "Ei_meV": 15.0,
+  "background_coordinate": [
+    0.9190636703800646,
+    1.344203286798761
+  ],
+  "background_theta_degrees": [
+    19.973907470703125,
+    29.973907470703125
+  ],
+  "bin_bounds": [
+    0.9196394059140267,
+    1.3552645398311636
+  ],
+  "coordinate": "positive transverse momentum = kf*sin(theta), inverse angstrom",
+  "delta_degrees": 0.026092529296875,
+  "detector_fixed_truth": {
+    "background_charge": 100.0,
+    "comparisons": {
+      "consistent_original_lab_geometry": {
+        "bias_from_known_signal": -20.002975218750002,
+        "empirical_standard_deviation": 0.7367707201780433,
+        "expected_estimate_using_empirical_source_mean": -15.002794800000004,
+        "gaussian_95_percent_coverage": 0.0,
+        "mean_estimate": -15.00297521875,
+        "monte_carlo_standard_error_of_mean": 0.0016474694141495809,
+        "rms_reported_sigma": 0.7374128575476309
+      },
+      "detector_identity_and_energy_remap": {
+        "bias_from_known_signal": -0.0015396937499998486,
+        "empirical_standard_deviation": 0.4391916494936961,
+        "expected_estimate_using_empirical_source_mean": 4.998640725000001,
+        "gaussian_95_percent_coverage": 0.95075,
+        "mean_estimate": 4.99846030625,
+        "monte_carlo_standard_error_of_mean": 0.0009820623834181656,
+        "rms_reported_sigma": 0.44017788546400477
+      },
+      "mixed_source_numerator_sample_denominator": {
+        "bias_from_known_signal": 4.99842218125,
+        "empirical_standard_deviation": 0.4103694917527416,
+        "expected_estimate_using_empirical_source_mean": 9.998602599999998,
+        "gaussian_95_percent_coverage": 0.0,
+        "mean_estimate": 9.99842218125,
+        "monte_carlo_standard_error_of_mean": 0.0009176140794511696,
+        "rms_reported_sigma": 0.41080014785362784
+      }
+    },
+    "detector_rates": [
+      10.0,
+      50.0
+    ],
+    "note": "Independent Poisson counts in detector/energy cells; conditional known exposures; no within-cell energy spread.",
+    "sample_charge": 400.0,
+    "sample_signal": 5.0
+  },
+  "energy_transfer_meV": 0.0,
+  "laboratory_field_truth": {
+    "logarithmic_rate_derivative_per_degree": 1.0,
+    "note": "Pixel remapping alone assumes detector-rate stationarity. A laboratory field varying with angle requires a field model/additional observations; consistent original-Qlab replay alone also cannot determine an unmeasured target direction.",
+    "sample_background_target": 30.793077584204717,
+    "sample_detector_rates": [
+      10.264359194734904,
+      51.321795973674526
+    ],
+    "unadjusted_pixel_transfer_subtraction_bias": 0.7930775842047169
+  },
+  "repetitions": 200000,
+  "sample_coordinate": [
+    0.9202151414479888,
+    1.3452645398311636
+  ],
+  "sample_theta_degrees": [
+    20.0,
+    30.0
+  ],
+  "script_sha256": "f4a2639afca5e35f881ed0682286c37840a2febe7039b8875b72f78d9a9bbbc2",
+  "seed": 73029,
+  "shared_calibration_example": {
+    "background_normalized_rate": 30.0,
+    "correct_signal_calibration_variance": 0.010000000000000002,
+    "incorrect_independent_operand_calibration_variance": 0.8500000000000001,
+    "note": "One multiplicative calibration shared by sample/background partially cancels in their difference; separate independent perturbations destroy that covariance.",
+    "relative_calibration_sigma": 0.02,
+    "sample_normalized_rate": 35.0,
+    "signal": 5.0
+  }
+}

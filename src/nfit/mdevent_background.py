@@ -6,11 +6,18 @@ copies are correlated observations, not additional counting statistics.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable
 
 import numpy as np
 
 from . import _parallel, mdevent
+from .cached_background_replay import (
+    REPLAY_INDEPENDENT_VARIANCE,
+    background_replay_metadata,
+    background_replay_payload,
+    background_replay_source_recipe,
+)
 from .event_masks import reduce_masked_event_runs
 from .mdhisto import MDHistoChannel, MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup, MaskSpec
@@ -56,7 +63,8 @@ def project_measured_background_mdevent(
     Masks apply at reconstructed output-bin centers, like native MDEvent
     reduction. Repeated copies of each background event are combined before
     squaring their weights for the variance. Cross-bin covariance is not
-    stored. The source's private powder binning does not enter this mode.
+    materialized. A compact persisted recipe supports explicit final-profile
+    covariance replay. The source's private powder binning does not enter this mode.
     """
     if any("mdevent" not in group.metadata for group in (sample, background)):
         raise ValueError("measured-event replay requires sample and background MDEvent groups")
@@ -195,6 +203,7 @@ def _replay_runs(
     edges = [np.asarray(axis.values, dtype=float) for axis in target.axes]
     size = int(np.prod(shape))
     numerator, variance, events, denominator = (np.zeros(size) for _ in range(4))
+    recorded_sources = []
     config = background.metadata["mdevent"]
     normalization_angles = len(prepared)
     normalization_total = (
@@ -368,6 +377,7 @@ def _replay_runs(
             index = int(source.metadata["mdevent_experiment_index"])
             gonio = mdevent._read_goniometer_matrix(workspace[f"experiment{index}"])
             values = workspace["event_data/event_data"]
+            content_digest = hashlib.sha256()
             workers = min(workers, max(1, values.shape[0]))
 
             def report(
@@ -392,7 +402,9 @@ def _replay_runs(
             report(0)
             for start in range(0, values.shape[0], rows):
                 batch_workers = workers
-                block = np.asarray(values[start : start + rows], dtype=float)
+                raw = np.asarray(values[start : start + rows])
+                content_digest.update(raw.tobytes())
+                block = np.asarray(raw, dtype=float)
                 block = block[block[:, 2].astype(np.int64) == index]
                 if block.size:
                     if np.any(block[:, 3] != 0):
@@ -422,6 +434,13 @@ def _replay_runs(
                             edges, shape, weights, numerator, variance, events,
                         )
                 report(min(start + rows, values.shape[0]), workers=batch_workers)
+            recorded_sources.append(background_replay_source_recipe(
+                source, workspace_path=config["workspace_path"],
+                frame=config["dimensions"][0]["frame"], gonio=gonio,
+                shape=values.shape, dtype=values.dtype, content_sha256=content_digest.hexdigest(),
+                transforms=transforms, weights=weights, detector_ids=ids,
+                accepted_ids=accepted_ids, excluded_bins=excluded_bins,
+            ))
     with np.errstate(divide="ignore", invalid="ignore"):
         signal = numerator / denominator
         errors = np.sqrt(variance) / denominator
@@ -445,7 +464,7 @@ def _replay_runs(
             "uncertainty": "correlated_event_copies_per_output_bin",
         },
     )
-    return MDHistoData(
+    output = MDHistoData(
         axes=target.axes,
         signal=signal.reshape(shape),
         errors=errors.reshape(shape),
@@ -455,9 +474,15 @@ def _replay_runs(
         auxiliary_channels={
             "normalization_denominator": MDHistoChannel(
                 denominator.reshape(shape), label="Replayed detector-trajectory normalization"
-            )
+            ),
+            REPLAY_INDEPENDENT_VARIANCE: MDHistoChannel(
+                np.zeros(shape), label="Independent variance outside replay sources"
+            ),
         },
     )
+    return output.with_updates(metadata=background_replay_metadata(
+        output.metadata, background_replay_payload(output, recorded_sources),
+    ))
 
 
 def _replay_numpy_block(

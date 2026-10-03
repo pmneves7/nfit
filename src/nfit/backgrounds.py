@@ -41,6 +41,9 @@ def background_with_user_mask_zeros(background: MDHistoData) -> MDHistoData:
     if dependencies is not None:
         included = np.flatnonzero(~excluded.ravel())
         dependencies = project_source_dependencies(dependencies, included, included, np.ones(len(included)), background.shape)
+    from .cached_background_replay import exclude_background_replay_cells
+
+    metadata = exclude_background_replay_cells(background, excluded, metadata)
     return background.with_updates(
         signal=np.where(excluded, 0.0, background.signal),
         errors=np.where(excluded, 0.0, background.errors),
@@ -104,7 +107,10 @@ def subtract_aligned_background(
         dependencies = combine_source_dependencies((data.source_dependencies, background.source_dependencies), (1.0, -factor))
         variance = dependencies.variance()
     if dependencies is None:
-        validate_independent_source_lineage(data, background)
+        from .cached_background_replay import replay_represents_background_overlap
+
+        if not replay_represents_background_overlap(data, background):
+            validate_independent_source_lineage(data, background)
     metadata = dict(data.metadata)
     metadata.update(merge_source_lineage_metadata(data, background))
     history = list(metadata.get("background_subtractions", []))
@@ -141,13 +147,16 @@ def subtract_aligned_background(
     if factor != 1.0:
         contribution = _freeze_owned(factor * contribution)
         contribution_errors = _freeze_owned(abs(factor) * contribution_errors)
-    return accumulate_background_channel(
+    result = accumulate_background_channel(
         data,
         result,
         contribution=contribution,
         contribution_errors=contribution_errors,
         valid=measured,
     )
+    from .cached_background_replay import background_replay_subtraction
+
+    return background_replay_subtraction(data, background, result, factor)
 
 
 def subtract_background(

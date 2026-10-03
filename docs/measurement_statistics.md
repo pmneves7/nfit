@@ -247,11 +247,97 @@ then call
 `project_measured_background_mdevent(sample_group, background_group, sample_final)`.
 Copies of each background event that meet in a final voxel combine before their
 variance is calculated. This accounts for their within-final-bin covariance.
-The replay output does not retain cross-voxel dependencies or certified additive
-count statistics: a later profile of its cached pixels cannot reconstruct that
-covariance. Subtract the background on the requested final grid, keeping sample
-and background uncertainty separate; arbitrary later cuts require a new replay.
-Shared calibration uncertainty remains outside this replay model.
+This direct final-grid operation pools sample and background components on that
+grid. It is distinct from averaging an already-subtracted cached field when their
+exposures vary differently across its cells. Shared calibration uncertainty remains
+outside this replay model.
+
+### Exact background uncertainty for a cached field
+
+New measured-background histograms retain a compact replay recipe: original
+event-source identities and content hashes, resolved lab-to-crystal transforms,
+energy limits, angle coefficients and compressed detector/output masks. Projects
+load this metadata without opening the original event files. They do not store
+millions of primitive source IDs or a dense covariance matrix.
+
+`replay_cached_background_profile(data, selected=..., indices=..., edges=...)`
+explicitly prepares a final profile from the original cached grid. Boolean
+`selected` and integer `indices` arrays have the full histogram shape; each
+selected cell belongs to one output bin defined by `edges`. Regular or rotated
+selections can supply these assignments. The function preserves cached-cell
+membership instead of assuming a distribution inside a cell.
+
+For a standalone measured background the target is its exposure-weighted mean.
+For an aligned, already-subtracted field, the target is
+
+$$
+\bar I =
+\frac{\sum_j N_{s,j}\,[I_{s,j}-\alpha I_{b,j}]}{\sum_j N_{s,j}}.
+$$
+
+Here $j$ labels included cached cells, $I_s$ and $I_b$ are sample and
+background intensities in the same units, $N_s$ is the known sample trajectory
+normalization in arbitrary normalization units, and $\alpha$ is the
+dimensionless background calibration factor. This target preserves the
+sample-exposure-weighted subtracted field; it does not replace its weights with
+precision weights or separately pool its background component.
+
+The source stream reconstructs each original background observation's total
+coefficient in every final bin, combining all angle copies and signed uses before
+squaring. A background observation contributing to several cached voxels remains
+one observation. The sample variance retains its recorded histogram policy;
+unknown sample cross-voxel, shared calibration and exposure uncertainty are not
+reconstructed. An already-subtracted field used as the background operand has
+additional independent sample primitives; that composition keeps approximate
+preview errors and requires replay of all components before exact profiles.
+Masks and missing background coverage are omitted explicitly.
+Covered zero-count cells retain exposure. Returned errors use observed primitive
+variance, not an average of zero-count display confidence bounds; confidence
+intervals need their own declared source model.
+
+```python
+import numpy as np
+
+from nfit import replay_cached_background_profile, save_measurement_profile_csv
+
+# data is the original 4D cached background or aligned subtracted histogram.
+# Keep all covered cells and project momentum dimensions into energy bins.
+selected = ~data.mask
+indices = np.broadcast_to(np.arange(data.shape[-1]), data.shape)
+profile = replay_cached_background_profile(
+    data, selected=selected, indices=indices, edges=data.axes[-1].values,
+)
+save_measurement_profile_csv("energy.csv", profile, coordinate_name="Energy",
+                             coordinate_unit="meV")
+```
+
+The CSV sidecar records the target, source hashes and uncertainty boundary. It
+retains weighted numerator, final-bin variance and exposure; a signed numerator
+does not declare a Poisson likelihood. Exact marginal errors do not establish
+independence between different final profile bins. Their cross-bin covariance is
+not retained; subsequent coarsening, combination or independent Gaussian fitting
+requires source replay or a represented joint source model.
+
+Repeated identical queries use a bounded 16 MiB numerical cache. Original source
+files must remain immutable: the stream validates event contents against their
+recorded SHA-256 hashes, and file-identity changes invalidate query reuse. Missing
+or changed sources raise `SourceReplayRequired`. The recipe is invalidated when
+untracked primary arrays, grid axes or auxiliary payloads change, including
+transforms that copy unchanged recipe metadata. Recipes have a 16 MiB storage
+budget; if exceeded, histogram creation succeeds with an explicit unavailable
+reason and diagonal preview errors. Exact profile requests then require direct
+source replay. Legacy cached
+histograms need their backgrounds recomputed to obtain a recipe.
+
+Ordinary GUI slice and box-cut previews keep their existing estimator and mark
+background uncertainty as a **diagonal approximation**. They do not trigger a
+full source stream on every pointer or slider movement. Use the explicit API for
+quantitative final background errors until asynchronous GUI replay and
+parent-composite recipe propagation are available. A profile API request with
+`require_exact_background_uncertainty=True` rejects such a preview instead of
+claiming exact uncertainty.
+
+### Sampled functions
 
 For a sampled function, bin the original ordered nodes over explicit coordinate
 intervals. The supported point workflow has one varying coordinate and constant

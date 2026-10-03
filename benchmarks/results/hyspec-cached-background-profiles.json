@@ -1,0 +1,201 @@
+{
+  "after_inputs": {
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34.nxs": [
+      3415014879,
+      1784639562000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34_bkg.nxs": [
+      178297738,
+      1784638933000000000
+    ]
+  },
+  "background_events": 4744544,
+  "before_inputs": {
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34.nxs": [
+      3415014879,
+      1784639562000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34_bkg.nxs": [
+      178297738,
+      1784638933000000000
+    ]
+  },
+  "event_sha256": "8641dff26f326014c82c293d75d316a81364ff2c0022a57f218a78925f183970",
+  "fringe_definitions": {
+    "coverage_fringe": "Covered original 4D cells within two cells of missing coverage; sparse nine-angle sampling makes this equal all covered cells.",
+    "projected_HHH_energy_fringe": "Covered cells within two HHH-energy projected cells of missing projected coverage after integrating other momentum axes."
+  },
+  "oracle_seconds": 3.073359042056836,
+  "original_inputs_unchanged": true,
+  "regions": {
+    "all_covered": {
+      "cold_seconds": 2.637778375064954,
+      "exact_to_diagonal_sigma_max": 1.1046459289753887,
+      "exact_to_diagonal_sigma_median": 1.0669614887593202,
+      "exposure": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "numerator": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "selected_cells": 33373,
+      "signal": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "variance": {
+        "cells": 48,
+        "max_absolute": 1.0058516248644817e-21,
+        "max_relative_to_peak": 1.609670804654854e-14
+      },
+      "variance_numerator": {
+        "cells": 48,
+        "max_absolute": 6.51925802230835e-09,
+        "max_relative_to_peak": 1.6222957721775278e-14
+      },
+      "warm_seconds": 0.013010624912567437,
+      "warm_sigma": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      }
+    },
+    "coverage_fringe": {
+      "cold_seconds": 2.5807572909398004,
+      "exact_to_diagonal_sigma_max": 1.1046459289753887,
+      "exact_to_diagonal_sigma_median": 1.0669614887593202,
+      "exposure": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "numerator": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "selected_cells": 33373,
+      "signal": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "variance": {
+        "cells": 48,
+        "max_absolute": 1.0058516248644817e-21,
+        "max_relative_to_peak": 1.609670804654854e-14
+      },
+      "variance_numerator": {
+        "cells": 48,
+        "max_absolute": 6.51925802230835e-09,
+        "max_relative_to_peak": 1.6222957721775278e-14
+      },
+      "warm_seconds": 0.0131482919678092,
+      "warm_sigma": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      }
+    },
+    "lowest_exposure_decile": {
+      "cold_seconds": 2.4826956669567153,
+      "exact_to_diagonal_sigma_max": 1.1349942473965253,
+      "exact_to_diagonal_sigma_median": 1.0,
+      "exposure": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "numerator": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "selected_cells": 3338,
+      "signal": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "variance": {
+        "cells": 48,
+        "max_absolute": 1.3552527156068805e-20,
+        "max_relative_to_peak": 2.581427693500705e-16
+      },
+      "variance_numerator": {
+        "cells": 48,
+        "max_absolute": 5.684341886080802e-14,
+        "max_relative_to_peak": 1.8367521985863327e-16
+      },
+      "warm_seconds": 0.010627250070683658,
+      "warm_sigma": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      }
+    },
+    "projected_HHH_energy_fringe": {
+      "cold_seconds": 2.4364951249444857,
+      "exact_to_diagonal_sigma_max": 1.0522678656504343,
+      "exact_to_diagonal_sigma_median": 1.0100481255921028,
+      "exposure": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "numerator": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "selected_cells": 2850,
+      "signal": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      },
+      "variance": {
+        "cells": 48,
+        "max_absolute": 8.470329472543003e-22,
+        "max_relative_to_peak": 4.606273076260937e-16
+      },
+      "variance_numerator": {
+        "cells": 48,
+        "max_absolute": 6.366462912410498e-12,
+        "max_relative_to_peak": 6.203870445291662e-16
+      },
+      "warm_seconds": 0.010328833013772964,
+      "warm_sigma": {
+        "cells": 48,
+        "max_absolute": 0.0,
+        "max_relative_to_peak": 0.0
+      }
+    }
+  },
+  "sample_runs": [
+    "505555",
+    "505600",
+    "505645",
+    "505690",
+    "505735",
+    "505780",
+    "505825",
+    "505870",
+    "505915"
+  ],
+  "scope": "50 K 34-degree bank, nine sample angles, complete background, unity normalization, identity symmetry. Sample variance follows the recorded histogram policy; background covariance uses an independent event oracle. Calibration/exposure uncertainty and cross-profile-bin covariance are not reconstructed.",
+  "script_sha256": "121c268601d02344c28f18c078d6825b00013cdf7dd5dba2741949efce50e90c",
+  "setup_seconds": 4.52504666603636,
+  "shape": [
+    80,
+    20,
+    8,
+    48
+  ],
+  "target": "sample_exposure_weighted_subtracted_field_mean"
+}

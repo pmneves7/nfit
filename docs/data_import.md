@@ -1215,11 +1215,17 @@ fallback when Numba is unavailable or JIT compilation is disabled. Work is chunk
 but replaying many angles costs more than voxel-center interpolation. Repeated
 copies of an event landing in the same voxel are combined before propagating
 variance, so they do not manufacture independent counting statistics. Covariance
-between different output voxels is not stored. For quantitative integrated cuts,
-replay directly onto the final grid with one bin for each integrated dimension;
-combining cached voxel errors cannot recover the shared background-event
-covariance. The replayed background also lacks the certified additive count
-payload needed by exposure-pooling profile consumers. Its covered-zero display
+between different output voxels is not stored as a dense array. New cached
+histograms retain compact, lazy original-source recipes for the public
+`replay_cached_background_profile` API. It combines source coefficients across
+selected original cached cells before squaring, preserving the sample-exposure-
+weighted subtracted-field target and its exact background marginal uncertainty.
+Alternatively, replay directly onto a final physical grid to pool its components;
+that is a distinct statistical target. See
+[exact cached-field background profiles](measurement_statistics.md#exact-background-uncertainty-for-a-cached-field)
+for the API and uncertainty boundaries. Ordinary interactive previews mark their
+background uncertainty as a diagonal approximation. Asynchronous GUI replay and
+parent-composite recipe propagation remain pending. Covered-zero display
 intervals are not observed count variances.
 
 Each source and sample group resolves its selected first-run incident energy

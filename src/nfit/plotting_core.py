@@ -2643,6 +2643,17 @@ class MDHistoSliceViewer:
         for name in ("measurement_target_required", "measurement_derivation"):
             if name in self.data.metadata:
                 view[name] = self.data.metadata[name]
+        background_uncertainty = self.data.metadata.get("background_profile_uncertainty")
+        if background_uncertainty is None and any(
+            subtraction.get("projection", {}).get("mode") == "measured_events"
+            for subtraction in self.data.metadata.get("background_subtractions", [])
+        ):
+            background_uncertainty = "diagonal_approximation_legacy_replay_recipe_unavailable"
+        if background_uncertainty:
+            view["background_profile_uncertainty"] = background_uncertainty
+            view["exact_background_profile_target"] = self.data.metadata.get(
+                "cached_background_replay", {}
+            ).get("target")
         if self._reduced_source_dependencies is not None:
             from .measurement_dependencies import project_source_dependencies
             dependencies = self._reduced_source_dependencies

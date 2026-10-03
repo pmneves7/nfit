@@ -62,8 +62,8 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 6A | Validate instrument families and continuous measurements | Survey complete; adapter follow-ups required |
 | 6A-R | Resolve raw-DGS geometry/timing and validate HYSPEC conversion | Core complete; historical subtraction split into 6A-R2 |
 | 6A-R2 | Validate directional HYSPEC background reconstruction and uncertainties | Analysis complete; cached final-cut dependencies split into 6A-R3 |
-| 6A-R3 | Preserve background source correlations and target through final cuts | In progress; split into R3a/R3b |
-| 6A-R3a | Persist bounded replay recipes and expose exact cached-field aggregation | In progress |
+| 6A-R3 | Preserve background source correlations and target through final cuts | R3a complete; R3b awaits review |
+| 6A-R3a | Persist bounded replay recipes and expose exact cached-field aggregation | Complete |
 | 6A-R3b | Integrate parent composites and asynchronous GUI cuts/exports | Pending review of R3a |
 | 6A-M | Preserve MACS count/exposure targets through final profiles | Deferred by Paul |
 | 6A-C | Supply CORELLI reconstruction/copy covariance or require replay | Deferred by Paul |
@@ -839,7 +839,8 @@ recorded within-bin model. A cached-cut diagonal approximation must be visible
 and must not claim source-aware uncertainty. Analytic variance is 2 where
 separate diagonal pooling gives 1.25; the real sparse 50 K / 34° energy-profile
 uncertainty is up to 2.12 times the diagonal result. Do not apply a fixed empirical
-correction. Start this implementation after Paul's checkpoint review.
+correction. The following split implements the explicit API before its asynchronous
+GUI and hierarchical-composite consumers.
 
 **R3a, authorized 2026-10-03:** Newly computed directional backgrounds retain
 bounded source/transform/mask recipes, source-event digests, and lazy exposure
@@ -850,6 +851,26 @@ signed coefficients before squaring. Preserve the field target
 and sample components is a distinct target. Ordinary previews remain responsive
 and identify diagonal uncertainty. Validate analytic truth, masked/low-exposure
 regions, serialization, stale sources and bounded repeated-query caching.
+
+**R3a acceptance:** `replay_cached_background_profile` and compact lazy recipes
+are implemented. Complete 50 K / 34° dummy-source validation with nine sample
+angles agrees with an independent original-voxel oracle to 1.63 × 10⁻¹⁴
+relative variance at the peak. A separate projected coverage-edge region agrees
+to 6.20 × 10⁻¹⁶; the lowest-exposure decile also passes. Cold queries take
+2.44–2.64 s and repeated identical queries 10–13 ms. Combined sample/background
+sigma exceeds the diagonal approximation by up to 10.5% overall, 13.5% in the
+lowest-exposure decile, and 5.2% at projected edges. These ratios concern the
+sample-exposure-weighted difference, distinct from R2's background-only target.
+Original files remain unchanged. The source/recipe receipt is
+`benchmarks/results/hyspec-cached-background-profiles.json`.
+
+Only background covariance within the requested final profile bins is replayed.
+Sample uncertainty retains its recorded policy; cross-profile-bin covariance
+and unrecorded calibration/exposure dependencies remain unavailable. Changed
+payloads invalidate recipes even when transforms copy their metadata. Oversized
+optional recipes preserve ordinary histograms with an explicit replay-unavailable
+reason. Unsupported derived background operands require complete source replay.
+Final validation includes the full 2,948-test suite and focused post-review gates.
 
 **R3b:** Propagate these recipes through hierarchical bank composites and
 integrate asynchronous viewer cuts and exports. Do not replay large sources

@@ -54,6 +54,10 @@ from .brillouin_zone import (
     set_tight_binding_standard_path,
     standard_band_path,
 )
+from .cached_background_replay import (
+    clear_cached_background_profile_queries,
+    replay_cached_background_profile,
+)
 from .composite_scaling import configure_composite_scaling
 from .composite_workflow import export_composite_recipe, replay_composite_recipe
 from .corelli import (
@@ -768,6 +772,8 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "replay_measurement_histogram",
+    "replay_cached_background_profile",
+    "clear_cached_background_profile_queries",
     "scale_measurement_data",
     "bin_measurement_points",
     "estimate_measurement_region",

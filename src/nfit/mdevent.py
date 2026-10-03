@@ -38,6 +38,7 @@ from .dgs_reduction_policy import (
 from .dgs_reduction_policy import (
     ENERGY_TO_K2 as ENERGY_TO_K2,
 )
+from .event_bin_indices import flat_bin_indices as _flat_bin_indices
 from .event_covariance import accumulate_copy_covariance
 from .event_masks import reduce_masked_event_runs
 from .histogram_statistics import (
@@ -2192,19 +2193,6 @@ def _accumulate_discrete_event_coordinates(
     np.add.at(data_sum.ravel(), indices, values)
     np.add.at(variance_sum.ravel(), indices, values**2 if variances is None else variances[valid])
     np.add.at(event_count.ravel(), indices, 1.0)
-
-
-def _flat_bin_indices(coords, edges, shape):
-    indices = []
-    valid = np.ones(coords.shape[0], dtype=bool)
-    for dim, edge in enumerate(edges):
-        index = np.searchsorted(edge, coords[:, dim], side="right") - 1
-        index[coords[:, dim] == edge[-1]] = len(edge) - 2
-        valid &= (index >= 0) & (index < len(edge) - 1)
-        indices.append(index)
-    flat = np.full(coords.shape[0], -1, dtype=np.int64)
-    flat[valid] = np.ravel_multi_index(tuple(index[valid] for index in indices), shape)
-    return flat
 
 
 def _read_run(group, index):
