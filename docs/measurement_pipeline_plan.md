@@ -59,28 +59,21 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 4B | Add grouped, repeated, and stacked run expressions | Complete |
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Complete |
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
-| 6A | Validate instrument families and continuous measurements | Survey complete; adapter follow-ups required |
-| 6A-R | Resolve raw-DGS geometry/timing and validate HYSPEC conversion | Core complete; historical subtraction split into 6A-R2 |
-| 6A-R2 | Validate directional HYSPEC background reconstruction and uncertainties | Analysis complete; cached final-cut dependencies split into 6A-R3 |
-| 6A-R3 | Preserve background source correlations and target through final cuts | Complete within the declared cached-field scope |
-| 6A-R3a | Persist bounded replay recipes and expose exact cached-field aggregation | Complete |
-| 6A-R3b | Integrate parent composites and asynchronous GUI cuts/exports | Complete; checkpoint review |
-| 6A-M | Preserve MACS count/exposure targets through final profiles | Deferred by Paul |
-| 6A-C | Supply CORELLI reconstruction/copy covariance or require replay | Deferred by Paul |
-| 6A1 | Validate optional numerical and statistical treatments | DGS investigation in progress; other families deferred |
-| 6A-P | Profile current HYSPEC/SEQUOIA workflows and adopt verified major speedups | In progress |
-| 6A-P1 | Fuse DGS projection and ordered accumulation with numerical parity | Complete; includes exact-text mask parsing reuse |
-| 6A-P2 | Measure current raw reduction and SEQUOIA workflows on ORNL | Native full workflow and matched pilot complete; full Shiver reference pending |
-| 6A-P3 | Reuse scalar inspection and geometry arithmetic; parallel snapshot reads | Complete; full SEQUOIA and both HYSPEC bank checks passed |
-| 6A-P4 | Correct HYSPEC run-angle averaging and isolate reference boundary differences | Pending scientific checkpoint review |
-| 6A2 | Review and adopt future defaults | Pending |
-| 6B | Migrate projects, verify performance, and remove this plan | Pending |
+| 6A | Finish DGS correctness and background validation | In progress; HYSPEC angle averaging and boundary differences remain |
+| 6A-P | Complete realistic performance comparisons and useful speedups | In progress; full Shiver benchmark running |
+| 6A1 | Validate optional numerical and statistical methods | Pending; after DGS correctness and benchmark review |
+| 6A2 | Review evidence and choose future defaults with Paul | Pending |
+| 6B | Validate migration, finish documentation, and remove this plan | Pending |
 
 Statuses are **Pending**, **Pending review**, **In progress**, **Complete**,
 **Deferred**, or **Needs subdivision**.
 Completion means the stated deliverables have passed their checks and have been
 committed, pushed, and synchronized. It does not mean the next checkpoint may
 start automatically.
+
+Stage 6 uses the five checkpoints above, with detailed checklists below.
+CORELLI and MACS follow-ups remain deferred; they do not block the current DGS
+work. Earlier stage 6 subcheckpoint names are retained only as evidence references.
 
 ## 1. Establish and correct uncertainty statistics
 
@@ -684,386 +677,188 @@ Paul authorized the representative-measurement survey in 6A. Scientific
 alternative validation and default adoption remain 6A1–6A2; no main NiO project
 is rebuilt for this checkpoint.
 
-## 6. Cross-instrument acceptance and cleanup
+## 6. DGS acceptance and completion
 
-### 6A — Representative measurements
+Finish SEQUOIA and HYSPEC first. The five checkpoints below replace the nested
+stage 6 tracking list. Review each coherent change with Paul before starting the
+next. Keep scientific originals unchanged and all ORNL scientific outputs in
+IPTS folders. Mantid/Shiver comparisons are manual validation jobs, outside
+production nfit and its unit tests.
 
-Validate SEQUOIA and HYSPEC DGS, CORELLI reconstruction, MACS measurements,
-continuous-wave diffraction, and synthetic densely sampled susceptibility versus
-temperature. Include uneven coverage, repeated measurements, independent and
-shared backgrounds, fractional/discrete binning, and symmetry. Match Mantid where
-it implements the same model; analytic and repeated-sampling references decide
-correctness when conventions differ.
+### 6A — Finish DGS correctness and background validation
 
-**Survey checkpoint (0.114.1):** analytic and repeated-acquisition tests validate
-continuous common-response and coordinate targets, uneven support, repeated
-temperatures, shared interpolation nodes, and independent/shared backgrounds
-through final cuts. Synthetic reduced CW tables exercise public import,
-coordinate preparation, binning and final cuts. Real MACS SPEC/DIFF, HYSPEC MDE,
-CORELLI raw data and SEQUOIA references are examined read-only; the bounded
-scripts and aggregate receipts are documented in
-`benchmarks/results/measurement-acceptance.md`.
+**Status: In progress.** Geometry, timing, directional background reconstruction
+and cached-background profile uncertainties are implemented. The remaining
+reference differences need an explanation and matched validation.
 
-This survey does not establish complete cross-instrument acceptance. Native
-MACS histograms lose their count/exposure model before later profiles; native
-CORELLI omits reconstruction/copy covariance; raw HYSPEC needs run-log-dependent
-instrument geometry and correct evaluation of its T0 formula. These are adapter
-implementation gaps, distinct from optional estimator/default adoption. **6A needs the follow-ups below before it
-can be marked complete.** Existing compatibility defaults and original science
-projects remain unchanged. The viewer now exposes CORELLI's recorded covariance
-and normalization limitations through its metadata-only provenance report.
+Completed work:
 
-The supplied DMC, D33, SANS-I, GP-SANS and raw WAND² files establish useful
-future adapter inputs. They do not have native reducers in nfit. Reduced WAND²
-histogram import is supported; MACS DIFF supplies the real CW diffraction
-example for this survey. Adding the other raw adapters is separate feature work.
+- [x] Resolve each raw DGS run's logged geometry, timing and masks. Reuse geometry
+  only after complete equivalence checks, including mixed-instrument inputs.
+- [x] Validate raw SEQUOIA and both HYSPEC detector-bank configurations against
+  matched Shiver recipes, with recorded energy-boundary differences.
+- [x] Average the HYSPEC dummy sample in laboratory coordinates and replay it at
+  each sample rotation. Preserve dummy geometry for dummy events/normalization
+  and sample geometry for sample events/normalization.
+- [x] Preserve shared dummy-event correlations through supported cached-field
+  cuts, hierarchical bank composites, asynchronous GUI replay and exports.
 
-#### 6A-R — Dynamic raw-DGS geometry and timing
+Remaining work:
 
-Paul authorized this checkpoint with HYSPEC remaining in the DGS workflow.
-Use HYSPEC's saved reduction recipes and fresh Mantid reference jobs to validate
-the same acquisition and settings; reduced MDE-only checks are insufficient.
+- [ ] Match Mantid's duration/accepted-time averaging of HYSPEC rotation logs.
+  Isolate run 505784 first, expose the convention through the public recipe,
+  record provenance and invalidate affected reduced-event/binned caches.
+- [ ] Repeat the matched 34° and 70° pilots with six and twelve symmetry copies.
+  Compare event numerator, variance, contribution counts, exposure, masks,
+  signal and uncertainty in every cell; prioritize low-coverage fringes and
+  the HHH/energy cut at K=0±0.03 and L=0.33±0.02 r.l.u.
+- [ ] Attribute remaining event clipping, trajectory boundaries and support
+  differences. Separate rounding from recipe differences; document intentional
+  deviations and any reproducible compatibility option before acceptance.
+- [ ] Review the DGS correctness results with Paul.
 
-Resolve instrument-definition locations/rotations from each run's referenced
-logs before conversion. Geometry reuse must compare complete resolved geometry,
-including logged moderator/detector positions, rather than static XML alone.
-Qualify raw-DGS detection by measurement type: WAND², CORELLI, MACS and SANS
-must retain their separate reduction paths even when they store event banks.
-Validate synthetic same-XML/different-log and mixed-instrument cases, then the
-available HYSPEC raw runs against their saved reduction with identical
-Ei/T0, goniometer, energy window, filters and corrections. Unsupported dynamic
-definitions must fail explicitly. Correct the HYSPEC T0 formula's exponent
-syntax and make failed automatic timing evaluation visible rather than silently
-returning zero. Preserve SEQUOIA parity.
+**Known issue:** run 505784 uses an arithmetic omega average of
+48.5016271525° in nfit and a duration-weighted 48.5043924634° average in Mantid.
+The raw timestamps reproduce Mantid's value. The other 23 pilot rotations, Ei,
+T0 and UB agree. This explains one coordinate discrepancy; replay must establish
+its histogram contribution. The existing 34° pilot also has approximately
+3×10⁻⁴ relative-L2 exposure differences. At 70°, twelve-copy binning differs
+in two exposure-support cells. HYSPEC cross-engine parity is therefore unfinished.
 
-Implemented run-log geometry resolution, corrected HYSPEC timing, raw TOF
-selection and relative Tank rotation. Reduction controls, script replay and
-resolved provenance cover the HYSPEC window and optional offset. Geometry reuse
-checks complete resolved definitions. Saved MDE detector masks now constrain
-HKLE, powder and background normalization trajectories; their omission had
-allowed exposure from masked tube tips. Reduced-event version 6 and DGS/MDE
-numerical-policy version 3 invalidate affected older caches on demand.
+**Background scope:** the dummy has the same mount, glue and aluminum without
+crystals; its coarse 180° sweep averages orientation effects. Retain detector
+direction and energy dependence. Encoder offsets between acquisitions are within
+instrument tolerance and do not justify substituting sample geometry into the
+dummy denominator. Current averaging is charge weighted; equal-angle weighting
+is a later statistical comparison.
 
-Fresh references use the installed Shiver data-to-MDE recipe with UB, rather
-than HYSPEC histogram autoreduction. Runs 506277, 506278 and 505555 cover the
-70° and 34° detector settings. Common energy, QSample, signal and variance
-event fields agree bit for bit. Loading the original MDE reproduces its
-histogram numerator, variance and event counts exactly. Native raw reduction
-also agrees exactly when Mantid uses the requested physical energy bounds.
-Normalization differs by at most $2.15\times10^{-11}$ relative and final-cut
-signal/uncertainty by at most $2.28\times10^{-13}$ relative.
+Exact cached-field replay estimates the sample-exposure-weighted subtracted
+field and combines each shared background event's coefficients before squaring.
+Independent primitive references validate both banks, rotated cuts and coverage
+fringes. This certifies represented background covariance **within each final
+profile bin**. Sample uncertainty retains its recorded policy; covariance between
+final bins and unrecorded calibration dependencies remain unavailable. Unsupported
+composites and box sums retain explicitly labeled diagonal uncertainty or require
+full source replay. See `docs/planned_features.md` for those remaining treatments.
 
-The unmodified Shiver recipe excludes 1–2 events per run when float32 energies
-round outside its observed-extrema MD box. Widening only Mantid's energy box
-restores precisely the native events. This is documented separately from
-reconstruction accuracy; a strict loss-emulation option remains a review
-decision. Original scientific projects and inputs remain unchanged.
+Evidence for former 6A-R, R2 and R3a/R3b is retained in:
 
-The three-run SEQUOIA powder regression preserves signal, variance and counts
-after accounting for four already documented Mantid conversion-boundary
-omissions; fringe bins agree without that adjustment. Exposure differs by at
-most $8.21\times10^{-11}$ relative. Five event energies differ by at most
-$3.73\times10^{-9}$ meV; QLab, weights and variances agree exactly. This bounded
-regression does not replace the earlier full HKLE validation.
+- `benchmarks/results/hyspec-dgs-parity.md`
+- `benchmarks/results/hyspec-background-analysis.md`
+- `benchmarks/results/hyspec-background-physical-assumptions.md`
+- `benchmarks/results/hyspec-cached-background-profiles.json`
+- `benchmarks/results/hyspec-bank-background-profiles.json`
+- `benchmarks/results/dgs-user-workflows-node19.md` for the remaining angle and
+  histogram differences (formerly 6A-P4).
 
-Detailed receipts and the unresolved saved-histogram comparison are in
-`benchmarks/results/hyspec-dgs-parity.md`, its aggregate JSON, and
-`measurement-acceptance-sequoia-raw-regression.json`. No scientific original was
-saved or rebuilt during this checkpoint.
+### 6A-P — Complete realistic performance comparisons and useful speedups
 
-Validation: 2,895 tests passed; one CuPy availability test skipped. Ruff,
-byte-compilation, diff checks and warning-as-error Sphinx build passed. Manual
-engine comparisons remain outside pytest and production code.
+**Status: In progress.** Native full-job acceptance and matched pilots are done;
+the full ordinary Shiver reference is running on node19.
 
-#### 6A-R2 — Directional HYSPEC background reconstruction
+- [x] Fuse event projection/accumulation and reuse exact-text mask parsing.
+- [x] Reuse successfully inspected scalar metadata and exact geometry arithmetic
+  with complete source, policy, mask and resolved-geometry checks.
+- [x] Parallelize large cached histogram reads while retaining the validated
+  original file descriptor, checksums, memory limits and platform fallbacks.
+- [x] Measure the full 617-run native SEQUOIA workflow before/after those changes,
+  including saves, reopen, lazy event-cache reuse and later twelve-copy binning.
+- [x] Measure matched SEQUOIA and both HYSPEC bank pilots in ordinary Shiver jobs.
+- [ ] Finish the full 617-run Shiver reduction, saves/reopens, and one/six/twelve
+  symmetry-copy histograms. Validate arrays and the low-coverage cut before
+  publishing the complete cross-engine comparison.
+- [ ] Measure representative full HYSPEC workflows after the 6A corrections.
+- [ ] Profile the remaining dominant costs, particularly trajectory normalization.
+  Adopt further speedups only when real workflows show a worthwhile gain and
+  preserve the selected numerical treatment; otherwise record the limiting cost.
+- [ ] Review timings, numerical differences and remaining opportunities with Paul.
 
-Paul reports that subtraction in `HYSPEC_all.nfit` removed the background well,
-while the historical Mantid subtraction looked worse. Use its existing
-`Workspace1/Group1` collections as the reference configuration: all four enabled
-background links use `measured_events`, despite their legacy names containing
-“powder”. The separate `powder averages` branch uses center projection. Preserve
-both branches and the original project during validation.
+**Current evidence:** on the same node and thread limits, the 24-run SEQUOIA
+initial saved dataset takes 51.066 s in nfit versus 565.660 s in Shiver (11.1×).
+Every event numerator, variance and contribution count agrees; the specified
+low-coverage cut agrees near 10⁻¹³. Tiny whole-cube exposure residuals are
+recorded separately. This pilot does not establish a full-job speed ratio.
 
-The physical target is a background fixed in laboratory coordinates, replayed
-as if acquired at every sample angle. Retain each measured event's full lab-frame
-momentum and energy, detector acceptance, and bank geometry. Use sample-angle
-exposure weights, matching detector masks, energy coverage, UB, output edges and
-symmetry. A radial background cannot recover directional structure lost by
-averaging over equal momentum modulus and energy. Check the assumption that the
-background is stable over sample rotation and that each source matches the
-sample temperature and bank configuration.
+The full native initial saved dataset improves 567.152 → 503.554 s (9m27s →
+8m24s), and saved histogram access improves 39.706 → 7.926 s (5.0×).
+Candidate/baseline event arrays and edges are identical; every nonzero exposure
+cell agrees within 10⁻¹² relative. Later twelve-copy binning remains approximately
+258–263 s, including about 172–173 s in trajectory normalization. No improvement
+is claimed for that unchanged interval. Both HYSPEC bank pilots preserve native
+baseline results; their roughly nine-second initial workflows show no material
+total improvement. Their Shiver counterparts take 47.220/49.820 s, with the
+scientific differences still tracked under 6A.
 
-Validate signal, exposure and uncertainty against explicit synthetic acquisitions
-with directional contrast at equal momentum modulus and energy, unequal sample
-charges and repeated angles. Copies of the same measured background event must
-retain their common source identity. Extend checks through final integrated cuts
-and low-coverage fringes; same-voxel coefficient merging alone does not certify
-cross-voxel covariance. The current replay does not store that covariance or a
-certified additive count/variance payload. Assess these gaps before changing the
-scientific contract.
+Report loading, reduction, event-cache/MDE persistence, first binning, saving,
+reopening and later rebins separately. The primary Shiver comparison uses one
+ordinary sequential reduction job with its normal internal threading and bins
+its resident MDE; do not add an unnecessary reload to that headline. Filesystem
+caches are uncontrolled. Paul's remembered two-hour reduction and thirty-minute
+binning are context, not measured baselines. Keep profiling separate from timings.
 
-Use the four historical histograms to attribute discrepancies, without making
-visual agreement with their subtraction an acceptance criterion. The available
-`histograms/export_metallix.py` passes MDE backgrounds directly to `MDNorm`; it
-does not establish that their upstream construction used a radial background.
-Audit that construction, source membership, angle weighting and variance
-propagation before attributing the residuals. Keep validated optional treatments
-and default adoption in 6A1/6A2; observed-extrema compatibility remains a separate
-review decision.
+Details and scalar receipts for former 6A-P1/P2/P3 are in
+`benchmarks/results/dgs-fused-event-performance.md` and
+`benchmarks/results/dgs-user-workflows-node19.md`. The full reference's
+`seq-full617-shiver-reference-01/receipt.partial.json` records progress; only a
+successful final `receipt.json` establishes completion.
 
-**Completion record (0.114.4):** complete real backgrounds for all four sample
-configurations agree with an independent event/covariance oracle at nine selected
-angles, including fringes and the lowest-exposure decile. Direct final-grid
-replay matches the full covariance reference. Unequal charges, source scales,
-repeated angles and both replay backends pass analytic tests. First-run Ei is
-now resolved before singleton trajectories and source-mask partitioning;
-background/composite caches recompute under the corrected convention.
+### 6A1 — Validate optional numerical and statistical methods
 
-Matched historical membership exposes a different normalization model: Mantid
-replays background lab directions but uses sample detector geometry in its
-background denominator. The 0.0261° / 0.00137° bank differences strongly affect
-tiny trajectory intersections. Substituting that denominator explains most of
-the largest oversubtraction (−0.100 native versus −6.233 saved; −6.294 with the
-historical geometry). Signal RMS discrepancy falls by about 74%, but complete
-historical parity is not established. Keep the successful directional treatment
-and review explicit compatibility/calibration-transfer alternatives in 6A1/6A2.
-See `benchmarks/results/hyspec-background-analysis.md` and its two scalar receipts.
-Original projects and sources remain unchanged. Full suite: 2,905 passed, one
-unavailable-CuPy skip; Ruff, compilation, diff checks and Sphinx passed.
+**Status: Pending; after DGS correctness and benchmark review.**
 
-#### 6A-R3 — Background final-cut correlations
+- [ ] Compare optional precision, stable monitor fitting, trajectory-energy and
+  symmetry-variance treatments against analytic or simulated truth.
+- [ ] Assess dummy-angle weighting and geometry/calibration-transfer assumptions
+  using the recorded physical configuration.
+- [ ] Include uneven coverage, repeated sources, final cuts and fringes; record
+  speed, memory, bias and uncertainty performance for each declared target.
+- [ ] Document which methods improve an estimate under which assumptions, and
+  which only reproduce a different convention. Review the evidence with Paul.
 
-Cached measured-background voxels lack cross-voxel source dependencies and a
-certified additive payload. Preserve source correlations and an explicit
-statistical target through profiles, cuts and exports, or use automatic replay
-on the final grid. Direct final-grid scripting replay is already correct for the
-recorded within-bin model. A cached-cut diagonal approximation must be visible
-and must not claim source-aware uncertainty. Analytic variance is 2 where
-separate diagonal pooling gives 1.25; the real sparse 50 K / 34° energy-profile
-uncertainty is up to 2.12 times the diagonal result. Do not apply a fixed empirical
-correction. The following split implements the explicit API before its asynchronous
-GUI and hierarchical-composite consumers.
+Include the confirmed 12.03 ppm energy-boundary residual and Python/compiled
+trajectory classification difference as explicit cases. Agreement with another
+convention, smaller errors or smoother plots alone does not establish accuracy.
+CORELLI/MACS alternatives remain deferred. Do not change defaults in this checkpoint.
 
-**R3a, authorized 2026-10-03:** Newly computed directional backgrounds retain
-bounded source/transform/mask recipes, source-event digests, and lazy exposure
-channels. An explicit scripting operation aggregates the original cached cells
-with sample exposure after subtraction, combining each background primitive's
-signed coefficients before squaring. Preserve the field target
-`sum(N_sample * (I_sample - B)) / sum(N_sample)`; separately pooling background
-and sample components is a distinct target. Ordinary previews remain responsive
-and identify diagonal uncertainty. Validate analytic truth, masked/low-exposure
-regions, serialization, stale sources and bounded repeated-query caching.
+### 6A2 — Review evidence and choose future defaults with Paul
 
-**R3a acceptance:** `replay_cached_background_profile` and compact lazy recipes
-are implemented. Complete 50 K / 34° dummy-source validation with nine sample
-angles agrees with an independent original-voxel oracle to 1.63 × 10⁻¹⁴
-relative variance at the peak. A separate projected coverage-edge region agrees
-to 6.20 × 10⁻¹⁶; the lowest-exposure decile also passes. Cold queries take
-2.44–2.64 s and repeated identical queries 10–13 ms. Combined sample/background
-sigma exceeds the diagonal approximation by up to 10.5% overall, 13.5% in the
-lowest-exposure decile, and 5.2% at projected edges. These ratios concern the
-sample-exposure-weighted difference, distinct from R2's background-only target.
-Original files remain unchanged. The source/recipe receipt is
-`benchmarks/results/hyspec-cached-background-profiles.json`.
+**Status: Pending; requires a decision from Paul.**
 
-Only background covariance within the requested final profile bins is replayed.
-Sample uncertainty retains its recorded policy; cross-profile-bin covariance
-and unrecorded calibration/exposure dependencies remain unavailable. Changed
-payloads invalidate recipes even when transforms copy their metadata. Oversized
-optional recipes preserve ordinary histograms with an explicit replay-unavailable
-reason. Unsupported derived background operands require complete source replay.
-Final validation includes the full 2,948-test suite and focused post-review gates.
+- [ ] Present the accepted methods, assumptions, limitations and compatibility paths.
+- [ ] Agree which defaults change and which treatments remain optional.
+- [ ] Define explicit migration for absent legacy fields so old projects retain
+  their resolved scientific settings.
 
-**Geometry assessment — complete, accepted 2026-10-03:** Paul confirmed that
-sample and dummy bank angles differ because the bank was repositioned and its
-encoder reaches each target within the instrument tolerance. Retain sample
-geometry for sample events and normalization, and dummy geometry for dummy
-events and normalization. Replay the orientation-averaged dummy at each sample
-rotation. These small positioning differences do not justify detector remapping
-or mixing source-event geometry with another acquisition's normalization.
+This decision follows validation and complete dependency propagation for the
+selected workflow. Distinguish correctness fixes from adopting a new estimator.
 
-**R3b — complete 2026-10-03:** Aligned exposure-weighted hierarchical bank
-composites preserve each component's exposure, signed scale and shared background
-source coefficients. Native-grid regular and rotated viewer box cuts replay
-asynchronously after a debounced selection; obsolete results are discarded and
-pending exports are disabled. Completed profile exports and editable figure
-scripts use the public original-grid selection API. Unsupported treatments retain
-explicit diagonal previews and reasons. Construction and project loading do not
-read event sources.
+### 6B — Validate migration, finish documentation, and remove this plan
 
-**R3b acceptance:** A nested public dataset-group composite of both 50 K HYSPEC
-banks reads the complete 4,744,544-event and 4,624,140-event dummy sources, with
-nine sample rotations per bank. Eight regular/12°-rotated x/y profiles across
-support and projected coverage fringes agree with an independent primitive
-coefficient oracle: variance discrepancies are at most 2.073 × 10⁻¹⁴ relative
-to the peak, and 1.089 × 10⁻¹⁵ at projected fringes. Exposure and masks agree
-literally. Both banks contribute event counts and variance to unmasked support
-bins; only the 34° bank contributes to the selected outer union fringe.
-Source files and scientific module hashes remain unchanged during validation.
-The bounded grid, acceptance masks, component contributions and scalar receipt
-are recorded in `benchmarks/results/hyspec-bank-background-profiles.json`. The
-full local suite passes with 3,024 tests and one unavailable CuPy backend skip;
-GUI/script round trips, export guards, metadata stacking and public API regression
-checks pass. Ruff, compilation, diff checks and the strict Sphinx build pass.
+**Status: Pending; after accepted DGS checkpoints and default decisions.**
 
-The replay target is the sample-exposure-weighted cached subtracted field, so
-both mean and uncertainty can differ from a precision-weighted preview. Exact
-claims concern represented background covariance within each final profile bin.
-Sample uncertainty retains its recorded policy; covariance between final bins
-and unrecorded source/calibration dependencies remain unavailable. Regridded,
-metadata-stacked, inverse-variance and unsupported dependent composites require
-full source replay. Box sums remain labeled diagonal. These remaining treatments
-are tracked in `docs/planned_features.md` and are outside this checkpoint.
+- [ ] Validate representative existing projects, portable recipe replay, cache
+  invalidation, lazy loading and GUI/script equivalence.
+- [ ] Confirm performance, peak memory, project size, reopening and reuse after
+  the final changes. Keep measured reference times separate from estimates.
+- [ ] Finish permanent physics, workflow and limitation documentation; synchronize
+  local/ORNL applications and documentation.
+- [ ] Review final acceptance with Paul, then delete this plan and navigation links.
 
-Paul clarified that the HYSPEC background is a dummy sample: the same mount,
-glue and aluminum without crystals. The coarse 180° sweep intentionally averages
-orientation-dependent effects. Retain detector direction and energy dependence
-while averaging dummy orientations. The current merge is charge weighted; the
-50 K / 34° background differs modestly from equal-angle weighting. Physical
-assessment and controlled geometry/calibration tests are recorded in
-`benchmarks/results/hyspec-background-physical-assumptions.md`. New scientific
-defaults remain gated by 6A2.
+### Deferred instrument work
 
-#### 6A-M — Native MACS statistical payloads
+The initial survey covered continuous measurements, reduced CW tables and real
+MACS/CORELLI inputs; it did not certify their complete native statistical paths.
+Evidence remains in `benchmarks/results/measurement-acceptance.md`.
 
-Retain original numerator, its explicitly declared variance, exposure and source
-identity through the native point histogram and every final-cut path. Present
-the target as an acquisition choice rather than inferring it from the instrument
-name. Validate SPEC and DIFF against original counts, covered zeros and exposure;
-direct/staged/profile estimates of the same target must agree. Keep the legacy
-error-floor/weighting treatment reproducible. Any new default and its migration
-remain a separate decision in 6A2.
+- **MACS (former 6A-M):** retain count numerator, declared variance, exposure and
+  source identity through SPEC/DIFF histograms and final cuts; keep legacy
+  weighting reproducible.
+- **CORELLI (former 6A-C):** preserve each neutron's reconstruction/copy
+  dependencies through final cuts, or require source replay. Changing energy-bin
+  centers is not simply summing prior reconstruction hypotheses.
+- **Other raw adapters:** DMC, D33, SANS-I, GP-SANS and WAND² files are future
+  inputs. Reduced WAND² histogram import is supported; new raw reducers require
+  separate feature work. These instruments must not use the DGS reducer.
 
-#### 6A-C — CORELLI reconstruction dependencies
-
-Accumulate coefficients of each physical neutron before squaring when
-fractional/symmetry copies meet. Represent dependencies across reconstructed
-energy channels or require source replay for final scientific cuts that need
-them. A wider energy bin reconstructs a new channel at a different center; it
-does not by itself replay a linear sum of previous energy hypotheses. Validate
-signed cancellation, positive covariance, overlapping copies, final cuts and
-fringes against independent primitive references. Keep charge/duty and pointwise
-calibration normalization distinct from full trajectory coverage.
-
-**Current authorization:** 6A-R core and 6A-R2 analysis are complete. Paul
-authorized DGS background follow-up, assessment of alternatives, and performance
-work on 2026-10-03. CORELLI and MACS are deferred. R3a supplies exact scientific
-aggregation without synchronous event replay on every GUI interaction; R3b
-integrates asynchronous consumers and parent-composite propagation. Review each
-coherent completion with Paul. Strict extrema compatibility and future default
-changes remain explicit decisions in 6A2.
-
-### 6A1 — Validate alternatives
-
-Compare optional high precision, stable monitor fitting, per-run trajectory Ei,
-and covariance treatments against analytic references, known calibration or
-simulated truth, and the representative instrument families. Prioritize fringes,
-coverage boundaries, repeated sources, and final cuts. Compare speed and memory
-as well as signal and uncertainty. Agreement with a different convention alone,
-smaller errors, or a smoother image does not establish greater accuracy.
-
-The confirmed 12.03 ppm energy-boundary residual and Python/compiled trajectory
-classification difference are explicit validation cases. Numerical performance
-candidates must preserve the chosen treatment; their synthetic gains require
-real-workload confirmation before adoption.
-
-### 6A2 — Choose defaults
-
-Review the evidence with Paul before changing any scientific default. State the
-measurement assumptions behind each choice and retain a reproducible compatibility
-path. Preserve previously resolved settings through explicit project migration;
-changing a default must not silently reinterpret projects with absent legacy fields.
-This gate follows complete dependency propagation and cross-instrument validation.
-
-### 6A-P — DGS performance
-
-**Authorized 2026-10-03; in progress:** With experiment mounts restored on
-node19, run realistic current-build SEQUOIA and HYSPEC workflows on the same
-hardware. Use the installed ordinary sequential Shiver reduction, allowing its
-normal internal threading. Include source loading, reduction, event-cache or MDE
-persistence, native histogramming, saved result reopening, and subsequent rebins.
-Separate first saved-dataset time from later reuse workflows; do not force an
-extra MDE reload into a resident Shiver reduction-to-histogram headline.
-The remembered two-hour reduction and thirty-minute binning are informal context,
-not measured benchmark inputs. Begin with a bounded matched pilot, then measure
-the full 617-run NiO workflow and representative HYSPEC configurations. Preserve
-original projects and keep all scientific artifacts in IPTS benchmark folders.
-Profile separately from ordinary timings. Validate every C/V/count/exposure cell
-and low-coverage cuts before attributing improvements to a candidate. Report
-rounding/boundary differences explicitly. Commit coherent validated changes,
-update both installations and review this checkpoint before proceeding.
-
-Profile matched inputs and policies before diagnosing a regression. Separate
-event reconstruction, event projection/accumulation, trajectory normalization,
-background replay, archive I/O, and first-call compilation. The fused uniform-grid
-Mantid projector preserves literal C/V/count/mask results. Complete local HYSPEC
-histogramming of 49.4 million events and 361 runs improved from 16.485 to 3.913 s
-with six symmetry copies, or 6.001 to 2.899 s without symmetry, on the same
-bounded grid and eight-worker budget. An exact-text bounded mask parse cache
-removes repeated parsing while retaining all source and geometry checks.
-Exposure is computed by the unchanged
-algorithm; differences are at its existing parallel addition precision.
-
-`benchmarks/results/dgs-fused-event-performance.md` records the scope, scalar
-receipts and fallback coverage. These timings exclude raw reconstruction and
-archive persistence. Current raw/SEQUOIA and matched Mantid measurements use
-restored experiment mounts on node19; older benchmarks cannot establish a
-current regression. Remaining event reads/filtering, raw reconstruction, and
-full-volume normalization require fresh isolated cluster profiles before adding
-more cache machinery. Do not adopt speculative micro-optimizations.
-
-**P2/P3 current evidence:** On node19, the matched 24-run saved-dataset workflow
-takes 51.066 s in nfit 0.116.0 versus 565.660 s in one ordinary Shiver job.
-C/V/counts and coverage support agree exactly for six/twelve copies. The
-low-coverage cut agrees near 10⁻¹³; tiny whole-cube exposure differences remain
-documented separately. Full 617-run native candidate acceptance preserves
-literal C/V/counts/edges and every-cell exposure within 10⁻¹² relative. Initial
-saved-dataset time improves 567.152 → 503.554 s, and saved histogram access
-39.706 → 7.926 s. Subsequent twelve-copy binning remains approximately 258–263 s;
-its 172–173 s trajectory interval remains the main cost.
-
-The validated candidates cache only successfully inspected scalar metadata and
-the geometry's exact distances/directions, with source identity, monitor policy,
-mask and complete geometry checks. Parallel cached-array reads retain the
-validated original descriptor across atomic saves. No numerical convention,
-saved schema or compression choice changes. The fused projector dispatches for
-the full SEQUOIA grid; rounded output edges do not disable it. Metadata threading
-is not adopted: its local smoke was slower and HDF5/Python serialization limits
-the plausible gain. Full-suite acceptance: 3113 passed, one optional GPU skip.
-
-Both HYSPEC detector-bank twelve-run pilots pass the same original-cell
-six/twelve-copy gate, with identical C/V/counts/coverage and roundoff-only N
-differences. Their roughly nine-second initial workflows show no material total
-speedup; small pilots are dominated by setup and first-call compilation. Their
-matched Shiver pilot receipts and the full SEQUOIA reference remain separate
-measurements, rather than extrapolated full-job claims.
-
-The ordinary Shiver HYSPEC pilots finish in 47.220/49.820 s, but reference
-parity is incomplete: 34° has count migrations and approximately 3×10⁻⁴
-relative-L2 exposure differences, and 70° twelve-copy exposure differs in two
-support cells. These differences also exist in the unchanged native baseline.
-Run 505784 exposes one concrete cause: native omega uses the arithmetic
-48.5016271525° average, while Mantid's time-weighted average is 48.5043924634°.
-The raw timestamps reproduce Mantid's value. Other 23 pilot rotations and Ei,
-T0 and UB agree. P4 must reproduce duration/accepted-time averaging through a
-public reduction convention, invalidate affected caches, isolate that run's
-histogram change, and then classify remaining clipping/support differences.
-Do not present the performance result as completed HYSPEC cross-engine parity.
-
-`benchmarks/results/dgs-user-workflows-node19.md` records complete scope, actual
-saves/reopens, scalar evidence locations and unresolved full-reference work.
-Launch the full ordinary Shiver reduction and one/six/twelve-copy bins last,
-with timings/progress/resource logs inside the IPTS folder. Keep 6A-P open
-until its full-job comparison and HYSPEC scope have been reviewed; do not proceed
-to selecting alternative defaults.
-
-### 6B — Migration, performance, and completion
-
-Validate existing projects and a documented migration path. Measure native reduction,
-first binning, cached-event rebinning, cache size, peak memory, and reopen latency.
-Report measured Mantid/Shiver job timings separately from estimated conventional
-single-job timings, with the same data/settings and explicit uncertainty assumptions.
-Geometry and calibration reuse must verify equivalence for mixed instrument inputs.
-
-Once all checkpoints are accepted, replace temporary findings with permanent
-physics/workflow documentation and delete this plan and its navigation references.
+Resume deferred work only when Paul authorizes it. Future non-DGS acceptance
+must exercise the same measurement contracts without assuming DGS statistics.

@@ -129,8 +129,10 @@ differences are 6.98×10⁻¹⁰ and 1.40×10⁻⁹. The strict comparison requi
 every nonzero N cell within 10⁻¹² relative, including fringes. Cache usage
 remains 617 initial misses and 617 later hits.
 
-The full ordinary Shiver reduction and one/six/twelve-copy binnings will run
+The full ordinary Shiver reduction and one/six/twelve-copy binnings were launched
 after native acceptance, with real saves/reopens and process/resource logs.
+The 2026-10-03 status check finds the job still reducing raw runs, without a
+reported error; histogramming and saving have not finished.
 Remembered two-hour reduction and thirty-minute binning times are informal
 context, not measurements or benchmark estimates. The full reference remains
 pending until its final receipt records successful completion.
