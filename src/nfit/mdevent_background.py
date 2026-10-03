@@ -15,6 +15,7 @@ from .event_masks import reduce_masked_event_runs
 from .mdhisto import MDHistoChannel, MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup, MaskSpec
 from .project_masks import _mdhisto_with_nfit_masks
+from .reduction_runtime import effective_trajectory_energies
 
 try:
     from . import _mdevent_background_numba as _REPLAY_NUMBA
@@ -103,6 +104,14 @@ def project_measured_background_mdevent(
     if np.any(~np.isfinite(exposure)) or np.any(exposure <= 0):
         raise ValueError("sample exposures must be finite and positive for measured-event replay")
     exposure /= exposure.sum()
+    # Resolve each group's first-run reference before singleton trajectory
+    # preparation and source-mask partitioning; batching cannot change Ei.
+    sample_reference = effective_trajectory_energies(
+        sample, runs, (run.metadata["incident_energy"] for run in runs)
+    )[0]
+    source_reference = effective_trajectory_energies(
+        background, sources, (run.metadata["incident_energy"] for run in sources)
+    )[0]
     prepared = []
     setup_total = len(runs) * _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
     for angle_index, (run, fraction) in enumerate(zip(runs, exposure, strict=True)):
@@ -134,6 +143,7 @@ def project_measured_background_mdevent(
             inverse_basis,
             symmetry,
             progress_callback=report_setup,
+            reference_energy=sample_reference,
         )
         masks = [mask for mask in [*sample_masks, *run.masks] if mask.enabled]
         excluded = None
@@ -151,6 +161,7 @@ def project_measured_background_mdevent(
             subset,
             target,
             prepared,
+            reference_energy=source_reference,
             max_batch_bytes=max_batch_bytes,
             progress_callback=progress_callback,
         ),
@@ -175,7 +186,9 @@ def _matching_directions(theta, phi, sample_theta, sample_phi):
     return bool(np.all(distance <= 2 * np.sin(np.deg2rad(0.1) / 2)))
 
 
-def _replay_runs(background, sources, target, prepared, *, max_batch_bytes, progress_callback):
+def _replay_runs(
+    background, sources, target, prepared, *, reference_energy, max_batch_bytes, progress_callback,
+):
     import h5py
 
     shape = target.shape
@@ -194,6 +207,7 @@ def _replay_runs(background, sources, target, prepared, *, max_batch_bytes, prog
             background,
             [source],
             np.eye(4),
+            reference_energy=reference_energy,
             progress_callback=progress_callback,
         )
         _, ei, bounds, charge, geometry = source_payloads[0]

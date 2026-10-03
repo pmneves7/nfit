@@ -1,0 +1,667 @@
+{
+  "UB": [
+    [
+      -0.05057369,
+      -0.048124059999999996,
+      0.09950387
+    ],
+    [
+      0.08492118000000001,
+      -0.08695869999999999,
+      0.0011052000000000002
+    ],
+    [
+      0.07074842,
+      0.06997786999999998,
+      0.06980258999999998
+    ]
+  ],
+  "actual_edges": [
+    [
+      -4.0,
+      4.0,
+      160
+    ],
+    [
+      -5.5,
+      5.5,
+      220
+    ],
+    [
+      -0.5,
+      0.6200000047683716,
+      8
+    ],
+    [
+      -12.0,
+      12.0,
+      48
+    ]
+  ],
+  "after_inputs": {
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/HYSPEC_all.nfit": [
+      2272042112,
+      1790612467117415358
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34.nxs": [
+      3415014879,
+      1784639562000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34_bkg.nxs": [
+      178297738,
+      1784638933000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70.nxs": [
+      2356544664,
+      1784639414000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70_bkg.nxs": [
+      173858391,
+      1784638933000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/histograms/3D_HHL_3meV_50K_metallix_1.nxs": [
+      546709726,
+      1786137056000000000
+    ]
+  },
+  "alternative_comparisons": {
+    "historical_sample_detector_geometry": {
+      "note": "Historical uniform replay numerator with sample detector geometry and background charge per angle denominator; native correlated variance is not compared.",
+      "signal": {
+        "cells": 3146243,
+        "exact": false,
+        "finite_support_equal": false,
+        "max_absolute": 1.255082619090551,
+        "max_relative": 61893.37105450782,
+        "rms_absolute": 0.0012667706663830746
+      }
+    },
+    "historical_uniform_angles_background_charge_pool": {
+      "signal": {
+        "cells": 3145897,
+        "exact": false,
+        "finite_support_equal": false,
+        "max_absolute": 6.13308924165484,
+        "max_relative": 59755.7467545462,
+        "rms_absolute": 0.004967975563633198
+      },
+      "variance": {
+        "cells": 3145897,
+        "exact": false,
+        "finite_support_equal": false,
+        "max_absolute": 4.8552421354266775,
+        "max_relative": 2876.544988525141,
+        "rms_absolute": 0.0028071165341644845
+      },
+      "variance_policy": "native correlated copies; not Mantid independent copies"
+    },
+    "native_sample_exposure_bank_pool": {
+      "signal": {
+        "cells": 3146243,
+        "exact": false,
+        "finite_support_equal": false,
+        "max_absolute": 6.13308924165484,
+        "max_relative": 69022.55343620617,
+        "rms_absolute": 0.004969230561671688
+      },
+      "variance": {
+        "cells": 3146243,
+        "exact": false,
+        "finite_support_equal": false,
+        "max_absolute": 4.8552421354266775,
+        "max_relative": 2876.5449885251423,
+        "rms_absolute": 0.0028066783099486075
+      },
+      "variance_policy": "native correlated copies within bank, independent source banks"
+    }
+  },
+  "banks": [
+    {
+      "background_charge": 1734.7308953888887,
+      "background_events": 4744544,
+      "background_path": "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34_bkg.nxs",
+      "background_runs": 1,
+      "background_uncertainty_policy": {
+        "mode": "measured_events",
+        "source_group": "3b7dde1cfcf04adcb4fd4190e3635e90",
+        "uncertainty": "correlated_event_copies_per_output_bin"
+      },
+      "excluded_sample_runs": [
+        "505892",
+        "505893",
+        "505894",
+        "505895",
+        "505896",
+        "505897",
+        "505898",
+        "505899",
+        "505900",
+        "505901",
+        "505902",
+        "505903",
+        "505904",
+        "505905",
+        "505906",
+        "505907",
+        "505908",
+        "505909",
+        "505910",
+        "505911",
+        "505912",
+        "505913",
+        "505914",
+        "505915"
+      ],
+      "original_sample_charge": 26119.089861149998,
+      "s2": 34,
+      "sample_events": 76874136,
+      "sample_path": "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34.nxs",
+      "sample_runs": 361,
+      "selected_sample_charge": 24382.208895980555,
+      "selected_sample_runs": 337
+    },
+    {
+      "background_charge": 1713.5044296194444,
+      "background_events": 4624140,
+      "background_path": "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70_bkg.nxs",
+      "background_runs": 1,
+      "background_uncertainty_policy": {
+        "mode": "measured_events",
+        "source_group": "dd83290089e148be9cb64e4accc3b081",
+        "uncertainty": "correlated_event_copies_per_output_bin"
+      },
+      "excluded_sample_runs": [],
+      "original_sample_charge": 16145.311756419444,
+      "s2": 70,
+      "sample_events": 49415626,
+      "sample_path": "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70.nxs",
+      "sample_runs": 361,
+      "selected_sample_charge": 16145.311756419444,
+      "selected_sample_runs": 361
+    }
+  ],
+  "before_inputs": {
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/HYSPEC_all.nfit": [
+      2272042112,
+      1790612467117415358
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34.nxs": [
+      3415014879,
+      1784639562000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34_bkg.nxs": [
+      178297738,
+      1784638933000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70.nxs": [
+      2356544664,
+      1784639414000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70_bkg.nxs": [
+      173858391,
+      1784638933000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/histograms/3D_HHL_3meV_50K_metallix_1.nxs": [
+      546709726,
+      1786137056000000000
+    ]
+  },
+  "comparisons": {
+    "all": {
+      "signal": {
+        "cells": 3145897,
+        "exact": false,
+        "finite_support_equal": false,
+        "max_absolute": 6.13308924165484,
+        "max_relative": 59564.37208869658,
+        "rms_absolute": 0.004968717550799166
+      },
+      "uncertainty": {
+        "cells": 3145897,
+        "exact": false,
+        "finite_support_equal": false,
+        "max_absolute": 2.1683744614627467,
+        "max_relative": 52.642753364505275,
+        "rms_absolute": 0.001493206182119774
+      },
+      "variance": {
+        "cells": 3145897,
+        "exact": false,
+        "finite_support_equal": false,
+        "max_absolute": 4.8552421354266775,
+        "max_relative": 2876.5449885251423,
+        "rms_absolute": 0.002807116463577657
+      }
+    },
+    "coverage_fringe": {
+      "signal": {
+        "cells": 2327528,
+        "exact": false,
+        "finite_support_equal": true,
+        "max_absolute": 6.13308924165484,
+        "max_relative": 59564.37208869658,
+        "rms_absolute": 0.005636640590229349
+      },
+      "uncertainty": {
+        "cells": 2327528,
+        "exact": false,
+        "finite_support_equal": true,
+        "max_absolute": 2.1683744614627467,
+        "max_relative": 52.642753364505275,
+        "rms_absolute": 0.0017357151317249184
+      },
+      "variance": {
+        "cells": 2327528,
+        "exact": false,
+        "finite_support_equal": true,
+        "max_absolute": 4.8552421354266775,
+        "max_relative": 2876.5449885251423,
+        "rms_absolute": 0.0032635120305398897
+      }
+    },
+    "lowest_exposure_decile": {
+      "signal": {
+        "cells": 314590,
+        "exact": false,
+        "finite_support_equal": true,
+        "max_absolute": 6.13308924165484,
+        "max_relative": 652.2518352002055,
+        "rms_absolute": 0.015202007498822372
+      },
+      "uncertainty": {
+        "cells": 314590,
+        "exact": false,
+        "finite_support_equal": true,
+        "max_absolute": 2.1683744614627467,
+        "max_relative": 52.642753364505275,
+        "rms_absolute": 0.004716539672167087
+      },
+      "variance": {
+        "cells": 314590,
+        "exact": false,
+        "finite_support_equal": true,
+        "max_absolute": 4.8552421354266775,
+        "max_relative": 2876.5449885251423,
+        "rms_absolute": 0.008876876837092379
+      }
+    }
+  },
+  "coverage_fringe_cells": 2327528,
+  "low_exposure_cells": 314590,
+  "mantid_environment": "Framework Version: 6.15.0.1\nOS name: Linux\nOS version: 5.14.0-427.42.1.el9_4.x86_64\n",
+  "note": "Native measured background currently pools copies of each source event before variance; compare this explicit covariance policy with historical Mantid variance independently.",
+  "original_inputs_unchanged": true,
+  "reference": "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/histograms/3D_HHL_3meV_50K_metallix_1.nxs",
+  "script_sha256": "94e44b878783b369bb1d84ce2122f48d662ae0babb03e6a2033006ddd7d3e742",
+  "shape": [
+    160,
+    220,
+    8,
+    48
+  ],
+  "symmetry": "1",
+  "timings": {
+    "34": {
+      "background_replay_seconds": 19.263879416976124,
+      "historical_sample_geometry_normalization_seconds": 3.2015833751065657,
+      "sample_histogram_seconds": 13.121951415902004,
+      "uniform_background_replay_seconds": 18.016523958998732
+    },
+    "70": {
+      "background_replay_seconds": 22.451893999939784,
+      "historical_sample_geometry_normalization_seconds": 3.4004980829777196,
+      "sample_histogram_seconds": 8.537911541992798,
+      "uniform_background_replay_seconds": 22.575471624964848
+    }
+  },
+  "worst_cells": [
+    {
+      "background_C": 0.024308860935085764,
+      "background_N": 0.24298226734815728,
+      "background_V": 7.386508762865977e-05,
+      "centers": [
+        -0.3749999999999998,
+        1.0250000000000004,
+        -0.009999997913837433,
+        0.25
+      ],
+      "historical_sample_geometry_background_N": 1.2970723756657143,
+      "historical_sample_geometry_signal": -6.293544790730187,
+      "historical_signal": -6.233133006989595,
+      "historical_uniform_angle_signal": -0.10004376533475506,
+      "historical_uniform_background_C": 8.163183093070984,
+      "historical_variance": 4.856493229759389,
+      "index": [
+        72,
+        130,
+        3,
+        24
+      ],
+      "native_background_signal": 0.10004376533475506,
+      "native_sample_signal": 0.0,
+      "native_signal": -0.10004376533475506,
+      "sample_C": 0.0,
+      "sample_N": 0.05463655635827673,
+      "sample_V": 0.0
+    },
+    {
+      "background_C": 0.09062984706681272,
+      "background_N": 0.7504590434773983,
+      "background_V": 0.00027379232281626013,
+      "centers": [
+        0.37500000000000044,
+        -1.3749999999999996,
+        0.13000000268220901,
+        -0.25
+      ],
+      "historical_sample_geometry_background_N": 5.97968845054303,
+      "historical_sample_geometry_signal": -5.116508573643794,
+      "historical_signal": -5.115350262512266,
+      "historical_uniform_angle_signal": -0.12076588036951581,
+      "historical_uniform_background_C": 30.595127224922187,
+      "historical_variance": 0.8722269972467347,
+      "index": [
+        87,
+        82,
+        4,
+        23
+      ],
+      "native_background_signal": 0.12076588036951577,
+      "native_sample_signal": 0.0,
+      "native_signal": -0.12076588036951577,
+      "sample_C": 0.0,
+      "sample_N": 0.24904983087155422,
+      "sample_V": 0.0
+    },
+    {
+      "background_C": 0.05058511949658996,
+      "background_N": 0.5298688117132946,
+      "background_V": 0.0001505208436558428,
+      "centers": [
+        0.2250000000000001,
+        -0.5249999999999999,
+        -0.14999999850988388,
+        -0.75
+      ],
+      "historical_sample_geometry_background_N": 7.239846630178818,
+      "historical_sample_geometry_signal": -2.358709360016713,
+      "historical_signal": -2.3561350287014906,
+      "historical_uniform_angle_signal": -0.095467252229899,
+      "historical_uniform_background_C": 17.076694011688236,
+      "historical_variance": 0.32655131373487106,
+      "index": [
+        84,
+        99,
+        2,
+        22
+      ],
+      "native_background_signal": 0.095467252229899,
+      "native_sample_signal": 0.0,
+      "native_signal": -0.095467252229899,
+      "sample_C": 0.0,
+      "sample_N": 0.3014319508624772,
+      "sample_V": 0.0
+    },
+    {
+      "background_C": 0.027613794927627063,
+      "background_N": 0.8020348049795686,
+      "background_V": 8.472463642177904e-05,
+      "centers": [
+        0.3250000000000002,
+        -1.3249999999999997,
+        0.13000000268220901,
+        0.25
+      ],
+      "historical_sample_geometry_background_N": 6.533725521452507,
+      "historical_sample_geometry_signal": -1.4267445608435763,
+      "historical_signal": -1.4273415839868064,
+      "historical_uniform_angle_signal": -0.034429671575575214,
+      "historical_uniform_background_C": 9.321957349777223,
+      "historical_variance": 0.22636712788691477,
+      "index": [
+        86,
+        83,
+        4,
+        24
+      ],
+      "native_background_signal": 0.034429671575575214,
+      "native_sample_signal": 0.0,
+      "native_signal": -0.034429671575575214,
+      "sample_C": 0.0,
+      "sample_N": 0.2719488862349986,
+      "sample_V": 0.0
+    },
+    {
+      "background_C": 46.72756316140631,
+      "background_N": 428.12691368060746,
+      "background_V": 0.2589877769535144,
+      "centers": [
+        0.9750000000000001,
+        -2.9749999999999996,
+        -0.009999997913837433,
+        -0.25
+      ],
+      "historical_sample_geometry_background_N": 160311.2913910365,
+      "historical_sample_geometry_signal": 3.8659765361415586,
+      "historical_signal": 5.12105915523211,
+      "historical_uniform_angle_signal": 3.8597425084904584,
+      "historical_uniform_background_C": 16489.388172268886,
+      "historical_variance": 0.001025727505431572,
+      "index": [
+        99,
+        50,
+        3,
+        23
+      ],
+      "native_background_signal": 0.10914418521295334,
+      "native_sample_signal": 3.9688350935718484,
+      "native_signal": 3.859690908358895,
+      "sample_C": 31003.47614467144,
+      "sample_N": 7811.732010454765,
+      "sample_V": 31481.6212836504
+    },
+    {
+      "background_C": 77.50743352717187,
+      "background_N": 699.653849994804,
+      "background_V": 0.42721970500437056,
+      "centers": [
+        0.9750000000000001,
+        -3.025,
+        -0.009999997913837433,
+        -0.25
+      ],
+      "historical_sample_geometry_background_N": 236650.2957855523,
+      "historical_sample_geometry_signal": 2.3317703369616223,
+      "historical_signal": 1.4802961811456021,
+      "historical_uniform_angle_signal": 2.336710621352739,
+      "historical_uniform_background_C": 27422.929155230653,
+      "historical_variance": 0.00022042402142965483,
+      "index": [
+        99,
+        49,
+        3,
+        23
+      ],
+      "native_background_signal": 0.11077968559416558,
+      "native_sample_signal": 2.4476498843089063,
+      "native_signal": 2.336870198714741,
+      "sample_C": 24751.52356171608,
+      "sample_N": 10112.36276903413,
+      "sample_V": 25123.87448823452
+    },
+    {
+      "background_C": 0.039044323960638914,
+      "background_N": 0.03789441630999899,
+      "background_V": 0.00010888994110019313,
+      "centers": [
+        0.2250000000000001,
+        -3.4749999999999996,
+        0.27000000327825546,
+        -0.75
+      ],
+      "historical_sample_geometry_background_N": 54.30936989154904,
+      "historical_sample_geometry_signal": -0.2589210965837765,
+      "historical_signal": -0.25909656181789503,
+      "historical_uniform_angle_signal": -1.0303450418983366,
+      "historical_uniform_background_C": 14.061841607093811,
+      "historical_variance": 0.004795073270398303,
+      "index": [
+        84,
+        40,
+        5,
+        22
+      ],
+      "native_background_signal": 1.0303450418983364,
+      "native_sample_signal": 0.0,
+      "native_signal": -1.0303450418983364,
+      "sample_C": 0.0,
+      "sample_N": 2.058450953066797,
+      "sample_V": 0.0
+    },
+    {
+      "background_C": 0.0,
+      "background_N": 0.00918757808765836,
+      "background_V": 0.0,
+      "centers": [
+        0.8250000000000006,
+        5.125000000000001,
+        -0.28999999910593033,
+        0.25
+      ],
+      "historical_sample_geometry_background_N": 2.676189686692153,
+      "historical_sample_geometry_signal": 0.0,
+      "historical_signal": -0.7711051915661237,
+      "historical_uniform_angle_signal": 0.0,
+      "historical_uniform_background_C": 0.0,
+      "historical_variance": 0.2973015813608544,
+      "index": [
+        96,
+        212,
+        1,
+        24
+      ],
+      "native_background_signal": 0.0,
+      "native_sample_signal": 0.0,
+      "native_signal": 0.0,
+      "sample_C": 0.0,
+      "sample_N": 0.06984061530990057,
+      "sample_V": 0.0
+    },
+    {
+      "background_C": 0.1358892647446427,
+      "background_N": 0.7779087664773583,
+      "background_V": 0.00041035319458178023,
+      "centers": [
+        0.07500000000000018,
+        -0.2749999999999999,
+        0.27000000327825546,
+        -0.25
+      ],
+      "historical_sample_geometry_background_N": 48.55986247908448,
+      "historical_sample_geometry_signal": -0.9446886923242117,
+      "historical_signal": -0.9443290830142572,
+      "historical_uniform_angle_signal": -0.17468534949155623,
+      "historical_uniform_background_C": 45.87395298480987,
+      "historical_variance": 0.019816833081338497,
+      "index": [
+        81,
+        104,
+        5,
+        23
+      ],
+      "native_background_signal": 0.17468534949155617,
+      "native_sample_signal": 0.0,
+      "native_signal": -0.17468534949155617,
+      "sample_C": 0.0,
+      "sample_N": 2.0217961551379586,
+      "sample_V": 0.0
+    },
+    {
+      "background_C": 47.60193127442463,
+      "background_N": 613.1279392234304,
+      "background_V": 0.25276210964362966,
+      "centers": [
+        0.9750000000000001,
+        -3.025,
+        -0.009999997913837433,
+        0.25
+      ],
+      "historical_sample_geometry_background_N": 216729.84524799802,
+      "historical_sample_geometry_signal": 1.6144351678817281,
+      "historical_signal": 1.0036599354116305,
+      "historical_uniform_angle_signal": 1.6143737055419074,
+      "historical_uniform_background_C": 16845.234709143628,
+      "historical_variance": 0.0001658612765316825,
+      "index": [
+        99,
+        49,
+        3,
+        24
+      ],
+      "native_background_signal": 0.07763784396241316,
+      "native_sample_signal": 1.6921597410242415,
+      "native_signal": 1.6145218970618282,
+      "sample_C": 18120.310940623283,
+      "sample_N": 10708.392654262832,
+      "sample_V": 18568.621891975403
+    },
+    {
+      "background_C": 0.0030383254448252926,
+      "background_N": 0.00615310486639336,
+      "background_V": 9.23142052808531e-06,
+      "centers": [
+        -0.22499999999999987,
+        0.4750000000000001,
+        0.13000000268220901,
+        0.25
+      ],
+      "historical_sample_geometry_background_N": 249.44000616520339,
+      "historical_sample_geometry_signal": 0.09366506791012655,
+      "historical_signal": 0.0936904786913505,
+      "historical_uniform_angle_signal": -0.39603192325112263,
+      "historical_uniform_background_C": 1.0203031301498413,
+      "historical_variance": 0.009578053939490067,
+      "index": [
+        75,
+        119,
+        4,
+        24
+      ],
+      "native_background_signal": 0.49378736602066164,
+      "native_sample_signal": 0.09775544276953903,
+      "native_signal": -0.39603192325112263,
+      "sample_C": 1.0205941200256348,
+      "sample_N": 10.44027924288279,
+      "sample_V": 1.0416125059127808
+    },
+    {
+      "background_C": 29.456811205405995,
+      "background_N": 422.0246686038298,
+      "background_V": 0.1370802845378586,
+      "centers": [
+        0.9250000000000003,
+        -2.9749999999999996,
+        -0.009999997913837433,
+        0.25
+      ],
+      "historical_sample_geometry_background_N": 151607.10754585074,
+      "historical_sample_geometry_signal": 1.079773599850174,
+      "historical_signal": 1.5508773199141241,
+      "historical_uniform_angle_signal": 1.0782711198637374,
+      "historical_uniform_background_C": 10321.754393816003,
+      "historical_variance": 0.00033482009048031985,
+      "index": [
+        98,
+        50,
+        3,
+        24
+      ],
+      "native_background_signal": 0.06979878996850346,
+      "native_sample_signal": 1.1478558590588617,
+      "native_signal": 1.0780570690903581,
+      "sample_C": 8861.754422187805,
+      "sample_N": 7720.267620930772,
+      "sample_V": 9106.197630286217
+    }
+  ]
+}

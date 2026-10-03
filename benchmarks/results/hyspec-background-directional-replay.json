@@ -1,0 +1,591 @@
+{
+  "after_inputs": {
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/HYSPEC_all.nfit": [
+      2272042112,
+      1790612467117415358
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_1p5K_240Hz_s2_70.nxs": [
+      4378512620,
+      1784639630000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_1p8K_240Hz_s2_34.nxs": [
+      5654989017,
+      1784639718000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_1p8K_240Hz_s2_34_bkg.nxs": [
+      190768848,
+      1784638971000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_1p8K_240Hz_s2_70_bkg.nxs": [
+      186736480,
+      1784638961000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34.nxs": [
+      3415014879,
+      1784639562000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34_bkg.nxs": [
+      178297738,
+      1784638933000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70.nxs": [
+      2356544664,
+      1784639414000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70_bkg.nxs": [
+      173858391,
+      1784638933000000000
+    ]
+  },
+  "banks": [
+    {
+      "background_events": 4744544,
+      "background_frame": "QLab",
+      "bank": 34,
+      "comparisons": {
+        "all_covered": {
+          "numerator": {
+            "cells": 36483,
+            "max_absolute": 3.183231456205249e-11,
+            "max_relative_to_peak": 8.351924900765687e-15
+          },
+          "source_event_counts": {
+            "cells": 36483,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 36483,
+            "max_absolute": 7.275957614183426e-12,
+            "max_relative_to_peak": 8.557879329458234e-15
+          }
+        },
+        "coverage_fringe": {
+          "numerator": {
+            "cells": 36483,
+            "max_absolute": 3.183231456205249e-11,
+            "max_relative_to_peak": 8.351924900765687e-15
+          },
+          "source_event_counts": {
+            "cells": 36483,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 36483,
+            "max_absolute": 7.275957614183426e-12,
+            "max_relative_to_peak": 8.557879329458234e-15
+          }
+        },
+        "lowest_exposure_decile": {
+          "numerator": {
+            "cells": 3649,
+            "max_absolute": 1.4210854715202004e-14,
+            "max_relative_to_peak": 6.19037834034021e-16
+          },
+          "source_event_counts": {
+            "cells": 3649,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 3649,
+            "max_absolute": 1.3322676295501878e-15,
+            "max_relative_to_peak": 3.991153367767857e-16
+          }
+        }
+      },
+      "covariance_effect_on_energy_profile": {
+        "all_covered": {
+          "selected_cells": 36483,
+          "sigma_ratio_exact_to_diagonal_max": 2.1207321220461055,
+          "sigma_ratio_exact_to_diagonal_median": 1.7985796250186816,
+          "sigma_ratio_exact_to_diagonal_min": 1.058829741828433
+        },
+        "coverage_fringe": {
+          "selected_cells": 36483,
+          "sigma_ratio_exact_to_diagonal_max": 2.1207321220461055,
+          "sigma_ratio_exact_to_diagonal_median": 1.7985796250186816,
+          "sigma_ratio_exact_to_diagonal_min": 1.058829741828433
+        },
+        "lowest_exposure_decile": {
+          "selected_cells": 3649,
+          "sigma_ratio_exact_to_diagonal_max": 1.5002398242746557,
+          "sigma_ratio_exact_to_diagonal_median": 1.0,
+          "sigma_ratio_exact_to_diagonal_min": 0.9999999999999997
+        }
+      },
+      "coverage_support_equal": true,
+      "covered_zero_count_bins": 7852,
+      "direct_final_grid": {
+        "exposure_additivity": {
+          "cells": 48,
+          "max_absolute": 3.4086406230926514e-07,
+          "max_relative_to_peak": 5.2159692692019054e-14
+        },
+        "numerator": {
+          "cells": 48,
+          "max_absolute": 2.87545844912529e-08,
+          "max_relative_to_peak": 3.474787104092655e-14
+        },
+        "variance": {
+          "cells": 48,
+          "max_absolute": 1.146690919995308e-08,
+          "max_relative_to_peak": 1.8099216930196184e-14
+        }
+      },
+      "fine_shape": [
+        80,
+        20,
+        8,
+        48
+      ],
+      "sample_charge_uAh": [
+        72.6069375861111,
+        72.25811737777778,
+        72.28234852777777,
+        72.33353706666666,
+        72.22574520277777,
+        72.21215391944445,
+        72.30922338888888,
+        72.48606836111111,
+        72.42662465555556
+      ],
+      "sample_runs": [
+        "505555",
+        "505600",
+        "505645",
+        "505690",
+        "505735",
+        "505780",
+        "505825",
+        "505870",
+        "505915"
+      ],
+      "seconds": 14.900563542032614,
+      "temperature_K": "50"
+    },
+    {
+      "background_events": 4624140,
+      "background_frame": "QLab",
+      "bank": 70,
+      "comparisons": {
+        "all_covered": {
+          "numerator": {
+            "cells": 2701,
+            "max_absolute": 1.2278178473934531e-11,
+            "max_relative_to_peak": 5.845881074948576e-15
+          },
+          "source_event_counts": {
+            "cells": 2701,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 2701,
+            "max_absolute": 2.2737367544323206e-12,
+            "max_relative_to_peak": 5.056708326190824e-15
+          }
+        },
+        "coverage_fringe": {
+          "numerator": {
+            "cells": 2701,
+            "max_absolute": 1.2278178473934531e-11,
+            "max_relative_to_peak": 5.845881074948576e-15
+          },
+          "source_event_counts": {
+            "cells": 2701,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 2701,
+            "max_absolute": 2.2737367544323206e-12,
+            "max_relative_to_peak": 5.056708326190824e-15
+          }
+        },
+        "lowest_exposure_decile": {
+          "numerator": {
+            "cells": 271,
+            "max_absolute": 3.552713678800501e-15,
+            "max_relative_to_peak": 1.9066670300907736e-16
+          },
+          "source_event_counts": {
+            "cells": 271,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 271,
+            "max_absolute": 4.440892098500626e-16,
+            "max_relative_to_peak": 2.0976993240894308e-16
+          }
+        }
+      },
+      "covariance_effect_on_energy_profile": {
+        "all_covered": {
+          "selected_cells": 2701,
+          "sigma_ratio_exact_to_diagonal_max": 1.360308519736967,
+          "sigma_ratio_exact_to_diagonal_median": 1.0739495894906184,
+          "sigma_ratio_exact_to_diagonal_min": 1.0
+        },
+        "coverage_fringe": {
+          "selected_cells": 2701,
+          "sigma_ratio_exact_to_diagonal_max": 1.360308519736967,
+          "sigma_ratio_exact_to_diagonal_median": 1.0739495894906184,
+          "sigma_ratio_exact_to_diagonal_min": 1.0
+        },
+        "lowest_exposure_decile": {
+          "selected_cells": 271,
+          "sigma_ratio_exact_to_diagonal_max": 1.4142120141253862,
+          "sigma_ratio_exact_to_diagonal_median": 1.0,
+          "sigma_ratio_exact_to_diagonal_min": 1.0
+        }
+      },
+      "coverage_support_equal": true,
+      "covered_zero_count_bins": 324,
+      "direct_final_grid": {
+        "exposure_additivity": {
+          "cells": 48,
+          "max_absolute": 5.413312464952469e-08,
+          "max_relative_to_peak": 5.254550991232604e-14
+        },
+        "numerator": {
+          "cells": 48,
+          "max_absolute": 6.039044819772243e-10,
+          "max_relative_to_peak": 1.1781191339901594e-14
+        },
+        "variance": {
+          "cells": 48,
+          "max_absolute": 6.002665031701326e-11,
+          "max_relative_to_peak": 5.199806354829754e-15
+        }
+      },
+      "fine_shape": [
+        80,
+        20,
+        8,
+        48
+      ],
+      "sample_charge_uAh": [
+        44.82411789166667,
+        44.80813071111111,
+        44.83711456111111,
+        44.567590244444446,
+        44.82931896666666,
+        44.82646016388889,
+        44.83868216944444,
+        44.43589045833333,
+        44.85014793888889
+      ],
+      "sample_runs": [
+        "506277",
+        "506322",
+        "506367",
+        "506412",
+        "506457",
+        "506502",
+        "506547",
+        "506592",
+        "506637"
+      ],
+      "seconds": 11.746826249989681,
+      "temperature_K": "50"
+    },
+    {
+      "background_events": 5080328,
+      "background_frame": "QLab",
+      "bank": 34,
+      "comparisons": {
+        "all_covered": {
+          "numerator": {
+            "cells": 21379,
+            "max_absolute": 6.639311322942376e-11,
+            "max_relative_to_peak": 8.037206570935625e-15
+          },
+          "source_event_counts": {
+            "cells": 21379,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 21379,
+            "max_absolute": 2.6830093702301383e-11,
+            "max_relative_to_peak": 7.266131595341302e-15
+          }
+        },
+        "coverage_fringe": {
+          "numerator": {
+            "cells": 21379,
+            "max_absolute": 6.639311322942376e-11,
+            "max_relative_to_peak": 8.037206570935625e-15
+          },
+          "source_event_counts": {
+            "cells": 21379,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 21379,
+            "max_absolute": 2.6830093702301383e-11,
+            "max_relative_to_peak": 7.266131595341302e-15
+          }
+        },
+        "lowest_exposure_decile": {
+          "numerator": {
+            "cells": 2138,
+            "max_absolute": 2.4868995751603507e-14,
+            "max_relative_to_peak": 8.620986612665644e-16
+          },
+          "source_event_counts": {
+            "cells": 2138,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 2138,
+            "max_absolute": 2.6645352591003757e-15,
+            "max_relative_to_peak": 5.543930676853972e-16
+          }
+        }
+      },
+      "covariance_effect_on_energy_profile": {
+        "all_covered": {
+          "selected_cells": 21379,
+          "sigma_ratio_exact_to_diagonal_max": 1.6400476718867687,
+          "sigma_ratio_exact_to_diagonal_median": 1.3915284555054117,
+          "sigma_ratio_exact_to_diagonal_min": 1.0624492565759522
+        },
+        "coverage_fringe": {
+          "selected_cells": 21379,
+          "sigma_ratio_exact_to_diagonal_max": 1.6400476718867687,
+          "sigma_ratio_exact_to_diagonal_median": 1.3915284555054117,
+          "sigma_ratio_exact_to_diagonal_min": 1.0624492565759522
+        },
+        "lowest_exposure_decile": {
+          "selected_cells": 2138,
+          "sigma_ratio_exact_to_diagonal_max": 1.107342214612038,
+          "sigma_ratio_exact_to_diagonal_median": 1.0,
+          "sigma_ratio_exact_to_diagonal_min": 0.9999999999999999
+        }
+      },
+      "coverage_support_equal": true,
+      "covered_zero_count_bins": 5232,
+      "direct_final_grid": {
+        "exposure_additivity": {
+          "cells": 48,
+          "max_absolute": 1.5273690223693848e-07,
+          "max_relative_to_peak": 1.9876194597178033e-14
+        },
+        "numerator": {
+          "cells": 48,
+          "max_absolute": 9.022187441587448e-08,
+          "max_relative_to_peak": 9.022159717204504e-14
+        },
+        "variance": {
+          "cells": 48,
+          "max_absolute": 6.926711648702621e-08,
+          "max_relative_to_peak": 9.015992754521685e-14
+        }
+      },
+      "fine_shape": [
+        80,
+        20,
+        8,
+        48
+      ],
+      "sample_charge_uAh": [
+        55.92102698888888,
+        55.92785592777778,
+        55.618636413888886,
+        55.602904386111106,
+        55.66194678888888,
+        64.2954627861111,
+        64.18271742222223,
+        64.202559575,
+        64.23102988333333
+      ],
+      "sample_runs": [
+        "505101",
+        "505191",
+        "505281",
+        "505371",
+        "505461",
+        "506639",
+        "506729",
+        "506819",
+        "506910"
+      ],
+      "seconds": 17.180052042007446,
+      "temperature_K": "1p8"
+    },
+    {
+      "background_events": 4978029,
+      "background_frame": "QLab",
+      "bank": 70,
+      "comparisons": {
+        "all_covered": {
+          "numerator": {
+            "cells": 4799,
+            "max_absolute": 7.958078640513122e-12,
+            "max_relative_to_peak": 6.545846688199099e-15
+          },
+          "source_event_counts": {
+            "cells": 4799,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 4799,
+            "max_absolute": 9.947598300641403e-13,
+            "max_relative_to_peak": 7.271273191021108e-15
+          }
+        },
+        "coverage_fringe": {
+          "numerator": {
+            "cells": 4799,
+            "max_absolute": 7.958078640513122e-12,
+            "max_relative_to_peak": 6.545846688199099e-15
+          },
+          "source_event_counts": {
+            "cells": 4799,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 4799,
+            "max_absolute": 9.947598300641403e-13,
+            "max_relative_to_peak": 7.271273191021108e-15
+          }
+        },
+        "lowest_exposure_decile": {
+          "numerator": {
+            "cells": 480,
+            "max_absolute": 3.552713678800501e-15,
+            "max_relative_to_peak": 1.778944440858575e-16
+          },
+          "source_event_counts": {
+            "cells": 480,
+            "max_absolute": 0.0,
+            "max_relative_to_peak": 0.0
+          },
+          "variance": {
+            "cells": 480,
+            "max_absolute": 4.440892098500626e-16,
+            "max_relative_to_peak": 1.959689034950783e-16
+          }
+        }
+      },
+      "covariance_effect_on_energy_profile": {
+        "all_covered": {
+          "selected_cells": 4799,
+          "sigma_ratio_exact_to_diagonal_max": 1.6051886809581584,
+          "sigma_ratio_exact_to_diagonal_median": 1.3897157129590838,
+          "sigma_ratio_exact_to_diagonal_min": 1.0
+        },
+        "coverage_fringe": {
+          "selected_cells": 4799,
+          "sigma_ratio_exact_to_diagonal_max": 1.6051886809581584,
+          "sigma_ratio_exact_to_diagonal_median": 1.3897157129590838,
+          "sigma_ratio_exact_to_diagonal_min": 1.0
+        },
+        "lowest_exposure_decile": {
+          "selected_cells": 480,
+          "sigma_ratio_exact_to_diagonal_max": 1.414213391678386,
+          "sigma_ratio_exact_to_diagonal_median": 1.0,
+          "sigma_ratio_exact_to_diagonal_min": 0.9999999999999998
+        }
+      },
+      "coverage_support_equal": true,
+      "covered_zero_count_bins": 1011,
+      "direct_final_grid": {
+        "exposure_additivity": {
+          "cells": 48,
+          "max_absolute": 5.8906152844429016e-08,
+          "max_relative_to_peak": 6.02132000560461e-14
+        },
+        "numerator": {
+          "cells": 48,
+          "max_absolute": 8.076312951743603e-10,
+          "max_relative_to_peak": 1.431291304171984e-14
+        },
+        "variance": {
+          "cells": 48,
+          "max_absolute": 2.5283952709287405e-10,
+          "max_relative_to_peak": 1.9976486528898646e-14
+        }
+      },
+      "fine_shape": [
+        80,
+        20,
+        8,
+        48
+      ],
+      "sample_charge_uAh": [
+        91.90652281388888,
+        91.86240206388888,
+        91.96249939444444,
+        92.06556219444444,
+        91.97513866666667,
+        91.83668142222221,
+        91.67706255555555,
+        91.81206171111111,
+        92.04837076666666
+      ],
+      "sample_runs": [
+        "505916",
+        "506119",
+        "505961",
+        "506164",
+        "506006",
+        "506209",
+        "506051",
+        "506254",
+        "506096"
+      ],
+      "seconds": 14.262439707992598,
+      "temperature_K": "1p5"
+    }
+  ],
+  "before_inputs": {
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/HYSPEC_all.nfit": [
+      2272042112,
+      1790612467117415358
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_1p5K_240Hz_s2_70.nxs": [
+      4378512620,
+      1784639630000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_1p8K_240Hz_s2_34.nxs": [
+      5654989017,
+      1784639718000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_1p8K_240Hz_s2_34_bkg.nxs": [
+      190768848,
+      1784638971000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_1p8K_240Hz_s2_70_bkg.nxs": [
+      186736480,
+      1784638961000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34.nxs": [
+      3415014879,
+      1784639562000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_34_bkg.nxs": [
+      178297738,
+      1784638933000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70.nxs": [
+      2356544664,
+      1784639414000000000
+    ],
+    "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70_bkg.nxs": [
+      173858391,
+      1784638933000000000
+    ]
+  },
+  "original_inputs_unchanged": true,
+  "scope": "Complete measured backgrounds at nine selected sample angles; identity symmetry, unity normalization, no user masks. Event oracle is independent of replay accumulation; exposure additivity uses the existing trajectory integrator, independently validated against Mantid in 6A-R.",
+  "script_sha256": "f71f6a0a52f3a1bf9962a3dbd284a81ef684c1bd0bf4c1048d6e0e1fee47bdaf"
+}

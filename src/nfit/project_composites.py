@@ -207,8 +207,8 @@ _COMPOSITE_DATA_CACHE_LIMIT = None
 # Viewer-ready and composite bin results use the same machine-level allowance;
 # this snapshots that preference when the application starts.
 _COMPOSITE_DATA_CACHE_MAX_BYTES = scientific_cache_budget_bytes()
-# Source-owner context, one workspace subtraction, and one reference scale.
-_BACKGROUND_APPLICATION_VERSION = 2
+# Source-owner context, subtraction scale, and shared first-run replay Ei.
+_BACKGROUND_APPLICATION_VERSION = 3
 
 
 @dataclass(frozen=True)

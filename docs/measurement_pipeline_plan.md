@@ -58,7 +58,8 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
 | 6A | Validate instrument families and continuous measurements | Survey complete; adapter follow-ups required |
 | 6A-R | Resolve raw-DGS geometry/timing and validate HYSPEC conversion | Core complete; historical subtraction split into 6A-R2 |
-| 6A-R2 | Validate directional HYSPEC background reconstruction and uncertainties | Pending review |
+| 6A-R2 | Validate directional HYSPEC background reconstruction and uncertainties | Analysis complete; cached final-cut dependencies split into 6A-R3 |
+| 6A-R3 | Preserve background source correlations and target through final cuts | Pending review |
 | 6A-M | Preserve MACS count/exposure targets through final profiles | Pending review |
 | 6A-C | Supply CORELLI reconstruction/copy covariance or require replay | Pending review |
 | 6A1 | Validate optional numerical and statistical treatments | Pending |
@@ -446,8 +447,11 @@ is backed up in IPTS-37189; the separate NiO-and-sapphire project is unchanged.
 Task-owned scientific archives and diagnostics were moved from home and `/tmp`
 to IPTS diagnostics storage. Home usage is 7.9 GiB. The existing desktop launcher
 uses IPTS scratch via `TMPDIR`; `NFIT_TMPDIR` can select another validated SNS
-IPTS workspace. The launcher accepts the canonical GPFS IPTS path after symlink
-resolution; a brief offscreen startup check reached the GUI event loop.
+IPTS workspace. The launcher validates the canonical GPFS destination but retains
+the direct `/SNS/SEQ/IPTS-37189` path for directory creation and `TMPDIR`.
+Resolving to GPFS before creation failed on analysis-node23; its home-data alias
+also failed there. The corrected launcher passed an offscreen startup check on
+analysis-node01; direct node23 access was unavailable.
 
 Use the same GUI-independent services for rebinning, hidden-axis slicing,
 coarsening, regular/rotated cuts, region summaries, fits, and exported profiles.
@@ -794,7 +798,39 @@ does not establish that their upstream construction used a radial background.
 Audit that construction, source membership, angle weighting and variance
 propagation before attributing the residuals. Keep validated optional treatments
 and default adoption in 6A1/6A2; observed-extrema compatibility remains a separate
-review decision. Start this follow-up after Paul authorizes the checkpoint.
+review decision.
+
+**Completion record (0.114.4):** complete real backgrounds for all four sample
+configurations agree with an independent event/covariance oracle at nine selected
+angles, including fringes and the lowest-exposure decile. Direct final-grid
+replay matches the full covariance reference. Unequal charges, source scales,
+repeated angles and both replay backends pass analytic tests. First-run Ei is
+now resolved before singleton trajectories and source-mask partitioning;
+background/composite caches recompute under the corrected convention.
+
+Matched historical membership exposes a different normalization model: Mantid
+replays background lab directions but uses sample detector geometry in its
+background denominator. The 0.0261° / 0.00137° bank differences strongly affect
+tiny trajectory intersections. Substituting that denominator explains most of
+the largest oversubtraction (−0.100 native versus −6.233 saved; −6.294 with the
+historical geometry). Signal RMS discrepancy falls by about 74%, but complete
+historical parity is not established. Keep the successful directional treatment
+and review explicit compatibility/calibration-transfer alternatives in 6A1/6A2.
+See `benchmarks/results/hyspec-background-analysis.md` and its two scalar receipts.
+Original projects and sources remain unchanged. Full suite: 2,905 passed, one
+unavailable-CuPy skip; Ruff, compilation, diff checks and Sphinx passed.
+
+#### 6A-R3 — Background final-cut correlations
+
+Cached measured-background voxels lack cross-voxel source dependencies and a
+certified additive payload. Preserve source correlations and an explicit
+statistical target through profiles, cuts and exports, or use automatic replay
+on the final grid. Direct final-grid scripting replay is already correct for the
+recorded within-bin model. A cached-cut diagonal approximation must be visible
+and must not claim source-aware uncertainty. Analytic variance is 2 where
+separate diagonal pooling gives 1.25; the real sparse 50 K / 34° energy-profile
+uncertainty is up to 2.12 times the diagonal result. Do not apply a fixed empirical
+correction. Start this implementation after Paul's checkpoint review.
 
 #### 6A-M — Native MACS statistical payloads
 
@@ -817,9 +853,9 @@ signed cancellation, positive covariance, overlapping copies, final cuts and
 fringes against independent primitive references. Keep charge/duty and pointwise
 calibration normalization distinct from full trajectory coverage.
 
-**Review gate:** 6A-R core is complete. Synchronize local/ORNL code and help, then
-check back with Paul before 6A-R2, 6A-M or 6A-C. Strict extrema compatibility is
-also a pending review decision. 6A1 and 6A2 remain unstarted.
+**Review gate:** 6A-R core and 6A-R2 analysis are complete. Synchronize local/ORNL
+code and help, then check back with Paul before 6A-R3, 6A-M or 6A-C. Strict
+extrema compatibility is also a pending review decision. 6A1 and 6A2 remain unstarted.
 
 ### 6A1 — Validate alternatives
 

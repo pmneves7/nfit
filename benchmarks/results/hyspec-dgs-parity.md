@@ -1,6 +1,6 @@
 # HYSPEC DGS acceptance: checkpoint 6A-R
 
-The independent fresh comparison passes for unsubtracted HYSPEC data. The saved background-subtracted reference requires a separate 6A-R2 investigation. The aggregate receipt is `hyspec-dgs-parity.json`; no numerical arrays are included.
+The independent fresh comparison passes for unsubtracted HYSPEC data. The saved background-subtracted reference differs; the completed [6A-R2 analysis](hyspec-background-analysis.md) isolates its principal geometry/normalization discrepancy and records the remaining final-cut covariance work. The aggregate receipt is `hyspec-dgs-parity.json`; no numerical arrays are included.
 
 ## Fresh raw and MDE comparison
 
@@ -43,8 +43,9 @@ that all four sample collections under `Workspace1/Group1` use enabled
 mode replays full laboratory-frame event directions at sample angles. The
 separate `powder averages` branch uses center projection.
 
-Checkpoint 6A-R2 will validate that directional treatment, exposure weighting and
-source correlations, especially in final cuts and coverage fringes. Agreement
+The [completed 6A-R2 analysis](hyspec-background-analysis.md) validates that
+directional treatment and final-grid source correlations, including coverage
+fringes. Cached final-cut dependencies remain an implementation follow-up. Agreement
 with the historical subtraction is a diagnostic comparison rather than the
 scientific acceptance criterion. The available `histograms/export_metallix.py`
 passes MDE backgrounds directly to `MDNorm`; this alone does not demonstrate a

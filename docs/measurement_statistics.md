@@ -241,6 +241,18 @@ source identities, source configuration, binning and numerical policies.
 Same-event variance follows the recorded copy policy; replay does not invent
 unrecorded detector-calibration dependencies.
 
+A measured-event background needs the same final-grid treatment. First obtain
+`sample_final = replay_measurement_histogram(sample_group, **final_binning)`,
+then call
+`project_measured_background_mdevent(sample_group, background_group, sample_final)`.
+Copies of each background event that meet in a final voxel combine before their
+variance is calculated. This accounts for their within-final-bin covariance.
+The replay output does not retain cross-voxel dependencies or certified additive
+count statistics: a later profile of its cached pixels cannot reconstruct that
+covariance. Subtract the background on the requested final grid, keeping sample
+and background uncertainty separate; arbitrary later cuts require a new replay.
+Shared calibration uncertainty remains outside this replay model.
+
 For a sampled function, bin the original ordered nodes over explicit coordinate
 intervals. The supported point workflow has one varying coordinate and constant
 remaining coordinates; multidimensional interpolation needs a separate model.

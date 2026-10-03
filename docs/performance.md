@@ -231,6 +231,12 @@ mkdir -p /path/to/IPTS/shared/nfit/.nfit-work
 TMPDIR=/path/to/IPTS/shared/nfit/.nfit-work nfit
 ```
 
+Keep the logical experiment path when the cluster uses automounts. Resolving an
+`/SNS/...` path to its physical `/gpfs/...` target before creating or accessing
+the directory can bypass node-local automounts. A launcher can validate the
+canonical destination after creation while exporting the original logical path
+as `TMPDIR`.
+
 This selects the temporary filesystem for mapped-array extraction, reduced-event
 staging and histogram staging. The session-cache folder preference controls a
 separate cache tier and does not replace `TMPDIR`. Keep diagnostics and retained

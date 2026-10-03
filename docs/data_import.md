@@ -1213,7 +1213,17 @@ fallback when Numba is unavailable or JIT compilation is disabled. Work is chunk
 but replaying many angles costs more than voxel-center interpolation. Repeated
 copies of an event landing in the same voxel are combined before propagating
 variance, so they do not manufacture independent counting statistics. Covariance
-between different output voxels is not stored.
+between different output voxels is not stored. For quantitative integrated cuts,
+replay directly onto the final grid with one bin for each integrated dimension;
+combining cached voxel errors cannot recover the shared background-event
+covariance. The replayed background also lacks the certified additive count
+payload needed by exposure-pooling profile consumers. Its covered-zero display
+intervals are not observed count variances.
+
+Each source and sample group resolves its selected first-run incident energy
+before preparing trajectories or partitioning masks. Selecting **Each run Ei**
+or a per-run override retains that explicit convention. These normalization
+choices do not reconstruct the measured source events again.
 
 Detector-trajectory normalization batches angles with identical output-mask
 acceptance into shared accumulators, avoiding a separate full-grid allocation
