@@ -1190,6 +1190,10 @@ measured $\mathbf Q$ (in Å⁻¹) back into the laboratory frame, then reconstru
 the background at every selected sample goniometer angle on the sample's HKLE
 grid. This uses the same basis, symmetry operations and detector-trajectory
 integration as the sample, without first making a spherical powder average.
+Use this treatment when the background is fixed in the laboratory frame over
+sample rotation and its acquisition conditions match the sample. Equal momentum
+modulus and energy do not imply equal background intensity: detector directions,
+including directions out of the scattering plane, can have different backgrounds.
 The relative exposure at each sample angle is its proton charge times its fit
 weight. Background run scales calibrate signal and uncertainty; background fit
 weights weight counts and exposure; the background link scale is applied last.

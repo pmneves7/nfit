@@ -34,6 +34,25 @@ Replaying both banks with the historical refined UB and actual uniform bounds do
 
 The current measured-background service uses sample-charge fractions across angles and combines copies of a source event before computing variance. The historical Mantid recipe bins a background once per sample angle and accumulates independent-copy variance. The service retains normalized signal/errors and exposure, rather than a certified additive C/V payload. This diagnostic reconstructs C = I N and V = (σ N)² only for comparison, excluding zero-count display confidence intervals; it installs no reconstructed payload. These model differences require investigation in 6A-R2. They do not establish that either treatment is the accurate estimator, nor completely explain every residual.
 
+### Background acceptance target
+
+Paul reports that `HYSPEC_all.nfit` removed the background well and that the
+historical Mantid subtraction looked worse. Read-only saved metadata confirms
+that all four sample collections under `Workspace1/Group1` use enabled
+`measured_events` background links. Their names contain “powder”, but the stored
+mode replays full laboratory-frame event directions at sample angles. The
+separate `powder averages` branch uses center projection.
+
+Checkpoint 6A-R2 will validate that directional treatment, exposure weighting and
+source correlations, especially in final cuts and coverage fringes. Agreement
+with the historical subtraction is a diagnostic comparison rather than the
+scientific acceptance criterion. The available `histograms/export_metallix.py`
+passes MDE backgrounds directly to `MDNorm`; this alone does not demonstrate a
+radial upstream background model. The source construction and remaining
+residuals still require attribution. Neither the successful visual subtraction
+nor the current same-voxel variance handling establishes complete uncertainty
+correctness.
+
 All original local projects, MDE files and reference histogram passed before/after size and modification-time checks. The fresh raw/reference inputs also remained unchanged. ORNL scientific products stayed in the IPTS diagnostics folder. Only small scalar receipts were copied locally.
 
 ## Timing scope and reproducibility

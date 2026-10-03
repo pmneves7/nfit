@@ -58,7 +58,7 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
 | 6A | Validate instrument families and continuous measurements | Survey complete; adapter follow-ups required |
 | 6A-R | Resolve raw-DGS geometry/timing and validate HYSPEC conversion | Core complete; historical subtraction split into 6A-R2 |
-| 6A-R2 | Reproduce historical HYSPEC background recipes and review extrema compatibility | Pending review |
+| 6A-R2 | Validate directional HYSPEC background reconstruction and uncertainties | Pending review |
 | 6A-M | Preserve MACS count/exposure targets through final profiles | Pending review |
 | 6A-C | Supply CORELLI reconstruction/copy covariance or require replay | Pending review |
 | 6A1 | Validate optional numerical and statistical treatments | Pending |
@@ -760,16 +760,41 @@ Validation: 2,895 tests passed; one CuPy availability test skipped. Ruff,
 byte-compilation, diff checks and warning-as-error Sphinx build passed. Manual
 engine comparisons remain outside pytest and production code.
 
-#### 6A-R2 — Historical HYSPEC background recipes
+#### 6A-R2 — Directional HYSPEC background reconstruction
 
-The four saved HYSPEC histograms use refined UB, actual serialized grid edges,
-angle-integrated backgrounds and temperature-specific source sets. Reproducing
-their subtraction requires matching the historical angle weighting and
-independent-copy variance convention. Native measured-background projection
-uses sample-exposure weights and groups copies of the same source event before
-variance propagation. Quantify these differences before choosing an explicit
-compatibility recipe. Keep optional treatment/default adoption in 6A1/6A2.
-Start this follow-up only after Paul reviews the 6A-R result.
+Paul reports that subtraction in `HYSPEC_all.nfit` removed the background well,
+while the historical Mantid subtraction looked worse. Use its existing
+`Workspace1/Group1` collections as the reference configuration: all four enabled
+background links use `measured_events`, despite their legacy names containing
+“powder”. The separate `powder averages` branch uses center projection. Preserve
+both branches and the original project during validation.
+
+The physical target is a background fixed in laboratory coordinates, replayed
+as if acquired at every sample angle. Retain each measured event's full lab-frame
+momentum and energy, detector acceptance, and bank geometry. Use sample-angle
+exposure weights, matching detector masks, energy coverage, UB, output edges and
+symmetry. A radial background cannot recover directional structure lost by
+averaging over equal momentum modulus and energy. Check the assumption that the
+background is stable over sample rotation and that each source matches the
+sample temperature and bank configuration.
+
+Validate signal, exposure and uncertainty against explicit synthetic acquisitions
+with directional contrast at equal momentum modulus and energy, unequal sample
+charges and repeated angles. Copies of the same measured background event must
+retain their common source identity. Extend checks through final integrated cuts
+and low-coverage fringes; same-voxel coefficient merging alone does not certify
+cross-voxel covariance. The current replay does not store that covariance or a
+certified additive count/variance payload. Assess these gaps before changing the
+scientific contract.
+
+Use the four historical histograms to attribute discrepancies, without making
+visual agreement with their subtraction an acceptance criterion. The available
+`histograms/export_metallix.py` passes MDE backgrounds directly to `MDNorm`; it
+does not establish that their upstream construction used a radial background.
+Audit that construction, source membership, angle weighting and variance
+propagation before attributing the residuals. Keep validated optional treatments
+and default adoption in 6A1/6A2; observed-extrema compatibility remains a separate
+review decision. Start this follow-up after Paul authorizes the checkpoint.
 
 #### 6A-M — Native MACS statistical payloads
 
