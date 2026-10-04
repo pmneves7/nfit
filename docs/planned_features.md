@@ -59,6 +59,12 @@ tracks the staged implementation and review checkpoints for these changes.
   requires it. Current raw reduction matches Shiver's time-weighted fixed
   orientation per run; pulse-resolved rotation needs explicit interpolation,
   temporal support, exposure integration and reference validation.
+- Benchmark bounded batching of freshly reduced DGS detector-bank chunks before
+  histogram accumulation. Measure complete reduction, binning and saving on
+  SEQUOIA and HYSPEC; preserve event order, cache contents, numerical results at
+  coverage fringes, memory limits, progress and cancellation. Adopt it only if
+  real saved workflows show a worthwhile gain. This is a deferred experiment,
+  not an implemented speedup.
 - Extend source-aware combination to repeated aliases across expression
   subfolders and repeated CORELLI/ordinary sources within a summed subfolder.
   Numbered-source selection and grouping already use ordinary dataset groups;

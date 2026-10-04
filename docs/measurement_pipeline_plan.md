@@ -63,7 +63,7 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Complete |
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
 | 6A | Finish DGS correctness and background validation | Complete; accepted by Paul |
-| 6A-P | Complete realistic performance comparisons and useful speedups | Technical work complete; review pending |
+| 6A-P | Complete realistic performance comparisons and useful speedups | Complete; accepted by Paul |
 | 6A1 | Validate optional numerical and statistical methods | Controlled truth checks complete; review pending, defaults unchanged |
 | 6A2 | Review evidence and choose future defaults with Paul | Pending |
 | 6B | Validate migration, finish documentation, and remove this plan | Pending |
@@ -771,12 +771,12 @@ Evidence for former 6A-R, R2 and R3a/R3b is retained in:
 
 ### 6A-P — Complete realistic performance comparisons and useful speedups
 
-**Status: Pending review.** Matched full SEQUOIA/HYSPEC workflows, every-cell
-comparisons, trajectory pooling, guarded symmetry-cache expansion and the
+**Status: Complete; accepted by Paul on 2026-10-04.** Matched full
+SEQUOIA/HYSPEC workflows, every-cell comparisons, trajectory pooling,
+guarded symmetry-cache expansion and the
 remaining-cost profile are complete. Ordered event parallelism was tested but
-its small workflow gain does not justify adoption. Local and ORNL installation
-synchronization completes this checkpoint; scientific default changes remain
-in 6A2.
+its small workflow gain does not justify adoption. Code and documentation are
+synchronized locally and on ORNL; scientific default changes remain in 6A2.
 
 - [x] Fuse event projection/accumulation and reuse exact-text mask parsing.
 - [x] Reuse successfully inspected scalar metadata and exact geometry arithmetic
@@ -802,7 +802,9 @@ in 6A2.
 - [x] Profile the remaining dominant costs, particularly trajectory normalization.
   Adopt further speedups only when real workflows show a worthwhile gain and
   preserve the selected numerical treatment; otherwise record the limiting cost.
-- [ ] Review timings, numerical differences and remaining opportunities with Paul.
+- [x] Review timings, numerical differences and remaining opportunities with Paul.
+  Accept the measured speedups and omit the ordered-event parallel prototype;
+  its approximately 5% whole-workflow gain does not justify the added complexity.
 
 **Current measured workflows:** same node, 64-thread ceilings, matching settings,
 loading and saving included. The reference is an ordinary sequential Shiver
@@ -829,8 +831,11 @@ A full617 normalization sweep favors 64 workers over 32 (median 127.526 versus
 142.320 s). Ordered event parallelism saves 14.463 s in the isolated real event
 pass but only about 5% of the complete saved workflow, so it is not adopted.
 The instrumented raw profile confirms geometry reuse and many small fresh-bank
-chunks. Coalesced delivery is the next bounded experiment; producer concurrency
-or fused reconstruction needs stronger evidence before implementation.
+chunks. Fresh detector-chunk batching is planned for a later performance
+checkpoint. Measure complete reduction/bin/save workflows and preserve event
+order, cache contents, full-grid/fringe numerical results, memory bounds,
+progress and cancellation. No gain is assumed before that experiment; producer
+concurrency or fused reconstruction needs stronger evidence before implementation.
 
 The final cost guard skips partial-cache loading when a large grid has too few
 source events to repay its scans. The 24-run selection correctly retains full
