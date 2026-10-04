@@ -28,6 +28,7 @@ from .project_archive import (
     dataset_artifact_member,
     open_project_artifact,
 )
+from .raw_dgs_geometry_precision import DGS_HE3_EFFICIENCY_CONVENTION
 
 _CACHE_KEY = "raw_dgs_reduction_cache"
 RAW_DGS_REDUCTION_VERSION = 7
@@ -73,6 +74,9 @@ def reduction_signature(dataset, config):
     policies = resolved_dgs_reduction_policies(config)
     for key in ("monitor_variance_policy", "event_precision_policy"):
         settings[key] = policies[key]
+    # Only legacy high-precision He-3 corrections changed. Preserve signatures
+    # for the unchanged Mantid path and for reductions without this correction.
+    settings.update(reduction_convention_signature(config))
     return json.dumps(
         [
             RAW_DGS_REDUCTION_VERSION,
@@ -84,6 +88,17 @@ def reduction_signature(dataset, config):
         ],
         sort_keys=True,
     )
+
+
+def reduction_convention_signature(config):
+    """Invalidate only legacy high-precision DGS He-3 reductions and binnings."""
+
+    policies = resolved_dgs_reduction_policies(config)
+    if policies["event_precision_policy"] == "high_precision" and config.get(
+        "he3_detector_efficiency_correction", True
+    ):
+        return {"he3_efficiency_convention": DGS_HE3_EFFICIENCY_CONVENTION}
+    return {}
 
 
 @dataclass(frozen=True)

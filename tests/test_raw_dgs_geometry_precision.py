@@ -134,7 +134,7 @@ def test_mask_preserves_both_exponents_and_excludes_unsupported_detectors():
         np.array([42, 43]), np.array([[1, 0, 2], [1, 0, 3]]),
         np.array([.42, .43]), np.array([.421, math.nan]),
     )
-    with pytest.raises(ValueError, match="high_precision"):
+    with pytest.raises(ValueError, match="detector cylinder shape"):
         geometry.event_geometry_for_ids(np.array([42, 43]), mantid_precision=True)
     mask = DetectorNormalization(None, np.array([42, 43]), np.array([1, 0]), np.zeros(2))
     masked = raw_dgs._masked_detector_geometry(geometry, None, mask)

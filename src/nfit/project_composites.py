@@ -82,7 +82,7 @@ from .project_masks import _mdhisto_with_nfit_masks, _point_data_with_nfit_masks
 from .project_point_lists import prepared_point_list_data
 from .project_rebinning import _rebin_axis_bound_is_auto
 from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group
-from .raw_dgs_cache import RAW_DGS_REDUCTION_VERSION
+from .raw_dgs_cache import RAW_DGS_REDUCTION_VERSION, reduction_convention_signature
 from .rebin import rebin_nd
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET, RebinCache
 from .source_lineage import source_lineage_metadata
@@ -982,6 +982,7 @@ def _composite_cache_signature(
             **resolved_dgs_reduction_policies(raw_config),
             "dgs_reduction_policy_version": DGS_REDUCTION_POLICY_VERSION,
             "native_reduction_version": RAW_DGS_REDUCTION_VERSION,
+            **reduction_convention_signature(raw_config),
             "histogram_statistics_version": EVENT_STATISTICS_VERSION,
             **calibration_rule,
         }

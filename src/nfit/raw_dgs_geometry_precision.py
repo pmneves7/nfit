@@ -13,6 +13,7 @@ import math
 import numpy as np
 
 HE3_EFFICIENCY_EXPONENTIAL_CONSTANT = 2175.486863864
+DGS_HE3_EFFICIENCY_CONVENTION = "mantid_radius_and_efficiency_v1"
 _RAY_DISTANCE = 1000.0
 
 

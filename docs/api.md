@@ -619,11 +619,11 @@ bad-pulse charge selection, TOF-to-HKLE conversion, He-3 and `ki/kf` event
 weights, trajectory normalization, and measured-zero handling, is documented
 in [Raw TOF reduction sequence](data_import.md#raw-tof-reduction-sequence).
 
-The default He-3 correction derives Mantid's ray radius from supported cardinal,
-transversely centered local cylinders using their bottom and height. Unsupported
-active shapes raise an actionable error requiring `event_precision_policy="high_precision"`,
-which uses nominal-radius geometry and an `expm1` efficiency denominator.
-Definitions missing cylinder height retain a nominal-radius fallback without an
-exact shape-parity claim. Reduction cache version 5 invalidates earlier chunks,
-including version 4's six-column caches. See
+Both raw-DGS event-precision modes derive Mantid's He-3 ray radius from supported
+cardinal, transversely centered local cylinders using their bottom and height.
+Unsupported active shapes raise an explicit error in either mode. Definitions
+missing cylinder height retain a nominal-radius fallback without an exact
+shape-parity claim. High precision keeps float64 correction weights and uses the
+same efficiency formula. Legacy high-precision caches with active He-3 correction
+regenerate on recomputation; unchanged Mantid cache signatures remain valid. See
 [numerical reduction policies](data_import.md#numerical-reduction-policies).

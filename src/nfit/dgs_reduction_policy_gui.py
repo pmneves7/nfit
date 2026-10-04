@@ -25,7 +25,7 @@ def add_dgs_policy_controls(layout, config, *, start_row, prefix, raw, on_change
             DEFAULT_EVENT_PRECISION_POLICY, validated_event_precision_policy,
             "Mantid compatibility follows its event-coordinate and histogram rounding "
             "and ray-derived He-3 tube geometry. "
-            "High precision keeps double precision and nominal tube geometry; a saved MDE file cannot "
+            "High precision keeps double precision. Both modes use Mantid's He-3 correction; a saved MDE file cannot "
             "recover precision already lost during reduction. Changing raw event "
             "precision can require regeneration of reduced-event caches.",
         ),

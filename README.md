@@ -57,6 +57,7 @@ A few of its main capabilities are:
   Poisson rate intervals, and selectable first-run or per-run trajectory Ei,
   with Mantid numerical conventions by default and saved, scriptable monitor,
   event-precision, and symmetry-variance alternatives,
+  with Mantid He-3 corrections in both event-precision modes,
   raw CORELLI finite-energy correlation-chopper reconstruction with fractional
   momentum and discrete reconstructed-energy assignment, and reduced
   CORELLI and WAND² single-crystal data, with conventional major-tick or

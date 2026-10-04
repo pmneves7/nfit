@@ -923,8 +923,7 @@ def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_ba
                 raw_tof = np.asarray(tofs[start:stop], dtype=float)
                 event_tof = raw_tof - t0
                 indices, exponents, valid = geometry.event_indices_for_ids(
-                    event_ids, mantid_precision=mantid_precision
-                    and config.get("he3_detector_efficiency_correction", True),
+                    event_ids, mantid_precision=config.get("he3_detector_efficiency_correction", True),
                 )
                 if hyspec_preprocessing is not None:
                     valid &= raw_hyspec_tof_keep(raw_tof, hyspec_preprocessing)
@@ -958,7 +957,7 @@ def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_ba
                 weights = np.ones(energy.size, dtype=np.float32 if mantid_precision else float)
                 variances = np.ones_like(weights)
                 if config.get("he3_detector_efficiency_correction", True):
-                    correction = _he3_tube_efficiency_correction(kf, exponents, mantid_precision=mantid_precision)
+                    correction = _he3_tube_efficiency_correction(kf, exponents, mantid_precision=True)
                     if mantid_precision:
                         correction = correction.astype(np.float32)
                     weights *= correction
@@ -1401,8 +1400,8 @@ class _DetectorGeometry:
         exponents[valid] = source[indices[valid]]
         if mantid_precision and np.any(~np.isfinite(exponents[valid])):
             raise ValueError(
-                "Mantid He-3 precision does not support this detector cylinder shape; "
-                "select high_precision event precision to use nominal geometry."
+                "Mantid He-3 correction does not support this detector cylinder shape. "
+                "Changing event precision does not change the supported geometry."
             )
         return indices, exponents, valid
 

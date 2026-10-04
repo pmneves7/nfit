@@ -471,17 +471,18 @@ Already stored MDE coordinates and variances cannot recover precision lost by
 an earlier reduction. Neither symmetry policy retains cross-bin covariance for
 later cuts; see [event copies](physics_conventions.md#event-copies-and-covariance).
 
-For raw He-3 tube corrections, Mantid precision follows the source operation
-order when deriving a ray-intersection radius from each detector cylinder's
-local bottom, axis and height. This is implemented for cardinal local axes with
-zero transverse offset and a cylinder spanning the local origin, before the
-detector's physical rotation. An active correction with an unsupported shape
-raises an error asking for `high_precision`, whose nominal-radius calculation
-is available without a general ray-intersection implementation. Historical
-instrument definitions without cylinder height retain a nominal-radius fallback;
-exact Mantid shape parity is not claimed for those definitions. High precision
-uses the nominal radius and `expm1` for the efficiency denominator; this is a
-different numerical convention, not an established accuracy improvement.
+Raw He-3 tube corrections use Mantid's radius and efficiency conventions in
+both event-precision modes. The source operation order derives a ray-intersection
+radius from each detector cylinder's local bottom, axis and height. This is
+implemented for cardinal local axes with zero transverse offset and a cylinder
+spanning the local origin, before the detector's physical rotation. Unsupported
+active shapes raise an error in either precision mode. Historical instrument
+definitions without cylinder height retain a nominal-radius fallback; exact
+Mantid shape parity is not claimed for those definitions. High precision retains
+float64 correction weights without selecting a different tube geometry or
+efficiency formula. Legacy high-precision reduced-event and histogram caches
+with active He-3 correction regenerate when recomputed; unchanged Mantid caches
+retain their signatures.
 
 **Copy policy script** exports the effective choices through
 `set_dgs_reduction_policies` and `set_dgs_trajectory_energy_policy`. It applies to

@@ -34,6 +34,10 @@ releases. Current behavior is documented in the workflow and API pages.
 The temporary [Measurement pipeline implementation plan](measurement_pipeline_plan.md)
 tracks the staged implementation and review checkpoints for these changes.
 
+- Add fused compiled float64 DGS event projection and accumulation after the
+  current numerical-policy decisions. Preserve the requested high-precision
+  arithmetic, Mantid He-3 correction, ordered accumulation and uncertainty
+  treatment; validate boundary behavior and measure complete workflow costs.
 - Extend the native reduction settings schema to the remaining measurement
   adapters and present [measurement contracts](measurement_statistics.md) around
   physical targets. Native DGS/CORELLI/MDEvent source recipes, shared/run edits,

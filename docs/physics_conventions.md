@@ -553,11 +553,10 @@ For native DGS He-3 tube efficiency, the correction is
 $[1-\exp(-a\lambda)]^{-1}$, where final neutron wavelength $\lambda=2\pi/k_f$
 is in Å and absorption coefficient $a$ is in Å$^{-1}$. The instrument definition
 supplies tube pressure in atm, temperature in K, and wall thickness and cylinder
-dimensions in metres. Mantid precision uses source-ordered ray geometry for
-supported local cylinders; `high_precision` uses their nominal radius and the
-equivalent denominator $-\operatorname{expm1}(-a\lambda)$. These conventions can
-give different correction weights; neither alternative alone establishes
-physical calibration accuracy. Shape support and fallback behavior are listed
+dimensions in metres. Both event-precision modes use Mantid's source-ordered ray
+geometry for supported local cylinders and the denominator $1-\exp(-a\lambda)$.
+High precision changes correction-weight storage to float64, not the physical
+tube-radius or efficiency convention. Shape support and fallback behavior are listed
 under [numerical reduction policies](data_import.md#numerical-reduction-policies).
 
 ### DGS sample rotation

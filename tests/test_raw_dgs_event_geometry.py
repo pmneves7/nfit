@@ -65,7 +65,7 @@ def _position_based_reference(geometry, event_ids, tofs, precision, he3, ki_kf, 
     rows = np.array([row_by_id[int(detector_id)] for detector_id in event_ids[selected]], dtype=int)
     positions = geometry.positions[rows]
     exponents = (
-        geometry.mantid_he3_exponents if precision == "mantid" and he3 else geometry.he3_exponents
+        geometry.mantid_he3_exponents if he3 else geometry.he3_exponents
     )[rows]
     distances = np.linalg.norm(positions, axis=1)
     final_tof = tofs[selected] - 2.5 - raw_dgs.TOF_US_PER_M_SQRT_MEV * 10 / math.sqrt(60)
@@ -87,7 +87,7 @@ def _position_based_reference(geometry, event_ids, tofs, precision, he3, ki_kf, 
     weights = np.ones(energy.size, dtype=np.float32 if mantid else float)
     variance = np.ones_like(weights)
     if he3:
-        correction = raw_dgs._he3_tube_efficiency_correction(kf, exponents, mantid_precision=mantid)
+        correction = raw_dgs._he3_tube_efficiency_correction(kf, exponents, mantid_precision=True)
         if mantid:
             correction = correction.astype(np.float32)
         weights *= correction
@@ -174,7 +174,12 @@ def test_unsupported_shape_is_rejected_before_pulse_and_crop_filtering(tmp_path)
             info, {"bad_pulse_threshold": 95}, geometry, 60, (-57, 57), 96 * 64,
             hyspec_preprocessing=crop,
         ))
-    for config in ({"he3_detector_efficiency_correction": False}, {"event_precision_policy": "high_precision"}):
+    with pytest.raises(ValueError, match="detector cylinder shape"):
+        list(raw_dgs._iter_reduced_event_chunks(
+            info, {"event_precision_policy": "high_precision"}, geometry, 60, (-57, 57), 96 * 64,
+        ))
+    for config in ({"he3_detector_efficiency_correction": False},
+                   {"event_precision_policy": "high_precision", "he3_detector_efficiency_correction": False}):
         with np.errstate(invalid="ignore"):
             list(raw_dgs._iter_reduced_event_chunks(info, config, geometry, 60, (-57, 57), 96 * 64))
 

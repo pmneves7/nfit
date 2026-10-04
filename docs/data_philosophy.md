@@ -252,8 +252,8 @@ Raw/MDE groups save event-precision and symmetry-variance conventions; raw group
 also save the monitor-fitting convention. Defaults follow Mantid's numerical
 and independent-copy variance rules. Stable monitor arithmetic, float64 event
 precision, and covariance for same-bin copies are explicit alternatives.
-The float64 event option also uses nominal tube radii rather than the default
-source-ordered Mantid ray geometry. Alternative calibration and per-run
+Both event-precision modes use the same source-ordered Mantid tube-radius and
+He-3 efficiency convention. Alternative calibration and per-run
 trajectory models require physical validation for the measurement.
 These choices do not establish cross-bin independence or resolve shared
 normalization uncertainty. Public policy setters and policy-script export use

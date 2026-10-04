@@ -103,3 +103,44 @@ def test_six_column_cache_matches_fresh_and_remains_lazy_in_project(tmp_path, mo
     for key in ("event_signal_numerator", "event_variance_numerator", "normalization_denominator"):
         np.testing.assert_array_equal(result.auxiliary_channels[key].values,
             cached.auxiliary_channels[key].values)
+
+
+@pytest.mark.parametrize("policy", ["mantid", "high_precision"])
+@pytest.mark.parametrize("exponent", [.4, 1e-12])
+def test_both_precision_modes_use_mantid_he3_geometry_and_formula(tmp_path, policy, exponent):
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source], event_precision_policy=policy)
+    config = {**group.metadata["raw_dgs"], "ki_kf_normalization": False}
+    info = raw_dgs.inspect_raw_dgs_run(source)
+    # Different coefficients expose accidental use of the nominal geometry.
+    geometry = raw_dgs._DetectorGeometry(
+        np.array([42]), np.array([[1., 0., 2.]]), np.array([exponent / 2]), np.array([exponent]),
+    )
+    events = np.concatenate([rows for rows, _ in raw_dgs._iter_reduced_event_chunks(
+        info, config, geometry, info.incident_energy, (-19., 19.), 192,
+    )])
+    ef = (raw_dgs.TOF_US_PER_M_SQRT_MEV * np.sqrt(5.) / (
+        9000. - raw_dgs.TOF_US_PER_M_SQRT_MEV * 10. / np.sqrt(20.)
+    ))**2
+    kf = np.sqrt(ef / raw_dgs.ENERGY_TO_K2)
+    factor = 1. / (1. - np.exp(-exponent * (2. * np.pi / kf)))
+    if policy == "mantid":
+        factor = np.float32(factor)
+    assert events[0, 4] == pytest.approx(float(factor), rel=1e-15)
+    assert events[0, 5] == pytest.approx(float(factor * factor), rel=1e-15)
+
+
+@pytest.mark.parametrize("policy", ["mantid", "high_precision"])
+def test_event_precision_does_not_bypass_unsupported_he3_shape(tmp_path, policy):
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    config = raw_dgs_dataset_group([source], event_precision_policy=policy).metadata["raw_dgs"]
+    info = raw_dgs.inspect_raw_dgs_run(source)
+    geometry = raw_dgs._DetectorGeometry(
+        np.array([42]), np.array([[1., 0., 2.]]), np.array([.2]), np.array([np.nan]),
+    )
+    with pytest.raises(ValueError, match="detector cylinder shape"):
+        list(raw_dgs._iter_reduced_event_chunks(info, config, geometry, 20., (-19., 19.), 192))
+    disabled = {**config, "he3_detector_efficiency_correction": False}
+    assert list(raw_dgs._iter_reduced_event_chunks(info, disabled, geometry, 20., (-19., 19.), 192))

@@ -270,8 +270,8 @@ cylinder's bottom and height are part of this calculation. Unsupported declared
 shape rotations or transverse offsets fail explicitly; incomplete IDFs without
 height retain a documented nominal-radius fallback.
 
-Selectable alternatives retain double-precision event arithmetic, nominal He-3
-tube radius, stable absorption arithmetic, and same-bin symmetry-copy covariance. They are scientific choices, not a promise of improved
+Selectable alternatives retain double-precision event arithmetic and same-bin
+symmetry-copy covariance. They are scientific choices, not a promise of improved
 accuracy for every dataset. Same-bin covariance is appropriate when a source event
 and its transformed copies are contributions to the same final estimate; it does
 not propagate dependencies between different histogram bins through later cuts.
@@ -933,6 +933,17 @@ keep each-run Ei optional. Raw reconstruction continues to use each run's own
 resolved Ei/T0. A shared energy override retains precedence. Paul considers the
 observed stable-monitor changes too small to matter practically; the accepted
 Mantid monitor default remains unchanged.
+
+**Accepted He-3 convention (2026-10-04):** both event-precision modes use Mantid's
+tube radius and efficiency formula; no alternative correction is justified by
+the evidence. High precision retains float64 weights. Only affected legacy
+high-precision raw-event and histogram caches invalidate on recomputation.
+Mantid defaults and existing scientific project files remain unchanged.
+
+**Deferred performance follow-up (2026-10-04):** accelerate high-precision
+projection/accumulation with a compiled fused path after these decisions finish.
+Benchmark against the existing float64 path with declared numerical tolerances,
+including realistic fringes, loading/saving, memory and cached reuse.
 
 **Deferred statistical follow-ups:** these require later checkpoints and do not
 block acceptance of the intensity estimator.

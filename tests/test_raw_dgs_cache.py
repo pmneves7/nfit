@@ -296,3 +296,37 @@ def test_reduction_version_invalidates_event_and_histogram_caches(tmp_path, monk
     assert project_composites._composite_cache_signature(group) != signature
     result = bin_raw_dgs_group(group, **OPTIONS)
     assert result.metadata['reduced_event_cache']['misses'] == 1
+
+
+@pytest.mark.parametrize("per_run_override", [False, True])
+@pytest.mark.parametrize("policy, enabled, changed", [
+    ("mantid", True, False), ("high_precision", True, True), ("high_precision", False, False),
+])
+def test_mantid_he3_convention_invalidates_only_affected_reductions_and_histograms(
+    tmp_path, monkeypatch, policy, enabled, changed, per_run_override,
+):
+    from nfit import project_composites, raw_dgs_cache
+
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source, with_he3=True)
+    group = raw_dgs_dataset_group([source], event_precision_policy=policy)
+    group.metadata["raw_dgs"]["he3_detector_efficiency_correction"] = enabled
+    if per_run_override:
+        from nfit.reduction_recipes import set_reduction_settings
+
+        group.metadata["raw_dgs"]["he3_detector_efficiency_correction"] = False
+        set_reduction_settings(group, {
+            "he3_detector_efficiency_correction": enabled,
+        }, dataset_ids=[group.datasets[0].id])
+    with monkeypatch.context() as legacy:
+        legacy.setattr(raw_dgs_cache, "reduction_convention_signature", lambda config: {})
+        legacy.setattr(project_composites, "reduction_convention_signature", lambda config: {})
+        bin_raw_dgs_group(group, **OPTIONS)
+        old_signature = group.datasets[0]._raw_dgs_reduction_cache.signature
+        old_histogram_signature = project_composites._composite_cache_signature(group)
+    result = bin_raw_dgs_group(group, **OPTIONS)
+    assert (group.datasets[0]._raw_dgs_reduction_cache.signature != old_signature) == changed
+    assert (project_composites._composite_cache_signature(group) != old_histogram_signature) == changed
+    assert result.metadata["reduced_event_cache"] == {
+        "hits": int(not changed), "misses": int(changed),
+    }
