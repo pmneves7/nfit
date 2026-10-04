@@ -82,6 +82,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "raw_dgs_geometry_precision.py",
     PACKAGE_ROOT / "raw_dgs_geometry.py",
     PACKAGE_ROOT / "raw_dgs_hyspec.py",
+    PACKAGE_ROOT / "raw_dgs_goniometer.py",
     PACKAGE_ROOT / "raw_dgs_pulses.py",
     PACKAGE_ROOT / "mdevent_detector_masks.py",
     PACKAGE_ROOT / "histogram_reduction.py",
@@ -384,7 +385,8 @@ def test_project_data_services_do_not_import_qt(module_name: str) -> None:
     assert not any("PySide" in module or module.startswith("qt_") for module in imported_modules)
 
 
-@pytest.mark.parametrize("module", ["raw_dgs_monitors", "raw_dgs_pulses", "histogram_reduction", "dgs_normalization"])
+@pytest.mark.parametrize("module", ["raw_dgs_monitors", "raw_dgs_pulses", "raw_dgs_goniometer",
+                                    "histogram_reduction", "dgs_normalization"])
 def test_reduction_services_do_not_import_their_coordinators(module):
     tree = ast.parse((PACKAGE_ROOT / f"{module}.py").read_text())
     imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
@@ -396,6 +398,14 @@ def test_raw_dgs_preserves_monitor_helper_import_identity():
 
     for name in ["TOF_US_PER_M_SQRT_MEV", "_mantid_getei_peak_region", "_mantid_getei_v2_peak"]:
         assert getattr(raw_dgs, name) is getattr(raw_dgs_monitors, name)
+
+
+def test_sample_goniometer_uses_authoritative_pulse_timestamps_and_selection():
+    from nfit import raw_dgs_goniometer, raw_dgs_pulses
+
+    assert raw_dgs_goniometer.nexus_timestamps is raw_dgs_pulses.nexus_timestamps
+    assert raw_dgs_goniometer.select_pulses is raw_dgs_pulses.select_pulses
+    assert raw_dgs_pulses._timestamps is raw_dgs_pulses.nexus_timestamps
 
 
 def test_background_panel_builder_has_no_reverse_coordinator_import():

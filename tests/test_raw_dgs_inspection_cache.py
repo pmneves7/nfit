@@ -9,6 +9,7 @@ import pytest
 
 from nfit import raw_dgs
 from tests.test_raw_dgs import _rewrite_instrument_xml, _write_raw_dgs
+from tests.test_raw_dgs_goniometer import _log
 
 
 @pytest.fixture(autouse=True)
@@ -51,6 +52,57 @@ def test_import_then_reduction_reuses_calibration_without_changing_metadata(tmp_
         else:
             assert a == b
     assert before.ub_matrix is not after.ub_matrix
+
+
+def test_filtered_angle_resolution_reuses_calibration_and_persists_through_lazy_cache(
+    tmp_path, calibration_calls, monkeypatch,
+):
+    from nfit import NfitProject, load_project, save_project
+    from nfit.pipeline import DataGroup
+
+    h5py = pytest.importorskip("h5py")
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    with h5py.File(source, "r+") as handle:
+        entry = handle["entry"]
+        del entry["DASlogs/omega"]
+        del entry["DASlogs/proton_charge"]
+        _log(entry, "omega", [0., 4.], [0., 10.])
+        _log(entry, "proton_charge", [0., 2., 4., 6., 8.], [10., 1., 10., 10., 10.])
+        _log(entry, "pause", [0.], [0])
+        entry["bank1_events/event_index"] = [0, 0, 0, 2, 2]
+    group = raw_dgs.raw_dgs_dataset_group([source])
+    assert raw_dgs.inspect_raw_dgs_run(source).omega == 5.
+    assert raw_dgs.inspect_raw_dgs_run(source, bad_pulse_threshold=95).omega == 10.
+    assert raw_dgs.inspect_raw_dgs_run(source).omega == 5.
+    assert len(calibration_calls) == 1
+    options = dict(lower=[-10, -10, -10, -100], upper=[10, 10, 10, 20], num_bins=[2] * 4)
+    project = NfitProject(data_groups=[DataGroup(name="runs", subgroups=[group])])
+    path = tmp_path / "filtered.nfit"
+    save_project(project, path)
+    first = raw_dgs.bin_raw_dgs_group(group, **options)
+    resolved = group.datasets[0].metadata["resolved_reduction"]
+    assert resolved["automatic_values"]["omega_degrees"] == 10.
+    assert resolved["provenance"]["goniometer_averaging"] == "mantid_accepted_time_mean"
+    save_project(project, path)
+    reopened = load_project(path).data_groups[0].subgroups[0]
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("a valid reopened reduction cache must not reread raw metadata")
+
+    monkeypatch.setattr(raw_dgs, "inspect_raw_dgs_run", forbidden)
+    second = raw_dgs.bin_raw_dgs_group(reopened, **options)
+    assert second.metadata["reduced_event_cache"] == {"hits": 1, "misses": 0}
+    for name in ("signal", "errors", "num_events", "mask"):
+        np.testing.assert_array_equal(getattr(first, name), getattr(second, name))
+    np.testing.assert_array_equal(first.metadata["normalization_denominator"], second.metadata["normalization_denominator"])
+    assert len(calibration_calls) == 1
+
+
+@pytest.mark.parametrize("threshold", [-1, np.inf, np.nan])
+def test_invalid_angle_filter_threshold_is_rejected(tmp_path, threshold):
+    with pytest.raises(ValueError, match="bad_pulse_threshold"):
+        raw_dgs.inspect_raw_dgs_run(tmp_path / "missing.nxs.h5", bad_pulse_threshold=threshold)
 
 
 def test_alias_paths_keep_callers_path_and_private_writable_ub(tmp_path, monkeypatch, calibration_calls):

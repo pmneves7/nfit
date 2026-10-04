@@ -31,8 +31,11 @@ temperature. Instrument names alone must not determine the statistical estimator
   or caching. Reject small speed gains that require disproportionate complexity.
 - Assess optional DGS precision, monitor-fitting, trajectory-energy and
   symmetry-variance treatments in the authorized DGS investigation. Existing
-  compatibility defaults stay fixed until the 6A2 decision; mathematical
-  correctness fixes and performance improvements must state their assumptions.
+  compatibility defaults stay fixed until the 6A2 decision, except Paul's
+  approved Shiver-compatible time-weighted sample angles. Continue performance
+  work and conditional statistical validation after that correction. Accept
+  observed-extrema float32 clipping as rounding; defer continuous-rotation
+  event reconstruction. Mathematical fixes and speedups must state assumptions.
 - Remove this page and its navigation links after all checkpoints are accepted.
   Keep the resulting scientific conventions and workflows in permanent docs.
 
@@ -59,9 +62,9 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 4B | Add grouped, repeated, and stacked run expressions | Complete |
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Complete |
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
-| 6A | Finish DGS correctness and background validation | In progress; HYSPEC angle averaging and boundary differences remain |
+| 6A | Finish DGS correctness and background validation | In progress; angle averaging corrected, matched histogram replay remains |
 | 6A-P | Complete realistic performance comparisons and useful speedups | In progress; full Shiver benchmark running |
-| 6A1 | Validate optional numerical and statistical methods | Pending; after DGS correctness and benchmark review |
+| 6A1 | Validate optional numerical and statistical methods | Authorized; controlled validation in progress, defaults unchanged |
 | 6A2 | Review evidence and choose future defaults with Paul | Pending |
 | 6B | Validate migration, finish documentation, and remove this plan | Pending |
 
@@ -705,23 +708,29 @@ Completed work:
 
 Remaining work:
 
-- [ ] Match Mantid's duration/accepted-time averaging of HYSPEC rotation logs.
-  Isolate run 505784 first, expose the convention through the public recipe,
-  record provenance and invalidate affected reduced-event/binned caches.
+- [x] Match Mantid's duration/accepted-time averaging of raw DGS rotation logs.
+  Run 505784 matches the reference angle exactly. Record effective angles and
+  convention in public recipe provenance and GUI details; reduction version 7
+  invalidates prior reduced-event/binned caches lazily. Native tests cover pause
+  and bad-pulse intervals, unequal durations, repeated/backdated timestamps,
+  legacy constants, source/calibration reuse and saved lazy-cache reopening.
 - [ ] Repeat the matched 34° and 70° pilots with six and twelve symmetry copies.
   Compare event numerator, variance, contribution counts, exposure, masks,
   signal and uncertainty in every cell; prioritize low-coverage fringes and
   the HHH/energy cut at K=0±0.03 and L=0.33±0.02 r.l.u.
-- [ ] Attribute remaining event clipping, trajectory boundaries and support
-  differences. Separate rounding from recipe differences; document intentional
-  deviations and any reproducible compatibility option before acceptance.
+- [ ] Attribute remaining trajectory boundaries and support differences.
+  Paul accepts the known observed-extrema float32 event clipping as immaterial
+  rounding; no loss-emulation option is needed. Separate that rounding from
+  recipe differences before acceptance.
 - [ ] Review the DGS correctness results with Paul.
 
-**Known issue:** run 505784 uses an arithmetic omega average of
-48.5016271525° in nfit and a duration-weighted 48.5043924634° average in Mantid.
-The raw timestamps reproduce Mantid's value. The other 23 pilot rotations, Ei,
-T0 and UB agree. This explains one coordinate discrepancy; replay must establish
-its histogram contribution. The existing 34° pilot also has approximately
+**Corrected angle issue:** nfit previously used 48.5016271525° for run 505784.
+Version 0.116.3 uses Mantid's pause-filtered time mean of
+48.504392463390396°, verified against the real raw timestamps. With a 95%
+bad-pulse threshold the native resolved angle is 48.50439215956369°; pulse
+filter settings therefore remain part of the recipe. The other 23 pilot
+rotations, Ei, T0 and UB already agreed. Histogram replay must establish the
+correction's contribution. The existing 34° pilot also has approximately
 3×10⁻⁴ relative-L2 exposure differences. At 70°, twelve-copy binning differs
 in two exposure-support cells. HYSPEC cross-engine parity is therefore unfinished.
 

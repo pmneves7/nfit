@@ -85,6 +85,7 @@ from .raw_dgs_geometry_precision import (
     mantid_cylinder_radius,
     mantid_he3_exponent,
 )
+from .raw_dgs_goniometer import GONIOMETER_AVERAGING_CONVENTION, sample_rotation
 from .raw_dgs_hyspec import raw_hyspec_tof_keep, resolved_hyspec_preprocessing
 from .raw_dgs_monitors import (
     TOF_US_PER_M_SQRT_MEV,
@@ -133,6 +134,7 @@ class RawDGSRunInfo:
     calibration_warning: str | None = None
     instrument_name: str = "unknown"
     geometry_signature: str | None = None
+    goniometer_logs_vary: bool = False
 
 
 _RUN_INFO_CACHE_MAXSIZE = 2048
@@ -166,15 +168,21 @@ def is_raw_dgs_nexus_file(path: str | Path) -> bool:
 
 def inspect_raw_dgs_run(
     path: str | Path, *, monitor_variance_policy: str = DEFAULT_MONITOR_VARIANCE_POLICY,
+    bad_pulse_threshold: float = 0.0,
 ) -> RawDGSRunInfo:
     """Read metadata, reusing successful calibration for an unchanged source.
 
     File identity is checked on every call. Returned UB matrices remain private,
     writable copies; the bounded cache retains no monitor or detector arrays.
     Failed calibration is retried so its warning behavior remains unchanged.
+    Sample angles use time means after pause/bad-pulse filtering; changing the
+    pulse threshold rereads only varying angle logs, without recalibration.
     """
 
     monitor_variance_policy = validated_monitor_variance_policy(monitor_variance_policy)
+    bad_pulse_threshold = float(bad_pulse_threshold)
+    if not np.isfinite(bad_pulse_threshold) or bad_pulse_threshold < 0.0:
+        raise ValueError("bad_pulse_threshold must be finite and nonnegative")
     source = Path(path)
     resolved = source.resolve()
     stat = resolved.stat()
@@ -201,6 +209,12 @@ def inspect_raw_dgs_run(
                     _RUN_INFO_CACHE.popitem(last=False)
     else:
         info, filename_run_number = cached
+    if bad_pulse_threshold > 0.0 and info.goniometer_logs_vary:
+        import h5py
+
+        with h5py.File(source, "r") as handle:
+            angles = sample_rotation(handle["entry"], bad_pulse_threshold=bad_pulse_threshold)
+        info = replace(info, omega=angles.omega, phi=angles.phi, chi=angles.chi)
     return replace(
         info, path=source, ub_matrix=info.ub_matrix.copy(),
         run_number=source.stem if filename_run_number else info.run_number,
@@ -232,15 +246,17 @@ def _inspect_raw_dgs_run_uncached(
         missing_run_number = object()
         run_number = _text_scalar(entry.get("run_number"), missing_run_number)
         filename_run_number = run_number is missing_run_number
+        angles = sample_rotation(entry)
         return RawDGSRunInfo(
             path=source,
             run_number=source.stem if filename_run_number else run_number,
             event_count=event_count,
             incident_energy=calibrated_ei,
             proton_charge=_raw_proton_charge_uah(entry),
-            omega=_log_value(entry, ("omega",), 0.0),
-            phi=_log_value(entry, ("phi",), 0.0),
-            chi=_log_value(entry, ("chi",), 0.0),
+            omega=angles.omega,
+            phi=angles.phi,
+            chi=angles.chi,
+            goniometer_logs_vary=angles.varying_logs,
             l1=_source_distance(entry),
             t0=calibrated_t0,
             ub_matrix=_ub_from_logs(entry),
@@ -570,7 +586,9 @@ def bin_raw_dgs_group(
                         _combined_detector_mask(run_config),
                     )
                 detector_norm, detector_mask = calibration_payloads[calibration_key]
-                info = inspect_raw_dgs_run(source, monitor_variance_policy=run_policies["monitor_variance_policy"])
+                info = inspect_raw_dgs_run(source,
+                    monitor_variance_policy=run_policies["monitor_variance_policy"],
+                    bad_pulse_threshold=run_config.get("bad_pulse_threshold", 95.0))
                 hyspec_setup = None
                 if str(info.instrument_name).upper() == "HYSPEC":
                     import h5py
@@ -598,11 +616,13 @@ def bin_raw_dgs_group(
             energy_bounds = _energy_transfer_bounds(run_config, ei)
             record_resolved_reduction(dataset, run_config,
                 automatic={"incident_energy_meV": info.incident_energy, "t0_microseconds": info.t0,
+                    "omega_degrees": info.omega, "phi_degrees": info.phi, "chi_degrees": info.chi,
                     **({"hyspec_tank_offset_degrees": hyspec_setup["tank_offset_degrees"]}
                        if hyspec_setup is not None else {})},
                 provenance={"algorithm_version": RAW_DGS_REDUCTION_VERSION, "calibration_source": info.calibration_source,
                     "calibration_warning": info.calibration_warning, "instrument_name": info.instrument_name,
                     "geometry_signature": info.geometry_signature, "reduction_signature": signature,
+                    "goniometer_averaging": GONIOMETER_AVERAGING_CONVENTION,
                     **({"hyspec_preprocessing": hyspec_setup} if hyspec_setup is not None else {})})
             energy_bounds_by_dataset_id[dataset.id] = energy_bounds
             resolved_energy_windows.append(
@@ -851,6 +871,15 @@ def _run_info_from_cache(payload):
     )
 
 
+def _inspect_configured_run(dataset, group):
+    from .reduction_recipes import effective_reduction_config
+
+    config = effective_reduction_config(group, dataset)
+    return inspect_raw_dgs_run(dataset.metadata["source_file"],
+        monitor_variance_policy=resolved_dgs_reduction_policies(config)["monitor_variance_policy"],
+        bad_pulse_threshold=config.get("bad_pulse_threshold", 95.0))
+
+
 def _run_normalization_payload(info, geometry, detector_norm, detector_mask, config):
     direction = geometry.positions / np.linalg.norm(geometry.positions, axis=1)[:, None]
     solid = (
@@ -968,8 +997,7 @@ def _trajectory_normalization(
     shared_detector_geometry = True
     datasets = list(datasets)
     infos = run_infos_by_dataset_id if run_infos_by_dataset_id is not None else {
-        dataset.id: inspect_raw_dgs_run(dataset.metadata["source_file"],
-            monitor_variance_policy=resolved_dgs_reduction_policies(config)["monitor_variance_policy"])
+        dataset.id: _inspect_configured_run(dataset, group)
         for dataset in datasets
     }
     trajectory_energies = effective_trajectory_energies(
@@ -1114,13 +1142,11 @@ def _powder_trajectory_normalization(
 ):
     """Accumulate the radial MDNorm-style denominator for raw runs."""
 
-    config = group.metadata["raw_dgs"]
     result = np.zeros(shape)
     payloads = []
     datasets = list(datasets)
     infos = run_infos_by_dataset_id if run_infos_by_dataset_id is not None else {
-        dataset.id: inspect_raw_dgs_run(dataset.metadata["source_file"],
-            monitor_variance_policy=resolved_dgs_reduction_policies(config)["monitor_variance_policy"])
+        dataset.id: _inspect_configured_run(dataset, group)
         for dataset in datasets
     }
     trajectory_energies = effective_trajectory_energies(

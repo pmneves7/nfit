@@ -338,6 +338,15 @@ calibration evaluation produces a warning and records the failure in the run's
 resolved reduction; explicit incident-energy and time-zero overrides remain
 available.
 
+Sample `omega`, `phi`, and `chi` use time-weighted log means after pause and
+configured bad-pulse filtering. The resolved values in degrees and averaging
+convention appear in the reduction details and saved recipe provenance; edits
+mark prior values stale until reduction is rerun. See
+[sample rotation conventions](physics_conventions.md#dgs-sample-rotation).
+Projects with earlier raw DGS caches rebuild them on the next requested
+reduction/binning, so a cached arithmetic angle cannot survive this correction.
+Opening a project alone does not trigger that rebuild.
+
 **HYSPEC raw TOF window** applies Shiver's flight-path window to recorded TOFs
 before time-zero subtraction. **HYSPEC Tank Y offset** defaults to the offset
 from polarization logs; an explicit zero disables that additional rotation.

@@ -213,7 +213,8 @@ def build_reduction_recipe_panel(
     resolved.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
     resolved.setToolTip(
         "Resolved automatic Ei (meV), T0 (microseconds), acquisition geometry, and calibration "
-        "provenance retained from source metadata or the most recent reduction."
+        "provenance retained from source metadata or the most recent reduction. "
+        "Resolved sample rotations are time-weighted over accepted acquisition intervals."
     )
     run_layout.addWidget(resolved)
     overrides = QtWidgets.QWidget()
@@ -228,6 +229,16 @@ def build_reduction_recipe_panel(
             "corelli_goniometer_angles", "calibration_source", "calibration_warning",
         ) if key in dataset.metadata}
         summary["resolved_settings"] = resolved_reduction_values(group, dataset)
+        record = dataset.metadata.get("resolved_reduction", {})
+        automatic = record.get("automatic_values", {})
+        angles = {key: automatic[key] for key in ("omega_degrees", "phi_degrees", "chi_degrees")
+                  if key in automatic}
+        if angles:
+            summary["resolved_sample_rotation"] = {
+                **angles,
+                "averaging": record.get("provenance", {}).get("goniometer_averaging"),
+                "stale": bool(record.get("stale")),
+            }
         return json.dumps(summary, indent=2, default=str)
 
     def refresh_resolved():

@@ -55,9 +55,10 @@ tracks the staged implementation and review checkpoints for these changes.
   previews. Exact background profile marginal errors still omit covariance between
   final bins and unrecorded sample correlations; subsequent coarsening, combination
   and joint GLS fits need original-source replay or a represented joint model.
-- Review a strict Shiver observed-extrema compatibility option separately from
-  retaining valid raw events across the configured energy window. Float32 MD
-  events can be rounded outside Shiver's observed-extrema box.
+- Add continuous sample-rotation DGS event reconstruction when an acquisition
+  requires it. Current raw reduction matches Shiver's time-weighted fixed
+  orientation per run; pulse-resolved rotation needs explicit interpolation,
+  temporal support, exposure integration and reference validation.
 - Extend source-aware combination to repeated aliases across expression
   subfolders and repeated CORELLI/ordinary sources within a summed subfolder.
   Numbered-source selection and grouping already use ordinary dataset groups;

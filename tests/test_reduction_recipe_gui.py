@@ -31,6 +31,7 @@ def test_every_schema_setting_has_a_tooltip_and_override_scope(recipe_explorer):
 
     explorer, group = recipe_explorer
     assert all(dataset.data is None for dataset in group.datasets)
+
     for field in reduction_settings_schema(group):
         editor = explorer.details_widget.findChild(QtWidgets.QWidget, f"raw_dgs_{field.key}")
         assert editor is not None and editor.toolTip()
@@ -44,6 +45,29 @@ def test_every_schema_setting_has_a_tooltip_and_override_scope(recipe_explorer):
     for name in ("raw_dgs_bad_pulse_threshold", "raw_dgs_he3_detector_efficiency_correction"):
         assert explorer.details_widget.findChild(QtWidgets.QWidget, name) is not None
     assert all(dataset.data is None for dataset in group.datasets)
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_resolved_summary_exposes_filtered_angles_and_their_convention(recipe_explorer, stale):
+    from PySide6 import QtWidgets
+
+    explorer, group = recipe_explorer
+    dataset = group.datasets[0]
+    dataset.metadata["omega"] = 5.
+    dataset.metadata["resolved_reduction"] = {
+        "automatic_values": {"omega_degrees": 10., "phi_degrees": 0., "chi_degrees": 0.},
+        "provenance": {"goniometer_averaging": "mantid_accepted_time_mean"},
+        "stale": stale,
+    }
+    explorer._refresh_tree(select_dataset_group=group)
+    label = explorer.details_widget.findChild(QtWidgets.QLabel, "raw_dgs_resolved_reduction_values")
+    summary = json.loads(label.text())
+    assert summary["resolved_sample_rotation"] == {
+        "omega_degrees": 10., "phi_degrees": 0., "chi_degrees": 0.,
+        "averaging": "mantid_accepted_time_mean", "stale": stale,
+    }
+    assert label.toolTip()
+    assert dataset.data is None
 
 
 def test_negative_time_zero_uses_explicit_automatic_mode(recipe_explorer):

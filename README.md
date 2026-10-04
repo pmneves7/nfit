@@ -48,7 +48,8 @@ A few of its main capabilities are:
   with parent-owned hierarchical binning, explicit background recipe context,
   and shared source-group symmetry controls in the background editor,
   including compatible raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data
-  with SNS monitor and beam-interval reduction, lazy per-run reduced-event caches
+  with SNS monitor and beam-interval reduction, time-weighted sample angles,
+  lazy per-run reduced-event caches
   for repeated binnings, editable shared and per-run reduction recipes with
   resolved calibration provenance, and exposure-pooled normalized histogram slices,
   with viewable count numerators, event variances and exposure, separate

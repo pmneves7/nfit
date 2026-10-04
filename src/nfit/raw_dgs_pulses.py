@@ -4,12 +4,25 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 import numpy as np
 
 
-def _timestamps(dataset):
+def iso_timestamp_ns(value):
+    """Parse an ISO timestamp without discarding sub-microsecond precision."""
+    value = value.decode() if isinstance(value, bytes) else str(value)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    origin = int(parsed.replace(microsecond=0).timestamp()) * 10**9
+    fraction = re.search(r"\.(\d+)", value)
+    if fraction:
+        origin += int((fraction[1] + "000000000")[:9])
+    return origin
+
+
+def nexus_timestamps(dataset):
     """Read NeXus timestamps as integer nanoseconds since the Unix epoch."""
     attrs = dataset.attrs
     if "offset_seconds" in attrs:
@@ -19,12 +32,7 @@ def _timestamps(dataset):
         offset = attrs.get("offset", attrs.get("start"))
         if offset is None:
             return None
-        offset = offset.decode() if isinstance(offset, bytes) else str(offset)
-        parsed = datetime.fromisoformat(offset.replace("Z", "+00:00"))
-        origin = int(parsed.replace(microsecond=0).timestamp()) * 10**9
-        fraction = re.search(r"\.(\d+)", offset)
-        if fraction:
-            origin += int((fraction[1] + "000000000")[:9])
+        origin = iso_timestamp_ns(offset)
     unit = attrs.get("units", "second")
     unit = unit.decode() if isinstance(unit, bytes) else str(unit)
     scale = {"second": 1e9, "seconds": 1e9, "s": 1e9,
@@ -32,7 +40,14 @@ def _timestamps(dataset):
              "nanosecond": 1, "nanoseconds": 1, "ns": 1}.get(unit)
     if scale is None:
         raise ValueError(f"unsupported pulse timestamp unit: {unit}")
-    return origin + np.rint(np.asarray(dataset, dtype=float) * scale).astype(np.int64)
+    values = np.asarray(dataset, dtype=float)
+    if np.any(~np.isfinite(values)):
+        raise ValueError("NeXus timestamps must be finite")
+    return origin + np.rint(values * scale).astype(np.int64)
+
+
+# Preserve the private import used by existing callers.
+_timestamps = nexus_timestamps
 
 
 def _inside(times, intervals):
@@ -125,9 +140,11 @@ def select_pulses(entry, threshold):
             if np.any(np.diff(pause_times) < 0):
                 order = np.argsort(pause_times, kind="stable")
                 pause_times, pause_values = pause_times[order], pause_values[order]
-            intervals = _intersect(intervals, _value_intervals(
+            # FilterByLogValue expands good endpoint intervals to pulse bounds;
+            # it does not clip earlier/later log timestamps to those bounds.
+            intervals = _value_intervals(
                 pause_times, (pause_values >= -1) & (pause_values <= 0.5), start, stop, centre=False,
-            ))
+            )
     if threshold > 0 and len(intervals):
         # RemoveDataOutsideTimeROI retains the records bracketing each interval.
         # Those records participate in the subsequent arithmetic charge mean.

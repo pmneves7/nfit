@@ -83,8 +83,9 @@ different Python.
 - `src/nfit/project_rebinning.py`: numerical grid configuration, symmetry-aware
   rebinning, and histogram construction.
 - `src/nfit/raw_dgs.py`, `raw_dgs_geometry.py`, `raw_dgs_geometry_precision.py`,
-  `raw_dgs_hyspec.py`, and `raw_dgs_cache.py`: direct-geometry reduction, resolved
-  instrument geometry, HYSPEC preprocessing, and dataset-owned reduced-event caches.
+  `raw_dgs_hyspec.py`, `raw_dgs_goniometer.py`, and `raw_dgs_cache.py`:
+  direct-geometry reduction, resolved instrument geometry, HYSPEC preprocessing,
+  accepted-time sample orientations, and dataset-owned reduced-event caches.
 - `src/nfit/mdevent.py` and `mdevent_detector_masks.py`: reduced-event import,
   trajectory normalization, and retained detector-mask metadata.
 - `src/nfit/event_bin_indices.py`: shared arbitrary-edge event membership,

@@ -166,11 +166,11 @@ def test_histogram_only_policy_reuses_reduced_cache_but_monitor_and_precision_in
     assert reduction_signature(group.datasets[0], config) != original_signature
     calibrated = bin_raw_dgs_group(group, **OPTIONS)
     assert calibrated.metadata["reduced_event_cache"] == {"hits": 0, "misses": 1}
-    assert calls == [{"monitor_variance_policy": "stable"}]
+    assert calls == [{"monitor_variance_policy": "stable", "bad_pulse_threshold": 95.0}]
     monitor_signature = reduction_signature(group.datasets[0], config)
     calls.clear()
     set_dgs_reduction_policies(group, event_precision_policy="high_precision")
     assert reduction_signature(group.datasets[0], config) != monitor_signature
     precise = bin_raw_dgs_group(group, **OPTIONS)
     assert precise.metadata["reduced_event_cache"] == {"hits": 0, "misses": 1}
-    assert calls == [{"monitor_variance_policy": "stable"}]
+    assert calls == [{"monitor_variance_policy": "stable", "bad_pulse_threshold": 95.0}]

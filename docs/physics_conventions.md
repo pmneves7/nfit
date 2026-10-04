@@ -560,6 +560,34 @@ give different correction weights; neither alternative alone establishes
 physical calibration accuracy. Shape support and fallback behavior are listed
 under [numerical reduction policies](data_import.md#numerical-reduction-policies).
 
+### DGS sample rotation
+
+Raw DGS reduction uses one universal goniometer orientation per run. Each
+sample angle $\theta$ (`omega`, `phi`, or `chi`, in degrees) is the
+duration-weighted mean of its stepwise log over accepted acquisition times:
+
+$$
+\overline\theta=\frac{\int_{\mathcal T}\theta(t)\,dt}
+{\int_{\mathcal T}dt}.
+$$
+
+Here $t$ is time in seconds and $\mathcal T$ contains the intervals retained
+after pause filtering and the configured bad-pulse filter, in that order.
+Each logged value lasts until the next timestamp. Values at the ends extend
+outside recorded support, and the last value at a repeated timestamp governs
+the following interval. Chronological weighted updates retain full double
+precision; sample angles do not use the instrument-definition geometry's
+six-significant-digit serialization.
+
+This follows Shiver's `SetGoniometer` convention. If no time filter is active,
+Mantid appends a floating log's final value at the recorded run end, when later
+than its last timestamp, then extends the last value by the preceding positive
+timestamp interval when averaging. Constant angles and legacy scalar logs need
+no timestamps; varying angles without temporal support fail explicitly.
+Resolved angles and the averaging convention are retained in reduction
+provenance. This is a fixed orientation for each run, not continuous-rotation
+event reconstruction.
+
 ### HYSPEC raw-event preprocessing
 
 For HYSPEC, incident energy $E_i$ is in meV and automatic time zero $T_0$ is
