@@ -940,6 +940,12 @@ the evidence. High precision retains float64 weights. Only affected legacy
 high-precision raw-event and histogram caches invalidate on recomputation.
 Mantid defaults and existing scientific project files remain unchanged.
 
+**Accepted background weighting (2026-10-04):** retain sample-exposure
+weighting after background subtraction. Defer an optional covariance-aware
+common-intensity estimator to a later statistical checkpoint. That estimator
+requires a declared common response and complete shared-background dependencies;
+it must not silently replace the exposure-weighted field target.
+
 **Deferred performance follow-up (2026-10-04):** accelerate high-precision
 projection/accumulation with a compiled fused path after these decisions finish.
 Benchmark against the existing float64 path with declared numerical tolerances,
