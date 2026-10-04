@@ -927,6 +927,13 @@ calibrates all 617 NiO runs without fallbacks and matches Mantid Ei/T0 to roundo
 The stable alternative avoids the intermediate NaN, but changes some peak tails;
 controlled tests have not demonstrated better calibration accuracy.
 
+**Accepted trajectory-energy policy (2026-10-04):** retain the first
+participating run's Ei for normalization trajectories, following Mantid MDNorm;
+keep each-run Ei optional. Raw reconstruction continues to use each run's own
+resolved Ei/T0. A shared energy override retains precedence. Paul considers the
+observed stable-monitor changes too small to matter practically; the accepted
+Mantid monitor default remains unchanged.
+
 **Deferred statistical follow-ups:** these require later checkpoints and do not
 block acceptance of the intensity estimator.
 

@@ -572,6 +572,13 @@ moment of each peak. The TOF-to-energy conversion uses the same neutron mass
 and meV conversion as Mantid. $E_i$ is in meV and $T_0$ is in µs. Explicit
 incident-energy and time-zero overrides remain available.
 
+SNS event-mode monitor files can retain arrival-time offsets, pulse timestamps
+and event indices linking detections to individual source pulses. The current
+calibration pools those monitor detections into one spectrum per monitor and
+resolves one Ei/T0 pair per run. It does not fit individual pulses; pulse-index
+metadata alone does not establish that each pulse has enough monitor counts
+for a reliable independent calibration.
+
 The default monitor policy reproduces Mantid GetEi's expanded derivative-variance
 expression and control flow, including a non-finite square root when roundoff
 makes the expression negative. The optional stable policy retains the squared
