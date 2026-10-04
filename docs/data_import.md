@@ -966,6 +966,24 @@ near -0.4, 0, 0.4, 1.2, 2.0, 2.8, and 3.6 meV without creating unmeasured
 intervening slices. Metadata axes default to discrete assignment but offer the
 same fractional choice for Step, Bins, and Edges grids. Empty bins remain masked.
 
+Fractional assignment uses multilinear weights between grid centers, including
+nonuniform Edges grids. It deposits signal and averaging weight consistently
+and propagates each bin's variance using squared full coefficients. Support
+saturates at the first and last centers within the accepted outer edges;
+exact centers and integrated axes have a single support. Neighboring-bin
+covariance is omitted. See the
+[fractional assignment convention](physics_conventions.md#fractional-assignment-of-point-measurements)
+for the estimator and uncertainty equations. Exposure-weighted point means
+retain their deposited normalization for later rebins. Rebin the original
+observations when changing the grid to avoid repeated interpolation.
+
+The optional compiled CPU backend supports uniform, nonuniform, and mixed
+grids with the same rules as NumPy. It resolves each axis once per point and
+reuses neighbor offsets within each bounded batch, omitting redundant neighbors on
+integrated axes. Explicit bounds or edges avoid a source-wide limit scan.
+Streaming skips identity coordinate transforms and accepts empty source
+batches. CPU and working-memory limits continue to control parallel partials.
+
 For four-dimensional single-crystal data, **Momentum coordinates** exposes the
 complete $3\times3$ momentum block. Its rows define the three output directions
 in physical H, K, and L coordinates; energy transfer remains a separate fixed
@@ -1083,8 +1101,11 @@ numerical settings. Older MDEvent caches from before the event-scale correction
 can be reused when all contributing event scales and fit weights are one, grid
 limits are explicit, and their background dependencies are also compatible.
 Changed sources, masks, grids, or numerically affected older results still require
-rebinning. Accepted caches are registered under the current signature without
-recomputing them; the next save records that signature.
+rebinning. General point/histogram caches also include a numerical version;
+older results affected by fractional boundary, coordinate filtering, or retained
+exposure fixes are recomputed on demand. Native raw-DGS and MDE event caches
+are unaffected by this general point-rebin version. Accepted caches are registered
+under the current signature without recomputing them; the next save records that signature.
 
 Native MDEvent reductions report event accumulation, detector-trajectory setup,
 detector-normalization integration, output finalization, derived-data

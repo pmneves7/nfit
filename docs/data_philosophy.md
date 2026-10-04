@@ -162,7 +162,11 @@ either discrete or fractional assignment. These axes retain
 `metadata_dimension` and `interpolation="none"` metadata. Physical and metadata
 coordinates enter one central N-dimensional accumulation, preserving original
 sample weights and propagated uncertainties without first averaging condition
-slices.
+slices. Generic point means with physical exposure retain their deposited
+normalization in the output container; inverse-variance averaging weights are
+not stored as physical exposure. Fractional accumulation retains diagonal
+variance and omits neighboring-bin covariance. The numerical convention is in
+[physics conventions](physics_conventions.md#fractional-assignment-of-point-measurements).
 
 Per-point metadata coordinates must already align with the measured payload.
 The MACS adapter records its scan/detector shape so aligned scan columns can be

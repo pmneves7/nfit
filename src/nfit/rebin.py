@@ -15,7 +15,7 @@ from . import _parallel
 
 FloatArray = NDArray[np.float64]
 
-REBIN_NUMERICAL_VERSION = 1
+REBIN_NUMERICAL_VERSION = 2
 """General point/histogram binning rules, including endpoint and sum masking."""
 
 MeanWeighting = Literal["inverse_variance", "uniform"]
@@ -58,6 +58,37 @@ def _uniform_center_edges(lower: float, upper: float, *, step=None, count=None) 
     return lower + (np.arange(count + 1, dtype=float) - 0.5) * step
 
 
+def _validated_bin_edges(bin_edges, ndim) -> list[FloatArray | None]:
+    edges_list = [None] * ndim if bin_edges is None else list(bin_edges)
+    if len(edges_list) != ndim:
+        raise ValueError("bin_edges must contain one entry per coordinate dimension")
+    normalized = []
+    for edges in edges_list:
+        if edges is None:
+            normalized.append(None)
+            continue
+        array = np.asarray(edges, dtype=float)
+        if array.ndim != 1 or array.size < 2:
+            raise ValueError("each explicit bin_edges entry must be a 1D array with at least two values")
+        if np.any(~np.isfinite(array)) or np.any(np.diff(array) <= 0.0):
+            raise ValueError("explicit bin edges must be finite and strictly increasing")
+        normalized.append(array.copy())
+    return normalized
+
+
+def _given_limits(ndim, lower, upper, bin_edges):
+    """Explicit edges determine their bounds without reading source coordinates."""
+    low = np.full(ndim, np.nan) if lower is None else np.atleast_1d(lower).astype(float, copy=True)
+    high = np.full(ndim, np.nan) if upper is None else np.atleast_1d(upper).astype(float, copy=True)
+    if low.size != ndim or high.size != ndim:
+        raise ValueError("lower and upper must be None or a 1D iterable of length Ndims")
+    edges_list = _validated_bin_edges(bin_edges, ndim)
+    for dim, edges in enumerate(edges_list):
+        if edges is not None:
+            low[dim], high[dim] = edges[0], edges[-1]
+    return low, high, edges_list
+
+
 def _numba_min_points() -> int:
     """Points required for automatic Numba selection, given kernel warmth."""
 
@@ -97,6 +128,7 @@ def _warm_numba_kernel() -> None:
                         np.ones(1, dtype=np.int64),
                         np.asarray([fractional], dtype=bool), inverse_variance,
                         np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1),
+                        (np.array([0.0, 1.0]), np.array([0, 2], dtype=np.int64)),
                     )
             _mark_numba_warm()
         except Exception:  # pragma: no cover - warm-up must never break a rebin
@@ -354,6 +386,7 @@ class NDRebin:
         self.bins_list: list[FloatArray] | None = None
         self.bin_centers_list: list[FloatArray] | None = None
         self._explicit_bin_edges: list[FloatArray | None] | None = None
+        self._numba_bin_edges: tuple[FloatArray, NDArray[np.int64]] | None = None
         self._fractional_axes: NDArray[np.bool_] | None = None
         self.bin_inds: FloatArray | None = None
         self.binned_data: FloatArray | None = None
@@ -522,12 +555,6 @@ class NDRebin:
 
     def _resolve_backend(self) -> str:
         assert self.Nvals is not None
-        if self._explicit_bin_edges and any(
-            edges is not None for edges in self._explicit_bin_edges
-        ):
-            # The optional fused kernel uses constant-width index arithmetic.
-            # Explicit-edge grids retain the fully featured NumPy path.
-            return "numpy"
         if self.backend == "numpy":
             return "numpy"
         if self.backend == "numba":
@@ -583,43 +610,25 @@ class NDRebin:
         assert self.coords_flat is not None
         assert self.Ndims is not None
 
-        mins = np.min(self.coords_flat, axis=0)
-        maxs = np.max(self.coords_flat, axis=0)
-        lower = mins if self.lower is None else self.lower
-        upper = maxs if self.upper is None else self.upper
-
-        lower_arr = np.atleast_1d(lower).astype(float, copy=True)
-        upper_arr = np.atleast_1d(upper).astype(float, copy=True)
-
-        if lower_arr.size != self.Ndims:
-            raise ValueError("lower must be None or a 1D iterable of length Ndims")
-        if upper_arr.size != self.Ndims:
-            raise ValueError("upper must be None or a 1D iterable of length Ndims")
-
-        lower_arr = np.where(np.isfinite(lower_arr), lower_arr, mins)
-        upper_arr = np.where(np.isfinite(upper_arr), upper_arr, maxs)
-
-        self.lower = np.minimum(lower_arr, upper_arr)
-        self.upper = np.maximum(lower_arr, upper_arr)
+        low, high, self._explicit_bin_edges = _given_limits(
+            self.Ndims, self.lower, self.upper, self.bin_edges,
+        )
+        if not (np.all(np.isfinite(low)) and np.all(np.isfinite(high))):
+            finite_rows = np.all(np.isfinite(self.coords_flat), axis=1)
+            if not np.any(finite_rows):
+                raise ValueError("data contain no finite coordinates for one or more dimensions")
+            coordinates = self.coords_flat if np.all(finite_rows) else self.coords_flat[finite_rows]
+            low = np.where(np.isfinite(low), low, np.min(coordinates, axis=0))
+            high = np.where(np.isfinite(high), high, np.max(coordinates, axis=0))
+        self.lower = np.minimum(low, high)
+        self.upper = np.maximum(low, high)
 
     def _make_bins(self) -> None:
         assert self.Ndims is not None
         assert self.lower is not None
         assert self.upper is not None
-        explicit = [None] * self.Ndims if self.bin_edges is None else list(self.bin_edges)
-        if len(explicit) != self.Ndims:
-            raise ValueError("bin_edges must contain one entry per coordinate dimension")
-        normalized_edges: list[FloatArray | None] = []
-        for edges in explicit:
-            if edges is None:
-                normalized_edges.append(None)
-                continue
-            array = np.asarray(edges, dtype=float)
-            if array.ndim != 1 or array.size < 2:
-                raise ValueError("each explicit bin_edges entry must be a 1D array with at least two values")
-            if np.any(~np.isfinite(array)) or np.any(np.diff(array) <= 0.0):
-                raise ValueError("explicit bin edges must be finite and strictly increasing")
-            normalized_edges.append(array.copy())
+        normalized_edges = self._explicit_bin_edges
+        assert normalized_edges is not None
 
         has_uniform_axis = any(edges is None for edges in normalized_edges)
         if has_uniform_axis and self.step_size is None and self.num_bins is None:
@@ -667,6 +676,17 @@ class NDRebin:
             self.bins_list.append(these_bins)
             self.bin_centers_list.append(these_centers)
             resolved_counts.append(int(these_bins.size - 1))
+
+        # Explicit axes are encoded in bin-position units for the fused kernel.
+        # Uniform discrete axes retain their exact saved physical boundaries.
+        kernel_edges = [
+            edges if explicit is None else np.arange(count + 1, dtype=float)
+            for edges, explicit, count in zip(self.bins_list, normalized_edges, resolved_counts, strict=True)
+        ]
+        self._numba_bin_edges = (
+            np.concatenate(kernel_edges),
+            np.asarray([0, *np.cumsum([edges.size for edges in kernel_edges])], dtype=np.int64),
+        )
 
         self._explicit_bin_edges = normalized_edges
         self.bin_edges = [None if edges is None else edges.copy() for edges in normalized_edges]
@@ -720,6 +740,22 @@ class NDRebin:
                 num_bins[ind] - (0.5 if self._fractional_axes[ind] else 1.0)
             )
             self.bin_inds[self.coords_flat[:, ind] > self.bins_list[ind][-1], ind] = np.nan
+            self.bin_inds[~np.isfinite(self.coords_flat[:, ind]), ind] = np.nan
+            if self._fractional_axes[ind] and num_bins[ind] > 1:
+                valid = np.isfinite(self.bin_inds[:, ind])
+                rows = np.flatnonzero(valid)
+                positions = self.bin_inds[valid, ind] - 0.5
+                candidates = np.clip(np.floor(positions + 0.5).astype(int), 0, num_bins[ind] - 1)
+                centers = self.bin_centers_list[ind]
+                values = self.coords_flat[valid, ind]
+                exact = values == centers[candidates]
+                self.bin_inds[rows[exact], ind] = candidates[exact] + 0.5
+            if not self._fractional_axes[ind]:
+                values = self.coords_flat[:, ind]
+                indices = np.searchsorted(self.bins_list[ind], values, side="right") - 1
+                indices[values == self.bins_list[ind][-1]] = num_bins[ind] - 1
+                valid = np.isfinite(self.bin_inds[:, ind])
+                self.bin_inds[valid, ind] = indices[valid]
 
     def _calculate_bins(self) -> None:
         assert self.bin_inds is not None
@@ -884,11 +920,13 @@ class NDRebin:
         assert _NUMBA_REBIN is not None
         assert self.coords_flat is not None and self.data_flat is not None
         assert self.errors_flat is not None and self.weights_flat is not None
+        coordinates, lower, upper, step_size = self._numba_range_coordinates(start, stop, lower, upper, step_size)
         _NUMBA_REBIN.accumulate_batch(
-            self.coords_flat[start:stop], self.data_flat[start:stop],
+            coordinates, self.data_flat[start:stop],
             self.errors_flat[start:stop], self.weights_flat[start:stop],
             lower, upper, step_size, num_bins, self._fractional_axes,
             self._use_inverse_variance_weights(), bd_sum, err_sum, norm_sum, ns_sum,
+            self._numba_bin_edges,
         )
         _mark_numba_warm()
 
@@ -898,13 +936,21 @@ class NDRebin:
         assert _NUMBA_REBIN is not None
         assert self.coords_flat is not None and self.data_flat is not None
         assert self.errors_flat is not None and self.weights_flat is not None
+        coordinates, lower, upper, step_size = self._numba_range_coordinates(start, stop, lower, upper, step_size)
         _NUMBA_REBIN.accumulate_batch_sparse(
-            self.coords_flat[start:stop], self.data_flat[start:stop],
+            coordinates, self.data_flat[start:stop],
             self.errors_flat[start:stop], self.weights_flat[start:stop],
             lower, upper, step_size, num_bins, self._fractional_axes,
             self._use_inverse_variance_weights(), *partial,
+            self._numba_bin_edges,
         )
         _mark_numba_warm()
+
+    def _numba_range_coordinates(self, start, stop, lower, upper, step_size):
+        coordinates = self.coords_flat[start:stop]
+        if self._explicit_bin_edges and any(edge is not None for edge in self._explicit_bin_edges):
+            return _stream_bin_position_coordinates(self, coordinates)
+        return coordinates, lower, upper, step_size
 
     @staticmethod
     def _merge_sparse_partial(partial, bd_sum, err_sum, norm_sum, ns_sum) -> None:
@@ -946,7 +992,7 @@ class NDRebin:
                 for ind in range(self.Ndims)
             ]
 
-            fractional_dimensions = np.flatnonzero(self._fractional_axes)
+            fractional_dimensions = np.flatnonzero(self._fractional_axes & (num_bins > 1))
             for fractional_offsets in product(
                 (0, 1), repeat=fractional_dimensions.size
             ):
@@ -1024,7 +1070,10 @@ class NDRebin:
     def _fractional_contribution_factor(self) -> int:
         if self._fractional_axes is None:
             return 2 ** (self.Ndims or 1) if bool(self.fractional) else 1
-        return 2 ** int(np.count_nonzero(self._fractional_axes))
+        active_axes = self._fractional_axes
+        if self.num_bins is not None:
+            active_axes = active_axes & (np.asarray(self.num_bins) > 1)
+        return 2 ** int(np.count_nonzero(active_axes))
 
     def _emit_progress(self, processed: int) -> None:
         if self.progress_callback is None:
@@ -1179,7 +1228,7 @@ def _stream_bin_position_coordinates(
     The fused kernel normally derives bin positions with constant-width
     arithmetic.  Explicit grids need the same ``searchsorted`` decisions as
     the NumPy implementation, particularly for values exactly on an edge.
-    Resolve those decisions once per streamed batch and let the fused kernel
+    Resolve those decisions once per source range and let the fused kernel
     perform only the contribution accumulation.
     """
 
@@ -1253,9 +1302,6 @@ def rebin_nd_stream(
     """
 
     edge_options = None if bin_edges is None else list(bin_edges)
-    has_explicit_edges = bool(edge_options is not None and any(
-        edges is not None for edges in edge_options
-    ))
     use_numba = bool(
         _NUMBA_REBIN is not None
         and (backend == "numba" or (backend == "auto" and int(source.n_points) >= _numba_min_points()))
@@ -1265,7 +1311,9 @@ def rebin_nd_stream(
     if axes_array.shape != (ndim, ndim):
         raise ValueError("axes must have shape (ndim, ndim)")
     axes_inv = np.linalg.inv(axes_array)
-    lower_arr, upper_arr = _stream_limits(source, lower, upper, axes_inv)
+    if np.array_equal(axes_array, np.eye(ndim)):
+        axes_inv = None
+    lower_arr, upper_arr = _stream_limits(source, lower, upper, axes_inv, edge_options)
 
     if progress_callback is not None:
         progress_callback(
@@ -1294,8 +1342,6 @@ def rebin_nd_stream(
     bd_sum, err_sum, norm_sum, ns_sum = template._empty_accumulators(size)
     template.Nvals = int(source.n_points)
     if use_numba:
-        # Explicit edges make the template's ordinary in-memory resolver choose
-        # NumPy, but the stream path has already selected fused accumulation.
         template.resolved_backend = "numba"
         template.resolved_workers, template.resolved_parallel_strategy = template._parallel_plan(size)
     if progress_callback is not None:
@@ -1333,7 +1379,7 @@ def rebin_nd_stream(
                         **template._progress_details(),
                     })
                 continue
-            projected = coords @ axes_inv
+            projected = coords if axes_inv is None else coords @ axes_inv
             errors = np.zeros(data.size) if batch.data_errs is None else np.asarray(batch.data_errs, dtype=float).reshape(-1)
             weights = np.ones(data.size) if batch.data_weights is None else np.asarray(batch.data_weights, dtype=float).reshape(-1)
             if errors.size != data.size or weights.size != data.size:
@@ -1355,10 +1401,6 @@ def rebin_nd_stream(
                 kernel_lower = lower_arr
                 kernel_upper = upper_arr
                 kernel_steps = np.asarray(template.step_size)
-                if has_explicit_edges:
-                    projected, kernel_lower, kernel_upper, kernel_steps = (
-                        _stream_bin_position_coordinates(template, projected)
-                    )
                 template.coords_flat = projected
                 template.data_flat = data
                 template.errors_flat = errors
@@ -1484,30 +1526,27 @@ def rebin_nd_symmetry(
     )
 
 
-def _stream_limits(source, lower, upper, axes_inv) -> tuple[np.ndarray, np.ndarray]:
+def _stream_limits(source, lower, upper, axes_inv, bin_edges=None) -> tuple[np.ndarray, np.ndarray]:
     ndim = int(source.ndim)
-    lower_given = None if lower is None else np.atleast_1d(lower).astype(float)
-    upper_given = None if upper is None else np.atleast_1d(upper).astype(float)
-    if lower_given is not None and lower_given.size != ndim:
-        raise ValueError("lower must have one value per streaming dimension")
-    if upper_given is not None and upper_given.size != ndim:
-        raise ValueError("upper must have one value per streaming dimension")
-    mins = np.full(ndim, np.inf)
-    maxs = np.full(ndim, -np.inf)
-    needs_scan = lower_given is None or upper_given is None or not (
-        np.all(np.isfinite(lower_given)) and np.all(np.isfinite(upper_given))
-    )
-    if needs_scan:
+    low, high, _ = _given_limits(ndim, lower, upper, bin_edges)
+    if not (np.all(np.isfinite(low)) and np.all(np.isfinite(high))):
+        mins = np.full(ndim, np.inf)
+        maxs = np.full(ndim, -np.inf)
         for batch in source.iter_batches():
             coords = np.asarray(batch.coords, dtype=float)
             if coords.ndim != 2 or coords.shape[1] != ndim:
                 raise ValueError("each streaming coordinate batch must have shape (batch_points, ndim)")
-            projected = coords @ axes_inv
-            finite = np.isfinite(projected)
-            mins = np.minimum(mins, np.min(np.where(finite, projected, np.inf), axis=0))
-            maxs = np.maximum(maxs, np.max(np.where(finite, projected, -np.inf), axis=0))
+            if coords.shape[0] == 0:
+                continue
+            projected = coords if axes_inv is None else coords @ axes_inv
+            finite_rows = np.all(np.isfinite(projected), axis=1)
+            if not np.any(finite_rows):
+                continue
+            projected = projected if np.all(finite_rows) else projected[finite_rows]
+            mins = np.minimum(mins, np.min(projected, axis=0))
+            maxs = np.maximum(maxs, np.max(projected, axis=0))
         if not np.all(np.isfinite(mins)) or not np.all(np.isfinite(maxs)):
             raise ValueError("stream contains no finite coordinates for one or more dimensions")
-    low = mins if lower_given is None else np.where(np.isfinite(lower_given), lower_given, mins)
-    high = maxs if upper_given is None else np.where(np.isfinite(upper_given), upper_given, maxs)
+        low = np.where(np.isfinite(low), low, mins)
+        high = np.where(np.isfinite(high), high, maxs)
     return np.minimum(low, high), np.maximum(low, high)

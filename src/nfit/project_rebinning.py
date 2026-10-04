@@ -1588,7 +1588,7 @@ def _rebin_mdhisto_data(
         contract = MeasurementContract.from_dict(declaration)
         if symmetry is not None or not np.allclose(transform, np.eye(ndim), rtol=0, atol=1e-12):
             raise ValueError("Declared measurement histograms require source replay for symmetry or a changed basis")
-        if bool(config.get("fractional", False)):
+        if any(_rebin_fractional_axes(config, axes_config)):
             raise ValueError("Declared measurement histograms require source replay for fractional assignments")
         bounds = [(float(axis.values[0]), float(axis.values[-1])) for axis in data.axes]
         axes_config = _resolve_auto_rebin_axes(axes_config, bounds)
@@ -2249,6 +2249,7 @@ def _point_data_histogram(
     coverage_mask = coverage < _rebin_minimum_coverage(config)
     mask |= coverage_mask
     metadata.update(copy.deepcopy(dict(metadata_updates or {})))
+    metadata.pop("normalization_denominator", None)
     metadata["signal_semantics"] = "density"
     metadata["signal_semantics_source"] = "nfit_normalized_rebin"
     metadata["coverage_mask_count"] = int(np.count_nonzero(coverage_mask))
@@ -2277,6 +2278,27 @@ def _point_data_histogram(
     symmetry_metadata = _rebin_symmetry_metadata(config, metadata.get("lattice_parameters"))
     if symmetry_metadata is not None:
         metadata["rebin"]["symmetry"] = symmetry_metadata
+    auxiliary_channels = {
+        "coverage_fraction": MDHistoChannel(
+            coverage,
+            label="Coverage",
+            unit="fraction",
+        )
+    }
+    if (
+        data_weights is not None
+        and metadata.get("weighted_by_normalization_denominator", False)
+        and _rebin_mean_weighting(config) == "uniform"
+        and result._normalization is not None
+    ):
+        normalization_output = np.asarray(result._normalization, dtype=float)
+        normalization_output.setflags(write=False)
+        auxiliary_channels["normalization_denominator"] = MDHistoChannel(
+            normalization_output,
+            label="Combined point normalization",
+            unit="arbitrary normalization units",
+        )
+        metadata["normalization_denominator"] = normalization_output
     if progress_callback is not None:
         progress_callback(
             {
@@ -2341,11 +2363,5 @@ def _point_data_histogram(
         coordinate_system=coordinate_system,
         visual_normalization=visual_normalization,
         metadata=metadata,
-        auxiliary_channels={
-            "coverage_fraction": MDHistoChannel(
-                coverage,
-                label="Coverage",
-                unit="fraction",
-            )
-        },
+        auxiliary_channels=auxiliary_channels,
     )

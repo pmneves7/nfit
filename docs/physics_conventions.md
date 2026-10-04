@@ -974,6 +974,53 @@ signed backgrounds, and uncertain exposure require a different likelihood;
 this API does not infer that they satisfy the Poisson model.
 See [Garwood's original construction](https://doi.org/10.1093/biomet/28.3-4.437).
 
+#### Fractional assignment of point measurements
+
+General point rebinning deposits each observation at neighboring grid centers
+using the tensor product of linear center weights. Let $a_{bi}$ be the
+dimensionless spatial weight from source observation $i$ into output bin $b$.
+Each accepted point satisfies $\sum_b a_{bi}=1$. A discrete axis assigns one
+bin; a fractional axis shares between its two surrounding centers. For
+nonuniform grids, distances are measured between the actual saved centers.
+Within the accepted outer edges, support beyond the first or last center
+saturates into that end bin. An integrated axis contributes only one neighbor.
+Exact reported centers have exactly one support on that axis, without
+rounding-generated neighboring bins. Points with any nonfinite coordinate are
+excluded, including during automatic-limit discovery.
+
+For independent source observations, let $x_i$ be a measured signal and
+$\sigma_i$ its standard uncertainty, both in signal units, and $s_i$ its
+averaging weight. The normalized result and its stored diagonal variance are
+
+$$
+I_b = \frac{\sum_i a_{bi}s_i x_i}{D_b},\qquad
+D_b=\sum_i a_{bi}s_i,\qquad
+\sigma_b^2=\frac{\sum_i(a_{bi}s_i)^2\sigma_i^2}{D_b^2}.
+$$
+
+Uniform averaging uses the supplied positive source weight for $s_i$;
+inverse-variance averaging additionally divides that weight by $\sigma_i^2$.
+The weight units cancel in the normalized signal and uncertainty. Unnormalized
+sums retain the numerator and its variance without dividing by $D_b$. The
+**Samples** channel is $\sum_i a_{bi}$, independent of the averaging weights.
+
+For a normalized count observation $x_i=C_i/N_i$ with known exposure $N_i$,
+variance $\sigma_i^2=V_i/N_i^2$, and exposure weighting $s_i=N_i$, this becomes
+$\sum_i a_{bi}C_i / \sum_i a_{bi}N_i$ with diagonal variance
+$\sum_i a_{bi}^2V_i/(\sum_i a_{bi}N_i)^2$. The same coefficients therefore
+apply to count numerator and exposure; deterministic sharing squares the
+coefficients for variance. Generic point rebins preserve deposited physical
+exposure for subsequent exposure-weighted means. Inverse-variance sums are
+statistical weights and are not relabeled as physical exposure.
+
+Neighboring-bin covariance is intentionally omitted in this representation.
+Combining fractional output bins therefore propagates their stored diagonal
+variances. Rebin original observations directly when changing the grid to avoid
+interpolating an already interpolated field. Fractional assignment is a
+center-based interpolation estimator; it does not infer detector footprints or
+an instrument resolution function. Native DGS event and trajectory histograms
+retain their separate discrete assignment convention.
+
 #### Event copies and covariance
 
 Copies of one event are perfectly correlated. If copies with coefficients

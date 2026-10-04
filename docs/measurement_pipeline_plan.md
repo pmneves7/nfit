@@ -979,6 +979,22 @@ These investigations are complete. Implementing weighted DGS intervals,
 matched fractional trajectory kernels, covariance propagation and the broader
 statistical GUI remains later work requiring review.
 
+**Fractional point-binning follow-up (2026-10-04):** Paul authorized correctness
+and performance improvements to existing general fractional assignment, with
+neighboring-bin covariance deliberately omitted. The implementation retains
+multilinear center weights, consistent numerator and averaging weight, and
+squared full coefficients for diagonal variance. An independent scalar oracle
+covers 1D–7D, nonuniform/mixed axes, exact centers and physical edges, integrated
+axes, streaming, invalid inputs, and serial/dense/sparse accumulation. Deposited
+physical exposure survives point rebins through GUI and scripting paths.
+Compiled accumulation now accepts explicit edges; redundant integrated-axis
+neighbors, unnecessary bound scans and identity stream projections are removed.
+General point/histogram numerical caches are invalidated lazily. Native DGS
+remains discrete. Performance evidence is recorded in
+`benchmarks/results/fractional-point-binning.md`. Zero-count treatment and
+cross-bin covariance remain deferred. Code completion does not adopt a native
+DGS fractional estimator or rewrite any scientific project.
+
 **Deferred statistical follow-ups:** these require later checkpoints and do not
 block acceptance of the intensity estimator.
 

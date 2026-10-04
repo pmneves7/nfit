@@ -134,6 +134,24 @@ RSS is a process-lifetime high-water mark, and the first Numba run may include
 JIT compilation. Record CPU model, available cores, memory, operating system,
 Python, NumPy, and Numba versions with published results.
 
+`benchmark_fractional_binning.py` compares complete warm generic fractional
+rebins on uniform, nonuniform, mixed, integrated, curved-detector and streaming
+point clouds. An optional Git reference loads only the older two rebin modules
+into isolated temporary code storage; it does not alter the checkout. Each
+comparison validates signal, diagonal error, deposited sample weights and
+normalization to `rtol=atol=1e-12`, including NaN masks. Source generation and
+JIT warmup are excluded; grid preparation, output allocation, bounded
+accumulation and finalization are included. This is not a DGS reduction,
+scientific I/O or Mantid comparison.
+
+```bash
+/Users/pmneves/anaconda3/envs/nfit/bin/python benchmarks/benchmark_fractional_binning.py \
+  --reference 8a530e9 --points 500000 --workers 1 4 > fractional.json
+```
+
+The [fractional point-binning report](results/fractional-point-binning.md)
+records correctness fixes, speed gains and the serial streaming tradeoff.
+
 `benchmark_rebin_modes.py` compares discrete assignment, fractional momentum
 with discrete energy, and fractional assignment on all four axes. It uses the
 same source and output basis and grid for every mode. Repeated timings separate

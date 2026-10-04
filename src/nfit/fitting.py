@@ -1090,6 +1090,7 @@ def rebin_point_data(
         temperature = source.temperature
 
     metadata = dict(data.metadata)
+    metadata.pop("normalization_denominator", None)
     metadata["rebin"] = {
         "lower": None if lower is None else np.asarray(lower, dtype=float).tolist(),
         "upper": None if upper is None else np.asarray(upper, dtype=float).tolist(),
@@ -1127,6 +1128,14 @@ def rebin_point_data(
         temperature=temperature,
         magnetic_field=None if source.magnetic_field is None else np.array(source.magnetic_field),
         metadata=metadata,
+        normalization_denominator=(
+            result._normalization.ravel()
+            if source.normalization_denominator is not None
+            and normalize
+            and mean_weighting == "uniform"
+            and result._normalization is not None
+            else None
+        ),
     )
 
 

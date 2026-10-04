@@ -36,6 +36,8 @@ provides double-click startup and a Dock icon using your existing environment.
 
 A few of its main capabilities are:
 
+- compiled fractional N-dimensional point binning on uniform and nonuniform grids,
+  with consistent exposure weights and diagonal uncertainty propagation;
 - compiled DGS HKLE event projection and accumulation in Mantid-compatible and double precision modes;
 - monitor nfit and system CPU and RAM usage live in the project toolbar;
 - set installation-wide figure font size and axes linewidth defaults in Preferences;

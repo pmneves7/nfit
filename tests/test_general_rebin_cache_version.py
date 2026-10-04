@@ -23,10 +23,12 @@ from tests.test_mdevent import _write_mdevent
 from tests.test_raw_dgs import _write_raw_dgs
 
 
-def _unversioned(signature, index):
+def _unversioned(signature, index, previous_version=None):
     payload = json.loads(signature)
     numerical = json.loads(payload[index])
     assert numerical.pop("general_rebin_numerical_version") == REBIN_NUMERICAL_VERSION
+    if previous_version is not None:
+        numerical["general_rebin_numerical_version"] = previous_version
     payload[index] = json.dumps(numerical, sort_keys=True, default=str)
     return json.dumps(payload)
 
@@ -42,9 +44,10 @@ def general_group():
     project_data._VIEWER_VIEW_CACHE.clear()
 
 
+@pytest.mark.parametrize("previous_version", [None, REBIN_NUMERICAL_VERSION - 1])
 @pytest.mark.parametrize("fractional, normalize", [(True, True), (False, False)])
 def test_old_general_composite_cache_replays_instead_of_returning_old_numerics(
-    general_group, monkeypatch, fractional, normalize
+    general_group, monkeypatch, fractional, normalize, previous_version
 ):
     group, entry = general_group
     config = composites.data_group_composite_config(group)
@@ -54,7 +57,7 @@ def test_old_general_composite_cache_replays_instead_of_returning_old_numerics(
     expected = refresh_composite_dataset(group)
     key = composites._composite_cache_key(group)
     signature, _ = composites._COMPOSITE_DATA_CACHE.get(key)
-    previous = _unversioned(signature, 4)
+    previous = _unversioned(signature, 4, previous_version)
     assert not composite_cache_signatures_match(previous, signature)
     composites._COMPOSITE_DATA_CACHE[key] = (previous, expected.with_updates(signal=np.full(expected.shape, 99.)))
     calls = []
@@ -69,9 +72,10 @@ def test_old_general_composite_cache_replays_instead_of_returning_old_numerics(
     np.testing.assert_array_equal(actual.num_events, expected.num_events)
 
 
+@pytest.mark.parametrize("previous_version", [None, REBIN_NUMERICAL_VERSION - 1])
 @pytest.mark.parametrize("fractional, normalize", [(True, True), (False, False)])
 def test_old_general_view_cache_replays_instead_of_returning_old_numerics(
-    general_group, monkeypatch, fractional, normalize
+    general_group, monkeypatch, fractional, normalize, previous_version
 ):
     group, entry = general_group
     config = project_data.dataset_rebin_config(entry)
@@ -80,7 +84,7 @@ def test_old_general_view_cache_replays_instead_of_returning_old_numerics(
         axis["fractional"] = fractional
     expected = project_data.dataset_for_slice_viewer(entry)
     signature, _ = project_data._VIEWER_VIEW_CACHE.get(entry.id)
-    previous = _unversioned(signature, 3)
+    previous = _unversioned(signature, 3, previous_version)
     project_data._VIEWER_VIEW_CACHE[entry.id] = (previous, expected.with_updates(signal=np.full(expected.shape, 99.)))
     calls = []
     original = project_data._viewer_data_before_scale_uncached
