@@ -65,7 +65,7 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 6A | Finish DGS correctness and background validation | Complete; accepted by Paul |
 | 6A-P | Complete realistic performance comparisons and useful speedups | Complete; accepted by Paul |
 | 6A1 | Validate optional numerical and statistical methods | Controlled truth checks complete; review pending, defaults unchanged |
-| 6A2 | Review evidence and choose future defaults with Paul | Pending |
+| 6A2 | Review evidence and choose future defaults with Paul | In progress; estimator policy accepted |
 | 6B | Validate migration, finish documentation, and remove this plan | Pending |
 
 Statuses are **Pending**, **Pending review**, **In progress**, **Complete**,
@@ -904,12 +904,33 @@ controlled pulse examples or validate HYSPEC's separate T0-formula branch.
 
 ### 6A2 — Review evidence and choose future defaults with Paul
 
-**Status: Pending; requires a decision from Paul.**
+**Status: In progress; individual decisions are under review.**
 
 Paul accepted DGS correctness on 2026-10-04 and deferred covariance between
 symmetry-related sample bins to a later checkpoint. Review other statistical
 choices separately; covariance work requires its own follow-up authorization
 and complete propagation through final cuts before any default adoption.
+
+**Accepted estimator policy (2026-10-04):** retain exposure-pooled normalization
+for native DGS counting data, including covered zero-count measurements in the
+exposure sum. Other measurement models retain estimators matched to their
+declared target and assumptions. Pooling estimates an exposure-weighted field
+when intensity varies within a bin; an equal-coordinate average is a separate
+target requiring a sampling model.
+
+**Deferred statistical follow-ups:** these require later checkpoints and do not
+block acceptance of the intensity estimator.
+
+- [ ] Establish error bars for covered bins with zero counts. Validate the
+  uncertainty or interval definition and repeated-sampling coverage for the
+  declared count model, including weighted events and backgrounds; distinguish
+  positive exposure with zero events from absent coverage.
+- [ ] Test whether fractional binning improves estimates of declared bin
+  intensities. Use known intensity fields and uneven coverage, gradients,
+  peaks and boundaries; compare bias, mean-squared error and uncertainty
+  coverage with discrete binning. Apply fractional coefficients consistently
+  to signal, exposure and source-dependent uncertainty before considering a
+  default change.
 
 - [ ] Present the accepted methods, assumptions, limitations and compatibility paths.
 - [ ] Agree which defaults change and which treatments remain optional.

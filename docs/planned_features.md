@@ -75,6 +75,14 @@ tracks the staged implementation and review checkpoints for these changes.
 - Validate numerical alternatives and choose future defaults at the late
   cross-instrument acceptance stage. Current DGS compatibility defaults remain
   unchanged during contract and workflow refactoring.
+- Establish model-appropriate error bars for covered zero-count bins. Validate
+  their statistical meaning and interval coverage, including weighted events
+  and background subtraction. Positive exposure with zero events must remain
+  distinct from a bin with no coverage.
+- Compare fractional and discrete binning against known bin intensities under
+  uneven coverage, gradients, sharp peaks and boundaries. Measure bias,
+  mean-squared error and uncertainty coverage for the declared target, retaining
+  consistent signal/exposure coefficients and shared-source dependencies.
 - Extend source adapters to supply dependencies from fractional assignment,
   repeated symmetry copies, shared monitors/vanadium and reconstruction hypotheses.
   CORELLI's reconstructed energy channels and symmetrized copies are not
