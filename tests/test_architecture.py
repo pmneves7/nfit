@@ -84,6 +84,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "raw_dgs_hyspec.py",
     PACKAGE_ROOT / "raw_dgs_goniometer.py",
     PACKAGE_ROOT / "raw_dgs_pulses.py",
+    PACKAGE_ROOT / "dgs_trajectory_tasks.py",
     PACKAGE_ROOT / "mdevent_detector_masks.py",
     PACKAGE_ROOT / "histogram_reduction.py",
     PACKAGE_ROOT / "dgs_normalization.py",

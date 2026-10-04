@@ -1435,8 +1435,13 @@ def _trajectory_normalization_from_payloads(
             output_size,
             reserved_bytes=MDEVENT_NORMALIZATION_RESERVED_GRIDS * output_size * 8,
         )
+        from .dgs_trajectory_tasks import pool_trajectory_tasks
+
         grouped_payloads = [
-            [payload for payload in run_payloads if payload[4] == geometry_index]
+            pool_trajectory_tasks(
+                [payload for payload in run_payloads if payload[4] == geometry_index],
+                edges[3], checked_shared_geometry=True,
+            )
             for geometry_index in range(len(detector_payloads))
         ]
         task_total = sum(

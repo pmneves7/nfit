@@ -62,9 +62,9 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 4B | Add grouped, repeated, and stacked run expressions | Complete |
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Complete |
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
-| 6A | Finish DGS correctness and background validation | In progress; angle averaging corrected, matched histogram replay remains |
-| 6A-P | Complete realistic performance comparisons and useful speedups | In progress; full Shiver benchmark running |
-| 6A1 | Validate optional numerical and statistical methods | Authorized; controlled validation in progress, defaults unchanged |
+| 6A | Finish DGS correctness and background validation | Technical checks complete; review pending |
+| 6A-P | Complete realistic performance comparisons and useful speedups | In progress; full SEQUOIA/HYSPEC comparisons and pooling accepted, ordered event parallelism under test |
+| 6A1 | Validate optional numerical and statistical methods | Controlled truth checks complete; review pending, defaults unchanged |
 | 6A2 | Review evidence and choose future defaults with Paul | Pending |
 | 6B | Validate migration, finish documentation, and remove this plan | Pending |
 
@@ -690,9 +690,10 @@ production nfit and its unit tests.
 
 ### 6A — Finish DGS correctness and background validation
 
-**Status: In progress.** Geometry, timing, directional background reconstruction
-and cached-background profile uncertainties are implemented. The remaining
-reference differences need an explanation and matched validation.
+**Status: Technical checks complete; review pending.** Geometry, timing,
+directional background reconstruction and cached-background profile uncertainties
+are validated. Time-weighted angle replay matches fresh Mantid histogramming;
+remaining accepted differences have explicit attribution.
 
 Completed work:
 
@@ -714,11 +715,11 @@ Remaining work:
   invalidates prior reduced-event/binned caches lazily. Native tests cover pause
   and bad-pulse intervals, unequal durations, repeated/backdated timestamps,
   legacy constants, source/calibration reuse and saved lazy-cache reopening.
-- [ ] Repeat the matched 34° and 70° pilots with six and twelve symmetry copies.
+- [x] Repeat the matched 34° and 70° pilots with six and twelve symmetry copies.
   Compare event numerator, variance, contribution counts, exposure, masks,
   signal and uncertainty in every cell; prioritize low-coverage fringes and
   the HHH/energy cut at K=0±0.03 and L=0.33±0.02 r.l.u.
-- [ ] Attribute remaining trajectory boundaries and support differences.
+- [x] Attribute remaining trajectory boundaries and support differences.
   Paul accepts the known observed-extrema float32 event clipping as immaterial
   rounding; no loss-emulation option is needed. Separate that rounding from
   recipe differences before acceptance.
@@ -729,10 +730,16 @@ Version 0.116.3 uses Mantid's pause-filtered time mean of
 48.504392463390396°, verified against the real raw timestamps. With a 95%
 bad-pulse threshold the native resolved angle is 48.50439215956369°; pulse
 filter settings therefore remain part of the recipe. The other 23 pilot
-rotations, Ei, T0 and UB already agreed. Histogram replay must establish the
-correction's contribution. The existing 34° pilot also has approximately
-3×10⁻⁴ relative-L2 exposure differences. At 70°, twelve-copy binning differs
-in two exposure-support cells. HYSPEC cross-engine parity is therefore unfinished.
+rotations, Ei, T0 and UB already agreed. Fresh matched six/twelve-copy
+replays give exposure relative L2 differences of 5.2×10⁻¹⁵–3.5×10⁻¹⁴ with
+identical support in both banks. Count excess is confined to accepted
+energy-edge clipping (32/30 contributions for six copies; 64/60 for twelve).
+The old loaded-MDE exposure discrepancy also occurs within Mantid itself.
+Its save/load parameter precision changes detector directions; native replay of
+the actual loaded directions reproduces the residual, while UB, sample rotation
+matrices and charge are unchanged. Preserve the original physical geometry.
+See `benchmarks/results/hyspec-mde-roundtrip.md` for attribution and the fresh
+resident controls. Continuous rotation remains deferred.
 
 **Background scope:** the dummy has the same mount, glue and aluminum without
 crystals; its coarse 180° sweep averages orientation effects. Retain detector
@@ -762,8 +769,11 @@ Evidence for former 6A-R, R2 and R3a/R3b is retained in:
 
 ### 6A-P — Complete realistic performance comparisons and useful speedups
 
-**Status: In progress.** Native full-job acceptance and matched pilots are done;
-the full ordinary Shiver reference is running on node19.
+**Status: In progress.** The full ordinary Shiver reference and its numerical
+comparison and post-angle-correction native replay are complete. Guarded
+trajectory pooling passes the full-cube gates. Full HYSPEC timing and the
+normalization worker sweep are complete. Ordered event parallelism is under
+real-cache testing on node19.
 
 - [x] Fuse event projection/accumulation and reuse exact-text mask parsing.
 - [x] Reuse successfully inspected scalar metadata and exact geometry arithmetic
@@ -773,10 +783,13 @@ the full ordinary Shiver reference is running on node19.
 - [x] Measure the full 617-run native SEQUOIA workflow before/after those changes,
   including saves, reopen, lazy event-cache reuse and later twelve-copy binning.
 - [x] Measure matched SEQUOIA and both HYSPEC bank pilots in ordinary Shiver jobs.
-- [ ] Finish the full 617-run Shiver reduction, saves/reopens, and one/six/twelve
+- [x] Finish the full 617-run Shiver reduction, saves/reopens, and one/six/twelve
   symmetry-copy histograms. Validate arrays and the low-coverage cut before
   publishing the complete cross-engine comparison.
-- [ ] Measure representative full HYSPEC workflows after the 6A corrections.
+- [x] Validate and measure duplicate-trajectory pooling against the current
+  time-weighted-angle build. Require literal event statistics, identical exposure
+  support and every nonzero exposure cell within 10⁻¹² relative.
+- [x] Measure representative full HYSPEC workflows after the 6A corrections.
 - [ ] Profile the remaining dominant costs, particularly trajectory normalization.
   Adopt further speedups only when real workflows show a worthwhile gain and
   preserve the selected numerical treatment; otherwise record the limiting cost.
@@ -786,7 +799,8 @@ the full ordinary Shiver reference is running on node19.
 initial saved dataset takes 51.066 s in nfit versus 565.660 s in Shiver (11.1×).
 Every event numerator, variance and contribution count agrees; the specified
 low-coverage cut agrees near 10⁻¹³. Tiny whole-cube exposure residuals are
-recorded separately. This pilot does not establish a full-job speed ratio.
+recorded separately. The complete 617-run reference additionally validates
+literal event statistics and identical exposure support in both symmetry cubes.
 
 The full native initial saved dataset improves 567.152 → 503.554 s (9m27s →
 8m24s), and saved histogram access improves 39.706 → 7.926 s (5.0×).
@@ -798,6 +812,23 @@ baseline results; their roughly nine-second initial workflows show no material
 total improvement. Their Shiver counterparts take 47.220/49.820 s, with the
 scientific differences still tracked under 6A.
 
+The next accepted optimization pools only checked identical trajectory tasks.
+It reduces full617 trajectory work by 34.8%, complete workflow time
+860.469 → 774.791 s, and cached twelve-copy binning 272.298 → 225.373 s.
+Event statistics and edges are literal; support is identical and every nonzero
+exposure cell agrees within 1.84×10⁻¹⁵ relative. Its initial saved dataset takes
+8m24s versus ordinary Shiver's 4h25m16s (31.5×); its later bin/save takes
+4m26s versus 52m26s (11.8×). Full workflow profiling and proposed further
+experiments are in `benchmarks/results/dgs-remaining-performance.md`.
+
+The full 361-run HYSPEC 34° initial saved workflow takes 88.976 s in nfit versus
+1434.725 s in ordinary Shiver (16.1×). Later twelve-copy bin/save takes 41.731 s
+versus 101.513 s (2.43×). Resident six-copy exposure agrees at 3.77×10⁻¹⁵
+relative L2 with identical support; accepted event clipping and the reference's
+loaded-MDE geometry loss are recorded separately. A full617 normalization sweep
+favors the current 64 workers: median 127.526 s versus 142.320 s at 32, with
+every-cell exposure/support acceptance. No worker-policy change is justified.
+
 Report loading, reduction, event-cache/MDE persistence, first binning, saving,
 reopening and later rebins separately. The primary Shiver comparison uses one
 ordinary sequential reduction job with its normal internal threading and bins
@@ -808,26 +839,50 @@ binning are context, not measured baselines. Keep profiling separate from timing
 Details and scalar receipts for former 6A-P1/P2/P3 are in
 `benchmarks/results/dgs-fused-event-performance.md` and
 `benchmarks/results/dgs-user-workflows-node19.md`. The full reference's
-`seq-full617-shiver-reference-01/receipt.partial.json` records progress; only a
-successful final `receipt.json` establishes completion.
+`seq-full617-shiver-reference-01/receipt.json` records successful completion.
+The initial reference workflow takes 4h25m16s including setup, sequential raw
+reduction, six-copy binning and saving; later twelve-copy MDNorm takes 49m56s
+before its histogram save. The six-hour process total also includes independent
+one/six/twelve cached-MDE rebins, reopen operations and untimed diagnostics, so
+it is not the initial saved-dataset headline.
 
 ### 6A1 — Validate optional numerical and statistical methods
 
-**Status: Pending; after DGS correctness and benchmark review.**
+**Status: Pending review. Controlled validation passes; defaults unchanged.**
 
-- [ ] Compare optional precision, stable monitor fitting, trajectory-energy and
+- [x] Compare optional precision, stable monitor fitting, trajectory-energy and
   symmetry-variance treatments against analytic or simulated truth.
-- [ ] Assess dummy-angle weighting and geometry/calibration-transfer assumptions
+- [x] Compare counting versus continuous estimators, unequal exposure,
+  observed versus expected precision weights, source-copy covariance and final-bin
+  low-count intervals against analytic expectations and repeated sampling.
+- [x] Assess dummy-angle weighting and geometry/calibration-transfer assumptions
   using the recorded physical configuration.
-- [ ] Include uneven coverage, repeated sources, final cuts and fringes; record
+- [x] Include uneven coverage, repeated sources, final cuts and fringes; record
   speed, memory, bias and uncertainty performance for each declared target.
-- [ ] Document which methods improve an estimate under which assumptions, and
-  which only reproduce a different convention. Review the evidence with Paul.
+- [x] Document which methods improve an estimate under which assumptions, and
+  which only reproduce a different convention.
+- [ ] Review the evidence and remaining physical-calibration gaps with Paul.
 
 Include the confirmed 12.03 ppm energy-boundary residual and Python/compiled
 trajectory classification difference as explicit cases. Agreement with another
 convention, smaller errors or smoother plots alone does not establish accuracy.
 CORELLI/MACS alternatives remain deferred. Do not change defaults in this checkpoint.
+
+The controlled reports are `benchmarks/results/dgs-estimator-alternatives.md`
+and `benchmarks/results/dgs-numerical-alternatives.md`. They validate pooling for
+independent counts with known exposure and a common rate, supplied-variance
+precision weighting for Gaussian measurements, and primitive covariance for
+transformed copies. With unequal copy multiplicity, counting each independent
+unweighted source once also lowers common-rate variance in the controlled case;
+DGS adoption would need the corresponding physical trajectory-union exposure,
+not just a changed variance channel. Per-run energy and angular weighting can improve or worsen
+an estimate depending on the actual acquisition model. Real calibration truth,
+angular stationarity and complete sample-cut covariance remain acceptance gaps;
+the simulations do not certify them. Higher precision improves fidelity to fixed
+input values and retains tiny internal fringe segments; this need not improve
+physical accuracy at the instrument's calibration tolerance. Stable monitor
+variance avoids invalid arithmetic, but does not demonstrate better Ei/T0 in the
+controlled pulse examples or validate HYSPEC's separate T0-formula branch.
 
 ### 6A2 — Review evidence and choose future defaults with Paul
 

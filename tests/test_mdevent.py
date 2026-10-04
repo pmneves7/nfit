@@ -1148,8 +1148,8 @@ def test_persistent_trajectory_accumulator_stops_at_batch_checkpoint(monkeypatch
     ]
     run_payloads = [
         (np.eye(3), 12.0, np.asarray([-2.0, 8.0]), 1.0, 0),
-        (np.eye(3), 12.0, np.asarray([-2.0, 8.0]), 1.0, 0),
-        (np.eye(3), 12.0, np.asarray([-2.0, 8.0]), 1.0, 0),
+        (np.eye(3) * 1.1, 12.0, np.asarray([-2.0, 8.0]), 1.0, 0),
+        (np.eye(3) * 1.2, 12.0, np.asarray([-2.0, 8.0]), 1.0, 0),
     ]
     monkeypatch.setattr(mdevent, "_MDEVENT_NUMBA", Kernels)
     monkeypatch.setattr(
@@ -1506,3 +1506,43 @@ def test_uniform_event_lookup_preserves_edges_and_adjacent_float_values(monkeypa
     mdevent._accumulate_discrete_event_coordinates(coordinates, weights, None, (edge, edge), shape, *actual)
     for left, right in zip(actual, expected, strict=True):
         np.testing.assert_array_equal(left, right)
+
+
+@pytest.mark.parametrize("accelerated", [False, True])
+@pytest.mark.parametrize("mixed_geometry", [False, True])
+def test_mdevent_duplicate_task_pooling_preserves_full_histogram(
+    tmp_path, monkeypatch, mixed_geometry, accelerated,
+):
+    from nfit import dgs_trajectory_tasks
+
+    if accelerated and mdevent._MDEVENT_NUMBA is None:
+        pytest.skip("Numba trajectory backend is unavailable")
+    if not accelerated:
+        monkeypatch.setattr(mdevent, "_MDEVENT_NUMBA", None)
+    source = tmp_path / "repeated.nxs"
+    _write_mdevent(source)
+    if mixed_geometry:
+        with pytest.importorskip("h5py").File(source, "r+") as handle:
+            handle["MDEventWorkspace/experiment1/instrument/physical_detectors/polar_angle"][0] = 0.3
+    group = mdevent_dataset_group(source)
+    options = dict(lower=[-2, -2, -2, -1], upper=[2, 2, 2, 1], num_bins=[4]*4)
+    real_pool = dgs_trajectory_tasks.pool_trajectory_tasks
+    calls = []
+
+    def recording_pool(payloads, edges, **kwargs):
+        result = real_pool(payloads, edges, **kwargs)
+        calls.append((len(payloads), len(result)))
+        return result
+
+    monkeypatch.setattr(dgs_trajectory_tasks, "pool_trajectory_tasks", recording_pool)
+    actual = bin_mdevent_group(group, **options)
+    assert calls == ([] if not accelerated else [(1, 1), (1, 1)] if mixed_geometry else [(2, 1)])
+    monkeypatch.setattr(dgs_trajectory_tasks, "pool_trajectory_tasks", lambda payloads, *_a, **_k: list(payloads))
+    reference = bin_mdevent_group(group, **options)
+    for name in ("event_signal_numerator", "event_variance_numerator"):
+        np.testing.assert_array_equal(actual.auxiliary_channels[name].values, reference.auxiliary_channels[name].values)
+    np.testing.assert_array_equal(actual.num_events, reference.num_events)
+    np.testing.assert_array_equal(actual.mask, reference.mask)
+    np.testing.assert_allclose(actual.metadata["normalization_denominator"], reference.metadata["normalization_denominator"], rtol=1e-12, atol=0)
+    np.testing.assert_allclose(actual.signal, reference.signal, rtol=1e-12, atol=0)
+    np.testing.assert_allclose(actual.errors, reference.errors, rtol=1e-12, atol=0)

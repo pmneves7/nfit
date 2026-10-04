@@ -100,6 +100,8 @@ different Python.
   `dgs_reduction_policy_gui.py` presents those choices.
 - `src/nfit/dgs_event_accumulation.py` and `_dgs_event_numba.py`: shared ordered
   event projection/accumulation using the policy-owned affine transform.
+- `src/nfit/dgs_trajectory_tasks.py`: exact-identity exposure task pooling after
+  complete detector-geometry checks.
 - `src/nfit/reduction_recipes.py`, `reduction_runtime.py`, and
   `reduction_recipe_gui.py`: source/reduction schemas, execution provenance,
   targeted edits, public replay, and focused Qt controls.

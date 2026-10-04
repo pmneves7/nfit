@@ -68,6 +68,17 @@ no monitor or event arrays. Detector distances and directions are calculated
 once per immutable resolved geometry and static detector selection; changed
 run-log geometry, masks, and mixed instruments retain separate snapshots.
 
+Compiled HKLE normalization pools charges for literally identical trajectory
+tasks before batching. Detector identities, directions, normalization and masks
+must first match completely. Tasks also require identical affine-transform bits,
+effective incident energy and the same source-energy interval after clipping
+to the requested energy grid. Raw collections with mixed geometry bypass this
+pooling; MDE inputs pool separately within each checked geometry. Positive finite
+charges add linearly; event numerators, event variances and contribution counts
+are accumulated from every original source as before. The Python reference path
+is unchanged. This reuse preserves exposure up to floating-point summation
+rounding and does not create a shared cache between different binnings.
+
 `benchmarks/profile_dgs_workflow.py` measures a real MDE source, including reads,
 run selection, trajectory normalization, and finalization. It reports first and
 repeated calls separately and can compare every output cell with the reference
@@ -82,6 +93,9 @@ one shared configuration. First saved-dataset time and later reuse workflows
 are reported separately; diagnostic array scans and exports are excluded.
 Kernel speedups should not be interpreted as reduction or whole-project speedups;
 raw reconstruction, background replay, and archive I/O require separate timings.
+For source-candidate acceptance, `NFIT_DGS_BENCHMARK_SOURCE` may select a staged
+directory containing `nfit`. The harness records that runtime explicitly and
+hashes its numerical modules; without this variable it uses the installed bundle.
 
 ### Measured-background replay
 

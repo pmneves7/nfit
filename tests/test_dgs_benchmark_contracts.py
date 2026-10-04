@@ -9,6 +9,8 @@ import ast
 import copy
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import h5py
@@ -47,6 +49,37 @@ def test_shared_settings_helper_has_only_standard_library_imports():
     imports.update((node.module or "").split(".")[0] for node in ast.walk(tree)
                    if isinstance(node, ast.ImportFrom))
     assert imports <= {"__future__", "copy", "json", "math", "re", "pathlib"}
+
+
+def test_benchmark_default_and_invalid_source_preserve_loaded_package(native_helper, monkeypatch, tmp_path):
+    monkeypatch.delenv("NFIT_DGS_BENCHMARK_SOURCE", raising=False)
+    original = importlib.import_module("nfit")
+    assert native_helper._select_source_tree() == "installed nfit; no source injection"
+    assert sys.modules["nfit"] is original
+    monkeypatch.setenv("NFIT_DGS_BENCHMARK_SOURCE", str(tmp_path))
+    with pytest.raises(ValueError, match="contain the nfit package"):
+        native_helper._select_source_tree()
+    assert sys.modules["nfit"] is original
+
+
+def test_benchmark_explicit_source_replaces_module_family_in_isolated_process(tmp_path):
+    package = tmp_path / "nfit"
+    package.mkdir()
+    (package / "__init__.py").write_text("candidate_marker = 42\n")
+    script = f"""
+import importlib.util, os, sys, types
+spec = importlib.util.spec_from_file_location('manual', {str(BENCHMARKS / 'benchmark_dgs_nfit_workflow.py')!r})
+helper = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(helper)
+sys.modules['nfit'] = types.ModuleType('nfit')
+sys.modules['nfit.old'] = types.ModuleType('nfit.old')
+os.environ['NFIT_DGS_BENCHMARK_SOURCE'] = {str(tmp_path)!r}
+assert {str(tmp_path)!r} in helper._select_source_tree()
+assert 'nfit.old' not in sys.modules
+import nfit
+assert nfit.candidate_marker == 42
+"""
+    subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)
 
 
 def test_shared_sequoia_membership_and_original_center_grid(settings_helper):

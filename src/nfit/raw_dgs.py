@@ -1047,8 +1047,14 @@ def _trajectory_normalization(
             (inverse, ei, energy_bounds, charge, direction, solid)
             for inverse in inverses
         )
-    task_total = sum(int(np.count_nonzero(item[5] > 0.0)) for item in payloads)
     accelerated = _MDEVENT_NUMBA is not None
+    if accelerated and shared_detector_geometry:
+        from .dgs_trajectory_tasks import pool_trajectory_tasks
+
+        payloads = pool_trajectory_tasks(
+            payloads, edges[3], checked_shared_geometry=True,
+        )
+    task_total = sum(int(np.count_nonzero(item[5] > 0.0)) for item in payloads)
     workers = _trajectory_worker_count(int(np.prod(shape))) if accelerated else 1
     completed = 0
 

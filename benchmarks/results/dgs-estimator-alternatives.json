@@ -1,0 +1,747 @@
+{
+  "acceptance": "All analytic equalities, public-reference checks and bounded fixed-seed simulation checks passed.",
+  "defaults_changed": false,
+  "dummy_angle_averaging": {
+    "cases": {
+      "orientation_independent": {
+        "charge_weighted": {
+          "bias": 5.681818181857423e-05,
+          "empirical_variance": 0.09069534623015799,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 2.000056818181818,
+          "mean_monte_carlo_standard_error": 0.0008693644528723171,
+          "mean_reported_variance": 0.09091167355371901,
+          "target": 1.9999999999999996,
+          "wald_95_percent_coverage": 0.9510666666666666
+        },
+        "charge_weighted_bias_if_equal_angle_target_requested": -8.881784197001252e-16,
+        "equal_measured_angle": {
+          "bias": 3.887847290995339e-05,
+          "empirical_variance": 0.09080773637277383,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 2.0000388784729104,
+          "mean_monte_carlo_standard_error": 0.0008699029465634554,
+          "mean_reported_variance": 0.0910353640627402,
+          "target": 2.0000000000000004,
+          "wald_95_percent_coverage": 0.9469666666666666
+        },
+        "equal_to_charge_analytic_variance_ratio": 1.0013776358243054,
+        "target_difference_bound_from_total_variation": 0.0,
+        "true_rates": [
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0,
+          2.0
+        ]
+      },
+      "orientation_varies": {
+        "charge_weighted": {
+          "bias": 0.00013052310638217435,
+          "empirical_variance": 0.0590486525563505,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 1.3065784090909092,
+          "mean_monte_carlo_standard_error": 0.0007014785133104607,
+          "mean_reported_variance": 0.05938992768595041,
+          "target": 1.306447885984527,
+          "wald_95_percent_coverage": 0.952225
+        },
+        "charge_weighted_bias_if_equal_angle_target_requested": 0.03372061325725406,
+        "equal_measured_angle": {
+          "bias": 5.638041764721713e-05,
+          "empirical_variance": 0.05621801159930589,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 1.2727836531449201,
+          "mean_monte_carlo_standard_error": 0.0006844584939893841,
+          "mean_reported_variance": 0.056549292846465954,
+          "target": 1.272727272727273,
+          "wald_95_percent_coverage": 0.9430083333333333
+        },
+        "equal_to_charge_analytic_variance_ratio": 0.9522728189598089,
+        "target_difference_bound_from_total_variation": 0.033720613257254915,
+        "true_rates": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          4.0
+        ]
+      }
+    },
+    "measured_angle_mean_vs_continuous_angle_mean": {
+      "angle_range_degrees": [
+        0,
+        180
+      ],
+      "field": "1 + cos(angle)^2",
+      "mean_of_11_endpoint_including_angles": 1.5454545454545454,
+      "scope": "Illustrates a distinct integration target; continuous sample rotation remains deferred.",
+      "trapezoid_mean": 1.5,
+      "uniform_continuous_integral": 1.5
+    },
+    "qualification": "Proxy for angle exposure, not exact pause-filtered per-run good-charge reconstruction. Event membership by original dummy angle is absent after QLab merging.",
+    "real_charge_proxy_receipt_sha256": "f746c6e84d54b21621562f1f1ce8aa1740fe7d504691ebab0ffb9a1592f839ab",
+    "relative_exposure_source": "Ei15meV_50K_240Hz_s2_34_bkg.nxs",
+    "synthetic_total_exposure": 22.0
+  },
+  "goniometer_scope": "Time-weighted stationary sample-angle convention accepted; continuous sample rotation is deferred.",
+  "original_projects_accessed": false,
+  "pooling": {
+    "fringe": {
+      "any_zero_observation_fraction": 0.9999416666666666,
+      "covered_zero_count_95_percent_upper_limit": 8.383816941168035,
+      "expected_total_counts": 0.8800000000000001,
+      "exposure": [
+        0.010000000000000002,
+        0.03,
+        0.1,
+        0.30000000000000004
+      ],
+      "observed_inverse_variance_omitting_zeros": {
+        "bias": 6.389308994180611,
+        "empirical_variance": 171.57807150496555,
+        "excluded_replicates": 49838,
+        "included_replicates": 70162,
+        "mean": 8.389308994180611,
+        "mean_monte_carlo_standard_error": 0.049451550266255605,
+        "mean_reported_variance": 223.70210453497097,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.9992160998831277
+      },
+      "pooled": {
+        "analytic_garwood_95_percent_coverage": 0.987506307429393,
+        "bias": -0.0005492424242423688,
+        "empirical_variance": 4.561248108182696,
+        "excluded_replicates": 0,
+        "garwood_95_percent_coverage": 0.9870666666666666,
+        "included_replicates": 120000,
+        "mean": 1.9994507575757576,
+        "mean_monte_carlo_standard_error": 0.006165257569763203,
+        "mean_reported_variance": 4.54420626721763,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.5844083333333333
+      },
+      "uniform": {
+        "bias": -0.0029444444444444162,
+        "empirical_variance": 18.250937402873415,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 1.9970555555555556,
+        "mean_monte_carlo_standard_error": 0.012332523870803783,
+        "mean_reported_variance": 18.250949074074068,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.584675
+      },
+      "uniform_to_pooled_analytic_variance_ratio": 4.033333333333333,
+      "zero_total_fraction": 0.41531666666666667
+    },
+    "high_counts": {
+      "any_zero_observation_fraction": 0.0,
+      "covered_zero_count_95_percent_upper_limit": 0.008383816941168036,
+      "expected_total_counts": 880.0,
+      "exposure": [
+        10.0,
+        30.0,
+        100.0,
+        300.0
+      ],
+      "observed_inverse_variance_omitting_zeros": {
+        "bias": -0.00750111416497945,
+        "empirical_variance": 0.004589950437967758,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 1.9924988858350206,
+        "mean_monte_carlo_standard_error": 0.0001955750162547984,
+        "mean_reported_variance": 0.004528406558715957,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.9454583333333333
+      },
+      "pooled": {
+        "analytic_garwood_95_percent_coverage": 0.9533066505095074,
+        "bias": -0.00037428030303021664,
+        "empirical_variance": 0.0045531970138993,
+        "excluded_replicates": 0,
+        "garwood_95_percent_coverage": 0.95335,
+        "included_replicates": 120000,
+        "mean": 1.9996257196969698,
+        "mean_monte_carlo_standard_error": 0.00019479042186196127,
+        "mean_reported_variance": 0.0045446039084022045,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.9506333333333333
+      },
+      "uniform": {
+        "bias": -0.00027081944444451445,
+        "empirical_variance": 0.018326278322573792,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 1.9997291805555555,
+        "mean_monte_carlo_standard_error": 0.00039079276608126754,
+        "mean_reported_variance": 0.018332707025462962,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.945325
+      },
+      "uniform_to_pooled_analytic_variance_ratio": 4.033333333333333,
+      "zero_total_fraction": 0.0
+    },
+    "known_variance_background_limited_gaussian": {
+      "background_variance": [
+        0.01,
+        4.0
+      ],
+      "exposure_to_precision_analytic_variance_ratio": 2.5655685562741186,
+      "known_precision_weighted": {
+        "bias": -7.731550828693479e-05,
+        "empirical_variance": 1.3560057803894552,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 1.999922684491713,
+        "mean_monte_carlo_standard_error": 0.0033615544276289987,
+        "mean_reported_variance": 1.3594202898550733,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.9500666666666666
+      },
+      "sample_exposure": [
+        1.0,
+        10.0
+      ],
+      "sample_exposure_weighted": {
+        "bias": -0.0035915207166827834,
+        "empirical_variance": 3.479965501602456,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 1.9964084792833172,
+        "mean_monte_carlo_standard_error": 0.0053851381146033574,
+        "mean_reported_variance": 3.487685950413223,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.949275
+      },
+      "sample_variance": [
+        2.0,
+        0.2
+      ],
+      "scope": "Common signal, independent Gaussian bank errors and known full variances. Shared background/calibration needs GLS or a joint count model."
+    },
+    "known_variance_gaussian": {
+      "inverse_variance": {
+        "bias": 0.0017178751362876277,
+        "empirical_variance": 0.7660871058698823,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 2.0017178751362876,
+        "mean_monte_carlo_standard_error": 0.0025266695897133745,
+        "mean_reported_variance": 0.7692307692307693,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.9513416666666666
+      },
+      "uniform": {
+        "bias": 0.01229014450056587,
+        "empirical_variance": 8.148335007555701,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 2.012290144500566,
+        "mean_monte_carlo_standard_error": 0.008240315026115861,
+        "mean_reported_variance": 8.125,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.95015
+      },
+      "uniform_to_inverse_variance_ratio": 10.562500000000002
+    },
+    "uneven_coverage": {
+      "any_zero_observation_fraction": 0.9288916666666667,
+      "covered_zero_count_95_percent_upper_limit": 0.8383816941168035,
+      "expected_total_counts": 8.8,
+      "exposure": [
+        0.1,
+        0.3,
+        1.0,
+        3.0
+      ],
+      "observed_inverse_variance_omitting_zeros": {
+        "bias": -0.0408203649234391,
+        "empirical_variance": 0.4942847670597417,
+        "excluded_replicates": 19,
+        "included_replicates": 119981,
+        "mean": 1.959179635076561,
+        "mean_monte_carlo_standard_error": 0.002029702443725707,
+        "mean_reported_variance": 0.5027852626024324,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.9225127311824373
+      },
+      "pooled": {
+        "analytic_garwood_95_percent_coverage": 0.9571645224300656,
+        "bias": -0.0032575757575759035,
+        "empirical_variance": 0.45355033032070485,
+        "excluded_replicates": 0,
+        "garwood_95_percent_coverage": 0.9572083333333333,
+        "included_replicates": 120000,
+        "mean": 1.996742424242424,
+        "mean_monte_carlo_standard_error": 0.0019441157594150289,
+        "mean_reported_variance": 0.45380509641873273,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.928775
+      },
+      "uniform": {
+        "bias": 0.004375000000000018,
+        "empirical_variance": 1.8569707554275916,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 2.004375,
+        "mean_monte_carlo_standard_error": 0.003933796676905141,
+        "mean_reported_variance": 1.8505631944444443,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.6914083333333333
+      },
+      "uniform_to_pooled_analytic_variance_ratio": 4.033333333333334,
+      "zero_total_fraction": 0.00015833333333333332
+    },
+    "varying_true_rate": {
+      "exposure": [
+        0.1,
+        0.3,
+        1.0,
+        3.0
+      ],
+      "pooled": {
+        "bias": -0.0008825757575765536,
+        "empirical_variance": 0.9582021957477515,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 4.215026515151514,
+        "mean_monte_carlo_standard_error": 0.0028257774678657785,
+        "mean_reported_variance": 0.9579605716253442,
+        "target": 4.215909090909091,
+        "wald_95_percent_coverage": 0.948175
+      },
+      "pooled_bias_if_uniform_target_requested": 1.5909090909090908,
+      "rates": [
+        1.0,
+        1.5,
+        3.0,
+        5.0
+      ],
+      "uniform": {
+        "bias": 3.819444444497222e-05,
+        "empirical_variance": 1.2177357250425969,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 2.625038194444445,
+        "mean_monte_carlo_standard_error": 0.0031855608154119906,
+        "mean_reported_variance": 1.2269004050925925,
+        "target": 2.625,
+        "wald_95_percent_coverage": 0.82565
+      }
+    }
+  },
+  "provenance": {
+    "benchmarks/validate_dgs_estimator_alternatives.py": "a750a69c05ace9562e483307fade7cac29c1aa5f3eadfa11364fed9f364c9086",
+    "src/nfit/event_covariance.py": "f5dfc33b51b959c93b5048e63ca9e1408464b0acf241056029b82f52d47df115",
+    "src/nfit/histogram_statistics.py": "e23f81d24309849d7dfd768022024a936696abdc7b3fe6f2f6e91308a1399ebc",
+    "src/nfit/measurement_contracts.py": "2a67eb2d891ceeed9b64373eb77b677cdeb049a42846bd36669be37fb10c0e0c",
+    "src/nfit/measurement_statistics.py": "f9c2b29ef2687a977f5642618bd1398df4085cdbfd6d747e017cb205ff42c828"
+  },
+  "replicates_per_case": 120000,
+  "scope": "Conditional Poisson/Gaussian truths, analytic acceptance and existing scalar angle-exposure receipt; no instrument files or Mantid.",
+  "seed": 20261003,
+  "symmetry": {
+    "central": {
+      "1": {
+        "analytic_sigma_understatement": 1.0,
+        "independent_copies": {
+          "bias": 0.008258333333333923,
+          "empirical_variance": 29.79713844275091,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 30.008258333333334,
+          "mean_monte_carlo_standard_error": 0.015757838907125694,
+          "mean_reported_variance": 30.008258333333334,
+          "misapplied_garwood_coverage_using_duplicated_counts": 0.9560194916463748,
+          "target": 30.0,
+          "wald_95_percent_coverage": 0.93225
+        },
+        "source_correlated": {
+          "bias": 0.008258333333333923,
+          "empirical_variance": 29.79713844275091,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 30.008258333333334,
+          "mean_monte_carlo_standard_error": 0.015757838907125694,
+          "mean_reported_variance": 30.008258333333334,
+          "primitive_count_garwood_coverage": 0.9560194916463748,
+          "target": 30.0,
+          "wald_95_percent_coverage": 0.93225
+        }
+      },
+      "12": {
+        "analytic_sigma_understatement": 3.4641016151377544,
+        "independent_copies": {
+          "bias": 0.008258333333333923,
+          "empirical_variance": 29.79713844275091,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 30.008258333333334,
+          "mean_monte_carlo_standard_error": 0.015757838907125694,
+          "mean_reported_variance": 2.500688194444445,
+          "misapplied_garwood_coverage_using_duplicated_counts": 0.4771121585532113,
+          "target": 30.0,
+          "wald_95_percent_coverage": 0.41223333333333334
+        },
+        "source_correlated": {
+          "bias": 0.008258333333333923,
+          "empirical_variance": 29.79713844275091,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 30.008258333333334,
+          "mean_monte_carlo_standard_error": 0.015757838907125694,
+          "mean_reported_variance": 30.008258333333334,
+          "primitive_count_garwood_coverage": 0.9560194916463748,
+          "target": 30.0,
+          "wald_95_percent_coverage": 0.93225
+        }
+      },
+      "6": {
+        "analytic_sigma_understatement": 2.449489742783178,
+        "independent_copies": {
+          "bias": 0.008258333333333923,
+          "empirical_variance": 29.79713844275091,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 30.008258333333334,
+          "mean_monte_carlo_standard_error": 0.015757838907125694,
+          "mean_reported_variance": 5.00137638888889,
+          "misapplied_garwood_coverage_using_duplicated_counts": 0.5889509608157879,
+          "target": 30.0,
+          "wald_95_percent_coverage": 0.589675
+        },
+        "source_correlated": {
+          "bias": 0.008258333333333923,
+          "empirical_variance": 29.79713844275091,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 30.008258333333334,
+          "mean_monte_carlo_standard_error": 0.015757838907125694,
+          "mean_reported_variance": 30.008258333333334,
+          "primitive_count_garwood_coverage": 0.9560194916463748,
+          "target": 30.0,
+          "wald_95_percent_coverage": 0.93225
+        }
+      }
+    },
+    "final_cut_across_cached_bins": {
+      "correct_normalized_variance": 8.0,
+      "exact_public_reference_merges_primitive_coefficients": true,
+      "independent_copy_normalized_variance": 2.0,
+      "production_same_bin_diagnostics": {
+        "cross_bin_pairs_unrepresented": 4,
+        "cross_terms_added": 32.0,
+        "within_bin_pairs_corrected": 2
+      },
+      "signal": 8.0,
+      "within_bin_only_normalized_variance": 4.0
+    },
+    "fringe": {
+      "1": {
+        "analytic_sigma_understatement": 1.0,
+        "independent_copies": {
+          "bias": -0.0007000000000000339,
+          "empirical_variance": 0.8010928524404368,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 0.7993,
+          "mean_monte_carlo_standard_error": 0.0025837518786325,
+          "mean_reported_variance": 0.7993,
+          "misapplied_garwood_coverage_using_duplicated_counts": 0.9909201421998459,
+          "target": 0.8,
+          "wald_95_percent_coverage": 0.5493
+        },
+        "source_correlated": {
+          "bias": -0.0007000000000000339,
+          "empirical_variance": 0.8010928524404368,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 0.7993,
+          "mean_monte_carlo_standard_error": 0.0025837518786325,
+          "mean_reported_variance": 0.7993,
+          "primitive_count_garwood_coverage": 0.9909201421998459,
+          "target": 0.8,
+          "wald_95_percent_coverage": 0.5493
+        }
+      },
+      "12": {
+        "analytic_sigma_understatement": 3.4641016151377544,
+        "independent_copies": {
+          "bias": -0.0007000000000000339,
+          "empirical_variance": 0.8010928524404368,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 0.7993,
+          "mean_monte_carlo_standard_error": 0.0025837518786325,
+          "mean_reported_variance": 0.06660833333333334,
+          "misapplied_garwood_coverage_using_duplicated_counts": 0.35946317129377725,
+          "target": 0.8,
+          "wald_95_percent_coverage": 0.3577416666666667
+        },
+        "source_correlated": {
+          "bias": -0.0007000000000000339,
+          "empirical_variance": 0.8010928524404368,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 0.7993,
+          "mean_monte_carlo_standard_error": 0.0025837518786325,
+          "mean_reported_variance": 0.7993,
+          "primitive_count_garwood_coverage": 0.9909201421998459,
+          "target": 0.8,
+          "wald_95_percent_coverage": 0.5493
+        }
+      },
+      "6": {
+        "analytic_sigma_understatement": 2.449489742783178,
+        "independent_copies": {
+          "bias": -0.0007000000000000339,
+          "empirical_variance": 0.8010928524404368,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 0.7993,
+          "mean_monte_carlo_standard_error": 0.0025837518786325,
+          "mean_reported_variance": 0.13321666666666668,
+          "misapplied_garwood_coverage_using_duplicated_counts": 0.35946317129377725,
+          "target": 0.8,
+          "wald_95_percent_coverage": 0.3577416666666667
+        },
+        "source_correlated": {
+          "bias": -0.0007000000000000339,
+          "empirical_variance": 0.8010928524404368,
+          "excluded_replicates": 0,
+          "included_replicates": 120000,
+          "mean": 0.7993,
+          "mean_monte_carlo_standard_error": 0.0025837518786325,
+          "mean_reported_variance": 0.7993,
+          "primitive_count_garwood_coverage": 0.9909201421998459,
+          "target": 0.8,
+          "wald_95_percent_coverage": 0.5493
+        }
+      }
+    },
+    "mixed_fringe_overlap": {
+      "accepted_copy_multiplicity": [
+        1,
+        2,
+        6
+      ],
+      "analytic_correlated_to_independent_variance_ratio": 5.567164179104477,
+      "analytic_duplicated_to_unique_source_variance_ratio": 1.163288037424816,
+      "correlated": {
+        "bias": 0.0015186567164180431,
+        "empirical_variance": 1.661493718121706,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 2.001518656716418,
+        "mean_monte_carlo_standard_error": 0.0037209919355391716,
+        "mean_reported_variance": 1.6631226331031408,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.863175
+      },
+      "empirical_duplicated_to_unique_source_variance_ratio": 1.1629552943294512,
+      "exposures": [
+        0.1,
+        0.3,
+        1.0
+      ],
+      "independent_copies": {
+        "bias": 0.0015186567164180431,
+        "empirical_variance": 1.661493718121706,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 2.001518656716418,
+        "mean_monte_carlo_standard_error": 0.0037209919355391716,
+        "mean_reported_variance": 0.29873412786812203,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.5692083333333333
+      },
+      "interval_scope": "Unequal effective source weights; integer-Poisson Garwood intervals do not apply to this sum.",
+      "unique_source_pooled_mle": {
+        "bias": 0.0014702380952380523,
+        "empirical_variance": 1.4286823631339218,
+        "excluded_replicates": 0,
+        "included_replicates": 120000,
+        "mean": 2.001470238095238,
+        "mean_monte_carlo_standard_error": 0.003450461760322718,
+        "mean_reported_variance": 1.4296215986394558,
+        "target": 2.0,
+        "wald_95_percent_coverage": 0.9359333333333333
+      },
+      "unique_source_scope": "Same independent unweighted Poisson source populations/counts, known exposure and true common response. Not a weighted-DGS or varying-field default. Physical final-bin source selection/trajectory-union exposure, varying targets and calibration require a separate model."
+    }
+  },
+  "trajectory_energy": {
+    "analytic_shared_first_energy_bias": -1.0,
+    "bins_physically_covered_but_first_energy_uncovered": 0,
+    "calibration_noise_counterexample": {
+      "maximum_relative_exposure_error_per_run_over_true_covered_bins": 0.32849355571305927,
+      "measured_Ei_meV": [
+        59.7,
+        60.3
+      ],
+      "true_common_Ei_meV": 60.0,
+      "using_known_common_calibrated_energy_relative_exposure_error": 0.0
+    },
+    "energy_transfer_window_meV": [
+      0,
+      40
+    ],
+    "fringe_bins": 10,
+    "per_run": {
+      "bias": 0.00386249999999988,
+      "empirical_variance": 1.0012455081396512,
+      "excluded_replicates": 0,
+      "included_replicates": 120000,
+      "mean": 2.0038625,
+      "mean_monte_carlo_standard_error": 0.002888548522671971,
+      "mean_reported_variance": 1.00193125,
+      "target": 2.0,
+      "wald_95_percent_coverage": 0.905075
+    },
+    "q_parallel_edges_inverse_angstrom": [
+      2.64,
+      2.65,
+      2.6599999999999997,
+      2.6699999999999995,
+      2.6799999999999993,
+      2.689999999999999,
+      2.699999999999999,
+      2.7099999999999986,
+      2.7199999999999984,
+      2.729999999999998,
+      2.739999999999998,
+      2.749999999999998,
+      2.7599999999999976,
+      2.7699999999999974,
+      2.779999999999997,
+      2.789999999999997,
+      2.7999999999999967,
+      2.8099999999999965,
+      2.8199999999999963,
+      2.829999999999996,
+      2.839999999999996,
+      2.8499999999999956,
+      2.8599999999999954,
+      2.869999999999995,
+      2.879999999999995,
+      2.889999999999995,
+      2.8999999999999946,
+      2.9099999999999944,
+      2.919999999999994,
+      2.929999999999994,
+      2.9399999999999937,
+      2.9499999999999935,
+      2.9599999999999933,
+      2.969999999999993,
+      2.979999999999993,
+      2.9899999999999927,
+      2.9999999999999925,
+      3.0099999999999922,
+      3.019999999999992,
+      3.029999999999992,
+      3.0399999999999916,
+      3.0499999999999914,
+      3.059999999999991,
+      3.069999999999991,
+      3.0799999999999907,
+      3.0899999999999905,
+      3.0999999999999903,
+      3.10999999999999,
+      3.11999999999999,
+      3.1299999999999897,
+      3.1399999999999895,
+      3.1499999999999893,
+      3.159999999999989,
+      3.169999999999989,
+      3.1799999999999886,
+      3.1899999999999884,
+      3.199999999999988,
+      3.209999999999988,
+      3.2199999999999878,
+      3.2299999999999875,
+      3.2399999999999873,
+      3.249999999999987,
+      3.259999999999987,
+      3.2699999999999867,
+      3.2799999999999865,
+      3.2899999999999863,
+      3.299999999999986,
+      3.309999999999986,
+      3.3199999999999856,
+      3.3299999999999854,
+      3.339999999999985,
+      3.349999999999985,
+      3.3599999999999848,
+      3.3699999999999846,
+      3.3799999999999844,
+      3.389999999999984,
+      3.399999999999984,
+      3.4099999999999837,
+      3.4199999999999835,
+      3.4299999999999833,
+      3.439999999999983,
+      3.449999999999983,
+      3.4599999999999826,
+      3.4699999999999824,
+      3.479999999999982,
+      3.489999999999982,
+      3.499999999999982,
+      3.5099999999999816,
+      3.5199999999999814,
+      3.529999999999981,
+      3.539999999999981,
+      3.5499999999999807,
+      3.5599999999999805,
+      3.5699999999999803,
+      3.57999999999998,
+      3.58999999999998,
+      3.5999999999999797,
+      3.6099999999999794,
+      3.6199999999999792,
+      3.629999999999979,
+      3.639999999999979,
+      3.6499999999999786
+    ],
+    "scope": "Independent analytic one-detector acceptance model; not a production trajectory test or real-data calibration claim.",
+    "selected_fringe_bin": [
+      2.6799999999999993,
+      2.689999999999999
+    ],
+    "shared_first_energy": {
+      "bias": -0.9980687500000001,
+      "empirical_variance": 0.2503113770349128,
+      "excluded_replicates": 0,
+      "included_replicates": 120000,
+      "mean": 1.00193125,
+      "mean_monte_carlo_standard_error": 0.0014442742613359856,
+      "mean_reported_variance": 0.2504828125,
+      "target": 2.0,
+      "wald_95_percent_coverage": 0.37521666666666664
+    },
+    "shared_first_energy_exposure": 4.0,
+    "theta_degrees": 60.0,
+    "true_exposure": 2.0,
+    "true_incident_energies_meV": [
+      59.7,
+      60.3
+    ]
+  }
+}

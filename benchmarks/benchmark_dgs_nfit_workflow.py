@@ -182,7 +182,8 @@ def _module_receipts():
              "nfit.project_composites", "nfit.project_rebinning", "nfit.project_io",
              "nfit.project_gui", "nfit.mapped_archive", "nfit.project_archive",
              "nfit.analysis.artifacts", "nfit.array_archive", "nfit.raw_dgs_monitors",
-             "nfit.raw_dgs_pulses", "nfit.raw_dgs_geometry_precision")
+             "nfit.raw_dgs_pulses", "nfit.raw_dgs_geometry_precision",
+             "nfit.raw_dgs_goniometer", "nfit.dgs_trajectory_tasks")
     result = {}
     for name in names:
         try:
@@ -201,6 +202,21 @@ def _module_receipts():
         result[name] = {"path": str(path), "sha256": hashlib.sha256(payload).hexdigest(),
                         "hash_kind": kind}
     return result
+
+
+def _select_source_tree():
+    """Select an explicitly staged candidate; otherwise use the desktop bundle."""
+    selected = os.environ.get("NFIT_DGS_BENCHMARK_SOURCE")
+    if not selected:
+        return "installed nfit; no source injection"
+    source = Path(selected).resolve()
+    if not (source / "nfit/__init__.py").is_file():
+        raise ValueError("NFIT_DGS_BENCHMARK_SOURCE must contain the nfit package")
+    for name in list(sys.modules):
+        if name == "nfit" or name.startswith("nfit."):
+            del sys.modules[name]
+    sys.path.insert(0, str(source))
+    return f"existing desktop runtime with explicitly staged source: {source}"
 
 
 def _vectors(settings):
@@ -317,6 +333,7 @@ def main():
     receipt = Receipt(output, settings)
     profiler = None
     try:
+        runtime = _select_source_tree()
         from threadpoolctl import threadpool_info, threadpool_limits
 
         from nfit import (
@@ -341,7 +358,7 @@ def main():
         receipt.payload.update(nfit_version=application_version(),
                                modules=_module_receipts(), harnesses=_harness_receipts(), sources_before=sources_before,
                                resource_limits=load_resource_limits(),
-                               runtime="installed nfit; no source injection",
+                               runtime=runtime,
                                timing_contract="raw reduction/cache write/event accumulation interleaved; progress intervals are observational")
         receipt.flush()
         project_path = output / "DGS_workflow.nfit"

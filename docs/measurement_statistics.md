@@ -456,6 +456,22 @@ retained count numerator, numerator variance, and exposure. It validates that
 those statistics reproduce the signal and observed error. Pool counts and
 exposure first; bounds are not additive statistics and must not be averaged.
 
+A correct observed variance does not guarantee a calibrated Gaussian interval
+at low counts. A covered zero still supplies exposure and a positive rate upper
+limit. Confidence bounds require a declared count model; they are not an
+additive replacement for standard errors. Likewise, transformed copies of one
+source event do not supply independent information. A final cut that combines
+copies from different cached cells needs their cross covariance or original-source
+replay, even when each cell's marginal variance was corrected.
+
+For independent counts with a common rate and unequal known exposures,
+pooling counts and exposure gives the expected inverse-variance weights. Weighting
+by the noisy observed count variance instead changes the estimator and can bias
+sparse data. Independent Gaussian measurements with supplied variances support
+precision weighting for a common response. A coordinate average, an
+exposure-weighted field and a common-response estimate are distinct targets when
+the response varies across a bin.
+
 Saved dataset parameter `fit_likelihood` selects these objectives through the
 project compiler and script API. Reports distinguish deviance from Gaussian
 chi-squared. Aggregated GLS residual components are display diagnostics, not a new

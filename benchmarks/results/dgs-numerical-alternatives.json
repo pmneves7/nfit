@@ -1,0 +1,476 @@
+{
+  "acceptance": "All independent numerical-reference checks and controlled calibration diagnostics completed.",
+  "coordinates": {
+    "definition": "Exact binary64 UB/basis/input values, 80-digit Decimal solving; \u00c5^-1 momentum projects to r.l.u. axes and meV. Compatibility policies can define rounded grids rather than the originally requested grid.",
+    "internal_boundary_challenge": {
+      "events": 400,
+      "policies": {
+        "high_precision": {
+          "max_coordinate_absolute_error": [
+            5.551115123125783e-16,
+            4.440892098500626e-16,
+            4.440892098500626e-16,
+            0.0
+          ],
+          "rms_coordinate_error": [
+            2.04253869088941e-16,
+            1.6397858470805334e-16,
+            1.1900285034867838e-16,
+            0.0
+          ],
+          "wrong_requested_grid_membership": 0
+        },
+        "mantid": {
+          "max_coordinate_absolute_error": [
+            2.9095493648823023e-06,
+            2.2737429998809233e-06,
+            6.585158249805545e-07,
+            1.904259093521432e-06
+          ],
+          "rms_coordinate_error": [
+            1.1402309821746644e-06,
+            1.0770410148148179e-06,
+            3.1170049739814383e-07,
+            7.585780329197098e-07
+          ],
+          "wrong_requested_grid_membership": 115
+        }
+      }
+    },
+    "ordinary_cloud": {
+      "events": 400,
+      "policies": {
+        "high_precision": {
+          "max_coordinate_absolute_error": [
+            5.551115123125783e-16,
+            4.440892098500626e-16,
+            4.440892098500626e-16,
+            0.0
+          ],
+          "rms_coordinate_error": [
+            2.0148753549263784e-16,
+            1.4860516529173525e-16,
+            1.1951248867244328e-16,
+            0.0
+          ],
+          "wrong_requested_grid_membership": 0
+        },
+        "mantid": {
+          "max_coordinate_absolute_error": [
+            2.6216705396597817e-06,
+            2.2164275923497456e-06,
+            6.585158249805545e-07,
+            1.904259093521432e-06
+          ],
+          "rms_coordinate_error": [
+            1.0855646544822268e-06,
+            1.0730005747394082e-06,
+            3.0927021504485733e-07,
+            7.585780329197098e-07
+          ],
+          "wrong_requested_grid_membership": 0
+        }
+      }
+    }
+  },
+  "decimal_precision": 80,
+  "defaults_changed": false,
+  "monitor_calibration": {
+    "cases": {
+      "symmetric_gaussian": {
+        "known_population_sample_mean": {
+          "bias_Ei_meV": 0.00521708892527073,
+          "bias_T0_us": 0.24076332958530422,
+          "failures": 0,
+          "mean_Ei_meV": 60.00521708892528,
+          "mean_Ei_monte_carlo_standard_error": 0.013122494720045426,
+          "mean_T0_monte_carlo_standard_error": 0.6123857856377847,
+          "mean_T0_us": 15.240763329585304,
+          "rmse_Ei_meV": 0.14324455406922454,
+          "rmse_T0_us": 6.684677455537149,
+          "successful_replicates": 120
+        },
+        "mantid": {
+          "bias_Ei_meV": 0.050921523640298005,
+          "bias_T0_us": 2.4097192062895516,
+          "failures": 0,
+          "mean_Ei_meV": 60.05092152364032,
+          "mean_Ei_monte_carlo_standard_error": 0.017243472552044885,
+          "mean_T0_monte_carlo_standard_error": 0.8058956588630808,
+          "mean_T0_us": 17.40971920628955,
+          "rmse_Ei_meV": 0.19487469230911977,
+          "rmse_T0_us": 9.115559028228027,
+          "successful_replicates": 120
+        },
+        "paired_stable_minus_reference": {
+          "bit_identical_calibration_fraction": 0.9916666666666667,
+          "common_successful_replicates": 120,
+          "maximum_absolute_Ei_difference_meV": 0.034909594153248236,
+          "maximum_absolute_T0_difference_us": 1.547635913958402,
+          "mean_squared_Ei_error_difference": 3.1096677736031e-05,
+          "mean_squared_Ei_error_difference_monte_carlo_standard_error": 3.1096677736031015e-05,
+          "mean_squared_T0_error_difference": 0.07934988236959602,
+          "mean_squared_T0_error_difference_monte_carlo_standard_error": 0.079349882369596,
+          "sign_convention": "Negative squared-error difference would favor stable; uncertainties are Monte Carlo standard errors, not calibration errors."
+        },
+        "stable": {
+          "bias_Ei_meV": 0.0506306103556895,
+          "bias_T0_us": 2.3968222403398975,
+          "failures": 0,
+          "mean_Ei_meV": 60.05063061035571,
+          "mean_Ei_monte_carlo_standard_error": 0.017258242136478648,
+          "mean_T0_monte_carlo_standard_error": 0.8066322219011395,
+          "mean_T0_us": 17.396822240339898,
+          "rmse_Ei_meV": 0.194954462324693,
+          "rmse_T0_us": 9.119910431549155,
+          "successful_replicates": 120
+        }
+      },
+      "unequal_asymmetric_tails": {
+        "known_population_sample_mean": {
+          "bias_Ei_meV": -0.016984296733340898,
+          "bias_T0_us": -0.7812790926371846,
+          "failures": 0,
+          "mean_Ei_meV": 59.983015703266624,
+          "mean_Ei_monte_carlo_standard_error": 0.014178369490059926,
+          "mean_T0_monte_carlo_standard_error": 0.6382944016908972,
+          "mean_T0_us": 14.218720907362815,
+          "rmse_Ei_meV": 0.15559749208046397,
+          "rmse_T0_us": 7.006664432164203,
+          "successful_replicates": 120
+        },
+        "mantid": {
+          "bias_Ei_meV": 1.5704663175647795,
+          "bias_T0_us": 67.15413590604552,
+          "failures": 0,
+          "mean_Ei_meV": 61.57046631756478,
+          "mean_Ei_monte_carlo_standard_error": 0.024246833539854355,
+          "mean_T0_monte_carlo_standard_error": 1.049829937157784,
+          "mean_T0_us": 82.15413590604548,
+          "rmse_Ei_meV": 1.5925845717179017,
+          "rmse_T0_us": 68.12365942919538,
+          "successful_replicates": 120
+        },
+        "paired_stable_minus_reference": {
+          "bit_identical_calibration_fraction": 1.0,
+          "common_successful_replicates": 120,
+          "maximum_absolute_Ei_difference_meV": 0.0,
+          "maximum_absolute_T0_difference_us": 0.0,
+          "mean_squared_Ei_error_difference": 0.0,
+          "mean_squared_Ei_error_difference_monte_carlo_standard_error": 0.0,
+          "mean_squared_T0_error_difference": 0.0,
+          "mean_squared_T0_error_difference_monte_carlo_standard_error": 0.0,
+          "sign_convention": "Negative squared-error difference would favor stable; uncertainties are Monte Carlo standard errors, not calibration errors."
+        },
+        "stable": {
+          "bias_Ei_meV": 1.5704663175647795,
+          "bias_T0_us": 67.15413590604552,
+          "failures": 0,
+          "mean_Ei_meV": 61.57046631756478,
+          "mean_Ei_monte_carlo_standard_error": 0.024246833539854355,
+          "mean_T0_monte_carlo_standard_error": 1.049829937157784,
+          "mean_T0_us": 82.15413590604548,
+          "rmse_Ei_meV": 1.5925845717179017,
+          "rmse_T0_us": 68.12365942919538,
+          "successful_replicates": 120
+        }
+      }
+    },
+    "distances_m": [
+      18.0,
+      20.0
+    ],
+    "peak_events_per_monitor": 2000,
+    "qualification": "Controlled independent pulses with known mean flight times and no monitor background. Sample-mean comparator knows event membership; not proposed as a general importer. Peak-region uncertainty controls stopping; no Ei/T0 confidence interval is produced.",
+    "replicates": 120,
+    "true_Ei_meV": 60.0,
+    "true_T0_us": 15.0
+  },
+  "monitor_derivative": {
+    "sparse_exact_equal_spacing": {
+      "backward_spacing_us": 1.5,
+      "errors": [
+        0.0,
+        1000.0,
+        0.0
+      ],
+      "forward_spacing_us": 1.5,
+      "oracle_sigma": 0.0,
+      "policies": {
+        "mantid": {
+          "absolute_errors": [
+            0.0,
+            0.0
+          ],
+          "leading_sigma": 0.0,
+          "relative_errors": [
+            null,
+            null
+          ],
+          "trailing_sigma": 0.0
+        },
+        "stable": {
+          "absolute_errors": [
+            0.0,
+            0.0
+          ],
+          "leading_sigma": 0.0,
+          "relative_errors": [
+            null,
+            null
+          ],
+          "trailing_sigma": 0.0
+        }
+      }
+    },
+    "sparse_near_equal_spacing": {
+      "backward_spacing_us": 1.4550783633161066,
+      "errors": [
+        0.0,
+        18.587976302691597,
+        0.0
+      ],
+      "forward_spacing_us": 1.455078363316107,
+      "oracle_sigma": 1.9493937521408537e-15,
+      "policies": {
+        "mantid": {
+          "absolute_errors": [
+            null,
+            null
+          ],
+          "leading_sigma": null,
+          "relative_errors": [
+            null,
+            null
+          ],
+          "trailing_sigma": null
+        },
+        "stable": {
+          "absolute_errors": [
+            1.1428617510264621e-16,
+            1.1428617510264621e-16
+          ],
+          "leading_sigma": 2.0636799272435e-15,
+          "relative_errors": [
+            0.058626521695340106,
+            0.058626521695340106
+          ],
+          "trailing_sigma": 2.0636799272435e-15
+        }
+      }
+    },
+    "unequal_independent_observations": {
+      "backward_spacing_us": 1.3,
+      "errors": [
+        2.0,
+        10.0,
+        3.0
+      ],
+      "forward_spacing_us": 1.7,
+      "oracle_sigma": 1.479610333641851,
+      "policies": {
+        "mantid": {
+          "absolute_errors": [
+            6.661338147750939e-16,
+            6.661338147750939e-16
+          ],
+          "leading_sigma": 1.4796103336418502,
+          "relative_errors": [
+            -4.440892098500626e-16,
+            -4.440892098500626e-16
+          ],
+          "trailing_sigma": 1.4796103336418502
+        },
+        "stable": {
+          "absolute_errors": [
+            2.220446049250313e-16,
+            2.220446049250313e-16
+          ],
+          "leading_sigma": 1.4796103336418507,
+          "relative_errors": [
+            -1.1102230246251565e-16,
+            -1.1102230246251565e-16
+          ],
+          "trailing_sigma": 1.4796103336418507
+        }
+      }
+    },
+    "uniform_independent_observations": {
+      "backward_spacing_us": 1.5,
+      "errors": [
+        2.0,
+        1000.0,
+        3.0
+      ],
+      "forward_spacing_us": 1.5,
+      "oracle_sigma": 1.2018504251546631,
+      "policies": {
+        "mantid": {
+          "absolute_errors": [
+            9.417355784080428e-12,
+            9.417355784080428e-12
+          ],
+          "leading_sigma": 1.2018504251640805,
+          "relative_errors": [
+            7.83573206319943e-12,
+            7.83573206319943e-12
+          ],
+          "trailing_sigma": 1.2018504251640805
+        },
+        "stable": {
+          "absolute_errors": [
+            0.0,
+            0.0
+          ],
+          "leading_sigma": 1.2018504251546631,
+          "relative_errors": [
+            0.0,
+            0.0
+          ],
+          "trailing_sigma": 1.2018504251546631
+        }
+      }
+    }
+  },
+  "original_projects_accessed": false,
+  "provenance": {
+    "benchmarks/validate_dgs_numerical_alternatives.py": "b67491d27b33c304c1a1e8801759828560ca66daf63fa7cd78810b402a09fbbf",
+    "src/nfit/_mdevent_numba.py": "3dbebea0025a71c334da2e240984103562cc37a121171ee6ee283cf74185f2a2",
+    "src/nfit/dgs_reduction_policy.py": "42dc703f4a7be40ff08a488bc7c03a6b680069d408a9dec88812970c9a2b5d2c",
+    "src/nfit/event_bin_indices.py": "54705ca5c344cba6030dd245184f60b99a55f0068d38a2be3b9d1a9a41057050",
+    "src/nfit/mdevent.py": "6a05eae22d8effa694921ffeb35cf5c9a510d884b8d3cc69a8f8e54de084737f",
+    "src/nfit/raw_dgs_monitors.py": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229"
+  },
+  "seed": 20261004,
+  "trajectory": {
+    "definition": "Per-voxel exact analytic path intersections on each policy's own effective edges; no production crossing enumeration or midpoint membership in the oracle.",
+    "narrow_fringe_grid": {
+      "Ei_meV": 60.0,
+      "energy_transfer_window_meV": [
+        0.0,
+        40.0
+      ],
+      "policies": {
+        "high_precision": {
+          "actual_total": 2.188163626438586e-06,
+          "compiled_backend": {
+            "coverage_membership_disagreements": 0,
+            "fringe_max_relative_error": 7.47888011975314e-10,
+            "max_absolute_error": 5.431215703617805e-15,
+            "max_error_divided_by_peak": 1.489253065973346e-08
+          },
+          "coverage_membership_disagreements": 0,
+          "exposure_units": "meV times fixed detector/charge weight",
+          "fringe_max_relative_error": 7.47888011975314e-10,
+          "max_absolute_error": 5.431215703617805e-15,
+          "max_error_divided_by_peak": 1.489253065973346e-08,
+          "max_relative_error_in_covered_bins": 1.4892530930506746e-08,
+          "oracle_total": 2.1881636234939205e-06
+        },
+        "mantid": {
+          "unsupported_grid_guard": "Mantid event precision cannot distinguish the requested bin edges; use high_precision"
+        }
+      },
+      "shape": [
+        6,
+        1,
+        1,
+        1
+      ]
+    },
+    "near_coincident_crossings": {
+      "Ei_meV": 60.11633518019062,
+      "energy_transfer_window_meV": [
+        19.0,
+        21.0
+      ],
+      "policies": {
+        "high_precision": {
+          "actual_total": 1.9999999999999942,
+          "compiled_backend": {
+            "coverage_membership_disagreements": 0,
+            "fringe_max_relative_error": 8.819298455427656e-10,
+            "max_absolute_error": 5.10702591327572e-15,
+            "max_error_divided_by_peak": 1.021405182655144e-14
+          },
+          "coverage_membership_disagreements": 0,
+          "exposure_units": "meV times fixed detector/charge weight",
+          "fringe_max_relative_error": 8.819298455427656e-10,
+          "max_absolute_error": 5.10702591327572e-15,
+          "max_error_divided_by_peak": 1.021405182655144e-14,
+          "max_relative_error_in_covered_bins": 8.819298455427656e-10,
+          "oracle_total": 2.0
+        },
+        "mantid": {
+          "actual_total": 1.9999999999999942,
+          "compiled_backend": {
+            "coverage_membership_disagreements": 1,
+            "fringe_max_relative_error": 1.0,
+            "max_absolute_error": 9.999999373011548e-08,
+            "max_error_divided_by_peak": 1.9999998746023095e-07
+          },
+          "coverage_membership_disagreements": 1,
+          "exposure_units": "meV times fixed detector/charge weight",
+          "fringe_max_relative_error": 1.0,
+          "max_absolute_error": 9.999999373011548e-08,
+          "max_error_divided_by_peak": 1.9999998746023095e-07,
+          "max_relative_error_in_covered_bins": 1.0,
+          "oracle_total": 2.0
+        }
+      },
+      "shape": [
+        10,
+        1,
+        1,
+        4
+      ]
+    },
+    "ordinary_grid": {
+      "Ei_meV": 60.0,
+      "energy_transfer_window_meV": [
+        0.0,
+        40.0
+      ],
+      "policies": {
+        "high_precision": {
+          "actual_total": 39.99999999999999,
+          "compiled_backend": {
+            "coverage_membership_disagreements": 0,
+            "fringe_max_relative_error": 4.6173024309453275e-14,
+            "max_absolute_error": 1.865174681370263e-14,
+            "max_error_divided_by_peak": 7.460698725481052e-15
+          },
+          "coverage_membership_disagreements": 0,
+          "exposure_units": "meV times fixed detector/charge weight",
+          "fringe_max_relative_error": 4.6173024309453275e-14,
+          "max_absolute_error": 1.865174681370263e-14,
+          "max_error_divided_by_peak": 7.460698725481052e-15,
+          "max_relative_error_in_covered_bins": 4.6173024309453275e-14,
+          "oracle_total": 40.0
+        },
+        "mantid": {
+          "actual_total": 39.99999999999999,
+          "compiled_backend": {
+            "coverage_membership_disagreements": 0,
+            "fringe_max_relative_error": 4.6173024309453275e-14,
+            "max_absolute_error": 1.865174681370263e-14,
+            "max_error_divided_by_peak": 7.460698725481052e-15
+          },
+          "coverage_membership_disagreements": 0,
+          "exposure_units": "meV times fixed detector/charge weight",
+          "fringe_max_relative_error": 4.6173024309453275e-14,
+          "max_absolute_error": 1.865174681370263e-14,
+          "max_error_divided_by_peak": 7.460698725481052e-15,
+          "max_relative_error_in_covered_bins": 4.6173024309453275e-14,
+          "oracle_total": 40.0
+        }
+      },
+      "shape": [
+        8,
+        1,
+        10,
+        16
+      ]
+    }
+  }
+}
