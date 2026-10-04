@@ -918,6 +918,15 @@ declared target and assumptions. Pooling estimates an exposure-weighted field
 when intensity varies within a bin; an equal-coordinate average is a separate
 target requiring a sampling model.
 
+**Accepted monitor policy (2026-10-04):** retain Mantid-compatible peak fitting
+as the default; keep the stable derivative-variance treatment optional. The
+real-data fallback failures were in the earlier Python translation: negative
+roundoff raised an exception, whereas Mantid propagated NaN into its peak-tail
+stopping comparison and completed calibration. The corrected compatibility path
+calibrates all 617 NiO runs without fallbacks and matches Mantid Ei/T0 to roundoff.
+The stable alternative avoids the intermediate NaN, but changes some peak tails;
+controlled tests have not demonstrated better calibration accuracy.
+
 **Deferred statistical follow-ups:** these require later checkpoints and do not
 block acceptance of the intensity estimator.
 

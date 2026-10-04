@@ -455,7 +455,10 @@ Raw-DGS and MDEvent group settings retain the following choices after import:
 These are numerical and statistical conventions, not interchangeable accuracy
 levels. The stable monitor option can select different peak tails and therefore
 change resolved $E_i$ and $T_0$; improved calibration accuracy has not been
-established for this alternative. The event policy can move boundary events and
+established for this alternative. The default preserves GetEi's NaN-dependent
+peak-tail stopping when an expanded variance becomes slightly negative through
+roundoff; this intermediate NaN does not itself mean calibration failed.
+The event policy can move boundary events and
 normalization midpoints between cells. Mantid precision follows its uniform-grid
 MDNorm/BinMD conventions, including float32 trajectory-midpoint indexing.
 Uniform-grid extents follow MDNorm's six-significant-digit text formatting
