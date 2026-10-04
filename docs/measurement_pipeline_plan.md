@@ -64,8 +64,8 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
 | 6A | Finish DGS correctness and background validation | Complete; accepted by Paul |
 | 6A-P | Complete realistic performance comparisons and useful speedups | Complete; accepted by Paul |
-| 6A1 | Validate optional numerical and statistical methods | Controlled truth checks complete; review pending, defaults unchanged |
-| 6A2 | Review evidence and choose future defaults with Paul | In progress; estimator policy accepted |
+| 6A1 | Validate optional numerical and statistical methods | Complete; controlled checks reviewed, limitations recorded |
+| 6A2 | Review evidence and choose future defaults with Paul | Complete |
 | 6B | Validate migration, finish documentation, and remove this plan | Pending |
 
 Statuses are **Pending**, **Pending review**, **In progress**, **Complete**,
@@ -866,7 +866,7 @@ it is not the initial saved-dataset headline.
 
 ### 6A1 — Validate optional numerical and statistical methods
 
-**Status: Pending review. Controlled validation passes; defaults unchanged.**
+**Status: Complete; controlled evidence reviewed and follow-ups deferred.**
 
 - [x] Compare optional precision, stable monitor fitting, trajectory-energy and
   symmetry-variance treatments against analytic or simulated truth.
@@ -879,7 +879,7 @@ it is not the initial saved-dataset headline.
   speed, memory, bias and uncertainty performance for each declared target.
 - [x] Document which methods improve an estimate under which assumptions, and
   which only reproduce a different convention.
-- [ ] Review the evidence and remaining physical-calibration gaps with Paul.
+- [x] Review the evidence and remaining physical-calibration gaps with Paul.
 
 Include the confirmed 12.03 ppm energy-boundary residual and Python/compiled
 trajectory classification difference as explicit cases. Agreement with another
@@ -904,7 +904,7 @@ controlled pulse examples or validate HYSPEC's separate T0-formula branch.
 
 ### 6A2 — Review evidence and choose future defaults with Paul
 
-**Status: In progress; individual decisions are under review.**
+**Status: Complete; defaults and deferred follow-ups accepted.**
 
 Paul accepted DGS correctness on 2026-10-04 and deferred covariance between
 symmetry-related sample bins to a later checkpoint. Review other statistical
@@ -946,6 +946,12 @@ common-intensity estimator to a later statistical checkpoint. That estimator
 requires a declared common response and complete shared-background dependencies;
 it must not silently replace the exposure-weighted field target.
 
+**Accepted cache migration (2026-10-04):** Paul does not require historical
+default preservation. Missing DGS policy fields use current defaults. Reduction
+version 8 and histogram policy version 4 invalidate prior DGS caches, including
+derived backgrounds, when requested. Explicit choices remain effective. No
+scientific project is rewritten by this application update.
+
 **Deferred performance follow-up (2026-10-04):** accelerate high-precision
 projection/accumulation with a compiled fused path after these decisions finish.
 Benchmark against the existing float64 path with declared numerical tolerances,
@@ -972,10 +978,10 @@ block acceptance of the intensity estimator.
   against original per-angle acquisitions and preserve the current saved
   projects until that later checkpoint.
 
-- [ ] Present the accepted methods, assumptions, limitations and compatibility paths.
-- [ ] Agree which defaults change and which treatments remain optional.
-- [ ] Define explicit migration for absent legacy fields so old projects retain
-  their resolved scientific settings.
+- [x] Present the accepted methods, assumptions, limitations and compatibility paths.
+- [x] Agree which defaults change and which treatments remain optional.
+- [x] Adopt current defaults for absent DGS settings and invalidate old DGS
+  caches for lazy recomputation; preserve explicit saved choices.
 
 This decision follows validation and complete dependency propagation for the
 selected workflow. Distinguish correctness fixes from adopting a new estimator.

@@ -526,11 +526,15 @@ The cache signature includes the raw, vanadium, and mask file paths, sizes, and
 nanosecond modification/change times, together with incident-energy/time-zero
 overrides, reduction energy bounds, pulse filtering, efficiency settings, and
 the monitor and event-precision policies, and HYSPEC preprocessing settings.
-Current reduction version 6 includes resolved run-log geometry, corrected T0
-formula evaluation, and HYSPEC preprocessing. Earlier reduced-event caches
-regenerate when binning is requested.
+Current reduction version 8 invalidates earlier DGS reduced-event caches.
+DGS histogram policy version 4 also invalidates earlier histograms and their
+derived backgrounds. Missing policy settings use the current Mantid-compatible
+defaults; explicit saved choices remain effective. Rebuilding occurs when data
+are requested, and requires the original reduction inputs. Opening a project
+does not load reduced events or start a rebuild.
 Changes to these inputs regenerate affected caches. If a source file is absent,
-its last saved signature is retained so the cached reduction remains usable.
+its last saved file signature is retained so a current-version cached reduction
+remains usable. An invalidated cache still requires the original inputs.
 Changed reduction settings still require the original inputs for regeneration.
 Instrument geometry is
 contained in the raw file and is checked independently on a new reduction.

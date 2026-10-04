@@ -297,10 +297,10 @@ def get_reduction_overrides(group, dataset) -> dict[str, Any]:
 
 
 def effective_reduction_config(group, dataset=None) -> dict[str, Any]:
-    """Return the legacy shared configuration with a validated run overlay.
+    """Return the shared configuration with a validated run overlay.
 
-    Absent legacy keys stay absent. This preserves importer defaults and old
-    cache signatures; this pure read does not create or refresh a recipe.
+    Absent keys use current importer defaults when executed. Explicit choices
+    remain intact; this pure read does not create or refresh a recipe.
     """
     _, config, _ = _format_config(group)
     result = copy.deepcopy(config)

@@ -330,3 +330,50 @@ def test_mantid_he3_convention_invalidates_only_affected_reductions_and_histogra
     assert result.metadata["reduced_event_cache"] == {
         "hits": int(not changed), "misses": int(changed),
     }
+
+
+@pytest.mark.parametrize("explicit_alternatives", [False, True])
+def test_old_saved_dgs_reduction_rebuilds_lazily_with_current_defaults(
+    tmp_path, monkeypatch, explicit_alternatives,
+):
+    from nfit import project_composites, raw_dgs_cache
+    from nfit.dgs_reduction_policy import resolved_dgs_reduction_policies
+
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    config = group.metadata["raw_dgs"]
+    keys = ("monitor_variance_policy", "event_precision_policy", "symmetry_variance_policy")
+    for key in keys:
+        config.pop(key, None)
+    if explicit_alternatives:
+        config.update(monitor_variance_policy="stable", event_precision_policy="high_precision",
+                      symmetry_variance_policy="within_bin_covariance")
+    with monkeypatch.context() as old:
+        old.setattr(raw_dgs_cache, "RAW_DGS_REDUCTION_VERSION", 7)
+        old.setattr(project_composites, "RAW_DGS_REDUCTION_VERSION", 7)
+        old.setattr(project_composites, "DGS_REDUCTION_POLICY_VERSION", 3)
+        bin_raw_dgs_group(group, **OPTIONS)
+        previous = project_composites._composite_cache_signature(group)
+        path = tmp_path / "old.nfit"
+        save_project(NfitProject([DataGroup("test", subgroups=[group])]), path)
+    with monkeypatch.context() as lazy:
+        def fail(*args, **kwargs):
+            pytest.fail("opening an old project loaded scientific arrays")
+        lazy.setattr(np, "load", fail)
+        reopened = load_project(path)
+    group = reopened.data_groups[0].subgroups[0]
+    assert project_composites._composite_cache_signature(group) != previous
+    effective = resolved_dgs_reduction_policies(group.metadata["raw_dgs"])
+    assert effective == ({
+        "monitor_variance_policy": "stable", "event_precision_policy": "high_precision",
+        "symmetry_variance_policy": "within_bin_covariance",
+    } if explicit_alternatives else {
+        "monitor_variance_policy": "mantid", "event_precision_policy": "mantid",
+        "symmetry_variance_policy": "independent_copies",
+    })
+    result = bin_raw_dgs_group(group, **OPTIONS)
+    assert result.metadata["reduced_event_cache"] == {"hits": 0, "misses": 1}
+    repeated = bin_raw_dgs_group(group, **OPTIONS)
+    assert repeated.metadata["reduced_event_cache"] == {"hits": 1, "misses": 0}
+    assert_equal(repeated, result)
