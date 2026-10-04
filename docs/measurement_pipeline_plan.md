@@ -747,8 +747,8 @@ resident controls. Continuous rotation remains deferred.
 crystals; its coarse 180° sweep averages orientation effects. Retain detector
 direction and energy dependence. Encoder offsets between acquisitions are within
 instrument tolerance and do not justify substituting sample geometry into the
-dummy denominator. Current averaging is charge weighted; equal-angle weighting
-is a later statistical comparison.
+dummy denominator. Current averaging is charge weighted. Paul prefers an explicit
+angular-average option for the dummy and has scheduled it for a later checkpoint.
 
 Exact cached-field replay estimates the sample-exposure-weighted subtracted
 field and combines each shared background event's coefficients before squaring.
@@ -931,6 +931,13 @@ block acceptance of the intensity estimator.
   coverage with discrete binning. Apply fractional coefficients consistently
   to signal, exposure and source-dependent uncertainty before considering a
   default change.
+- [ ] Add explicit angular averaging of measured dummy backgrounds, as requested
+  by Paul on 2026-10-04. Normalize each acquisition using its own exposure and
+  geometry, then apply declared angular weights. Retain detector/energy
+  dependence, per-angle provenance and shared-source uncertainty. Distinguish
+  the mean of measured angles from a continuous angular integral, validate
+  against original per-angle acquisitions and preserve the current saved
+  projects until that later checkpoint.
 
 - [ ] Present the accepted methods, assumptions, limitations and compatibility paths.
 - [ ] Agree which defaults change and which treatments remain optional.

@@ -55,6 +55,11 @@ tracks the staged implementation and review checkpoints for these changes.
   previews. Exact background profile marginal errors still omit covariance between
   final bins and unrecorded sample correlations; subsequent coarsening, combination
   and joint GLS fits need original-source replay or a represented joint model.
+- Add explicit angular averaging for measured dummy backgrounds, retaining each
+  acquisition's exposure, geometry, detector/energy dependence and source
+  identity. Apply declared angular weights after normalization and distinguish
+  a mean of measured angles from continuous-angle quadrature. Validate with
+  original per-angle data before changing existing background recipes.
 - Add continuous sample-rotation DGS event reconstruction when an acquisition
   requires it. Current raw reduction matches Shiver's time-weighted fixed
   orientation per run; pulse-resolved rotation needs explicit interpolation,
