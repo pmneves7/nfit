@@ -62,7 +62,7 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 4B | Add grouped, repeated, and stacked run expressions | Complete |
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Complete |
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
-| 6A | Finish DGS correctness and background validation | Technical checks complete; review pending |
+| 6A | Finish DGS correctness and background validation | Complete; accepted by Paul |
 | 6A-P | Complete realistic performance comparisons and useful speedups | Technical work complete; review pending |
 | 6A1 | Validate optional numerical and statistical methods | Controlled truth checks complete; review pending, defaults unchanged |
 | 6A2 | Review evidence and choose future defaults with Paul | Pending |
@@ -690,7 +690,7 @@ production nfit and its unit tests.
 
 ### 6A — Finish DGS correctness and background validation
 
-**Status: Technical checks complete; review pending.** Geometry, timing,
+**Status: Complete; accepted by Paul on 2026-10-04.** Geometry, timing,
 directional background reconstruction and cached-background profile uncertainties
 are validated. Time-weighted angle replay matches fresh Mantid histogramming;
 remaining accepted differences have explicit attribution.
@@ -707,7 +707,7 @@ Completed work:
 - [x] Preserve shared dummy-event correlations through supported cached-field
   cuts, hierarchical bank composites, asynchronous GUI replay and exports.
 
-Remaining work:
+Final checks:
 
 - [x] Match Mantid's duration/accepted-time averaging of raw DGS rotation logs.
   Run 505784 matches the reference angle exactly. Record effective angles and
@@ -723,7 +723,9 @@ Remaining work:
   Paul accepts the known observed-extrema float32 event clipping as immaterial
   rounding; no loss-emulation option is needed. Separate that rounding from
   recipe differences before acceptance.
-- [ ] Review the DGS correctness results with Paul.
+- [x] Review the DGS correctness results with Paul. Complete sample covariance
+  between bins created by symmetry is explicitly deferred to a later checkpoint;
+  it does not block this accepted reduction/background scope.
 
 **Corrected angle issue:** nfit previously used 48.5016271525° for run 505784.
 Version 0.116.3 uses Mantid's pause-filtered time mean of
@@ -898,6 +900,11 @@ controlled pulse examples or validate HYSPEC's separate T0-formula branch.
 ### 6A2 — Review evidence and choose future defaults with Paul
 
 **Status: Pending; requires a decision from Paul.**
+
+Paul accepted DGS correctness on 2026-10-04 and deferred covariance between
+symmetry-related sample bins to a later checkpoint. Review other statistical
+choices separately; covariance work requires its own follow-up authorization
+and complete propagation through final cuts before any default adoption.
 
 - [ ] Present the accepted methods, assumptions, limitations and compatibility paths.
 - [ ] Agree which defaults change and which treatments remain optional.
