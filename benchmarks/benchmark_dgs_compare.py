@@ -36,7 +36,8 @@ def _summary(actual, reference):
                 finite_support_equal=bool(np.array_equal(np.isfinite(actual), np.isfinite(reference))))
 
 
-def _whole_cells(actual, reference, *, require_native_parity, block_cells=1_000_000):
+def _whole_cells(actual, reference, *, require_native_parity,
+                 require_rounding_parity=False, block_cells=1_000_000):
     shape = actual[CHANNELS[0]].shape
     if shape != reference[CHANNELS[0]].shape:
         raise ValueError("Compared histograms have different shapes")
@@ -73,8 +74,8 @@ def _whole_cells(actual, reference, *, require_native_parity, block_cells=1_000_
             total["squared_difference"] += float(np.sum((aa-bb)**2))
             total["squared_reference"] += float(np.sum(bb**2))
             total["reference_peak"] = max(total["reference_peak"], float(np.max(abs(bb), initial=0.)))
-            if require_native_parity:
-                if key == "normalization":
+            if require_native_parity or require_rounding_parity:
+                if key == "normalization" or (require_rounding_parity and key != "counts"):
                     np.testing.assert_allclose(a[key], b[key], rtol=1e-12, atol=0., equal_nan=True)
                 else:
                     np.testing.assert_array_equal(a[key], b[key])
@@ -84,7 +85,7 @@ def _whole_cells(actual, reference, *, require_native_parity, block_cells=1_000_
             full = (point[0]+start, *point[1:])
             differences.append(dict(index=full, actual=float(a["counts"][point]),
                                     reference=float(b["counts"][point])))
-        if require_native_parity:
+        if require_native_parity or require_rounding_parity:
             np.testing.assert_array_equal(an, bn)
     for total in totals.values():
         d = total.pop("squared_difference")
@@ -148,7 +149,10 @@ def main():
     parser.add_argument("reference", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--nio-cut", action="store_true")
-    parser.add_argument("--require-native-parity", action="store_true")
+    gates = parser.add_mutually_exclusive_group()
+    gates.add_argument("--require-native-parity", action="store_true")
+    gates.add_argument("--require-native-rounding-parity", action="store_true",
+                       help="Require exact counts/edges/support and 1e-12 relative C/V/N after changed sum grouping")
     args = parser.parse_args()
     before = {str(path): [path.stat().st_size, path.stat().st_mtime_ns]
               for path in (args.actual, args.reference)}
@@ -160,13 +164,15 @@ def main():
             if a.shape != b.shape:
                 raise ValueError("Compared edge arrays have different shapes")
             edges.append(_summary(a, b))
-            if args.require_native_parity:
+            if args.require_native_parity or args.require_native_rounding_parity:
                 np.testing.assert_array_equal(a, b)
         result = dict(host=socket.getfqdn(), actual=str(args.actual), reference=str(args.reference),
                       inputs=before, edges=edges,
                       native_candidate_parity_required=args.require_native_parity,
+                      native_rounding_parity_required=args.require_native_rounding_parity,
                       whole_cells=_whole_cells(actual, reference,
-                                               require_native_parity=args.require_native_parity),
+                                               require_native_parity=args.require_native_parity,
+                                               require_rounding_parity=args.require_native_rounding_parity),
                       nio_cut=_nio_cut(actual, reference) if args.nio_cut else None,
                       timing_scope="untimed scientific diagnostics; excluded from workflow wall time",
                       script_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())

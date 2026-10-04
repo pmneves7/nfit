@@ -85,6 +85,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "raw_dgs_goniometer.py",
     PACKAGE_ROOT / "raw_dgs_pulses.py",
     PACKAGE_ROOT / "dgs_trajectory_tasks.py",
+    PACKAGE_ROOT / "dgs_symmetry_cache.py",
     PACKAGE_ROOT / "mdevent_detector_masks.py",
     PACKAGE_ROOT / "histogram_reduction.py",
     PACKAGE_ROOT / "dgs_normalization.py",
@@ -454,3 +455,10 @@ def test_source_selection_public_exports_are_authoritative():
         assert getattr(nfit, name) is getattr(source_selection, name)
     for name in ("import_source_selection", "source_selection_script"):
         assert getattr(nfit, name) is getattr(source_selection_imports, name)
+
+
+def test_incremental_symmetry_service_has_no_coordinator_or_reducer_imports():
+    tree = ast.parse((PACKAGE_ROOT / "dgs_symmetry_cache.py").read_text())
+    modules = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+    modules.extend(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names)
+    assert not any(module.startswith(("raw_dgs", "mdevent", "project_", "PySide", "PyQt", "qt_")) for module in modules)

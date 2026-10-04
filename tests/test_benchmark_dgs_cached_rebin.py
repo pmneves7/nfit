@@ -174,3 +174,20 @@ def test_real_cached_project_rebin_save_and_input_preservation(helper, tmp_path)
     intervals = next(stage for stage in receipt["stages"] if stage["label"] == "saved_event_cache_bin_12")["progress_intervals_seconds"]
     assert "raw_dgs_events" in intervals and "raw_dgs_normalization" in intervals
     assert "primary_workflow_seconds" not in receipt
+
+
+def test_grid_guard_uses_authoritative_mantid_edges_for_nonbinary_steps(helper, tmp_path):
+    from nfit.dgs_reduction_policy import dgs_histogram_edges
+
+    settings = _settings(tmp_path / "IPTS-42")
+    requested = [np.linspace(-1, 1, 68), np.linspace(-2, 2, 135),
+                 np.linspace(-1, 1, 102), np.linspace(-.25, 50.25, 102)]
+    settings["grid"]["bin_edges"] = [edge.tolist() for edge in requested]
+    resolved = dgs_histogram_edges(requested)
+    assert any(not np.array_equal(a, b) for a, b in zip(resolved, requested, strict=True))
+    histogram = SimpleNamespace(shape=tuple(len(edge)-1 for edge in resolved),
+                                axes=[SimpleNamespace(values=edge) for edge in resolved])
+    helper._validate_histogram_grid(histogram, settings)
+    histogram.axes[0].values = requested[0]
+    with pytest.raises(AssertionError, match="exact shared grid"):
+        helper._validate_histogram_grid(histogram, settings)

@@ -1343,6 +1343,47 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
     )
 
 
+def _raw_dgs_composite_histogram(group, config, progress_callback, *, symmetry_operations=None):
+    """One raw adapter dispatch for full and incremental symmetry binnings."""
+    node = group.node if isinstance(group, _CompositeScope) else group
+    lower, upper, num_bins = _composite_rebin_bounds(config)
+    common = {
+        "lower": lower,
+        "upper": upper,
+        "num_bins": num_bins,
+        "step_size": _composite_rebin_step_sizes(config),
+        "bin_edges": _composite_rebin_bin_edges(config),
+        "minimum_samples": _rebin_minimum_samples(config),
+        "datasets": _composite_candidates(group),
+        "max_batch_bytes": _rebin_max_batch_bytes(config),
+        "progress_callback": progress_callback,
+    }
+    raw_config = node.metadata.get("raw_dgs", {})
+    if raw_config.get("format") == "corelli-correlation-nexus":
+        common["fractional_axes"] = _rebin_fractional_axes(
+            config,
+            config.get("axes", []),
+        )
+    if config.get("coordinate_mode") == "powder":
+        return bin_raw_dgs_powder_group(node, **common)
+    else:
+        return bin_raw_dgs_group(
+            node,
+            vectors=[
+                axis.get("vector", _identity_vector(index, 4))
+                for index, axis in enumerate(config.get("axes", []))
+            ],
+            axis_names=[
+                str(axis.get("name", ("H", "K", "L", "DeltaE")[index]))
+                for index, axis in enumerate(config.get("axes", []))
+            ],
+            symmetry_operations=(symmetry_operations if symmetry_operations is not None else _rebin_symmetry_matrices(
+                config, _composite_root(group).lattice_parameters
+            )),
+            **common,
+        )
+
+
 def _composite_dataset_data(
     group: DataGroup | _CompositeScope,
     *,
@@ -1534,42 +1575,7 @@ def _composite_dataset_data(
             raise ValueError(
                 "raw direct-geometry composites must be imported inside a dataset group"
             )
-        lower, upper, num_bins = _composite_rebin_bounds(config)
-        common = {
-            "lower": lower,
-            "upper": upper,
-            "num_bins": num_bins,
-            "step_size": _composite_rebin_step_sizes(config),
-            "bin_edges": _composite_rebin_bin_edges(config),
-            "minimum_samples": _rebin_minimum_samples(config),
-            "datasets": _composite_candidates(group),
-            "max_batch_bytes": _rebin_max_batch_bytes(config),
-            "progress_callback": progress_callback,
-        }
-        raw_config = node.metadata.get("raw_dgs", {})
-        if raw_config.get("format") == "corelli-correlation-nexus":
-            common["fractional_axes"] = _rebin_fractional_axes(
-                config,
-                config.get("axes", []),
-            )
-        if config.get("coordinate_mode") == "powder":
-            result = bin_raw_dgs_powder_group(node, **common)
-        else:
-            result = bin_raw_dgs_group(
-                node,
-                vectors=[
-                    axis.get("vector", _identity_vector(index, 4))
-                    for index, axis in enumerate(config.get("axes", []))
-                ],
-                axis_names=[
-                    str(axis.get("name", ("H", "K", "L", "DeltaE")[index]))
-                    for index, axis in enumerate(config.get("axes", []))
-                ],
-                symmetry_operations=_rebin_symmetry_matrices(
-                    config, _composite_root(group).lattice_parameters
-                ),
-                **common,
-            )
+        result = _raw_dgs_composite_histogram(group, config, progress_callback)
     elif kind == "mdhisto":
         result = _composite_mdhisto_data(
             group,
@@ -2057,6 +2063,59 @@ def _apply_composite_backgrounds(
     return result
 
 
+def _incremental_raw_dgs_base(group, config, progress_callback):
+    """Offer exact-current unscaled bases to the independent-copy service."""
+    from .dgs_symmetry_cache import symmetry_reuse_worthwhile, try_expand_raw_dgs_symmetry
+
+    node = group.node if isinstance(group, _CompositeScope) else group
+    raw = node.metadata.get("raw_dgs", {})
+    if not isinstance(raw, Mapping):
+        return None
+    if (not isinstance(node, DatasetGroup) or raw.get("format") != "raw-direct-geometry-nexus"
+            or config.get("coordinate_mode", "hkle") != "hkle" or group.metadata.get("metadata_dimensions")
+            or any(_rebin_axis_bound_is_auto(axis, bound) for axis in config.get("axes", []) for bound in ("lower", "upper"))
+            or _hierarchical_composite_scopes(group)
+            or resolved_dgs_reduction_policies(raw)["symmetry_variance_policy"] != "independent_copies"
+            or _backend_value("_composite_dataset_data", _composite_dataset_data) is not _composite_dataset_data):
+        return None
+
+    grid_cells = 1
+    for count in _composite_rebin_bounds(config)[2]:
+        grid_cells *= int(count)
+    source_counts = [dataset.metadata.get("event_count") for dataset in _composite_candidates(group)
+                     if dataset.fit_weight > 0]
+    # Missing counts must not become a partial estimate for a large lazy cache.
+    # Weights do not multiply the number of event projections saved.
+    source_event_count = (sum(int(count) for count in source_counts)
+                          if all(isinstance(count, (int, np.integer))
+                                 and not isinstance(count, (bool, np.bool_)) and count >= 0
+                                 for count in source_counts) else None)
+
+    def signature(recipe):
+        return _composite_cache_signature(group, config_override=recipe, include_backgrounds=False)
+
+    def candidates():
+        for binning in data_group_composite_binnings(group):
+            recipe = binning["config"]
+            def load(recipe=recipe, binning=binning):
+                identity = signature(recipe)
+                key = _matching_composite_base_key(group, identity, None if binning["fit"] else binning["id"])
+                cached = None if key is None else _COMPOSITE_DATA_CACHE.get(key)
+                return cached[1] if cached is not None and cached[0] == identity else None
+            yield recipe, load
+
+    return try_expand_raw_dgs_symmetry(
+        config, candidates=candidates(), signature=signature,
+        operations=lambda recipe: (_rebin_symmetry_matrices(recipe, _composite_root(group).lattice_parameters)
+                                   or (np.eye(3),)),
+        reduce_missing=lambda matrices: _raw_dgs_composite_histogram(
+            group, config, progress_callback, symmetry_operations=matrices),
+        finalize=lambda data: _apply_mdhisto_coverage_threshold(data, config),
+        minimum_samples=_rebin_minimum_samples(config),
+        worthwhile=lambda count: symmetry_reuse_worthwhile(grid_cells, source_event_count, count),
+    )
+
+
 def _cached_composite_dataset_data(
     group: DataGroup,
     *,
@@ -2150,13 +2209,15 @@ def _cached_composite_dataset_data(
             progress_callback({"stage": "composite_scaling", "message": f"Updating scale and background subtraction from cached histograms: {group.name}"})
         base = base_cached[1]
     else:
-        base = composite_dataset_data(
-            group,
-            progress_callback=progress_callback,
-            config_override=config,
-            apply_spectral_channels=False,
-            apply_backgrounds=False,
-        )
+        base = _incremental_raw_dgs_base(group, config, progress_callback)
+        if base is None:
+            base = composite_dataset_data(
+                group,
+                progress_callback=progress_callback,
+                config_override=config,
+                apply_spectral_channels=False,
+                apply_backgrounds=False,
+            )
         base_signature = _composite_cache_signature(
             group, config_override=config, binning_id=binning_id, include_backgrounds=False
         )

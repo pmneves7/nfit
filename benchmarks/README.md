@@ -66,8 +66,17 @@ baseline: C/V/counts and edges must match literally, with roundoff tolerance
 for exposure. Cross-engine reports retain cell discrepancies rather than
 assuming that matching aggregate totals proves numerical agreement.
 
+The comparator's `--require-native-parity` gate requires literal C/V/counts and
+edges, exact exposure support and 10⁻¹² relative exposure agreement. For validated
+incremental symmetry sums, `--require-native-rounding-parity` explicitly permits
+10⁻¹² relative C/V/exposure differences caused by changed addition grouping,
+while still requiring literal counts/edges and exact support. Neither gate
+accepts nonfinite support changes or drops uncovered cells from comparison.
+
 See [current node19 workflow measurements](results/dgs-user-workflows-node19.md)
 for completed timings, numerical comparisons and the scope of pending jobs.
+The [symmetry-cache measurements](results/dgs-symmetry-cache-node19.md) use
+matched saved projects and report the benefit of calculating only new operations.
 The [remaining performance audit](results/dgs-remaining-performance.md)
 distinguishes worthwhile profiling candidates from measured or rejected gains.
 

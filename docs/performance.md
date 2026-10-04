@@ -79,6 +79,28 @@ are accumulated from every original source as before. The Python reference path
 is unchanged. This reuse preserves exposure up to floating-point summation
 rounding and does not create a shared cache between different binnings.
 
+Named raw-DGS HKLE binnings can reuse a compatible unsubtracted histogram when
+its symmetry operations are an exact multiset subset of the requested operations.
+Only missing operations are reduced and binned; retained event numerator,
+variance, counts and exposure are added before recalculating intensity,
+uncertainty, coverage and masks. Complete source, geometry, calibration, weight,
+mask, grid and policy signatures must still match. This uses the existing lazy
+project histogram caches; it adds no saved format or application preference.
+
+Cache validation and joining scan the whole output grid. For grids of at least
+250,000 cells, nfit uses incremental symmetry only when known source event counts
+and cached operations imply at least eight saved event projections per output
+cell. Unknown counts or smaller workloads use full recalculation without loading
+the partial cache. This conservative cost estimate prevents cache scans from
+slowing down a few-run job on a very large grid; it changes no scientific setting.
+
+This reuse applies to independent-copy variance on fixed HKLE grids. Powder,
+metadata axes, automatic bounds, reduced MDE inputs, source dependencies and
+copy-covariance treatments retain full replay. Partial masks never remove retained
+numerator contributions. Grouping floating-point additions can change their last
+bits, while counts and exposure support retain the full-replay result. Direct
+stateless reduction calls have no project histogram cache to reuse.
+
 `benchmarks/profile_dgs_workflow.py` measures a real MDE source, including reads,
 run selection, trajectory normalization, and finalization. It reports first and
 repeated calls separately and can compare every output cell with the reference

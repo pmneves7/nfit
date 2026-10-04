@@ -102,6 +102,8 @@ different Python.
   event projection/accumulation using the policy-owned affine transform.
 - `src/nfit/dgs_trajectory_tasks.py`: exact-identity exposure task pooling after
   complete detector-geometry checks.
+- `src/nfit/dgs_symmetry_cache.py`: guarded reuse of additive raw-DGS statistics
+  for expanded symmetry binnings.
 - `src/nfit/reduction_recipes.py`, `reduction_runtime.py`, and
   `reduction_recipe_gui.py`: source/reduction schemas, execution provenance,
   targeted edits, public replay, and focused Qt controls.

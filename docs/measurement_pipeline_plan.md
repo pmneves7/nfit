@@ -63,7 +63,7 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 5A | Separate Sources, Reduction, Binning, and Plot controls | Complete |
 | 5B | Expose statistical diagnostics and complete script replay | Complete |
 | 6A | Finish DGS correctness and background validation | Technical checks complete; review pending |
-| 6A-P | Complete realistic performance comparisons and useful speedups | In progress; full SEQUOIA/HYSPEC comparisons and pooling accepted, ordered event parallelism under test |
+| 6A-P | Complete realistic performance comparisons and useful speedups | Technical work complete; review pending |
 | 6A1 | Validate optional numerical and statistical methods | Controlled truth checks complete; review pending, defaults unchanged |
 | 6A2 | Review evidence and choose future defaults with Paul | Pending |
 | 6B | Validate migration, finish documentation, and remove this plan | Pending |
@@ -769,11 +769,12 @@ Evidence for former 6A-R, R2 and R3a/R3b is retained in:
 
 ### 6A-P — Complete realistic performance comparisons and useful speedups
 
-**Status: In progress.** The full ordinary Shiver reference and its numerical
-comparison and post-angle-correction native replay are complete. Guarded
-trajectory pooling passes the full-cube gates. Full HYSPEC timing and the
-normalization worker sweep are complete. Ordered event parallelism is under
-real-cache testing on node19.
+**Status: Pending review.** Matched full SEQUOIA/HYSPEC workflows, every-cell
+comparisons, trajectory pooling, guarded symmetry-cache expansion and the
+remaining-cost profile are complete. Ordered event parallelism was tested but
+its small workflow gain does not justify adoption. Local and ORNL installation
+synchronization completes this checkpoint; scientific default changes remain
+in 6A2.
 
 - [x] Fuse event projection/accumulation and reuse exact-text mask parsing.
 - [x] Reuse successfully inspected scalar metadata and exact geometry arithmetic
@@ -790,44 +791,54 @@ real-cache testing on node19.
   time-weighted-angle build. Require literal event statistics, identical exposure
   support and every nonzero exposure cell within 10⁻¹² relative.
 - [x] Measure representative full HYSPEC workflows after the 6A corrections.
-- [ ] Profile the remaining dominant costs, particularly trajectory normalization.
+- [x] Measure disjoint-bin event parallelism with all 617 real cached sources.
+  Keep the production path unchanged: its 14.5 s event-pass gain is only about
+  5% of the complete rebin/save workflow and adds separate numerical paths.
+- [x] Reuse compatible cached symmetry contributions and calculate only the
+  missing operations. Validate unchanged source/grid/policy signatures, full
+  statistics and recomputed masks against complete replay; measure saved workflows.
+- [x] Profile the remaining dominant costs, particularly trajectory normalization.
   Adopt further speedups only when real workflows show a worthwhile gain and
   preserve the selected numerical treatment; otherwise record the limiting cost.
 - [ ] Review timings, numerical differences and remaining opportunities with Paul.
 
-**Current evidence:** on the same node and thread limits, the 24-run SEQUOIA
-initial saved dataset takes 51.066 s in nfit versus 565.660 s in Shiver (11.1×).
-Every event numerator, variance and contribution count agrees; the specified
-low-coverage cut agrees near 10⁻¹³. Tiny whole-cube exposure residuals are
-recorded separately. The complete 617-run reference additionally validates
-literal event statistics and identical exposure support in both symmetry cubes.
+**Current measured workflows:** same node, 64-thread ceilings, matching settings,
+loading and saving included. The reference is an ordinary sequential Shiver
+reduction with normal internal threading, followed by Mantid MDNorm.
 
-The full native initial saved dataset improves 567.152 → 503.554 s (9m27s →
-8m24s), and saved histogram access improves 39.706 → 7.926 s (5.0×).
-Candidate/baseline event arrays and edges are identical; every nonzero exposure
-cell agrees within 10⁻¹² relative. Later twelve-copy binning remains approximately
-258–263 s, including about 172–173 s in trajectory normalization. No improvement
-is claimed for that unchanged interval. Both HYSPEC bank pilots preserve native
-baseline results; their roughly nine-second initial workflows show no material
-total improvement. Their Shiver counterparts take 47.220/49.820 s, with the
-scientific differences still tracked under 6A.
+| Workflow | nfit | Shiver/Mantid |
+| --- | ---: | ---: |
+| SEQUOIA 617 runs, first saved six-operation dataset | 8m16s | 4h25m16s |
+| SEQUOIA, later twelve-operation bin and save | 3m19s | 52m26s |
+| HYSPEC 34° bank, 361 runs, first saved dataset | 1m25s | 23m55s |
+| HYSPEC, later twelve-operation bin and save | 34.4s | 1m42s |
 
-The next accepted optimization pools only checked identical trajectory tasks.
-It reduces full617 trajectory work by 34.8%, complete workflow time
-860.469 → 774.791 s, and cached twelve-copy binning 272.298 → 225.373 s.
-Event statistics and edges are literal; support is identical and every nonzero
-exposure cell agrees within 1.84×10⁻¹⁵ relative. Its initial saved dataset takes
-8m24s versus ordinary Shiver's 4h25m16s (31.5×); its later bin/save takes
-4m26s versus 52m26s (11.8×). Full workflow profiling and proposed further
-experiments are in `benchmarks/results/dgs-remaining-performance.md`.
+Checked trajectory pooling removes 34.8% of full SEQUOIA trajectory tasks.
+Compatible symmetry expansion reuses six operations and computes six missing
+ones. A separate matched saved-project control improves 260.527 → 200.654 s
+for SEQUOIA with the final workload guard; HYSPEC improves 49.665 → 41.626 s.
+These controls retain existing histograms and differ from the standard two-bin
+workflow above. Counts, C/V, masks and exposure support are exact over both full
+grids; exposure changes only through summation rounding. The standard native
+six/twelve gates agree in every nonzero exposure cell within 1.61×10⁻¹⁴
+relative, including the NiO low-coverage cut and fringes.
 
-The full 361-run HYSPEC 34° initial saved workflow takes 88.976 s in nfit versus
-1434.725 s in ordinary Shiver (16.1×). Later twelve-copy bin/save takes 41.731 s
-versus 101.513 s (2.43×). Resident six-copy exposure agrees at 3.77×10⁻¹⁵
-relative L2 with identical support; accepted event clipping and the reference's
-loaded-MDE geometry loss are recorded separately. A full617 normalization sweep
-favors the current 64 workers: median 127.526 s versus 142.320 s at 32, with
-every-cell exposure/support acceptance. No worker-policy change is justified.
+A full617 normalization sweep favors 64 workers over 32 (median 127.526 versus
+142.320 s). Ordered event parallelism saves 14.463 s in the isolated real event
+pass but only about 5% of the complete saved workflow, so it is not adopted.
+The instrumented raw profile confirms geometry reuse and many small fresh-bank
+chunks. Coalesced delivery is the next bounded experiment; producer concurrency
+or fused reconstruction needs stronger evidence before implementation.
+
+The final cost guard skips partial-cache loading when a large grid has too few
+source events to repay its scans. The 24-run selection correctly retains full
+replay, avoiding the measured regression. The final suite passes 3,234 tests
+with one optional CuPy skip. Detailed stage receipts, support/uncertainty gates
+and accepted Shiver clipping/geometry-rounding differences are in:
+
+- `benchmarks/results/dgs-user-workflows-node19.md`
+- `benchmarks/results/dgs-symmetry-cache-node19.md`
+- `benchmarks/results/dgs-remaining-performance.md`
 
 Report loading, reduction, event-cache/MDE persistence, first binning, saving,
 reopening and later rebins separately. The primary Shiver comparison uses one

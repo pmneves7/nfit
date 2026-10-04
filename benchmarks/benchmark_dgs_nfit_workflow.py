@@ -6,13 +6,14 @@ imports Mantid. All scientific storage stays below the configured IPTS benchmark
 root. No original project is opened or edited. Timings intentionally include
 native project serialization, unlike diagnostic array exports and comparisons.
 
-The primary workflow creates a 3bar binning, saves its raw-event and histogram
+The two-stage workflow creates a 3bar binning, saves its raw-event and histogram
 caches, reopens the native project, accesses the saved histogram, creates a
 3barm binning from saved events, and saves again. Raw reduction, writing the
 reduced-event cache, and event accumulation are interleaved in nfit's public
 workflow; their combined interval is reported honestly rather than invented as
-three independently measured operations. Optional cached 1/6/12-copy timings follow the primary workflow and do not enter its headline time. The optional
-cProfile flag profiles the primary workflow in a separate profiling job; those
+three independently measured operations. Optional cached 1/6/12-copy timings
+follow the two-stage workflow and do not enter its headline time. The optional
+cProfile flag profiles both stages in a separate profiling job; those
 measurements must not be used as ordinary timing results.
 """
 from __future__ import annotations
@@ -183,7 +184,7 @@ def _module_receipts():
              "nfit.project_gui", "nfit.mapped_archive", "nfit.project_archive",
              "nfit.analysis.artifacts", "nfit.array_archive", "nfit.raw_dgs_monitors",
              "nfit.raw_dgs_pulses", "nfit.raw_dgs_geometry_precision",
-             "nfit.raw_dgs_goniometer", "nfit.dgs_trajectory_tasks")
+             "nfit.raw_dgs_goniometer", "nfit.dgs_trajectory_tasks", "nfit.dgs_symmetry_cache")
     result = {}
     for name in names:
         try:

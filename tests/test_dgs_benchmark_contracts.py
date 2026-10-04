@@ -246,6 +246,32 @@ def test_native_comparator_does_not_hide_nonfinite_support_mismatch(comparator, 
     assert report["channels"]["numerator"]["finite_support_equal"] is False
 
 
+@pytest.mark.parametrize("changed_channel", ["counts", "normalization", "numerator", "variance"])
+def test_rounding_gate_preserves_exact_counts_support_and_bounded_statistics(comparator, tmp_path, changed_channel):
+    actual_path, reference_path = tmp_path / "actual.h5", tmp_path / "reference.h5"
+    norm = np.ones((2, 2))
+    _write_channels(reference_path, normalization=norm)
+    _write_channels(actual_path, normalization=norm)
+    with h5py.File(actual_path, "a") as handle:
+        for name in ("numerator", "variance", "normalization"):
+            handle[name][:] = 1.0
+    with h5py.File(reference_path, "a") as handle:
+        for name in ("numerator", "variance", "normalization"):
+            handle[name][:] = 1.0
+    with h5py.File(actual_path, "a") as handle:
+        handle["numerator"][0, 0] = np.nextafter(1.0, np.inf)
+        handle["variance"][0, 0] = np.nextafter(1.0, np.inf)
+    with h5py.File(actual_path) as actual, h5py.File(reference_path) as reference:
+        comparator._whole_cells(actual, reference, require_native_parity=False, require_rounding_parity=True)
+        with pytest.raises(AssertionError):
+            comparator._whole_cells(actual, reference, require_native_parity=True)
+    with h5py.File(actual_path, "a") as handle:
+        handle[changed_channel][1, 1] = 0.0 if changed_channel == "normalization" else 10.0
+    with h5py.File(actual_path) as actual, h5py.File(reference_path) as reference:
+        with pytest.raises(AssertionError):
+            comparator._whole_cells(actual, reference, require_native_parity=False, require_rounding_parity=True)
+
+
 def test_nio_cut_support_uses_exposure_and_keeps_covered_zeros(comparator, tmp_path):
     path = tmp_path / "covered_zero_cut.h5"
     # Rows below are energies; columns are HHH. Hidden-axis cells each hold

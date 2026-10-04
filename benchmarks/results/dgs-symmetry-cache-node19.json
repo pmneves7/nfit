@@ -1,0 +1,2931 @@
+{
+  "hardware": "analysis-node19, Xeon Gold6246R,32 physical/64 logical CPUs",
+  "cpu_limit": 64,
+  "ram_limit_mib": 200000,
+  "blas_threads": 1,
+  "filesystem_caches": "uncontrolled",
+  "timing_contract": "load metadata/access primary histogram, explicit new12-copy cached rebin, save new project; all old histograms retained in both matched jobs; diagnostics excluded",
+  "workflows": {
+    "sequoia617": {
+      "control": {
+        "runtime": "existing desktop runtime with explicitly staged source: /tmp/nfit-trajectory-v011604/src",
+        "nfit_version": "0.116.4",
+        "modules": {
+          "nfit": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/__init__.py",
+            "sha256": "5b98f8d3f39fa32d829894484e66cfd347b99bb09de71908b60e100fdbd74178",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs.py",
+            "sha256": "4674f38a28f828c0bfbba5af127918bd7f9b94236727107d10a33e03101a3312",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_cache": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_cache.py",
+            "sha256": "bf7147a21f0d183356168a56bb237ae874f949b068c3c8e5fc5bec625553b6be",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_geometry": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_geometry.py",
+            "sha256": "9009e2aa3c6103e69c3f5b7cf6b94031620c0c2a5bd17e98ebfe69d6f976752b",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_hyspec": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_hyspec.py",
+            "sha256": "b5a3e153b9920e493525c4a46a9a38726cedd8b75bf1ac6b3d561986ddef0fb9",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_event_accumulation": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/dgs_event_accumulation.py",
+            "sha256": "33c70308fbc9369cdb76183e4423d85be83c1e96ab23117953f5c710b093d7b9",
+            "hash_kind": "file"
+          },
+          "nfit._dgs_event_numba": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/_dgs_event_numba.py",
+            "sha256": "b8286d18a394374d80af3f86adbdf19bd230da2c530a08bb00920e37db92fbf4",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_reduction_policy": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/dgs_reduction_policy.py",
+            "sha256": "42dc703f4a7be40ff08a488bc7c03a6b680069d408a9dec88812970c9a2b5d2c",
+            "hash_kind": "file"
+          },
+          "nfit.mdevent": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/mdevent.py",
+            "sha256": "6a05eae22d8effa694921ffeb35cf5c9a510d884b8d3cc69a8f8e54de084737f",
+            "hash_kind": "file"
+          },
+          "nfit._mdevent_numba": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/_mdevent_numba.py",
+            "sha256": "3dbebea0025a71c334da2e240984103562cc37a121171ee6ee283cf74185f2a2",
+            "hash_kind": "file"
+          },
+          "nfit.project_composites": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/project_composites.py",
+            "sha256": "de3b4d00f87e6b5a2d4089fe2faaa9768c043cb932c24fa7a7089262f25b70e9",
+            "hash_kind": "file"
+          },
+          "nfit.project_rebinning": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/project_rebinning.py",
+            "sha256": "53aaebf3f502b2021d29e75e0648b1441016821c0d902a5d56ca615887abe5d3",
+            "hash_kind": "file"
+          },
+          "nfit.project_io": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/project_io.py",
+            "sha256": "d1ab6f4e9e89ef9987656f0493150fd0c08e168198f6f43beee2f51dca961fbe",
+            "hash_kind": "file"
+          },
+          "nfit.project_gui": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/project_gui.py",
+            "sha256": "694ffa0bc4b4425f14839a0cfeeb35e380df32478689abd7c67f355707c8b693",
+            "hash_kind": "file"
+          },
+          "nfit.mapped_archive": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/mapped_archive.py",
+            "sha256": "b6b954d956c0fa5c698a1a5358d4520cafb23aff11f9231ba4dee01a670c2c4d",
+            "hash_kind": "file"
+          },
+          "nfit.project_archive": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/project_archive.py",
+            "sha256": "18d712357eff10820b18425e493e01eab921e18509ecfb9fdc976e36f1eba6f2",
+            "hash_kind": "file"
+          },
+          "nfit.analysis.artifacts": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/analysis/artifacts.py",
+            "sha256": "55879e41f8dfe8297aab3182378bdc6ede56873ed11695dd67992f94f0f3e620",
+            "hash_kind": "file"
+          },
+          "nfit.array_archive": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/array_archive.py",
+            "sha256": "77a4397f8281d6aa99a463d8a00db57622d8f541dd510737c1ca4ef6ec03d3b8",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_monitors": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_monitors.py",
+            "sha256": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_pulses": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_pulses.py",
+            "sha256": "267ef7961283fe4c4f825e0fbb90a93613cfd024744bf09d44f8fab5c7efd541",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_geometry_precision": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_geometry_precision.py",
+            "sha256": "c519fd8baa722b21cb2d65e4d16a54f7d16d96a353d647efedb75773df7ccb39",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_goniometer": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_goniometer.py",
+            "sha256": "99172a9785b53bd8a6ce428ede02d3e4384f94456e94eb9c115b0e37ad51be07",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_trajectory_tasks": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/dgs_trajectory_tasks.py",
+            "sha256": "0f02ada5a3e0def41c991406d8e3b0920bf1f12e9a1ba109f703493c66b1b669",
+            "hash_kind": "file"
+          }
+        },
+        "harnesses": {
+          "benchmark_dgs_nfit_workflow.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_nfit_workflow.py",
+            "sha256": "23eab368bbe273d5b7223c74509be73cb1a082fe12012ea51ff646d0f2a31680"
+          },
+          "benchmark_dgs_settings.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_settings.py",
+            "sha256": "5b3fb5290a27d08aed128499fe71501a4f5ef934f855b98c95d24f93568a5d45"
+          },
+          "benchmark_dgs_cached_rebin.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_cached_rebin.py",
+            "sha256": "5f97ed41a4feecdb8ad643a19529c59492f7112bcafe33ca5019106816602bde"
+          }
+        },
+        "raw_reduction_performed": false,
+        "saved_event_rebin_cache_usage": {
+          "hits": 617,
+          "misses": 0
+        },
+        "cached_rebin_workflow_seconds": 260.5269905120367,
+        "diagnostic_checks_and_dump_seconds": 12.734540653997101,
+        "stages": [
+          {
+            "label": "native_project_reopen_metadata",
+            "seconds": 1.325166348950006,
+            "progress_intervals_seconds": {
+              "setup": 1.325166348950006
+            },
+            "peak_process_memory_mib": 328.6328125
+          },
+          {
+            "label": "saved_histogram_access_6",
+            "seconds": 3.690180963021703,
+            "progress_intervals_seconds": {
+              "setup": 0.2200069830287248,
+              "cache_load": 3.4701739799929783
+            },
+            "peak_process_memory_mib": 5335.453125
+          },
+          {
+            "label": "additional_binning_setup",
+            "seconds": 0.2326015119906515,
+            "progress_intervals_seconds": {
+              "setup": 0.2326015119906515
+            },
+            "peak_process_memory_mib": 5335.453125
+          },
+          {
+            "label": "saved_event_cache_bin_12",
+            "seconds": 215.56495337793604,
+            "progress_intervals_seconds": {
+              "setup": 1.341771841980517,
+              "raw_dgs_events": 78.78436267899815,
+              "raw_dgs_normalization": 126.67575956101064,
+              "histogram_finalize": 8.763059295946732
+            },
+            "peak_process_memory_mib": 49340.5234375
+          },
+          {
+            "label": "native_project_save_12",
+            "seconds": 39.62923417601269,
+            "progress_intervals_seconds": {
+              "setup": 39.62923417601269
+            },
+            "peak_process_memory_mib": 49340.5234375
+          }
+        ],
+        "archive": {
+          "file": "/gpfs/neutronsfs/instruments/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011604-control-02/DGS_cached_rebin.nfit",
+          "bytes": 14783009010,
+          "member_count": 621,
+          "reduced_cache_bytes": 11520182588,
+          "uncompressed_member_bytes": 14791274002
+        },
+        "receipt": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011604-control-02/receipt.json",
+        "input_unchanged": true,
+        "incremental_symmetry": null,
+        "array_digests": {
+          "C": {
+            "sha256": "8a323df3c474c56d3560199874261813dc7d966131d5a262bfe5a63f12779a40",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 91584578,
+            "finite_sum": 870457138.6406338
+          },
+          "V": {
+            "sha256": "d5ad2c6f3f7f6e8101028bf70e8e80ee8a579d7703f54b62f3b978fb13e76474",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 91584578,
+            "finite_sum": 1112656208.5893188
+          },
+          "N": {
+            "sha256": "570950f1697f65c87ebb86463f6a70d1809eea9c525e54d3ee42e7c7d8d7f5d3",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 91584578,
+            "finite_sum": 1734100916354.5012
+          },
+          "I": {
+            "sha256": "5d848fb1550c99ec1b0f0a388e88649e5238d4e79a133eff5125e31bdf4d2782",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 62474877,
+            "finite_sum": 48868.436835379835
+          },
+          "sigma": {
+            "sha256": "a82de655832d5cc101e9490cccf2756c98f0102998cbfdade9a6a83c55542dc1",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 62474877,
+            "finite_sum": 13889.281262577346
+          },
+          "counts": {
+            "sha256": "635e883d81cf3c629e71f4bdec2e2020fb04025f2a51dee61b52caea28ce1842",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 91584578,
+            "finite_sum": 707079655.0
+          },
+          "mask": {
+            "sha256": "b1f4a0d85e154d1648a46f0480c8b18fe58d3e2fa848243b551c190761a950eb",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "bool",
+            "finite_count": 91584578,
+            "finite_sum": 29109701.0
+          }
+        }
+      },
+      "candidate": {
+        "runtime": "existing desktop runtime with explicitly staged source: /tmp/nfit-symmetry-v011605/src",
+        "nfit_version": "0.116.4",
+        "modules": {
+          "nfit": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/__init__.py",
+            "sha256": "5b98f8d3f39fa32d829894484e66cfd347b99bb09de71908b60e100fdbd74178",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+            "sha256": "4674f38a28f828c0bfbba5af127918bd7f9b94236727107d10a33e03101a3312",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_cache": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_cache.py",
+            "sha256": "bf7147a21f0d183356168a56bb237ae874f949b068c3c8e5fc5bec625553b6be",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_geometry": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_geometry.py",
+            "sha256": "9009e2aa3c6103e69c3f5b7cf6b94031620c0c2a5bd17e98ebfe69d6f976752b",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_hyspec": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_hyspec.py",
+            "sha256": "b5a3e153b9920e493525c4a46a9a38726cedd8b75bf1ac6b3d561986ddef0fb9",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_event_accumulation": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_event_accumulation.py",
+            "sha256": "33c70308fbc9369cdb76183e4423d85be83c1e96ab23117953f5c710b093d7b9",
+            "hash_kind": "file"
+          },
+          "nfit._dgs_event_numba": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/_dgs_event_numba.py",
+            "sha256": "b8286d18a394374d80af3f86adbdf19bd230da2c530a08bb00920e37db92fbf4",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_reduction_policy": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_reduction_policy.py",
+            "sha256": "42dc703f4a7be40ff08a488bc7c03a6b680069d408a9dec88812970c9a2b5d2c",
+            "hash_kind": "file"
+          },
+          "nfit.mdevent": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/mdevent.py",
+            "sha256": "6a05eae22d8effa694921ffeb35cf5c9a510d884b8d3cc69a8f8e54de084737f",
+            "hash_kind": "file"
+          },
+          "nfit._mdevent_numba": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/_mdevent_numba.py",
+            "sha256": "3dbebea0025a71c334da2e240984103562cc37a121171ee6ee283cf74185f2a2",
+            "hash_kind": "file"
+          },
+          "nfit.project_composites": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/project_composites.py",
+            "sha256": "c24e32aff0977f3886ebd67f0efb25d48056350dd7c7df72d888e7d0400b7820",
+            "hash_kind": "file"
+          },
+          "nfit.project_rebinning": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/project_rebinning.py",
+            "sha256": "53aaebf3f502b2021d29e75e0648b1441016821c0d902a5d56ca615887abe5d3",
+            "hash_kind": "file"
+          },
+          "nfit.project_io": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/project_io.py",
+            "sha256": "d1ab6f4e9e89ef9987656f0493150fd0c08e168198f6f43beee2f51dca961fbe",
+            "hash_kind": "file"
+          },
+          "nfit.project_gui": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/project_gui.py",
+            "sha256": "694ffa0bc4b4425f14839a0cfeeb35e380df32478689abd7c67f355707c8b693",
+            "hash_kind": "file"
+          },
+          "nfit.mapped_archive": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/mapped_archive.py",
+            "sha256": "b6b954d956c0fa5c698a1a5358d4520cafb23aff11f9231ba4dee01a670c2c4d",
+            "hash_kind": "file"
+          },
+          "nfit.project_archive": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/project_archive.py",
+            "sha256": "18d712357eff10820b18425e493e01eab921e18509ecfb9fdc976e36f1eba6f2",
+            "hash_kind": "file"
+          },
+          "nfit.analysis.artifacts": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/analysis/artifacts.py",
+            "sha256": "55879e41f8dfe8297aab3182378bdc6ede56873ed11695dd67992f94f0f3e620",
+            "hash_kind": "file"
+          },
+          "nfit.array_archive": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/array_archive.py",
+            "sha256": "77a4397f8281d6aa99a463d8a00db57622d8f541dd510737c1ca4ef6ec03d3b8",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_monitors": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_monitors.py",
+            "sha256": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_pulses": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_pulses.py",
+            "sha256": "267ef7961283fe4c4f825e0fbb90a93613cfd024744bf09d44f8fab5c7efd541",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_geometry_precision": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_geometry_precision.py",
+            "sha256": "c519fd8baa722b21cb2d65e4d16a54f7d16d96a353d647efedb75773df7ccb39",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_goniometer": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_goniometer.py",
+            "sha256": "99172a9785b53bd8a6ce428ede02d3e4384f94456e94eb9c115b0e37ad51be07",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_trajectory_tasks": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_trajectory_tasks.py",
+            "sha256": "0f02ada5a3e0def41c991406d8e3b0920bf1f12e9a1ba109f703493c66b1b669",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_symmetry_cache": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_symmetry_cache.py",
+            "sha256": "6eddac199b53a879a1e6420903192fccd5aee373c98b920086592f292c03535d",
+            "hash_kind": "file"
+          }
+        },
+        "harnesses": {
+          "benchmark_dgs_nfit_workflow.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_nfit_workflow.py",
+            "sha256": "23eab368bbe273d5b7223c74509be73cb1a082fe12012ea51ff646d0f2a31680"
+          },
+          "benchmark_dgs_settings.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_settings.py",
+            "sha256": "5b3fb5290a27d08aed128499fe71501a4f5ef934f855b98c95d24f93568a5d45"
+          },
+          "benchmark_dgs_cached_rebin.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_cached_rebin.py",
+            "sha256": "5f97ed41a4feecdb8ad643a19529c59492f7112bcafe33ca5019106816602bde"
+          }
+        },
+        "raw_reduction_performed": false,
+        "saved_event_rebin_cache_usage": {
+          "hits": 617,
+          "misses": 0
+        },
+        "cached_rebin_workflow_seconds": 209.9322525979951,
+        "diagnostic_checks_and_dump_seconds": 13.216299071907997,
+        "stages": [
+          {
+            "label": "native_project_reopen_metadata",
+            "seconds": 1.2542891210177913,
+            "progress_intervals_seconds": {
+              "setup": 1.2542891210177913
+            },
+            "peak_process_memory_mib": 330.70703125
+          },
+          {
+            "label": "saved_histogram_access_6",
+            "seconds": 3.666338059003465,
+            "progress_intervals_seconds": {
+              "setup": 0.2203876180574298,
+              "cache_load": 3.445950440946035
+            },
+            "peak_process_memory_mib": 5339.6953125
+          },
+          {
+            "label": "additional_binning_setup",
+            "seconds": 0.23961631301790476,
+            "progress_intervals_seconds": {
+              "setup": 0.23961631301790476
+            },
+            "peak_process_memory_mib": 5339.6953125
+          },
+          {
+            "label": "saved_event_cache_bin_12",
+            "seconds": 160.89869260799605,
+            "progress_intervals_seconds": {
+              "setup": 6.511198706924915,
+              "raw_dgs_events": 62.894981642020866,
+              "raw_dgs_normalization": 68.37644529703539,
+              "histogram_finalize": 23.116066962014884
+            },
+            "peak_process_memory_mib": 47219.08203125
+          },
+          {
+            "label": "native_project_save_12",
+            "seconds": 43.8156688810559,
+            "progress_intervals_seconds": {
+              "setup": 43.8156688810559
+            },
+            "peak_process_memory_mib": 47219.08203125
+          }
+        ],
+        "archive": {
+          "file": "/gpfs/neutronsfs/instruments/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011605-symmetry-reuse/DGS_cached_rebin.nfit",
+          "bytes": 14782853649,
+          "member_count": 621,
+          "reduced_cache_bytes": 11520182588,
+          "uncompressed_member_bytes": 14791118648
+        },
+        "receipt": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011605-symmetry-reuse/receipt.json",
+        "input_unchanged": true,
+        "incremental_symmetry": {
+          "cached_operations": 6,
+          "computed_operations": 6,
+          "variance_policy": "independent_copies"
+        },
+        "array_digests": {
+          "C": {
+            "sha256": "8a323df3c474c56d3560199874261813dc7d966131d5a262bfe5a63f12779a40",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 91584578,
+            "finite_sum": 870457138.6406338
+          },
+          "V": {
+            "sha256": "d5ad2c6f3f7f6e8101028bf70e8e80ee8a579d7703f54b62f3b978fb13e76474",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 91584578,
+            "finite_sum": 1112656208.5893188
+          },
+          "N": {
+            "sha256": "5c716de99f03cbc5f5aee531186ad160450fd1c8f6027469b6ab27e189edb7f2",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 91584578,
+            "finite_sum": 1734100916354.5012
+          },
+          "I": {
+            "sha256": "b7cab80306354bfe60712ed81f2aae653681629f8580a98f8594c87585f4d957",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 62474877,
+            "finite_sum": 48868.436835379835
+          },
+          "sigma": {
+            "sha256": "f902b07f77db15ca5105a68b1475da2a20c1b0ba0c504b29b91368841352f114",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 62474877,
+            "finite_sum": 13889.281262577346
+          },
+          "counts": {
+            "sha256": "635e883d81cf3c629e71f4bdec2e2020fb04025f2a51dee61b52caea28ce1842",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "float64",
+            "finite_count": 91584578,
+            "finite_sum": 707079655.0
+          },
+          "mask": {
+            "sha256": "b1f4a0d85e154d1648a46f0480c8b18fe58d3e2fa848243b551c190761a950eb",
+            "shape": [
+              67,
+              134,
+              101,
+              101
+            ],
+            "dtype": "bool",
+            "finite_count": 91584578,
+            "finite_sum": 29109701.0
+          }
+        }
+      },
+      "comparison": {
+        "host": "analysis-node19.sns.gov",
+        "actual": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011605-symmetry-reuse/histogram-12.h5",
+        "reference": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011604-control-02/histogram-12.h5",
+        "inputs": {
+          "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011605-symmetry-reuse/histogram-12.h5": [
+            4487698026,
+            1791087447921401920
+          ],
+          "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011604-control-02/histogram-12.h5": [
+            4487698026,
+            1791086783149537111
+          ]
+        },
+        "edges": [
+          {
+            "cells": 68,
+            "different_cells": 0,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "relative_l2": 0.0,
+            "actual_sum": -0.6800007224082947,
+            "reference_sum": -0.6800007224082947,
+            "finite_support_equal": true
+          },
+          {
+            "cells": 135,
+            "different_cells": 0,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "relative_l2": 0.0,
+            "actual_sum": -0.6749866008758545,
+            "reference_sum": -0.6749866008758545,
+            "finite_support_equal": true
+          },
+          {
+            "cells": 102,
+            "different_cells": 0,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "relative_l2": 0.0,
+            "actual_sum": -1.430511474609375e-06,
+            "reference_sum": -1.430511474609375e-06,
+            "finite_support_equal": true
+          },
+          {
+            "cells": 102,
+            "different_cells": 0,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "relative_l2": 0.0,
+            "actual_sum": 2550.0,
+            "reference_sum": 2550.0,
+            "finite_support_equal": true
+          }
+        ],
+        "native_candidate_parity_required": false,
+        "native_rounding_parity_required": true,
+        "whole_cells": {
+          "shape": [
+            67,
+            134,
+            101,
+            101
+          ],
+          "channels": {
+            "numerator": {
+              "cells": 91584578,
+              "different_cells": 0,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "actual_sum": 870457138.6406338,
+              "reference_sum": 870457138.6406338,
+              "finite_support_equal": true,
+              "relative_l2": 0.0,
+              "max_relative_to_peak": 0.0
+            },
+            "variance": {
+              "cells": 91584578,
+              "different_cells": 0,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "actual_sum": 1112656208.5893176,
+              "reference_sum": 1112656208.5893176,
+              "finite_support_equal": true,
+              "relative_l2": 0.0,
+              "max_relative_to_peak": 0.0
+            },
+            "normalization": {
+              "cells": 91584578,
+              "different_cells": 34462388,
+              "max_absolute": 1.1641532182693481e-09,
+              "max_relative_nonzero": 1.7034424258203332e-15,
+              "actual_sum": 1734100916354.5024,
+              "reference_sum": 1734100916354.5024,
+              "finite_support_equal": true,
+              "relative_l2": 2.7206025894291444e-16,
+              "max_relative_to_peak": 6.230560077818521e-16
+            },
+            "counts": {
+              "cells": 91584578,
+              "different_cells": 0,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "actual_sum": 707079655.0,
+              "reference_sum": 707079655.0,
+              "finite_support_equal": true,
+              "relative_l2": 0.0,
+              "max_relative_to_peak": 0.0
+            }
+          },
+          "exposure_support": {
+            "actual_exposed": 62474877,
+            "reference_exposed": 62474877,
+            "differing_exposure_support": 0,
+            "actual_events_without_exposure": 9,
+            "reference_events_without_exposure": 9
+          },
+          "first_count_differences": []
+        },
+        "nio_cut": {
+          "hidden_cell_indices": [
+            [
+              66,
+              68
+            ],
+            [
+              66,
+              68
+            ]
+          ],
+          "target": "pooled numerator/variance/exposure from original cells",
+          "exposure_support": {
+            "actual_exposed": 4536,
+            "reference_exposed": 4536,
+            "differing_cells": 0
+          },
+          "regions": {
+            "all": {
+              "numerator": {
+                "cells": 6767,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 258544.84054911137,
+                "reference_sum": 258544.84054911137,
+                "finite_support_equal": true
+              },
+              "variance": {
+                "cells": 6767,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 331146.31786322594,
+                "reference_sum": 331146.31786322594,
+                "finite_support_equal": true
+              },
+              "normalization": {
+                "cells": 6767,
+                "different_cells": 2576,
+                "max_absolute": 9.313225746154785e-10,
+                "max_relative_nonzero": 5.9086040191878e-16,
+                "max_relative_to_peak": 3.37697413141638e-16,
+                "relative_l2": 1.6717342262710032e-16,
+                "actual_sum": 1539930471.1081176,
+                "reference_sum": 1539930471.1081176,
+                "finite_support_equal": true
+              },
+              "counts": {
+                "cells": 6767,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 207880.0,
+                "reference_sum": 207880.0,
+                "finite_support_equal": true
+              },
+              "signal": {
+                "cells": 4536,
+                "different_cells": 2028,
+                "max_absolute": 3.469446951953614e-18,
+                "max_relative_nonzero": 6.693900822519636e-16,
+                "max_relative_to_peak": 1.8057758045697071e-16,
+                "relative_l2": 1.3723567678673142e-16,
+                "actual_sum": 1.052093293274304,
+                "reference_sum": 1.052093293274304,
+                "finite_support_equal": true
+              },
+              "uncertainty": {
+                "cells": 4536,
+                "different_cells": 2043,
+                "max_absolute": 1.734723475976807e-18,
+                "max_relative_nonzero": 6.422937437353732e-16,
+                "max_relative_to_peak": 3.241551164748914e-16,
+                "relative_l2": 2.547737760996717e-16,
+                "actual_sum": 0.12172041770565432,
+                "reference_sum": 0.12172041770565434,
+                "finite_support_equal": true
+              }
+            },
+            "coverage_fringe": {
+              "numerator": {
+                "cells": 202,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 14284.089822769165,
+                "reference_sum": 14284.089822769165,
+                "finite_support_equal": true
+              },
+              "variance": {
+                "cells": 202,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 26993.904829144478,
+                "reference_sum": 26993.904829144478,
+                "finite_support_equal": true
+              },
+              "normalization": {
+                "cells": 202,
+                "different_cells": 122,
+                "max_absolute": 9.313225746154785e-10,
+                "max_relative_nonzero": 5.9086040191878e-16,
+                "max_relative_to_peak": 3.4454723628122864e-16,
+                "relative_l2": 1.4770274252268324e-16,
+                "actual_sum": 99741111.75734673,
+                "reference_sum": 99741111.75734673,
+                "finite_support_equal": true
+              },
+              "counts": {
+                "cells": 202,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 7629.0,
+                "reference_sum": 7629.0,
+                "finite_support_equal": true
+              },
+              "signal": {
+                "cells": 202,
+                "different_cells": 75,
+                "max_absolute": 1.734723475976807e-18,
+                "max_relative_nonzero": 6.456940482526785e-16,
+                "max_relative_to_peak": 3.2415512750855235e-16,
+                "relative_l2": 2.912118217530986e-16,
+                "actual_sum": 0.02297339938905657,
+                "reference_sum": 0.02297339938905657,
+                "finite_support_equal": true
+              },
+              "uncertainty": {
+                "cells": 202,
+                "different_cells": 78,
+                "max_absolute": 1.734723475976807e-18,
+                "max_relative_nonzero": 6.053372159520704e-16,
+                "max_relative_to_peak": 3.241551164748914e-16,
+                "relative_l2": 3.198661833286162e-16,
+                "actual_sum": 0.010253549284795358,
+                "reference_sum": 0.01025354928479536,
+                "finite_support_equal": true
+              }
+            },
+            "row_lowest_exposure_decile": {
+              "numerator": {
+                "cells": 491,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 9802.570955753326,
+                "reference_sum": 9802.570955753326,
+                "finite_support_equal": true
+              },
+              "variance": {
+                "cells": 491,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 11742.859687924385,
+                "reference_sum": 11742.859687924385,
+                "finite_support_equal": true
+              },
+              "normalization": {
+                "cells": 491,
+                "different_cells": 293,
+                "max_absolute": 8.731149137020111e-11,
+                "max_relative_nonzero": 5.717922482035907e-16,
+                "max_relative_to_peak": 2.2499124981180146e-16,
+                "relative_l2": 1.786942677918345e-16,
+                "actual_sum": 34691794.99325015,
+                "reference_sum": 34691794.99325015,
+                "finite_support_equal": true
+              },
+              "counts": {
+                "cells": 491,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 8280.0,
+                "reference_sum": 8280.0,
+                "finite_support_equal": true
+              },
+              "signal": {
+                "cells": 491,
+                "different_cells": 136,
+                "max_absolute": 1.734723475976807e-18,
+                "max_relative_nonzero": 6.693900822519636e-16,
+                "max_relative_to_peak": 9.028879022848536e-17,
+                "relative_l2": 7.638456671091991e-17,
+                "actual_sum": 0.15546147943854152,
+                "reference_sum": 0.15546147943854152,
+                "finite_support_equal": true
+              },
+              "uncertainty": {
+                "cells": 491,
+                "different_cells": 134,
+                "max_absolute": 1.734723475976807e-18,
+                "max_relative_nonzero": 6.422937437353732e-16,
+                "max_relative_to_peak": 3.241551164748914e-16,
+                "relative_l2": 2.663371042843883e-16,
+                "actual_sum": 0.032485778144247905,
+                "reference_sum": 0.032485778144247905,
+                "finite_support_equal": true
+              }
+            },
+            "central_low_coverage_roi": {
+              "numerator": {
+                "cells": 129,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 2655.1350440979004,
+                "reference_sum": 2655.1350440979004,
+                "finite_support_equal": true
+              },
+              "variance": {
+                "cells": 129,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 3375.3671748638153,
+                "reference_sum": 3375.3671748638153,
+                "finite_support_equal": true
+              },
+              "normalization": {
+                "cells": 129,
+                "different_cells": 77,
+                "max_absolute": 4.656612873077393e-10,
+                "max_relative_nonzero": 5.717922482035907e-16,
+                "max_relative_to_peak": 4.0156864204183583e-16,
+                "relative_l2": 2.017934695325659e-16,
+                "actual_sum": 43909676.52129287,
+                "reference_sum": 43909676.521292865,
+                "finite_support_equal": true
+              },
+              "counts": {
+                "cells": 129,
+                "different_cells": 0,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "relative_l2": 0.0,
+                "actual_sum": 2098.0,
+                "reference_sum": 2098.0,
+                "finite_support_equal": true
+              },
+              "signal": {
+                "cells": 129,
+                "different_cells": 51,
+                "max_absolute": 5.421010862427522e-20,
+                "max_relative_nonzero": 5.018893875738406e-16,
+                "max_relative_to_peak": 2.21443719294234e-16,
+                "relative_l2": 1.6920113758352687e-16,
+                "actual_sum": 0.005458849866084211,
+                "reference_sum": 0.005458849866084212,
+                "finite_support_equal": true
+              },
+              "uncertainty": {
+                "cells": 129,
+                "different_cells": 53,
+                "max_absolute": 2.0328790734103208e-20,
+                "max_relative_nonzero": 5.464176992595725e-16,
+                "max_relative_to_peak": 8.70692251497572e-17,
+                "relative_l2": 1.2182156743974517e-16,
+                "actual_sum": 0.0017936617690998465,
+                "reference_sum": 0.0017936617690998465,
+                "finite_support_equal": true
+              }
+            }
+          }
+        },
+        "timing_scope": "untimed scientific diagnostics; excluded from workflow wall time",
+        "script_sha256": "5c63ea80143e82e4bf19fcf6993a04aefd219fdf43f69adcb3959834cfd10ffb",
+        "original_inputs_unchanged": true
+      },
+      "stored_mask_digest_equal": true,
+      "stored_signal_error_finite_counts_equal": true
+    },
+    "hyspec361": {
+      "control": {
+        "runtime": "existing desktop runtime with explicitly staged source: /tmp/nfit-trajectory-v011604/src",
+        "nfit_version": "0.116.4",
+        "modules": {
+          "nfit": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/__init__.py",
+            "sha256": "5b98f8d3f39fa32d829894484e66cfd347b99bb09de71908b60e100fdbd74178",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs.py",
+            "sha256": "4674f38a28f828c0bfbba5af127918bd7f9b94236727107d10a33e03101a3312",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_cache": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_cache.py",
+            "sha256": "bf7147a21f0d183356168a56bb237ae874f949b068c3c8e5fc5bec625553b6be",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_geometry": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_geometry.py",
+            "sha256": "9009e2aa3c6103e69c3f5b7cf6b94031620c0c2a5bd17e98ebfe69d6f976752b",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_hyspec": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_hyspec.py",
+            "sha256": "b5a3e153b9920e493525c4a46a9a38726cedd8b75bf1ac6b3d561986ddef0fb9",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_event_accumulation": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/dgs_event_accumulation.py",
+            "sha256": "33c70308fbc9369cdb76183e4423d85be83c1e96ab23117953f5c710b093d7b9",
+            "hash_kind": "file"
+          },
+          "nfit._dgs_event_numba": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/_dgs_event_numba.py",
+            "sha256": "b8286d18a394374d80af3f86adbdf19bd230da2c530a08bb00920e37db92fbf4",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_reduction_policy": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/dgs_reduction_policy.py",
+            "sha256": "42dc703f4a7be40ff08a488bc7c03a6b680069d408a9dec88812970c9a2b5d2c",
+            "hash_kind": "file"
+          },
+          "nfit.mdevent": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/mdevent.py",
+            "sha256": "6a05eae22d8effa694921ffeb35cf5c9a510d884b8d3cc69a8f8e54de084737f",
+            "hash_kind": "file"
+          },
+          "nfit._mdevent_numba": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/_mdevent_numba.py",
+            "sha256": "3dbebea0025a71c334da2e240984103562cc37a121171ee6ee283cf74185f2a2",
+            "hash_kind": "file"
+          },
+          "nfit.project_composites": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/project_composites.py",
+            "sha256": "de3b4d00f87e6b5a2d4089fe2faaa9768c043cb932c24fa7a7089262f25b70e9",
+            "hash_kind": "file"
+          },
+          "nfit.project_rebinning": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/project_rebinning.py",
+            "sha256": "53aaebf3f502b2021d29e75e0648b1441016821c0d902a5d56ca615887abe5d3",
+            "hash_kind": "file"
+          },
+          "nfit.project_io": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/project_io.py",
+            "sha256": "d1ab6f4e9e89ef9987656f0493150fd0c08e168198f6f43beee2f51dca961fbe",
+            "hash_kind": "file"
+          },
+          "nfit.project_gui": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/project_gui.py",
+            "sha256": "694ffa0bc4b4425f14839a0cfeeb35e380df32478689abd7c67f355707c8b693",
+            "hash_kind": "file"
+          },
+          "nfit.mapped_archive": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/mapped_archive.py",
+            "sha256": "b6b954d956c0fa5c698a1a5358d4520cafb23aff11f9231ba4dee01a670c2c4d",
+            "hash_kind": "file"
+          },
+          "nfit.project_archive": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/project_archive.py",
+            "sha256": "18d712357eff10820b18425e493e01eab921e18509ecfb9fdc976e36f1eba6f2",
+            "hash_kind": "file"
+          },
+          "nfit.analysis.artifacts": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/analysis/artifacts.py",
+            "sha256": "55879e41f8dfe8297aab3182378bdc6ede56873ed11695dd67992f94f0f3e620",
+            "hash_kind": "file"
+          },
+          "nfit.array_archive": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/array_archive.py",
+            "sha256": "77a4397f8281d6aa99a463d8a00db57622d8f541dd510737c1ca4ef6ec03d3b8",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_monitors": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_monitors.py",
+            "sha256": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_pulses": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_pulses.py",
+            "sha256": "267ef7961283fe4c4f825e0fbb90a93613cfd024744bf09d44f8fab5c7efd541",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_geometry_precision": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_geometry_precision.py",
+            "sha256": "c519fd8baa722b21cb2d65e4d16a54f7d16d96a353d647efedb75773df7ccb39",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_goniometer": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/raw_dgs_goniometer.py",
+            "sha256": "99172a9785b53bd8a6ce428ede02d3e4384f94456e94eb9c115b0e37ad51be07",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_trajectory_tasks": {
+            "path": "/tmp/nfit-trajectory-v011604/src/nfit/dgs_trajectory_tasks.py",
+            "sha256": "0f02ada5a3e0def41c991406d8e3b0920bf1f12e9a1ba109f703493c66b1b669",
+            "hash_kind": "file"
+          }
+        },
+        "harnesses": {
+          "benchmark_dgs_nfit_workflow.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_nfit_workflow.py",
+            "sha256": "23eab368bbe273d5b7223c74509be73cb1a082fe12012ea51ff646d0f2a31680"
+          },
+          "benchmark_dgs_settings.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_settings.py",
+            "sha256": "5b3fb5290a27d08aed128499fe71501a4f5ef934f855b98c95d24f93568a5d45"
+          },
+          "benchmark_dgs_cached_rebin.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_cached_rebin.py",
+            "sha256": "5f97ed41a4feecdb8ad643a19529c59492f7112bcafe33ca5019106816602bde"
+          }
+        },
+        "raw_reduction_performed": false,
+        "saved_event_rebin_cache_usage": {
+          "hits": 361,
+          "misses": 0
+        },
+        "cached_rebin_workflow_seconds": 49.665423856000416,
+        "diagnostic_checks_and_dump_seconds": 0.5270051879342645,
+        "stages": [
+          {
+            "label": "native_project_reopen_metadata",
+            "seconds": 0.7148632030002773,
+            "progress_intervals_seconds": {
+              "setup": 0.7148632030002773
+            },
+            "peak_process_memory_mib": 317.6015625
+          },
+          {
+            "label": "saved_histogram_access_6",
+            "seconds": 0.33521601906977594,
+            "progress_intervals_seconds": {
+              "setup": 0.11035561608150601,
+              "cache_load": 0.22486040298826993
+            },
+            "peak_process_memory_mib": 522.3203125
+          },
+          {
+            "label": "additional_binning_setup",
+            "seconds": 0.11204491788521409,
+            "progress_intervals_seconds": {
+              "setup": 0.11204491788521409
+            },
+            "peak_process_memory_mib": 522.3203125
+          },
+          {
+            "label": "saved_event_cache_bin_12",
+            "seconds": 38.76489396602847,
+            "progress_intervals_seconds": {
+              "setup": 0.9459948759758845,
+              "raw_dgs_events": 29.395820725010708,
+              "raw_dgs_normalization": 7.626845492050052,
+              "histogram_finalize": 0.7962328729918227
+            },
+            "peak_process_memory_mib": 1115.515625
+          },
+          {
+            "label": "native_project_save_12",
+            "seconds": 9.660944671952166,
+            "progress_intervals_seconds": {
+              "setup": 9.660944671952166
+            },
+            "peak_process_memory_mib": 1115.515625
+          }
+        ],
+        "archive": {
+          "file": "/gpfs/neutronsfs/instruments/HYS/IPTS-36860/shared/nfit/benchmarks/6A-P-node19/nfit/hys34-full361-cached12-v011604-control/DGS_cached_rebin.nfit",
+          "bytes": 4019715525,
+          "member_count": 365,
+          "reduced_cache_bytes": 3987935362,
+          "uncompressed_member_bytes": 4024984811
+        },
+        "receipt": "/SNS/HYS/IPTS-36860/shared/nfit/benchmarks/6A-P-node19/nfit/hys34-full361-cached12-v011604-control/receipt.json",
+        "input_unchanged": true,
+        "incremental_symmetry": null,
+        "array_digests": {
+          "C": {
+            "sha256": "ec25a3627e5bd4194c4327a21243ac6bfeebb4c0ba66b8495fd1d8cd8ab21538",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 3365793,
+            "finite_sum": 261293049.24173898
+          },
+          "V": {
+            "sha256": "153915fbbd638d369b86465919bc516536bb240d370403582e0d72ed1f50823e",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 3365793,
+            "finite_sum": 283381342.42105573
+          },
+          "N": {
+            "sha256": "9096abd8c8b00c3b61b13819131d7f50c9c2b155c5c0f6d33d07e111a67de7fb",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 3365793,
+            "finite_sum": 37459676795.16492
+          },
+          "I": {
+            "sha256": "ad6f0b65a777ed7b03dd5636b11cd9ee9f9a1acad0857efb57f1afae851b9bf8",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 417186,
+            "finite_sum": 3044.8503256040904
+          },
+          "sigma": {
+            "sha256": "4fef40a0976d2b07fbb930a15c55304341fc36b71423320ad862c2ccf82cff39",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 417186,
+            "finite_sum": 68.82991692478787
+          },
+          "counts": {
+            "sha256": "0441b1a9e6feaa9a978d5a212c03f63b1fbc32b87959d2afbf08050f94845db9",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 3365793,
+            "finite_sum": 251252957.0
+          },
+          "mask": {
+            "sha256": "f7f658d5e03a800bf7f4ffb682002f426cd4beed6ed5b74d5180c9c0041c902b",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "bool",
+            "finite_count": 3365793,
+            "finite_sum": 2948607.0
+          }
+        }
+      },
+      "candidate": {
+        "runtime": "existing desktop runtime with explicitly staged source: /tmp/nfit-symmetry-v011605/src",
+        "nfit_version": "0.116.4",
+        "modules": {
+          "nfit": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/__init__.py",
+            "sha256": "5b98f8d3f39fa32d829894484e66cfd347b99bb09de71908b60e100fdbd74178",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+            "sha256": "4674f38a28f828c0bfbba5af127918bd7f9b94236727107d10a33e03101a3312",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_cache": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_cache.py",
+            "sha256": "bf7147a21f0d183356168a56bb237ae874f949b068c3c8e5fc5bec625553b6be",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_geometry": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_geometry.py",
+            "sha256": "9009e2aa3c6103e69c3f5b7cf6b94031620c0c2a5bd17e98ebfe69d6f976752b",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_hyspec": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_hyspec.py",
+            "sha256": "b5a3e153b9920e493525c4a46a9a38726cedd8b75bf1ac6b3d561986ddef0fb9",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_event_accumulation": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_event_accumulation.py",
+            "sha256": "33c70308fbc9369cdb76183e4423d85be83c1e96ab23117953f5c710b093d7b9",
+            "hash_kind": "file"
+          },
+          "nfit._dgs_event_numba": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/_dgs_event_numba.py",
+            "sha256": "b8286d18a394374d80af3f86adbdf19bd230da2c530a08bb00920e37db92fbf4",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_reduction_policy": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_reduction_policy.py",
+            "sha256": "42dc703f4a7be40ff08a488bc7c03a6b680069d408a9dec88812970c9a2b5d2c",
+            "hash_kind": "file"
+          },
+          "nfit.mdevent": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/mdevent.py",
+            "sha256": "6a05eae22d8effa694921ffeb35cf5c9a510d884b8d3cc69a8f8e54de084737f",
+            "hash_kind": "file"
+          },
+          "nfit._mdevent_numba": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/_mdevent_numba.py",
+            "sha256": "3dbebea0025a71c334da2e240984103562cc37a121171ee6ee283cf74185f2a2",
+            "hash_kind": "file"
+          },
+          "nfit.project_composites": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/project_composites.py",
+            "sha256": "c24e32aff0977f3886ebd67f0efb25d48056350dd7c7df72d888e7d0400b7820",
+            "hash_kind": "file"
+          },
+          "nfit.project_rebinning": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/project_rebinning.py",
+            "sha256": "53aaebf3f502b2021d29e75e0648b1441016821c0d902a5d56ca615887abe5d3",
+            "hash_kind": "file"
+          },
+          "nfit.project_io": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/project_io.py",
+            "sha256": "d1ab6f4e9e89ef9987656f0493150fd0c08e168198f6f43beee2f51dca961fbe",
+            "hash_kind": "file"
+          },
+          "nfit.project_gui": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/project_gui.py",
+            "sha256": "694ffa0bc4b4425f14839a0cfeeb35e380df32478689abd7c67f355707c8b693",
+            "hash_kind": "file"
+          },
+          "nfit.mapped_archive": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/mapped_archive.py",
+            "sha256": "b6b954d956c0fa5c698a1a5358d4520cafb23aff11f9231ba4dee01a670c2c4d",
+            "hash_kind": "file"
+          },
+          "nfit.project_archive": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/project_archive.py",
+            "sha256": "18d712357eff10820b18425e493e01eab921e18509ecfb9fdc976e36f1eba6f2",
+            "hash_kind": "file"
+          },
+          "nfit.analysis.artifacts": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/analysis/artifacts.py",
+            "sha256": "55879e41f8dfe8297aab3182378bdc6ede56873ed11695dd67992f94f0f3e620",
+            "hash_kind": "file"
+          },
+          "nfit.array_archive": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/array_archive.py",
+            "sha256": "77a4397f8281d6aa99a463d8a00db57622d8f541dd510737c1ca4ef6ec03d3b8",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_monitors": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_monitors.py",
+            "sha256": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_pulses": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_pulses.py",
+            "sha256": "267ef7961283fe4c4f825e0fbb90a93613cfd024744bf09d44f8fab5c7efd541",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_geometry_precision": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_geometry_precision.py",
+            "sha256": "c519fd8baa722b21cb2d65e4d16a54f7d16d96a353d647efedb75773df7ccb39",
+            "hash_kind": "file"
+          },
+          "nfit.raw_dgs_goniometer": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_goniometer.py",
+            "sha256": "99172a9785b53bd8a6ce428ede02d3e4384f94456e94eb9c115b0e37ad51be07",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_trajectory_tasks": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_trajectory_tasks.py",
+            "sha256": "0f02ada5a3e0def41c991406d8e3b0920bf1f12e9a1ba109f703493c66b1b669",
+            "hash_kind": "file"
+          },
+          "nfit.dgs_symmetry_cache": {
+            "path": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_symmetry_cache.py",
+            "sha256": "6eddac199b53a879a1e6420903192fccd5aee373c98b920086592f292c03535d",
+            "hash_kind": "file"
+          }
+        },
+        "harnesses": {
+          "benchmark_dgs_nfit_workflow.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_nfit_workflow.py",
+            "sha256": "23eab368bbe273d5b7223c74509be73cb1a082fe12012ea51ff646d0f2a31680"
+          },
+          "benchmark_dgs_settings.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_settings.py",
+            "sha256": "5b3fb5290a27d08aed128499fe71501a4f5ef934f855b98c95d24f93568a5d45"
+          },
+          "benchmark_dgs_cached_rebin.py": {
+            "path": "/tmp/nfit-6ap-timeweighted-code/benchmark_dgs_cached_rebin.py",
+            "sha256": "5f97ed41a4feecdb8ad643a19529c59492f7112bcafe33ca5019106816602bde"
+          }
+        },
+        "raw_reduction_performed": false,
+        "saved_event_rebin_cache_usage": {
+          "hits": 361,
+          "misses": 0
+        },
+        "cached_rebin_workflow_seconds": 41.62624157196842,
+        "diagnostic_checks_and_dump_seconds": 0.520825166022405,
+        "stages": [
+          {
+            "label": "native_project_reopen_metadata",
+            "seconds": 0.6425720519619063,
+            "progress_intervals_seconds": {
+              "setup": 0.6425720519619063
+            },
+            "peak_process_memory_mib": 319.92578125
+          },
+          {
+            "label": "saved_histogram_access_6",
+            "seconds": 0.4261134900152683,
+            "progress_intervals_seconds": {
+              "setup": 0.1336698590312153,
+              "cache_load": 0.292443630984053
+            },
+            "peak_process_memory_mib": 524.16796875
+          },
+          {
+            "label": "additional_binning_setup",
+            "seconds": 0.12804152199532837,
+            "progress_intervals_seconds": {
+              "setup": 0.12804152199532837
+            },
+            "peak_process_memory_mib": 524.16796875
+          },
+          {
+            "label": "saved_event_cache_bin_12",
+            "seconds": 30.31641531200148,
+            "progress_intervals_seconds": {
+              "setup": 1.4824185100151226,
+              "raw_dgs_events": 22.138178596040234,
+              "raw_dgs_normalization": 5.366588987992145,
+              "histogram_finalize": 1.32922921795398
+            },
+            "peak_process_memory_mib": 1092.3046875
+          },
+          {
+            "label": "native_project_save_12",
+            "seconds": 10.044582657050341,
+            "progress_intervals_seconds": {
+              "setup": 10.044582657050341
+            },
+            "peak_process_memory_mib": 1092.3046875
+          }
+        ],
+        "archive": {
+          "file": "/gpfs/neutronsfs/instruments/HYS/IPTS-36860/shared/nfit/benchmarks/6A-P-node19/nfit/hys34-full361-cached12-v011605-symmetry-reuse/DGS_cached_rebin.nfit",
+          "bytes": 4019404193,
+          "member_count": 365,
+          "reduced_cache_bytes": 3987935362,
+          "uncompressed_member_bytes": 4024673491
+        },
+        "receipt": "/SNS/HYS/IPTS-36860/shared/nfit/benchmarks/6A-P-node19/nfit/hys34-full361-cached12-v011605-symmetry-reuse/receipt.json",
+        "input_unchanged": true,
+        "incremental_symmetry": {
+          "cached_operations": 6,
+          "computed_operations": 6,
+          "variance_policy": "independent_copies"
+        },
+        "array_digests": {
+          "C": {
+            "sha256": "ec25a3627e5bd4194c4327a21243ac6bfeebb4c0ba66b8495fd1d8cd8ab21538",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 3365793,
+            "finite_sum": 261293049.24173898
+          },
+          "V": {
+            "sha256": "153915fbbd638d369b86465919bc516536bb240d370403582e0d72ed1f50823e",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 3365793,
+            "finite_sum": 283381342.42105573
+          },
+          "N": {
+            "sha256": "3d6be1ac99642d5004c9208f16104fad685999f97f16fc4ec972829138d51eeb",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 3365793,
+            "finite_sum": 37459676795.16492
+          },
+          "I": {
+            "sha256": "e9545dc11d54ef090b6f60e328d7af6b9ab85228ce66971d026e74ffa1a20088",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 417186,
+            "finite_sum": 3044.850325604091
+          },
+          "sigma": {
+            "sha256": "6a405ef1a38ea5824eee11dd590dd618961bb224053a600226a4cbba133d8f17",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 417186,
+            "finite_sum": 68.82991692478787
+          },
+          "counts": {
+            "sha256": "0441b1a9e6feaa9a978d5a212c03f63b1fbc32b87959d2afbf08050f94845db9",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "float64",
+            "finite_count": 3365793,
+            "finite_sum": 251252957.0
+          },
+          "mask": {
+            "sha256": "f7f658d5e03a800bf7f4ffb682002f426cd4beed6ed5b74d5180c9c0041c902b",
+            "shape": [
+              81,
+              81,
+              9,
+              57
+            ],
+            "dtype": "bool",
+            "finite_count": 3365793,
+            "finite_sum": 2948607.0
+          }
+        }
+      },
+      "comparison": {
+        "host": "analysis-node19.sns.gov",
+        "actual": "/SNS/HYS/IPTS-36860/shared/nfit/benchmarks/6A-P-node19/nfit/hys34-full361-cached12-v011605-symmetry-reuse/histogram-12.h5",
+        "reference": "/SNS/HYS/IPTS-36860/shared/nfit/benchmarks/6A-P-node19/nfit/hys34-full361-cached12-v011604-control/histogram-12.h5",
+        "inputs": {
+          "/SNS/HYS/IPTS-36860/shared/nfit/benchmarks/6A-P-node19/nfit/hys34-full361-cached12-v011605-symmetry-reuse/histogram-12.h5": [
+            164979713,
+            1791087890398957017
+          ],
+          "/SNS/HYS/IPTS-36860/shared/nfit/benchmarks/6A-P-node19/nfit/hys34-full361-cached12-v011604-control/histogram-12.h5": [
+            164979713,
+            1791087676794774131
+          ]
+        },
+        "edges": [
+          {
+            "cells": 82,
+            "different_cells": 0,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "relative_l2": 0.0,
+            "actual_sum": -2.002716064453125e-05,
+            "reference_sum": -2.002716064453125e-05,
+            "finite_support_equal": true
+          },
+          {
+            "cells": 82,
+            "different_cells": 0,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "relative_l2": 0.0,
+            "actual_sum": -2.002716064453125e-05,
+            "reference_sum": -2.002716064453125e-05,
+            "finite_support_equal": true
+          },
+          {
+            "cells": 10,
+            "different_cells": 0,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "relative_l2": 0.0,
+            "actual_sum": 0.0,
+            "reference_sum": 0.0,
+            "finite_support_equal": true
+          },
+          {
+            "cells": 58,
+            "different_cells": 0,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "relative_l2": 0.0,
+            "actual_sum": 0.0,
+            "reference_sum": 0.0,
+            "finite_support_equal": true
+          }
+        ],
+        "native_candidate_parity_required": false,
+        "native_rounding_parity_required": true,
+        "whole_cells": {
+          "shape": [
+            81,
+            81,
+            9,
+            57
+          ],
+          "channels": {
+            "numerator": {
+              "cells": 3365793,
+              "different_cells": 0,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "actual_sum": 261293049.24173898,
+              "reference_sum": 261293049.24173898,
+              "finite_support_equal": true,
+              "relative_l2": 0.0,
+              "max_relative_to_peak": 0.0
+            },
+            "variance": {
+              "cells": 3365793,
+              "different_cells": 0,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "actual_sum": 283381342.42105573,
+              "reference_sum": 283381342.42105573,
+              "finite_support_equal": true,
+              "relative_l2": 0.0,
+              "max_relative_to_peak": 0.0
+            },
+            "normalization": {
+              "cells": 3365793,
+              "different_cells": 370971,
+              "max_absolute": 2.491287887096405e-08,
+              "max_relative_nonzero": 1.6850457074636562e-14,
+              "actual_sum": 37459676795.164925,
+              "reference_sum": 37459676795.164925,
+              "finite_support_equal": true,
+              "relative_l2": 2.057866116699949e-15,
+              "max_relative_to_peak": 7.772091459450707e-15
+            },
+            "counts": {
+              "cells": 3365793,
+              "different_cells": 0,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "actual_sum": 251252957.0,
+              "reference_sum": 251252957.0,
+              "finite_support_equal": true,
+              "relative_l2": 0.0,
+              "max_relative_to_peak": 0.0
+            }
+          },
+          "exposure_support": {
+            "actual_exposed": 417186,
+            "reference_exposed": 417186,
+            "differing_exposure_support": 0,
+            "actual_events_without_exposure": 0,
+            "reference_events_without_exposure": 0
+          },
+          "first_count_differences": []
+        },
+        "nio_cut": null,
+        "timing_scope": "untimed scientific diagnostics; excluded from workflow wall time",
+        "script_sha256": "5c63ea80143e82e4bf19fcf6993a04aefd219fdf43f69adcb3959834cfd10ffb",
+        "original_inputs_unchanged": true
+      },
+      "stored_mask_digest_equal": true,
+      "stored_signal_error_finite_counts_equal": true
+    }
+  },
+  "workload_guard": {
+    "scope": "Final production cost guard, tested against the same source4 control. Large grids require known source counts and eight saved event copies per cell; scientific arithmetic is unchanged.",
+    "receipts": {
+      "pilot24_control": {
+        "histograms": {
+          "12": {
+            "histogram_shape": null,
+            "incremental_symmetry": null,
+            "mask_digest": {
+              "dtype": "bool",
+              "finite_count": 91584578,
+              "finite_sum": 56446483.0,
+              "sha256": "999c0a8860ab1e5532e33bf1c04537d1f5de90402a2d400a9c6cc2c480efecac"
+            },
+            "symmetry_covariance": {
+              "cross_bin_pairs_unrepresented": 0,
+              "cross_terms_added": 0.0,
+              "policy": "independent_copies",
+              "within_bin_pairs_corrected": 0
+            }
+          }
+        },
+        "identity_before_after_equal": true,
+        "identity_count_after": 5,
+        "identity_count_before": 5,
+        "identity_field": "input_before/input_after",
+        "module_sha256": {
+          "nfit": "5b98f8d3f39fa32d829894484e66cfd347b99bb09de71908b60e100fdbd74178",
+          "nfit._dgs_event_numba": "b8286d18a394374d80af3f86adbdf19bd230da2c530a08bb00920e37db92fbf4",
+          "nfit._mdevent_numba": "3dbebea0025a71c334da2e240984103562cc37a121171ee6ee283cf74185f2a2",
+          "nfit.analysis.artifacts": "55879e41f8dfe8297aab3182378bdc6ede56873ed11695dd67992f94f0f3e620",
+          "nfit.array_archive": "77a4397f8281d6aa99a463d8a00db57622d8f541dd510737c1ca4ef6ec03d3b8",
+          "nfit.dgs_event_accumulation": "33c70308fbc9369cdb76183e4423d85be83c1e96ab23117953f5c710b093d7b9",
+          "nfit.dgs_reduction_policy": "42dc703f4a7be40ff08a488bc7c03a6b680069d408a9dec88812970c9a2b5d2c",
+          "nfit.dgs_trajectory_tasks": "0f02ada5a3e0def41c991406d8e3b0920bf1f12e9a1ba109f703493c66b1b669",
+          "nfit.mapped_archive": "b6b954d956c0fa5c698a1a5358d4520cafb23aff11f9231ba4dee01a670c2c4d",
+          "nfit.mdevent": "6a05eae22d8effa694921ffeb35cf5c9a510d884b8d3cc69a8f8e54de084737f",
+          "nfit.project_archive": "18d712357eff10820b18425e493e01eab921e18509ecfb9fdc976e36f1eba6f2",
+          "nfit.project_composites": "de3b4d00f87e6b5a2d4089fe2faaa9768c043cb932c24fa7a7089262f25b70e9",
+          "nfit.project_gui": "694ffa0bc4b4425f14839a0cfeeb35e380df32478689abd7c67f355707c8b693",
+          "nfit.project_io": "d1ab6f4e9e89ef9987656f0493150fd0c08e168198f6f43beee2f51dca961fbe",
+          "nfit.project_rebinning": "53aaebf3f502b2021d29e75e0648b1441016821c0d902a5d56ca615887abe5d3",
+          "nfit.raw_dgs": "4674f38a28f828c0bfbba5af127918bd7f9b94236727107d10a33e03101a3312",
+          "nfit.raw_dgs_cache": "bf7147a21f0d183356168a56bb237ae874f949b068c3c8e5fc5bec625553b6be",
+          "nfit.raw_dgs_geometry": "9009e2aa3c6103e69c3f5b7cf6b94031620c0c2a5bd17e98ebfe69d6f976752b",
+          "nfit.raw_dgs_geometry_precision": "c519fd8baa722b21cb2d65e4d16a54f7d16d96a353d647efedb75773df7ccb39",
+          "nfit.raw_dgs_goniometer": "99172a9785b53bd8a6ce428ede02d3e4384f94456e94eb9c115b0e37ad51be07",
+          "nfit.raw_dgs_hyspec": "b5a3e153b9920e493525c4a46a9a38726cedd8b75bf1ac6b3d561986ddef0fb9",
+          "nfit.raw_dgs_monitors": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229",
+          "nfit.raw_dgs_pulses": "267ef7961283fe4c4f825e0fbb90a93613cfd024744bf09d44f8fab5c7efd541"
+        },
+        "path": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-pilot24-cached12-v011604-control/receipt.json",
+        "stages": [
+          {
+            "label": "native_project_reopen_metadata",
+            "peak_process_memory_mib": 314.48828125,
+            "progress_intervals_seconds": {
+              "setup": 0.06001936795655638
+            },
+            "seconds": 0.06001936795655638
+          },
+          {
+            "label": "saved_histogram_access_6",
+            "peak_process_memory_mib": 5320.0078125,
+            "progress_intervals_seconds": {
+              "cache_load": 2.5632964990800247,
+              "setup": 0.009888947941362858
+            },
+            "seconds": 2.5731854470213875
+          },
+          {
+            "label": "additional_binning_setup",
+            "peak_process_memory_mib": 5320.0078125,
+            "progress_intervals_seconds": {
+              "setup": 0.023829212062992156
+            },
+            "seconds": 0.023829212062992156
+          },
+          {
+            "label": "saved_event_cache_bin_12",
+            "peak_process_memory_mib": 24451.67578125,
+            "progress_intervals_seconds": {
+              "histogram_finalize": 3.941404760000296,
+              "raw_dgs_events": 3.1807220610789955,
+              "raw_dgs_normalization": 12.406311845988967,
+              "setup": 0.9941434889333323
+            },
+            "seconds": 20.52258215600159
+          },
+          {
+            "label": "native_project_save_12",
+            "peak_process_memory_mib": 24451.67578125,
+            "progress_intervals_seconds": {
+              "setup": 9.522267082938924
+            },
+            "seconds": 9.522267082938924
+          }
+        ],
+        "summary": {
+          "cached_rebin_workflow_seconds": 32.73869527701754,
+          "nfit_version": "0.116.4",
+          "raw_reduction_performed": false,
+          "resolved_cpu_budget": 64,
+          "runtime": "existing desktop runtime with explicitly staged source: /tmp/nfit-trajectory-v011604/src",
+          "saved_event_rebin_cache_usage": {
+            "hits": 24,
+            "misses": 0
+          },
+          "saved_histogram_shape": [
+            67,
+            134,
+            101,
+            101
+          ],
+          "script_enter_to_workflow_complete_seconds": 33.97384452400729,
+          "status": "complete",
+          "workflow": "saved_reduced_event_cache_rebin"
+        }
+      },
+      "pilot24_guarded": {
+        "histograms": {
+          "12": {
+            "histogram_shape": null,
+            "incremental_symmetry": null,
+            "mask_digest": {
+              "dtype": "bool",
+              "finite_count": 91584578,
+              "finite_sum": 56446483.0,
+              "sha256": "999c0a8860ab1e5532e33bf1c04537d1f5de90402a2d400a9c6cc2c480efecac"
+            },
+            "symmetry_covariance": {
+              "cross_bin_pairs_unrepresented": 0,
+              "cross_terms_added": 0.0,
+              "policy": "independent_copies",
+              "within_bin_pairs_corrected": 0
+            }
+          }
+        },
+        "identity_before_after_equal": true,
+        "identity_count_after": 5,
+        "identity_count_before": 5,
+        "identity_field": "input_before/input_after",
+        "module_sha256": {
+          "nfit": "5b98f8d3f39fa32d829894484e66cfd347b99bb09de71908b60e100fdbd74178",
+          "nfit._dgs_event_numba": "b8286d18a394374d80af3f86adbdf19bd230da2c530a08bb00920e37db92fbf4",
+          "nfit._mdevent_numba": "3dbebea0025a71c334da2e240984103562cc37a121171ee6ee283cf74185f2a2",
+          "nfit.analysis.artifacts": "55879e41f8dfe8297aab3182378bdc6ede56873ed11695dd67992f94f0f3e620",
+          "nfit.array_archive": "77a4397f8281d6aa99a463d8a00db57622d8f541dd510737c1ca4ef6ec03d3b8",
+          "nfit.dgs_event_accumulation": "33c70308fbc9369cdb76183e4423d85be83c1e96ab23117953f5c710b093d7b9",
+          "nfit.dgs_reduction_policy": "42dc703f4a7be40ff08a488bc7c03a6b680069d408a9dec88812970c9a2b5d2c",
+          "nfit.dgs_symmetry_cache": "ede41cfa230f7e546e25d4be92fe931bfddaa09f8e665f0a2c02cd2e097e9dc2",
+          "nfit.dgs_trajectory_tasks": "0f02ada5a3e0def41c991406d8e3b0920bf1f12e9a1ba109f703493c66b1b669",
+          "nfit.mapped_archive": "b6b954d956c0fa5c698a1a5358d4520cafb23aff11f9231ba4dee01a670c2c4d",
+          "nfit.mdevent": "6a05eae22d8effa694921ffeb35cf5c9a510d884b8d3cc69a8f8e54de084737f",
+          "nfit.project_archive": "18d712357eff10820b18425e493e01eab921e18509ecfb9fdc976e36f1eba6f2",
+          "nfit.project_composites": "3e204457f62f34a70608645cc4b2594394fff50948ac3c63322384343eff8fc4",
+          "nfit.project_gui": "694ffa0bc4b4425f14839a0cfeeb35e380df32478689abd7c67f355707c8b693",
+          "nfit.project_io": "d1ab6f4e9e89ef9987656f0493150fd0c08e168198f6f43beee2f51dca961fbe",
+          "nfit.project_rebinning": "53aaebf3f502b2021d29e75e0648b1441016821c0d902a5d56ca615887abe5d3",
+          "nfit.raw_dgs": "4674f38a28f828c0bfbba5af127918bd7f9b94236727107d10a33e03101a3312",
+          "nfit.raw_dgs_cache": "bf7147a21f0d183356168a56bb237ae874f949b068c3c8e5fc5bec625553b6be",
+          "nfit.raw_dgs_geometry": "9009e2aa3c6103e69c3f5b7cf6b94031620c0c2a5bd17e98ebfe69d6f976752b",
+          "nfit.raw_dgs_geometry_precision": "c519fd8baa722b21cb2d65e4d16a54f7d16d96a353d647efedb75773df7ccb39",
+          "nfit.raw_dgs_goniometer": "99172a9785b53bd8a6ce428ede02d3e4384f94456e94eb9c115b0e37ad51be07",
+          "nfit.raw_dgs_hyspec": "b5a3e153b9920e493525c4a46a9a38726cedd8b75bf1ac6b3d561986ddef0fb9",
+          "nfit.raw_dgs_monitors": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229",
+          "nfit.raw_dgs_pulses": "267ef7961283fe4c4f825e0fbb90a93613cfd024744bf09d44f8fab5c7efd541"
+        },
+        "path": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-pilot24-cached12-v011605-guarded/receipt.json",
+        "stages": [
+          {
+            "label": "native_project_reopen_metadata",
+            "peak_process_memory_mib": 271.14453125,
+            "progress_intervals_seconds": {
+              "setup": 0.06704466603696346
+            },
+            "seconds": 0.06704466603696346
+          },
+          {
+            "label": "saved_histogram_access_6",
+            "peak_process_memory_mib": 5279.5234375,
+            "progress_intervals_seconds": {
+              "cache_load": 2.735376136028208,
+              "setup": 0.00997917796485126
+            },
+            "seconds": 2.745355313993059
+          },
+          {
+            "label": "additional_binning_setup",
+            "peak_process_memory_mib": 5279.5234375,
+            "progress_intervals_seconds": {
+              "setup": 0.023188234074041247
+            },
+            "seconds": 0.023188234074041247
+          },
+          {
+            "label": "saved_event_cache_bin_12",
+            "peak_process_memory_mib": 27596.99609375,
+            "progress_intervals_seconds": {
+              "histogram_finalize": 2.45971051894594,
+              "raw_dgs_events": 3.1305742270778865,
+              "raw_dgs_normalization": 12.41880876896903,
+              "setup": 1.0536783429561183
+            },
+            "seconds": 19.062771857948974
+          },
+          {
+            "label": "native_project_save_12",
+            "peak_process_memory_mib": 27596.99609375,
+            "progress_intervals_seconds": {
+              "setup": 8.796968218055554
+            },
+            "seconds": 8.796968218055554
+          }
+        ],
+        "summary": {
+          "cached_rebin_workflow_seconds": 30.735221820999868,
+          "nfit_version": "0.116.4",
+          "raw_reduction_performed": false,
+          "resolved_cpu_budget": 64,
+          "runtime": "existing desktop runtime with explicitly staged source: /tmp/nfit-symmetry-v011605-guarded/src",
+          "saved_event_rebin_cache_usage": {
+            "hits": 24,
+            "misses": 0
+          },
+          "saved_histogram_shape": [
+            67,
+            134,
+            101,
+            101
+          ],
+          "script_enter_to_workflow_complete_seconds": 31.10984074906446,
+          "status": "complete",
+          "workflow": "saved_reduced_event_cache_rebin"
+        }
+      },
+      "full617_guarded": {
+        "histograms": {
+          "12": {
+            "histogram_shape": null,
+            "incremental_symmetry": {
+              "cached_operations": 6,
+              "computed_operations": 6,
+              "variance_policy": "independent_copies"
+            },
+            "mask_digest": {
+              "dtype": "bool",
+              "finite_count": 91584578,
+              "finite_sum": 29109701.0,
+              "sha256": "b1f4a0d85e154d1648a46f0480c8b18fe58d3e2fa848243b551c190761a950eb"
+            },
+            "symmetry_covariance": {
+              "cross_bin_pairs_unrepresented": 0,
+              "cross_terms_added": 0.0,
+              "policy": "independent_copies",
+              "within_bin_pairs_corrected": 0
+            }
+          }
+        },
+        "identity_before_after_equal": true,
+        "identity_count_after": 5,
+        "identity_count_before": 5,
+        "identity_field": "input_before/input_after",
+        "module_sha256": {
+          "nfit": "5b98f8d3f39fa32d829894484e66cfd347b99bb09de71908b60e100fdbd74178",
+          "nfit._dgs_event_numba": "b8286d18a394374d80af3f86adbdf19bd230da2c530a08bb00920e37db92fbf4",
+          "nfit._mdevent_numba": "3dbebea0025a71c334da2e240984103562cc37a121171ee6ee283cf74185f2a2",
+          "nfit.analysis.artifacts": "55879e41f8dfe8297aab3182378bdc6ede56873ed11695dd67992f94f0f3e620",
+          "nfit.array_archive": "77a4397f8281d6aa99a463d8a00db57622d8f541dd510737c1ca4ef6ec03d3b8",
+          "nfit.dgs_event_accumulation": "33c70308fbc9369cdb76183e4423d85be83c1e96ab23117953f5c710b093d7b9",
+          "nfit.dgs_reduction_policy": "42dc703f4a7be40ff08a488bc7c03a6b680069d408a9dec88812970c9a2b5d2c",
+          "nfit.dgs_symmetry_cache": "ede41cfa230f7e546e25d4be92fe931bfddaa09f8e665f0a2c02cd2e097e9dc2",
+          "nfit.dgs_trajectory_tasks": "0f02ada5a3e0def41c991406d8e3b0920bf1f12e9a1ba109f703493c66b1b669",
+          "nfit.mapped_archive": "b6b954d956c0fa5c698a1a5358d4520cafb23aff11f9231ba4dee01a670c2c4d",
+          "nfit.mdevent": "6a05eae22d8effa694921ffeb35cf5c9a510d884b8d3cc69a8f8e54de084737f",
+          "nfit.project_archive": "18d712357eff10820b18425e493e01eab921e18509ecfb9fdc976e36f1eba6f2",
+          "nfit.project_composites": "3e204457f62f34a70608645cc4b2594394fff50948ac3c63322384343eff8fc4",
+          "nfit.project_gui": "694ffa0bc4b4425f14839a0cfeeb35e380df32478689abd7c67f355707c8b693",
+          "nfit.project_io": "d1ab6f4e9e89ef9987656f0493150fd0c08e168198f6f43beee2f51dca961fbe",
+          "nfit.project_rebinning": "53aaebf3f502b2021d29e75e0648b1441016821c0d902a5d56ca615887abe5d3",
+          "nfit.raw_dgs": "4674f38a28f828c0bfbba5af127918bd7f9b94236727107d10a33e03101a3312",
+          "nfit.raw_dgs_cache": "bf7147a21f0d183356168a56bb237ae874f949b068c3c8e5fc5bec625553b6be",
+          "nfit.raw_dgs_geometry": "9009e2aa3c6103e69c3f5b7cf6b94031620c0c2a5bd17e98ebfe69d6f976752b",
+          "nfit.raw_dgs_geometry_precision": "c519fd8baa722b21cb2d65e4d16a54f7d16d96a353d647efedb75773df7ccb39",
+          "nfit.raw_dgs_goniometer": "99172a9785b53bd8a6ce428ede02d3e4384f94456e94eb9c115b0e37ad51be07",
+          "nfit.raw_dgs_hyspec": "b5a3e153b9920e493525c4a46a9a38726cedd8b75bf1ac6b3d561986ddef0fb9",
+          "nfit.raw_dgs_monitors": "c4450b49a312e113548bd1f7d7786c62f264a5b05dc78b959d8e0f35dec04229",
+          "nfit.raw_dgs_pulses": "267ef7961283fe4c4f825e0fbb90a93613cfd024744bf09d44f8fab5c7efd541"
+        },
+        "path": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011605-guarded/receipt.json",
+        "stages": [
+          {
+            "label": "native_project_reopen_metadata",
+            "peak_process_memory_mib": 293.71484375,
+            "progress_intervals_seconds": {
+              "setup": 1.2628775759367272
+            },
+            "seconds": 1.2628775759367272
+          },
+          {
+            "label": "saved_histogram_access_6",
+            "peak_process_memory_mib": 5309.90625,
+            "progress_intervals_seconds": {
+              "cache_load": 3.574404328945093,
+              "setup": 0.22168491804040968
+            },
+            "seconds": 3.7960892469855025
+          },
+          {
+            "label": "additional_binning_setup",
+            "peak_process_memory_mib": 5309.90625,
+            "progress_intervals_seconds": {
+              "setup": 0.24339485098607838
+            },
+            "seconds": 0.24339485098607838
+          },
+          {
+            "label": "saved_event_cache_bin_12",
+            "peak_process_memory_mib": 47083.703125,
+            "progress_intervals_seconds": {
+              "histogram_finalize": 21.76011433894746,
+              "raw_dgs_events": 61.76250897499267,
+              "raw_dgs_normalization": 63.832224835059606,
+              "setup": 6.599102868931368
+            },
+            "seconds": 153.9539510179311
+          },
+          {
+            "label": "native_project_save_12",
+            "peak_process_memory_mib": 47083.703125,
+            "progress_intervals_seconds": {
+              "setup": 41.31628936203197
+            },
+            "seconds": 41.31628936203197
+          }
+        ],
+        "summary": {
+          "cached_rebin_workflow_seconds": 200.65376830496825,
+          "nfit_version": "0.116.4",
+          "raw_reduction_performed": false,
+          "resolved_cpu_budget": 64,
+          "runtime": "existing desktop runtime with explicitly staged source: /tmp/nfit-symmetry-v011605-guarded/src",
+          "saved_event_rebin_cache_usage": {
+            "hits": 617,
+            "misses": 0
+          },
+          "saved_histogram_shape": [
+            67,
+            134,
+            101,
+            101
+          ],
+          "script_enter_to_workflow_complete_seconds": 205.63545132800937,
+          "status": "complete",
+          "workflow": "saved_reduced_event_cache_rebin"
+        }
+      }
+    },
+    "comparisons": {
+      "full617_guarded_vs_control12": {
+        "actual": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011605-guarded/histogram-12.h5",
+        "edges": [
+          {
+            "actual_sum": -0.6800007224082947,
+            "cells": 68,
+            "different_cells": 0,
+            "finite_support_equal": true,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "reference_sum": -0.6800007224082947,
+            "relative_l2": 0.0
+          },
+          {
+            "actual_sum": -0.6749866008758545,
+            "cells": 135,
+            "different_cells": 0,
+            "finite_support_equal": true,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "reference_sum": -0.6749866008758545,
+            "relative_l2": 0.0
+          },
+          {
+            "actual_sum": -1.430511474609375e-06,
+            "cells": 102,
+            "different_cells": 0,
+            "finite_support_equal": true,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "reference_sum": -1.430511474609375e-06,
+            "relative_l2": 0.0
+          },
+          {
+            "actual_sum": 2550.0,
+            "cells": 102,
+            "different_cells": 0,
+            "finite_support_equal": true,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "reference_sum": 2550.0,
+            "relative_l2": 0.0
+          }
+        ],
+        "host": "analysis-node19.sns.gov",
+        "inputs": {
+          "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011604-control-02/histogram-12.h5": [
+            4487698026,
+            1791086783149537111
+          ],
+          "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011605-guarded/histogram-12.h5": [
+            4487698026,
+            1791090779134698259
+          ]
+        },
+        "native_candidate_parity_required": false,
+        "native_rounding_parity_required": true,
+        "nio_cut": {
+          "exposure_support": {
+            "actual_exposed": 4536,
+            "differing_cells": 0,
+            "reference_exposed": 4536
+          },
+          "hidden_cell_indices": [
+            [
+              66,
+              68
+            ],
+            [
+              66,
+              68
+            ]
+          ],
+          "regions": {
+            "all": {
+              "counts": {
+                "actual_sum": 207880.0,
+                "cells": 6767,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 207880.0,
+                "relative_l2": 0.0
+              },
+              "normalization": {
+                "actual_sum": 1539930471.1081176,
+                "cells": 6767,
+                "different_cells": 2572,
+                "finite_support_equal": true,
+                "max_absolute": 9.313225746154785e-10,
+                "max_relative_nonzero": 6.770271326793463e-16,
+                "max_relative_to_peak": 3.37697413141638e-16,
+                "reference_sum": 1539930471.1081176,
+                "relative_l2": 1.720047532275895e-16
+              },
+              "numerator": {
+                "actual_sum": 258544.84054911137,
+                "cells": 6767,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 258544.84054911137,
+                "relative_l2": 0.0
+              },
+              "signal": {
+                "actual_sum": 1.052093293274304,
+                "cells": 4536,
+                "different_cells": 2044,
+                "finite_support_equal": true,
+                "max_absolute": 3.469446951953614e-18,
+                "max_relative_nonzero": 7.069131774625841e-16,
+                "max_relative_to_peak": 1.8057758045697071e-16,
+                "reference_sum": 1.052093293274304,
+                "relative_l2": 1.358704077416525e-16
+              },
+              "uncertainty": {
+                "actual_sum": 0.12172041770565432,
+                "cells": 4536,
+                "different_cells": 2031,
+                "finite_support_equal": true,
+                "max_absolute": 1.734723475976807e-18,
+                "max_relative_nonzero": 6.66484109770954e-16,
+                "max_relative_to_peak": 3.241551164748914e-16,
+                "reference_sum": 0.12172041770565434,
+                "relative_l2": 2.636999310639995e-16
+              },
+              "variance": {
+                "actual_sum": 331146.31786322594,
+                "cells": 6767,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 331146.31786322594,
+                "relative_l2": 0.0
+              }
+            },
+            "central_low_coverage_roi": {
+              "counts": {
+                "actual_sum": 2098.0,
+                "cells": 129,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 2098.0,
+                "relative_l2": 0.0
+              },
+              "normalization": {
+                "actual_sum": 43909676.52129287,
+                "cells": 129,
+                "different_cells": 77,
+                "finite_support_equal": true,
+                "max_absolute": 3.4924596548080444e-10,
+                "max_relative_nonzero": 5.717922482035907e-16,
+                "max_relative_to_peak": 3.0117648153137686e-16,
+                "reference_sum": 43909676.521292865,
+                "relative_l2": 1.6983851680981458e-16
+              },
+              "numerator": {
+                "actual_sum": 2655.1350440979004,
+                "cells": 129,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 2655.1350440979004,
+                "relative_l2": 0.0
+              },
+              "signal": {
+                "actual_sum": 0.005458849866084212,
+                "cells": 129,
+                "different_cells": 50,
+                "finite_support_equal": true,
+                "max_absolute": 5.421010862427522e-20,
+                "max_relative_nonzero": 5.018893875738406e-16,
+                "max_relative_to_peak": 2.21443719294234e-16,
+                "reference_sum": 0.005458849866084212,
+                "relative_l2": 1.81036184195161e-16
+              },
+              "uncertainty": {
+                "actual_sum": 0.0017936617690998465,
+                "cells": 129,
+                "different_cells": 53,
+                "finite_support_equal": true,
+                "max_absolute": 5.421010862427522e-20,
+                "max_relative_nonzero": 5.464176992595725e-16,
+                "max_relative_to_peak": 2.321846003993525e-16,
+                "reference_sum": 0.0017936617690998465,
+                "relative_l2": 2.1315116070453265e-16
+              },
+              "variance": {
+                "actual_sum": 3375.3671748638153,
+                "cells": 129,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 3375.3671748638153,
+                "relative_l2": 0.0
+              }
+            },
+            "coverage_fringe": {
+              "counts": {
+                "actual_sum": 7629.0,
+                "cells": 202,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 7629.0,
+                "relative_l2": 0.0
+              },
+              "normalization": {
+                "actual_sum": 99741111.75734673,
+                "cells": 202,
+                "different_cells": 122,
+                "finite_support_equal": true,
+                "max_absolute": 9.313225746154785e-10,
+                "max_relative_nonzero": 6.607383949091882e-16,
+                "max_relative_to_peak": 3.4454723628122864e-16,
+                "reference_sum": 99741111.75734673,
+                "relative_l2": 1.7473602981819858e-16
+              },
+              "numerator": {
+                "actual_sum": 14284.089822769165,
+                "cells": 202,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 14284.089822769165,
+                "relative_l2": 0.0
+              },
+              "signal": {
+                "actual_sum": 0.022973399389056567,
+                "cells": 202,
+                "different_cells": 74,
+                "finite_support_equal": true,
+                "max_absolute": 1.734723475976807e-18,
+                "max_relative_nonzero": 6.50077559550161e-16,
+                "max_relative_to_peak": 3.2415512750855235e-16,
+                "reference_sum": 0.02297339938905657,
+                "relative_l2": 2.9353948575818356e-16
+              },
+              "uncertainty": {
+                "actual_sum": 0.010253549284795356,
+                "cells": 202,
+                "different_cells": 76,
+                "finite_support_equal": true,
+                "max_absolute": 1.734723475976807e-18,
+                "max_relative_nonzero": 6.451684051526303e-16,
+                "max_relative_to_peak": 3.241551164748914e-16,
+                "reference_sum": 0.01025354928479536,
+                "relative_l2": 3.204812338211048e-16
+              },
+              "variance": {
+                "actual_sum": 26993.904829144478,
+                "cells": 202,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 26993.904829144478,
+                "relative_l2": 0.0
+              }
+            },
+            "row_lowest_exposure_decile": {
+              "counts": {
+                "actual_sum": 8280.0,
+                "cells": 491,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 8280.0,
+                "relative_l2": 0.0
+              },
+              "normalization": {
+                "actual_sum": 34691794.99325015,
+                "cells": 491,
+                "different_cells": 286,
+                "finite_support_equal": true,
+                "max_absolute": 1.1641532182693481e-10,
+                "max_relative_nonzero": 6.770271326793463e-16,
+                "max_relative_to_peak": 2.99988333082402e-16,
+                "reference_sum": 34691794.99325015,
+                "relative_l2": 1.7775637041188207e-16
+              },
+              "numerator": {
+                "actual_sum": 9802.570955753326,
+                "cells": 491,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 9802.570955753326,
+                "relative_l2": 0.0
+              },
+              "signal": {
+                "actual_sum": 0.15546147943854152,
+                "cells": 491,
+                "different_cells": 125,
+                "finite_support_equal": true,
+                "max_absolute": 1.734723475976807e-18,
+                "max_relative_nonzero": 6.693900822519636e-16,
+                "max_relative_to_peak": 9.028879022848536e-17,
+                "reference_sum": 0.15546147943854152,
+                "relative_l2": 6.52707767066821e-17
+              },
+              "uncertainty": {
+                "actual_sum": 0.032485778144247905,
+                "cells": 491,
+                "different_cells": 121,
+                "finite_support_equal": true,
+                "max_absolute": 1.734723475976807e-18,
+                "max_relative_nonzero": 6.451684051526303e-16,
+                "max_relative_to_peak": 3.241551164748914e-16,
+                "reference_sum": 0.032485778144247905,
+                "relative_l2": 2.7636029994059608e-16
+              },
+              "variance": {
+                "actual_sum": 11742.859687924385,
+                "cells": 491,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 11742.859687924385,
+                "relative_l2": 0.0
+              }
+            }
+          },
+          "target": "pooled numerator/variance/exposure from original cells"
+        },
+        "original_inputs_unchanged": true,
+        "reference": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-full617-cached12-v011604-control-02/histogram-12.h5",
+        "script_sha256": "5c63ea80143e82e4bf19fcf6993a04aefd219fdf43f69adcb3959834cfd10ffb",
+        "timing_scope": "untimed scientific diagnostics; excluded from workflow wall time",
+        "whole_cells": {
+          "channels": {
+            "counts": {
+              "actual_sum": 707079655.0,
+              "cells": 91584578,
+              "different_cells": 0,
+              "finite_support_equal": true,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "max_relative_to_peak": 0.0,
+              "reference_sum": 707079655.0,
+              "relative_l2": 0.0
+            },
+            "normalization": {
+              "actual_sum": 1734100916354.5022,
+              "cells": 91584578,
+              "different_cells": 34495229,
+              "finite_support_equal": true,
+              "max_absolute": 1.1641532182693481e-09,
+              "max_relative_nonzero": 1.7034424258203332e-15,
+              "max_relative_to_peak": 6.230560077818521e-16,
+              "reference_sum": 1734100916354.5024,
+              "relative_l2": 2.7262454185670474e-16
+            },
+            "numerator": {
+              "actual_sum": 870457138.6406338,
+              "cells": 91584578,
+              "different_cells": 0,
+              "finite_support_equal": true,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "max_relative_to_peak": 0.0,
+              "reference_sum": 870457138.6406338,
+              "relative_l2": 0.0
+            },
+            "variance": {
+              "actual_sum": 1112656208.5893176,
+              "cells": 91584578,
+              "different_cells": 0,
+              "finite_support_equal": true,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "max_relative_to_peak": 0.0,
+              "reference_sum": 1112656208.5893176,
+              "relative_l2": 0.0
+            }
+          },
+          "exposure_support": {
+            "actual_events_without_exposure": 9,
+            "actual_exposed": 62474877,
+            "differing_exposure_support": 0,
+            "reference_events_without_exposure": 9,
+            "reference_exposed": 62474877
+          },
+          "first_count_differences": [],
+          "shape": [
+            67,
+            134,
+            101,
+            101
+          ]
+        }
+      },
+      "pilot24_guarded_vs_control12": {
+        "actual": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-pilot24-cached12-v011605-guarded/histogram-12.h5",
+        "edges": [
+          {
+            "actual_sum": -0.6800007224082947,
+            "cells": 68,
+            "different_cells": 0,
+            "finite_support_equal": true,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "reference_sum": -0.6800007224082947,
+            "relative_l2": 0.0
+          },
+          {
+            "actual_sum": -0.6749866008758545,
+            "cells": 135,
+            "different_cells": 0,
+            "finite_support_equal": true,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "reference_sum": -0.6749866008758545,
+            "relative_l2": 0.0
+          },
+          {
+            "actual_sum": -1.430511474609375e-06,
+            "cells": 102,
+            "different_cells": 0,
+            "finite_support_equal": true,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "reference_sum": -1.430511474609375e-06,
+            "relative_l2": 0.0
+          },
+          {
+            "actual_sum": 2550.0,
+            "cells": 102,
+            "different_cells": 0,
+            "finite_support_equal": true,
+            "max_absolute": 0.0,
+            "max_relative_nonzero": 0.0,
+            "max_relative_to_peak": 0.0,
+            "reference_sum": 2550.0,
+            "relative_l2": 0.0
+          }
+        ],
+        "host": "analysis-node19.sns.gov",
+        "inputs": {
+          "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-pilot24-cached12-v011604-control/histogram-12.h5": [
+            4487668810,
+            1791090304211350319
+          ],
+          "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-pilot24-cached12-v011605-guarded/histogram-12.h5": [
+            4487668810,
+            1791090435579400092
+          ]
+        },
+        "native_candidate_parity_required": false,
+        "native_rounding_parity_required": true,
+        "nio_cut": {
+          "exposure_support": {
+            "actual_exposed": 4493,
+            "differing_cells": 0,
+            "reference_exposed": 4493
+          },
+          "hidden_cell_indices": [
+            [
+              66,
+              68
+            ],
+            [
+              66,
+              68
+            ]
+          ],
+          "regions": {
+            "all": {
+              "counts": {
+                "actual_sum": 9303.0,
+                "cells": 6767,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 9303.0,
+                "relative_l2": 0.0
+              },
+              "normalization": {
+                "actual_sum": 54106864.63964964,
+                "cells": 6767,
+                "different_cells": 842,
+                "finite_support_equal": true,
+                "max_absolute": 4.3655745685100555e-11,
+                "max_relative_nonzero": 4.569174244348528e-16,
+                "max_relative_to_peak": 4.017522950630954e-16,
+                "reference_sum": 54106864.63964964,
+                "relative_l2": 1.1764650896328098e-16
+              },
+              "numerator": {
+                "actual_sum": 11312.54844045639,
+                "cells": 6767,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 11312.54844045639,
+                "relative_l2": 0.0
+              },
+              "signal": {
+                "actual_sum": 1.098647835201091,
+                "cells": 4493,
+                "different_cells": 230,
+                "finite_support_equal": true,
+                "max_absolute": 3.469446951953614e-18,
+                "max_relative_nonzero": 5.664877757681657e-16,
+                "max_relative_to_peak": 1.5206830509425572e-16,
+                "reference_sum": 1.098647835201091,
+                "relative_l2": 6.43860854065824e-17
+              },
+              "uncertainty": {
+                "actual_sum": 0.3832629049878956,
+                "cells": 4493,
+                "different_cells": 232,
+                "finite_support_equal": true,
+                "max_absolute": 4.336808689942018e-19,
+                "max_relative_nonzero": 5.417118250944432e-16,
+                "max_relative_to_peak": 2.6882133000590494e-17,
+                "reference_sum": 0.3832629049878956,
+                "relative_l2": 3.567343053753486e-17
+              },
+              "variance": {
+                "actual_sum": 14062.063439369202,
+                "cells": 6767,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 14062.063439369202,
+                "relative_l2": 0.0
+              }
+            },
+            "central_low_coverage_roi": {
+              "counts": {
+                "actual_sum": 69.0,
+                "cells": 129,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 69.0,
+                "relative_l2": 0.0
+              },
+              "normalization": {
+                "actual_sum": 1718668.3487950799,
+                "cells": 129,
+                "different_cells": 25,
+                "finite_support_equal": true,
+                "max_absolute": 7.275957614183426e-12,
+                "max_relative_nonzero": 3.025726622802272e-16,
+                "max_relative_to_peak": 1.750451531146223e-16,
+                "reference_sum": 1718668.34879508,
+                "relative_l2": 1.0690066430477942e-16
+              },
+              "numerator": {
+                "actual_sum": 89.43658792972565,
+                "cells": 129,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 89.43658792972565,
+                "relative_l2": 0.0
+              },
+              "signal": {
+                "actual_sum": 0.0034118662168237546,
+                "cells": 129,
+                "different_cells": 8,
+                "finite_support_equal": true,
+                "max_absolute": 4.0657581468206416e-20,
+                "max_relative_nonzero": 3.703355164647911e-16,
+                "max_relative_to_peak": 9.245338737822784e-17,
+                "reference_sum": 0.003411866216823754,
+                "relative_l2": 9.567684554944301e-17
+              },
+              "uncertainty": {
+                "actual_sum": 0.0021722033381242466,
+                "cells": 129,
+                "different_cells": 8,
+                "finite_support_equal": true,
+                "max_absolute": 2.710505431213761e-20,
+                "max_relative_nonzero": 3.491556721639995e-16,
+                "max_relative_to_peak": 8.716588732356571e-17,
+                "reference_sum": 0.0021722033381242466,
+                "relative_l2": 1.0039704523018932e-16
+              },
+              "variance": {
+                "actual_sum": 116.35932505130768,
+                "cells": 129,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 116.35932505130768,
+                "relative_l2": 0.0
+              }
+            },
+            "coverage_fringe": {
+              "counts": {
+                "actual_sum": 223.0,
+                "cells": 330,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 223.0,
+                "relative_l2": 0.0
+              },
+              "normalization": {
+                "actual_sum": 4141548.366125001,
+                "cells": 330,
+                "different_cells": 50,
+                "finite_support_equal": true,
+                "max_absolute": 2.9103830456733704e-11,
+                "max_relative_nonzero": 4.1180355864655603e-16,
+                "max_relative_to_peak": 2.885341597638606e-16,
+                "reference_sum": 4141548.366125001,
+                "relative_l2": 1.4069171559431736e-16
+              },
+              "numerator": {
+                "actual_sum": 393.4316952228546,
+                "cells": 330,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 393.4316952228546,
+                "relative_l2": 0.0
+              },
+              "signal": {
+                "actual_sum": 0.022521570050186145,
+                "cells": 330,
+                "different_cells": 14,
+                "finite_support_equal": true,
+                "max_absolute": 5.421010862427522e-20,
+                "max_relative_nonzero": 4.657013894437783e-16,
+                "max_relative_to_peak": 1.469524580822169e-17,
+                "reference_sum": 0.022521570050186145,
+                "relative_l2": 1.488650649855146e-17
+              },
+              "uncertainty": {
+                "actual_sum": 0.015322322630923663,
+                "cells": 330,
+                "different_cells": 14,
+                "finite_support_equal": true,
+                "max_absolute": 2.710505431213761e-20,
+                "max_relative_nonzero": 4.3906747481758495e-16,
+                "max_relative_to_peak": 7.347622476035745e-18,
+                "reference_sum": 0.015322322630923663,
+                "relative_l2": 1.0094554847155818e-17
+              },
+              "variance": {
+                "actual_sum": 705.5904607772827,
+                "cells": 330,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 705.5904607772827,
+                "relative_l2": 0.0
+              }
+            },
+            "row_lowest_exposure_decile": {
+              "counts": {
+                "actual_sum": 62.0,
+                "cells": 487,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 62.0,
+                "relative_l2": 0.0
+              },
+              "normalization": {
+                "actual_sum": 345075.5838012728,
+                "cells": 487,
+                "different_cells": 40,
+                "finite_support_equal": true,
+                "max_absolute": 1.8189894035458565e-12,
+                "max_relative_nonzero": 3.3293114149143193e-16,
+                "max_relative_to_peak": 1.4990049416532113e-16,
+                "reference_sum": 345075.5838012728,
+                "relative_l2": 1.0859895701539336e-16
+              },
+              "numerator": {
+                "actual_sum": 75.52684283256531,
+                "cells": 487,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 75.52684283256531,
+                "relative_l2": 0.0
+              },
+              "signal": {
+                "actual_sum": 0.07668529484681831,
+                "cells": 487,
+                "different_cells": 4,
+                "finite_support_equal": true,
+                "max_absolute": 2.168404344971009e-19,
+                "max_relative_nonzero": 2.1545947557568582e-16,
+                "max_relative_to_peak": 9.504269068390983e-18,
+                "reference_sum": 0.07668529484681831,
+                "relative_l2": 9.432347249177448e-18
+              },
+              "uncertainty": {
+                "actual_sum": 0.055126796572911495,
+                "cells": 487,
+                "different_cells": 3,
+                "finite_support_equal": true,
+                "max_absolute": 1.0842021724855044e-19,
+                "max_relative_nonzero": 1.650772620010321e-16,
+                "max_relative_to_peak": 6.7205332501476234e-18,
+                "reference_sum": 0.05512679657291149,
+                "relative_l2": 8.366057916007463e-18
+              },
+              "variance": {
+                "actual_sum": 93.2466390132904,
+                "cells": 487,
+                "different_cells": 0,
+                "finite_support_equal": true,
+                "max_absolute": 0.0,
+                "max_relative_nonzero": 0.0,
+                "max_relative_to_peak": 0.0,
+                "reference_sum": 93.2466390132904,
+                "relative_l2": 0.0
+              }
+            }
+          },
+          "target": "pooled numerator/variance/exposure from original cells"
+        },
+        "original_inputs_unchanged": true,
+        "reference": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-pilot24-cached12-v011604-control/histogram-12.h5",
+        "script_sha256": "5c63ea80143e82e4bf19fcf6993a04aefd219fdf43f69adcb3959834cfd10ffb",
+        "timing_scope": "untimed scientific diagnostics; excluded from workflow wall time",
+        "whole_cells": {
+          "channels": {
+            "counts": {
+              "actual_sum": 17536624.0,
+              "cells": 91584578,
+              "different_cells": 0,
+              "finite_support_equal": true,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "max_relative_to_peak": 0.0,
+              "reference_sum": 17536624.0,
+              "relative_l2": 0.0
+            },
+            "normalization": {
+              "actual_sum": 66790817035.39172,
+              "cells": 91584578,
+              "different_cells": 3957048,
+              "finite_support_equal": true,
+              "max_absolute": 3.637978807091713e-11,
+              "max_relative_nonzero": 1.802299829587772e-15,
+              "max_relative_to_peak": 5.19644128294926e-16,
+              "reference_sum": 66790817035.39172,
+              "relative_l2": 1.1187242293552928e-16
+            },
+            "numerator": {
+              "actual_sum": 22492595.841014862,
+              "cells": 91584578,
+              "different_cells": 0,
+              "finite_support_equal": true,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "max_relative_to_peak": 0.0,
+              "reference_sum": 22492595.841014862,
+              "relative_l2": 0.0
+            },
+            "variance": {
+              "actual_sum": 30351313.063871145,
+              "cells": 91584578,
+              "different_cells": 0,
+              "finite_support_equal": true,
+              "max_absolute": 0.0,
+              "max_relative_nonzero": 0.0,
+              "max_relative_to_peak": 0.0,
+              "reference_sum": 30351313.063871145,
+              "relative_l2": 0.0
+            }
+          },
+          "exposure_support": {
+            "actual_events_without_exposure": 26,
+            "actual_exposed": 35138095,
+            "differing_exposure_support": 0,
+            "reference_events_without_exposure": 26,
+            "reference_exposed": 35138095
+          },
+          "first_count_differences": [],
+          "shape": [
+            67,
+            134,
+            101,
+            101
+          ]
+        }
+      }
+    },
+    "stored_mask_digest_equal": {
+      "pilot24": true,
+      "full617": true
+    },
+    "full_test_suite": {
+      "passed": 3234,
+      "skipped": 1,
+      "skip_reason": "optional CuPy electronic-response backend unavailable"
+    }
+  }
+}

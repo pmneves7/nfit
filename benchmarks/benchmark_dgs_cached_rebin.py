@@ -145,7 +145,12 @@ def _require_saved_caches(group):
 
 def _validate_histogram_grid(histogram, settings):
     import numpy as np
-    edges = settings["grid"]["bin_edges"]
+
+    from nfit.dgs_reduction_policy import dgs_histogram_edges
+
+    # The shared settings describe requested physical edges. Native Mantid
+    # compatibility stores the authoritative float32-resolved dimension edges.
+    edges = dgs_histogram_edges(settings["grid"]["bin_edges"])
     if histogram.shape != tuple(len(edge)-1 for edge in edges) or any(
         not np.array_equal(axis.values, expected)
         for axis, expected in zip(histogram.axes, edges, strict=True)

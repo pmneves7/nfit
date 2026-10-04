@@ -15,6 +15,42 @@ production nfit nor its unit tests invokes Mantid. Instrumentation records
 children without replacing their algorithms. Profiling is separate from the
 timed workflows.
 
+## Current validated workflows
+
+Time-weighted accepted sample orientations, checked trajectory pooling and
+compatible six-to-twelve-operation cache expansion are included in the
+0.116.5 source measurements below. Both initial workflows reconstruct raw data
+and save a six-operation histogram; the later workflows bin saved data with
+twelve operations and save the result. The initial nfit save also persists lazy
+reduced-event caches. The ordinary Shiver job performs sequential raw reduction
+with its normal internal threading. These are measured user workflows on the
+same host, including loading and saving, without background subtraction.
+
+| Dataset and operation | nfit | Ordinary Shiver/Mantid | Ratio |
+| --- | ---: | ---: | ---: |
+| SEQUOIA, 617 runs: first saved dataset | 496.388 s (8m16s) | 15916.054 s (4h25m16s) | 32.1× |
+| SEQUOIA: later twelve-operation bin and save | 198.897 s (3m19s) | 3145.606 s (52m26s) | 15.8× |
+| HYSPEC 34° bank, 361 runs: first saved dataset | 85.221 s (1m25s) | 1434.725 s (23m55s) | 16.8× |
+| HYSPEC: later twelve-operation bin and save | 34.388 s | 101.513 s (1m42s) | 3.0× |
+
+Reopening and accessing the saved histogram takes 4.207 / 0.756 s in nfit.
+All initial reduced caches miss and all later caches hit. Both standard
+six- and twelve-operation native comparisons preserve literal C/V/counts,
+identical exposure support and every-cell exposure within 1.61×10⁻¹⁴ relative.
+The NiO low-coverage cut, including its fringes, agrees at summation rounding.
+Source hashes, stage receipts and full-grid gates are in
+`dgs-symmetry-standard-node19.json`. Source-candidate jobs record 0.116.4
+installed metadata and the frozen 0.116.5 module hashes.
+
+The cache expansion changes later compatible binnings. It does not change raw
+reconstruction in the initial workflow; the small initial timing changes from
+0.116.4 are not attributed to this optimization. A separate matched saved-project
+control and final workload guard are reported in
+[the cache-expansion report](dgs-symmetry-cache-node19.md). The guard prevents
+large-grid cache scans from slowing a small source selection. Tiny Shiver
+extrema losses and HYSPEC SaveMD/LoadMD geometry rounding remain accepted,
+documented numerical differences; nfit does not reproduce those losses.
+
 ## Matched SEQUOIA pilot
 
 The 24 angle-spaced raw runs cover the complete 617-run NiO membership. Both

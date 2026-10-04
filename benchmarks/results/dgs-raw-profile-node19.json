@@ -1,0 +1,677 @@
+{
+  "profile": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/6A-P-node19/nfit/seq-pilot24-v011605-component-profile/primary_workflow.prof",
+  "scope": "Instrumented two-stage 24-run workflow, including initial six-operation and later twelve-operation histograms and saves; not an ordinary timing result. Cumulative components overlap and must not be added.",
+  "total_profile_seconds": 101.20384934000003,
+  "top_self": [
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/_mdevent_numba.py",
+      "line": 278,
+      "function": "accumulate",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 10.338197031,
+      "cumulative_seconds": 18.993061323000003
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_symmetry_cache.py",
+      "line": 85,
+      "function": "_join",
+      "primitive_calls": 1,
+      "calls": 1,
+      "self_seconds": 8.784672516,
+      "cumulative_seconds": 14.780896449
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "function": "<method 'compress' of 'zlib.Compress' objects>",
+      "primitive_calls": 256,
+      "calls": 2734,
+      "self_seconds": 4.765770812,
+      "cumulative_seconds": 0.138269845
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "function": "<built-in method zlib.crc32>",
+      "primitive_calls": 153730,
+      "calls": 170268,
+      "self_seconds": 4.72857953,
+      "cumulative_seconds": 5.225264436000001
+    },
+    {
+      "file": "h5py/_hl/dataset.py",
+      "line": 853,
+      "function": "__getitem__",
+      "primitive_calls": 6126,
+      "calls": 6126,
+      "self_seconds": 4.243462611,
+      "cumulative_seconds": 4.572319979
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 430,
+      "function": "bin_raw_dgs_group",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 3.9807343570000002,
+      "cumulative_seconds": 57.617042879
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_symmetry_cache.py",
+      "line": 59,
+      "function": "_statistics",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 3.8310907600000004,
+      "cumulative_seconds": 8.633211536000001
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_symmetry_cache.py",
+      "line": 72,
+      "function": "<genexpr>",
+      "primitive_calls": 3670,
+      "calls": 3670,
+      "self_seconds": 3.5765297410000003,
+      "cumulative_seconds": 3.5765297410000003
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_event_accumulation.py",
+      "line": 21,
+      "function": "accumulate_projected_dgs_events",
+      "primitive_calls": 16728,
+      "calls": 16728,
+      "self_seconds": 2.957212594,
+      "cumulative_seconds": 5.516464009000001
+    },
+    {
+      "file": "h5py/_hl/group.py",
+      "line": 409,
+      "function": "_get",
+      "primitive_calls": 43211,
+      "calls": 43211,
+      "self_seconds": 1.931295871,
+      "cumulative_seconds": 3.666985694
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_symmetry_cache.py",
+      "line": 103,
+      "function": "<genexpr>",
+      "primitive_calls": 1835,
+      "calls": 1835,
+      "self_seconds": 1.7455971750000001,
+      "cumulative_seconds": 1.7455971750000001
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "function": "<method 'tobytes' of 'numpy.ndarray' objects>",
+      "primitive_calls": 1400,
+      "calls": 1400,
+      "self_seconds": 1.442299542,
+      "cumulative_seconds": 1.442299542
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/array_archive.py",
+      "line": 38,
+      "function": "compress",
+      "primitive_calls": 644,
+      "calls": 644,
+      "self_seconds": 1.4182858950000001,
+      "cumulative_seconds": 1.5651157530000002
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "function": "<method 'decompress' of 'zlib.Decompress' objects>",
+      "primitive_calls": 1158,
+      "calls": 19975,
+      "self_seconds": 1.406135442,
+      "cumulative_seconds": 8.415966569
+    },
+    {
+      "file": "llvmlite/binding/ffi.py",
+      "line": 210,
+      "function": "__call__",
+      "primitive_calls": 18034,
+      "calls": 18034,
+      "self_seconds": 1.228588239,
+      "cumulative_seconds": 1.461144852
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_geometry.py",
+      "line": 185,
+      "function": "location_transform",
+      "primitive_calls": 121081,
+      "calls": 121081,
+      "self_seconds": 1.163254982,
+      "cumulative_seconds": 4.171866598
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 901,
+      "function": "_iter_reduced_event_chunks",
+      "primitive_calls": 2784,
+      "calls": 2784,
+      "self_seconds": 1.107988964,
+      "cumulative_seconds": 9.251109816000001
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "function": "<method 'reduce' of 'numpy.ufunc' objects>",
+      "primitive_calls": 435675,
+      "calls": 435675,
+      "self_seconds": 0.9515532590000001,
+      "cumulative_seconds": 0.9515532590000001
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "function": "<method 'read' of '_io.BufferedReader' objects>",
+      "primitive_calls": 162242,
+      "calls": 164103,
+      "self_seconds": 0.9505608160000001,
+      "cumulative_seconds": 1.1124928390000002
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "function": "<method 'searchsorted' of 'numpy.ndarray' objects>",
+      "primitive_calls": 10785,
+      "calls": 10785,
+      "self_seconds": 0.9164965140000001,
+      "cumulative_seconds": 0.9164965140000001
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_geometry_precision.py",
+      "line": 87,
+      "function": "mantid_he3_exponent",
+      "primitive_calls": 119808,
+      "calls": 119808,
+      "self_seconds": 0.883432824,
+      "cumulative_seconds": 3.405276046
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 640,
+      "function": "accumulate",
+      "primitive_calls": 48,
+      "calls": 48,
+      "self_seconds": 0.8800379260000001,
+      "cumulative_seconds": 16.800971338
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 1503,
+      "function": "_expand_type",
+      "primitive_calls": 5,
+      "calls": 1177,
+      "self_seconds": 0.8358232090000001,
+      "cumulative_seconds": 5.138507333000001
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "function": "<method 'write' of '_io.BufferedRandom' objects>",
+      "primitive_calls": 147322,
+      "calls": 147322,
+      "self_seconds": 0.8265915800000001,
+      "cumulative_seconds": 0.8265915800000001
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_geometry_precision.py",
+      "line": 24,
+      "function": "_vector",
+      "primitive_calls": 239622,
+      "calls": 239622,
+      "self_seconds": 0.767733871,
+      "cumulative_seconds": 1.9728211690000002
+    }
+  ],
+  "top_cumulative": [
+    {
+      "file": "threading.py",
+      "line": 1097,
+      "function": "join",
+      "primitive_calls": 61,
+      "calls": 61,
+      "self_seconds": 0.0035011710000000004,
+      "cumulative_seconds": 91.166138542
+    },
+    {
+      "file": "~",
+      "line": 0,
+      "function": "<method 'join' of '_thread._ThreadHandle' objects>",
+      "primitive_calls": 61,
+      "calls": 61,
+      "self_seconds": 0.001105007,
+      "cumulative_seconds": 91.16161073800001
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/project_composites.py",
+      "line": 3122,
+      "function": "refresh_composite_dataset",
+      "primitive_calls": 3,
+      "calls": 3,
+      "self_seconds": 6.3483e-05,
+      "cumulative_seconds": 82.124965348
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/project_composites.py",
+      "line": 2106,
+      "function": "_cached_composite_dataset_data",
+      "primitive_calls": 3,
+      "calls": 3,
+      "self_seconds": 0.0005957740000000001,
+      "cumulative_seconds": 82.124143379
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/project_composites.py",
+      "line": 1346,
+      "function": "_raw_dgs_composite_histogram",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 0.0005482950000000001,
+      "cumulative_seconds": 57.620990531000004
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 430,
+      "function": "bin_raw_dgs_group",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 3.9807343570000002,
+      "cumulative_seconds": 57.617042879
+    },
+    {
+      "file": "concurrent/futures/_base.py",
+      "line": 424,
+      "function": "result",
+      "primitive_calls": 2518,
+      "calls": 2518,
+      "self_seconds": 0.008425164,
+      "cumulative_seconds": 48.398551113
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/project_composites.py",
+      "line": 1067,
+      "function": "composite_dataset_data",
+      "primitive_calls": 1,
+      "calls": 1,
+      "self_seconds": 9.721600000000001e-05,
+      "cumulative_seconds": 47.860773193
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/project_composites.py",
+      "line": 1387,
+      "function": "_composite_dataset_data",
+      "primitive_calls": 1,
+      "calls": 1,
+      "self_seconds": 0.0023774530000000003,
+      "cumulative_seconds": 47.860674365
+    },
+    {
+      "file": "threading.py",
+      "line": 337,
+      "function": "wait",
+      "primitive_calls": 220,
+      "calls": 220,
+      "self_seconds": 0.002892869,
+      "cumulative_seconds": 43.040243068
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/project_composites.py",
+      "line": 2066,
+      "function": "_incremental_raw_dgs_base",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 0.114368964,
+      "cumulative_seconds": 30.729923395
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_symmetry_cache.py",
+      "line": 128,
+      "function": "try_expand_raw_dgs_symmetry",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 0.00015445900000000002,
+      "cumulative_seconds": 30.615259087000002
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 975,
+      "function": "_trajectory_normalization",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 0.053853637,
+      "cumulative_seconds": 20.580705684
+    },
+    {
+      "file": "zipfile/__init__.py",
+      "line": 1326,
+      "function": "write",
+      "primitive_calls": 146560,
+      "calls": 146560,
+      "self_seconds": 0.22252379600000002,
+      "cumulative_seconds": 19.791056351
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 1086,
+      "function": "accumulate_batch",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 8.296700000000001e-05,
+      "cumulative_seconds": 18.993441915000002
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/_mdevent_numba.py",
+      "line": 278,
+      "function": "accumulate",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 10.338197031,
+      "cumulative_seconds": 18.993061323000003
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 640,
+      "function": "accumulate",
+      "primitive_calls": 48,
+      "calls": 48,
+      "self_seconds": 0.8800379260000001,
+      "cumulative_seconds": 16.800971338
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/project_gui.py",
+      "line": 6149,
+      "function": "save_project",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 0.000221169,
+      "cumulative_seconds": 15.096753002000002
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/project_gui.py",
+      "line": 6167,
+      "function": "_save_project_archive",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 0.00041380100000000005,
+      "cumulative_seconds": 15.096209271000001
+    },
+    {
+      "file": "concurrent/futures/_base.py",
+      "line": 672,
+      "function": "__exit__",
+      "primitive_calls": 3,
+      "calls": 3,
+      "self_seconds": 3.2389000000000004e-05,
+      "cumulative_seconds": 14.817314608
+    }
+  ],
+  "components": [
+    {
+      "file": "zipfile/__init__.py",
+      "line": 1326,
+      "function": "write",
+      "primitive_calls": 146560,
+      "calls": 146560,
+      "self_seconds": 0.22252379600000002,
+      "cumulative_seconds": 19.791056351
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 1086,
+      "function": "accumulate_batch",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 8.296700000000001e-05,
+      "cumulative_seconds": 18.993441915000002
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/_mdevent_numba.py",
+      "line": 278,
+      "function": "accumulate",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 10.338197031,
+      "cumulative_seconds": 18.993061323000003
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 640,
+      "function": "accumulate",
+      "primitive_calls": 48,
+      "calls": 48,
+      "self_seconds": 0.8800379260000001,
+      "cumulative_seconds": 16.800971338
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 1435,
+      "function": "_detector_geometry",
+      "primitive_calls": 24,
+      "calls": 24,
+      "self_seconds": 0.052467148000000005,
+      "cumulative_seconds": 10.780882993
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 1451,
+      "function": "_detector_geometry_from_xml",
+      "primitive_calls": 1,
+      "calls": 1,
+      "self_seconds": 0.252353259,
+      "cumulative_seconds": 10.493574500000001
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_cache.py",
+      "line": 115,
+      "function": "cache_event_chunks",
+      "primitive_calls": 2784,
+      "calls": 2784,
+      "self_seconds": 0.12540632300000001,
+      "cumulative_seconds": 9.940867793
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 901,
+      "function": "_iter_reduced_event_chunks",
+      "primitive_calls": 2784,
+      "calls": 2784,
+      "self_seconds": 1.107988964,
+      "cumulative_seconds": 9.251109816000001
+    },
+    {
+      "file": "zipfile/__init__.py",
+      "line": 1080,
+      "function": "read",
+      "primitive_calls": 3591,
+      "calls": 22847,
+      "self_seconds": 0.174094363,
+      "cumulative_seconds": 6.884126979
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/dgs_event_accumulation.py",
+      "line": 21,
+      "function": "accumulate_projected_dgs_events",
+      "primitive_calls": 16728,
+      "calls": 16728,
+      "self_seconds": 2.957212594,
+      "cumulative_seconds": 5.516464009000001
+    },
+    {
+      "file": "h5py/_hl/dataset.py",
+      "line": 853,
+      "function": "__getitem__",
+      "primitive_calls": 6126,
+      "calls": 6126,
+      "self_seconds": 4.243462611,
+      "cumulative_seconds": 4.572319979
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 169,
+      "function": "inspect_raw_dgs_run",
+      "primitive_calls": 48,
+      "calls": 48,
+      "self_seconds": 0.001546349,
+      "cumulative_seconds": 3.687198475
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 224,
+      "function": "_inspect_raw_dgs_run_uncached",
+      "primitive_calls": 24,
+      "calls": 24,
+      "self_seconds": 0.01928128,
+      "cumulative_seconds": 3.677265605
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_geometry_precision.py",
+      "line": 87,
+      "function": "mantid_he3_exponent",
+      "primitive_calls": 119808,
+      "calls": 119808,
+      "self_seconds": 0.883432824,
+      "cumulative_seconds": 3.405276046
+    },
+    {
+      "file": "h5py/_hl/group.py",
+      "line": 405,
+      "function": "__getitem__",
+      "primitive_calls": 32216,
+      "calls": 32216,
+      "self_seconds": 0.04543577,
+      "cumulative_seconds": 3.1263629070000003
+    },
+    {
+      "file": "zipfile/__init__.py",
+      "line": 1975,
+      "function": "write",
+      "primitive_calls": 26,
+      "calls": 26,
+      "self_seconds": 0.000404469,
+      "cumulative_seconds": 1.855721409
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 1596,
+      "function": "_he3_exponent",
+      "primitive_calls": 119808,
+      "calls": 119808,
+      "self_seconds": 0.515988161,
+      "cumulative_seconds": 1.5370654300000002
+    },
+    {
+      "file": "h5py/_hl/attrs.py",
+      "line": 51,
+      "function": "__getitem__",
+      "primitive_calls": 18480,
+      "calls": 18480,
+      "self_seconds": 0.6475084950000001,
+      "cumulative_seconds": 0.884209145
+    },
+    {
+      "file": "zipfile/__init__.py",
+      "line": 917,
+      "function": "read",
+      "primitive_calls": 16668,
+      "calls": 17904,
+      "self_seconds": 0.075953668,
+      "cumulative_seconds": 0.830004586
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 1420,
+      "function": "_masked_detector_geometry",
+      "primitive_calls": 24,
+      "calls": 24,
+      "self_seconds": 0.052748522000000006,
+      "cumulative_seconds": 0.251223904
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 1618,
+      "function": "_he3_tube_efficiency_correction",
+      "primitive_calls": 2760,
+      "calls": 2760,
+      "self_seconds": 0.136577848,
+      "cumulative_seconds": 0.166345122
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_geometry.py",
+      "line": 234,
+      "function": "resolved_geometry_signature",
+      "primitive_calls": 24,
+      "calls": 24,
+      "self_seconds": 0.006510943000000001,
+      "cumulative_seconds": 0.158719026
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 1344,
+      "function": "_event_geometry",
+      "primitive_calls": 24,
+      "calls": 24,
+      "self_seconds": 0.018976317,
+      "cumulative_seconds": 0.066262267
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_cache.py",
+      "line": 211,
+      "function": "bind_project_reduced_event_caches",
+      "primitive_calls": 3,
+      "calls": 3,
+      "self_seconds": 0.000463337,
+      "cumulative_seconds": 0.011730223000000001
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_cache.py",
+      "line": 198,
+      "function": "project_reduced_event_artifacts",
+      "primitive_calls": 2,
+      "calls": 2,
+      "self_seconds": 0.00020750800000000002,
+      "cumulative_seconds": 0.006524894000000001
+    },
+    {
+      "file": "zipfile/__init__.py",
+      "line": 1687,
+      "function": "read",
+      "primitive_calls": 1,
+      "calls": 1,
+      "self_seconds": 8.750000000000001e-06,
+      "cumulative_seconds": 0.0014878060000000002
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs.py",
+      "line": 1537,
+      "function": "_idf_he3_parameters",
+      "primitive_calls": 1,
+      "calls": 1,
+      "self_seconds": 4.4825000000000005e-05,
+      "cumulative_seconds": 6.4701e-05
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/raw_dgs_cache.py",
+      "line": 192,
+      "function": "clear_reduced_event_cache",
+      "primitive_calls": 24,
+      "calls": 24,
+      "self_seconds": 1.4223000000000001e-05,
+      "cumulative_seconds": 1.9517e-05
+    },
+    {
+      "file": "/tmp/nfit-symmetry-v011605/src/nfit/reduction_recipes.py",
+      "line": 66,
+      "function": "affects_reduced_events",
+      "primitive_calls": 24,
+      "calls": 24,
+      "self_seconds": 6.272e-06,
+      "cumulative_seconds": 6.272e-06
+    }
+  ]
+}
