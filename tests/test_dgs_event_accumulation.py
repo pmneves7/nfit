@@ -61,11 +61,12 @@ def _compare(projector, inputs, shape, *, enabled=None, variances=True, chunks=N
     return bins, reference, candidate
 
 
+@pytest.mark.parametrize("precision", ["mantid", "high_precision"])
 @pytest.mark.parametrize("layout", ["C", "F", "reversed", "sliced"])
 @pytest.mark.parametrize("variances", [False, True])
-def test_unequal_signed_weights_layouts_masks_and_streamed_chunks_are_literal(layout, variances):
+def test_unequal_signed_weights_layouts_masks_and_streamed_chunks_are_literal(layout, variances, precision):
     ub, basis, edges = _case()
-    projector = prepare_dgs_event_projector(ub, basis, np.eye(3), edges)
+    projector = prepare_dgs_event_projector(ub, basis, np.eye(3), edges, precision)
     inputs = _arrays(layout=layout)
     before = [array.copy() for array in inputs]
     enabled = np.arange(len(inputs[1])) % 3 != 0
@@ -76,10 +77,11 @@ def test_unequal_signed_weights_layouts_masks_and_streamed_chunks_are_literal(la
         np.testing.assert_array_equal(array, original)
 
 
-def test_exact_and_nextafter_edges_invalid_coordinates_and_coverage_fringe_bins():
+@pytest.mark.parametrize("precision", ["mantid", "high_precision"])
+def test_exact_and_nextafter_edges_invalid_coordinates_and_coverage_fringe_bins(precision):
     ub = np.eye(3)/(2*np.pi)
     edges = tuple(np.linspace(-1, 1, 9) for _ in range(4))
-    projector = prepare_dgs_event_projector(ub, np.eye(4), np.eye(3), edges)
+    projector = prepare_dgs_event_projector(ub, np.eye(4), np.eye(3), edges, precision)
     levels = np.concatenate((edges[0], np.nextafter(edges[0], -np.inf),
                              np.nextafter(edges[0], np.inf), [np.nan, np.inf, -np.inf, -0.]))
     points = np.zeros((4*len(levels), 4))
@@ -90,9 +92,10 @@ def test_exact_and_nextafter_edges_invalid_coordinates_and_coverage_fringe_bins(
     _compare(projector, (points[:, :3], points[:, 3], weights, variance), (8,)*4)
 
 
+@pytest.mark.parametrize("precision", ["mantid", "high_precision"])
 @pytest.mark.parametrize("copies", [1, 6, 12])
 @pytest.mark.parametrize("covariance", [False, True])
-def test_symmetry_order_and_selected_copy_variance_policy_are_literal(copies, covariance):
+def test_symmetry_order_and_selected_copy_variance_policy_are_literal(copies, covariance, precision):
     ub, basis, edges = _case()
     shape = tuple(len(edge)-1 for edge in edges)
     expression = "x,y,z;y,z,x;z,x,y;y,x,z;x,z,y;z,y,x;-x,-y,-z;-y,-z,-x;-z,-x,-y;-y,-x,-z;-x,-z,-y;-z,-y,-x"
@@ -103,7 +106,7 @@ def test_symmetry_order_and_selected_copy_variance_policy_are_literal(copies, co
     outputs = [[np.zeros(shape) for _ in range(3)] for _ in range(2)]
     bins = [np.full((copies, len(energy)), -1, dtype=np.int64) for _ in range(2)]
     for copy, operation in enumerate(operations):
-        projector = prepare_dgs_event_projector(ub, basis, operation.matrix_hkl, edges)
+        projector = prepare_dgs_event_projector(ub, basis, operation.matrix_hkl, edges, precision)
         coordinates, accumulation_edges = projector(q, energy)
         _accumulate_discrete_event_coordinates(coordinates, weights, variances, accumulation_edges,
             shape, *outputs[0], bin_indices=bins[0][copy])
@@ -120,12 +123,12 @@ def test_symmetry_order_and_selected_copy_variance_policy_are_literal(copies, co
         np.testing.assert_array_equal(actual, expected)
 
 
-@pytest.mark.parametrize("mode", ["high_precision", "nonuniform", "numba_unavailable"])
+@pytest.mark.parametrize("mode", ["nonuniform", "numba_unavailable"])
 def test_established_fallback_remains_exact(monkeypatch, mode):
     ub, basis, edges = _case()
     if mode == "nonuniform":
         edges = (np.array([-1, -.7, -.55, .2, 1]), *edges[1:])
-    policy = "high_precision" if mode == "high_precision" else "mantid"
+    policy = "mantid"
     projector = prepare_dgs_event_projector(ub, basis, np.eye(3), edges, policy)
     if mode == "numba_unavailable":
         monkeypatch.setattr(dgs_event_accumulation, "_compiled", None)
@@ -171,3 +174,32 @@ def test_fused_shape_mismatch_fails_before_unchecked_native_indexing():
     with pytest.raises(ValueError, match="matching"):
         accumulate_projected_dgs_events(projector, q[:2], energy, weights, variances,
             sums[0].shape, *sums, fallback_accumulator=_accumulate_discrete_event_coordinates)
+
+
+@pytest.mark.parametrize("nonuniform", [False, True])
+def test_high_precision_fuses_physical_edges_without_calling_numpy_projector(nonuniform):
+    ub, basis, edges = _case()
+    if nonuniform:
+        edges = (np.array([-1, -.7, -.55, .2, 1]), *edges[1:])
+    projector = prepare_dgs_event_projector(ub, basis, np.eye(3), edges, "high_precision")
+    class FusedOnly:
+        _dgs_float64_projection = projector._dgs_float64_projection
+        def __call__(self, *args):
+            pytest.fail("compiled high precision constructed event-sized coordinates")
+    q, energy, weights, variances = _arrays(rows=300)
+    outputs = [np.zeros(tuple(len(edge)-1 for edge in edges)) for _ in range(3)]
+    reference = [np.zeros_like(array) for array in outputs]
+    coordinates, accumulation_edges = projector(q, energy)
+    _accumulate_discrete_event_coordinates(coordinates, weights, variances, accumulation_edges,
+        outputs[0].shape, *reference)
+    accumulate_projected_dgs_events(FusedOnly(), q, energy, weights, variances,
+        outputs[0].shape, *outputs, fallback_accumulator=_accumulate_discrete_event_coordinates)
+    for expected, actual in zip(reference, outputs, strict=True):
+        np.testing.assert_array_equal(actual, expected)
+
+
+def test_high_precision_retains_fallback_when_compiler_is_unavailable(monkeypatch):
+    monkeypatch.setattr(dgs_event_accumulation, "_compiled_high_precision", None)
+    ub, basis, edges = _case()
+    _compare(prepare_dgs_event_projector(ub, basis, np.eye(3), edges, "high_precision"),
+             _arrays(rows=30), tuple(len(edge)-1 for edge in edges))

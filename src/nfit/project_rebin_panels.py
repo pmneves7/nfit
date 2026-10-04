@@ -360,9 +360,21 @@ def _format_bytes(value: int) -> str:
     return f"{size:.1f} TiB"
 
 
-def measurement_average_choices(combo: Any) -> None:
+def measurement_average_choices(combo: Any, *, pooled_events: bool = False, weighting: str = "uniform") -> None:
     """Describe legacy averaging choices by their measurement target without changing defaults."""
     from PySide6 import QtCore
+
+    if pooled_events:
+        combo.addItem("Event response: pooled numerator / exposure", weighting)
+        combo.setEnabled(False)
+        combo.setToolTip(
+            "Native event histograms add the corrected event numerator C, its observed variance V, "
+            "and the normalization exposure N before calculating signal C/N and standard error "
+            "sqrt(V)/N. Exposure is treated as fixed. Point-average weighting does not apply; "
+            "the saved point-weighting setting is retained for compatible downstream workflows."
+        )
+        combo.setItemData(0, combo.toolTip(), QtCore.Qt.ItemDataRole.ToolTipRole)
+        return
 
     combo.setToolTip(
         "For already normalized measurements of a common value: precision weighting uses "

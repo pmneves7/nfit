@@ -88,7 +88,8 @@ different Python.
   accepted-time sample orientations, and dataset-owned reduced-event caches.
 - `src/nfit/mdevent.py` and `mdevent_detector_masks.py`: reduced-event import,
   trajectory normalization, and retained detector-mask metadata.
-- `src/nfit/event_bin_indices.py`: shared arbitrary-edge event membership,
+- `src/nfit/event_bin_indices.py` and `_event_bin_numba.py`: shared Python and
+  compiled physical-edge event membership; the Python entry point is
   explicitly re-exported by the MDE importer for compatibility.
 - `src/nfit/cached_background_replay.py` and `background_profile_queries.py`:
   bounded measured-background recipes, aligned composite propagation, and

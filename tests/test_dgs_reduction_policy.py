@@ -169,3 +169,16 @@ def test_mantid_normalization_index_uses_float32_first_bin_width():
     assert policy.dgs_uses_mantid_trajectory_grid((np.linspace(-.5, .5, 101),))
     assert not policy.dgs_uses_mantid_trajectory_grid((np.array([0., .3, 1.]),))
     assert not policy.dgs_uses_mantid_trajectory_grid((np.linspace(-.5, .5, 101),), "high_precision")
+
+
+@pytest.mark.parametrize("precision, changes", [("mantid", False), ("high_precision", True)])
+def test_scalar_projection_version_invalidates_only_high_precision_histograms(tmp_path, monkeypatch, precision, changes):
+    from nfit import mdevent_dataset_group, project_composites
+    from tests.test_mdevent import _write_mdevent
+
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source, event_precision_policy=precision)
+    before = project_composites._composite_cache_signature(group)
+    monkeypatch.setattr(policy, "HIGH_PRECISION_PROJECTION_VERSION", policy.HIGH_PRECISION_PROJECTION_VERSION+1)
+    assert (project_composites._composite_cache_signature(group) != before) == changes

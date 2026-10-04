@@ -397,14 +397,18 @@ for every bank.
 The powder path bins radially from detector events without first allocating an
 intermediate four-dimensional volume.
 
-Native raw-event and HKLE MDE binning use an ordered compiled pass when Numba
+Native raw-event HKLE and HKLE MDE binning use an ordered compiled pass when Numba
 is available. Uniform grids under the Mantid precision policy fuse coordinate
 projection, bin lookup, and signal, variance, and event-count updates. Each
 float32 multiplication and addition keeps its original rounding order; events
 and symmetry copies accumulate in source order. This avoids allocating the
-full projected event-coordinate arrays. Nonuniform grids and the optional
-float64 high-precision policy retain separate projection and accumulation;
-nonuniform bin lookup uses binary search. Event accumulation
+full projected event-coordinate arrays. The float64 high-precision policy also
+fuses its three transform stages and accumulation, using the requested physical
+edges on uniform or nonuniform grids. It retains double precision and source
+order; scalar dot products can differ from BLAS by roundoff. Uniform physical
+bin lookup is corrected against the saved edges; nonuniform lookup uses binary
+search. The separate projection path remains available when the compiled backend
+is unavailable. Event accumulation
 does not allocate worker-sized copies of the output volume. Trajectory
 normalization reuses its worker grids across batches and supplies each
 instrument geometry's own detector angles and solid-angle weights. Momentum
@@ -480,9 +484,10 @@ active shapes raise an error in either precision mode. Historical instrument
 definitions without cylinder height retain a nominal-radius fallback; exact
 Mantid shape parity is not claimed for those definitions. High precision retains
 float64 correction weights without selecting a different tube geometry or
-efficiency formula. Legacy high-precision reduced-event and histogram caches
-with active He-3 correction regenerate when recomputed; unchanged Mantid caches
-retain their signatures.
+efficiency formula. Older DGS caches regenerate under the current numerical
+versions when requested. High-precision histograms also record their scalar
+projection convention; a projection change reuses current reduced events and
+rebuilds only the affected histograms.
 
 **Copy policy script** exports the effective choices through
 `set_dgs_reduction_policies` and `set_dgs_trajectory_energy_policy`. It applies to
@@ -491,6 +496,50 @@ binning recipe. Changing monitor or event precision regenerates raw reduced-even
 caches; changing symmetry variance or trajectory Ei retains those events and
 requires histogram recomputation. Saved old histogram values remain unchanged
 until recomputed.
+
+### Scientific settings available in the explorer
+
+Select the native dataset group to inspect its saved reduction recipe. The
+**Reduction** section contains reconstruction and normalization settings;
+**Binning and combination** contains the output grid and histogram conventions.
+Automatic values and per-run overrides remain visible after import. **Copy
+reduction recipe script** exports the shared and per-run settings; **Copy
+workflow script** includes sources and the selected binning.
+
+| Scientific choice | Raw DGS GUI | MDEvent GUI | Meaning and limits |
+| --- | --- | --- | --- |
+| Ei and T0 | Automatic calibration or explicit run override | Trajectory Ei override; stored T0 is provenance | MDE event coordinates are already reduced. Individual-pulse Ei fitting is not implemented. |
+| Detector normalization and mask | Shared paths and per-run overrides | Shared paths and per-run overrides | Masked detectors contribute neither numerator nor exposure. |
+| Energy window, pulse-charge rejection, ki/kf and He-3 correction | Shared settings and per-run overrides | Fixed upstream | Beam-deadtime selection follows the native reduction convention; there is no separate disable option. |
+| Monitor variance convention | Mantid or stable | Fixed upstream | Stable peak selection can change calibrated Ei/T0; improved calibration accuracy has not been established. |
+| HYSPEC TOF window and Tank Y offset | Enabled window and automatic or signed offset override | Fixed upstream | Controls affect HYSPEC only. |
+| UB and output momentum basis | Shared UB; editable binning basis | Shared UB; editable binning basis | Changing UB reprojects laboratory events; it does not redo raw TOF conversion. |
+| Trajectory incident energy | First participating run or each run | First participating run or each run | Changes normalization trajectories, not the corrected event numerator. |
+| Event precision | Mantid or high precision | Mantid or high precision | Stored MDE values cannot recover precision lost upstream. |
+| Symmetry and uncertainty | Resolved operations; independent copies or within-bin covariance | Same | Within-bin covariance does not retain cross-bin covariance for later cuts. |
+| Grid bounds, steps, counts and edges | Editable | Editable | Native events use discrete bin membership. Fractional assignment is not implemented for these adapters. |
+| Statistical target | Pooled event response, displayed read-only | Same | Signal is pooled corrected numerator divided by pooled exposure; standard error is the square root of pooled numerator variance divided by exposure. Exposure is treated as fixed. |
+| Minimum samples and coverage | Editable | Editable | Samples count accepted events and symmetry copies, not independent observations. Native coverage is binary positive exposure, not a measure of sampling density or statistical precision. |
+
+The disabled **Discrete** assignment and **Event response: pooled numerator /
+exposure** selectors show the estimator the native adapter actually executes.
+Generic point-average and fractional settings saved in a binning remain stored
+for compatible downstream workflows but do not change native DGS/MDE results.
+For ordinary normalized point measurements, **Measurement target** still offers
+precision weighting for a common value and uniform weighting for a measurement
+mean. CORELLI keeps selectable fractional momentum assignment, discrete
+reconstructed energy channels, and its own charge/duty-cycle normalization.
+Its populated-bin coverage also does not quantify statistical precision.
+
+**Statistics and provenance** reports retained assumptions and channel units.
+Use **Exposure**, **Error**, and event-statistics channels to inspect sparse
+regions; a coverage threshold cannot reject small positive exposure. These
+diagnostics do not infer missing calibration covariance. Declared measurement
+contracts, model-specific low-count intervals, count likelihood choices, and
+source-aware count smoothing have public scripting APIs but no general GUI
+editor yet; see [Measurement statistics](measurement_statistics.md). Full
+cross-bin event covariance and upstream MDE reconstruction controls are not
+hidden options: the native adapters do not currently provide them.
 
 ### Reduced-event caches
 

@@ -11,6 +11,13 @@ box profiles, waterfalls, fit preparation, and statistical CSV export. Existing
 projects are not assigned an acquisition model from their instrument name.
 Unmarked legacy data retain their saved behavior and record that provenance.
 
+The explorer's **Measurement target** control selects the two legacy normalized
+point estimators. Native DGS/MDE groups display their fixed pooled event response
+instead. General `MeasurementContract` editing, model-specific final-bin
+intervals, and count likelihood selection currently use the scripting APIs on
+this page; **Statistics and provenance** is a read-only report. Source-aware
+count smoothing is also a scripting operation, separate from display blur.
+
 ## Choose a target
 
 | Kind and estimator | Target and assumptions | Inputs |
@@ -456,13 +463,29 @@ retained count numerator, numerator variance, and exposure. It validates that
 those statistics reproduce the signal and observed error. Pool counts and
 exposure first; bounds are not additive statistics and must not be averaged.
 
-A correct observed variance does not guarantee a calibrated Gaussian interval
-at low counts. A covered zero still supplies exposure and a positive rate upper
-limit. Confidence bounds require a declared count model; they are not an
-additive replacement for standard errors. Likewise, transformed copies of one
-source event do not supply independent information. A final cut that combines
-copies from different cached cells needs their cross covariance or original-source
-replay, even when each cell's marginal variance was corrected.
+A covered zero supplies exposure and must remain in counting aggregation.
+With no observed events, its count numerator and accumulated event variance can
+both be zero. The resulting zero standard uncertainty is an observed variance
+estimate, not certainty about the unknown rate. A correct observed variance does
+not guarantee a calibrated Gaussian interval at low counts. The Gaussian fit's
+positive-error selection excludes such points; an admissible count likelihood
+retains their information. Absent exposure and masked cells remain excluded.
+
+Confidence bounds require a declared source model and must be computed after
+pooling the final bin. They are not additive statistics or replacement standard
+errors. Heterogeneous event weights, background differences and uncertain
+calibration need their own response and nuisance-measurement model. An empty
+event set does not reveal the weights or response of unobserved events; imposing
+an arbitrary positive error or RMS-weight floor does not establish calibrated
+coverage. The available independent Poisson interval and likelihood do not
+extend automatically to these DGS cases.
+
+Transformed copies of one source event do not supply independent information.
+A final cut that combines copies from different cached cells needs their cross
+covariance or original-source replay, even when each cell's marginal variance was
+corrected. Background replay also reuses the original background observation;
+its virtual trajectory exposure does not create additional independent counting
+information or likelihood contributions.
 
 For independent counts with a common rate and unequal known exposures,
 pooling counts and exposure gives the expected inverse-variance weights. Weighting

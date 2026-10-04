@@ -152,7 +152,7 @@ def reduction_settings_schema(group_or_format) -> tuple[ReductionSetting, ...]:
                 ReductionSetting("energy_max_fraction", "Emax / Ei", "float", 0.95,
                                  "Upper reconstructed energy-transfer bound divided by Ei; must be below one and above Emin / Ei.", maximum=1.0),
                 ReductionSetting("monitor_variance_policy", "Monitor variance convention", "choice", DEFAULT_MONITOR_VARIANCE_POLICY,
-                                 "Convention used when fitting run monitors to determine Ei and T0.", choices=MONITOR_VARIANCE_POLICIES),
+                                 "Mantid reproduces GetEi peak-tail arithmetic and stopping without calling Mantid. Stable uses an algebraically nonnegative derivative variance; peak selection and resolved Ei/T0 can change. Improved calibration accuracy has not been established.", choices=MONITOR_VARIANCE_POLICIES),
                 ReductionSetting("hyspec_tof_crop", "HYSPEC raw TOF window", "bool", True,
                                  "Apply Shiver's HYSPEC TOF frame window before time-zero correction. Uses the run msd and effective Ei; other instruments are unaffected."),
                 ReductionSetting("hyspec_tank_offset_override", "HYSPEC Tank Y offset", "float", None,
@@ -164,10 +164,10 @@ def reduction_settings_schema(group_or_format) -> tuple[ReductionSetting, ...]:
                              "Use the first participating run Ei (Mantid MDNorm) or each run Ei for normalization trajectories.",
                              scope="normalization", choices=TRAJECTORY_ENERGY_POLICIES, per_run=False, reduced_event_dependency=False),
             ReductionSetting("event_precision_policy", "Event precision", "choice", DEFAULT_EVENT_PRECISION_POLICY,
-                             "Mantid-compatible event arithmetic or high precision. The convention applies to the entire output grid.",
+                             "Mantid follows float32 corrected-event storage, projection and histogram boundary arithmetic. High precision keeps float64 corrections and projection; both use the same Mantid He-3 correction. Stored MDE coordinates cannot recover precision lost upstream. This choice applies to the entire grid and can change boundary membership; changing raw precision regenerates reduced events.",
                              scope="histogram" if mde else "reduction", choices=EVENT_PRECISION_POLICIES, per_run=False),
             ReductionSetting("symmetry_variance_policy", "Symmetry uncertainty", "choice", DEFAULT_SYMMETRY_VARIANCE_POLICY,
-                             "Treat symmetry copies independently (Mantid) or retain their covariance within each final bin.",
+                             "Independent copies follows Mantid's diagonal event variance. Within-bin covariance includes shared-source terms when copies of one event reach the same final bin. Neither choice retains covariance between different bins through later slices or cuts; replay original events directly onto the final grid for that calculation. Monitor and calibration uncertainty remain separate assumptions.",
                              scope="histogram", choices=SYMMETRY_VARIANCE_POLICIES, per_run=False),
         ]
     if not mde:

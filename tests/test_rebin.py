@@ -21,6 +21,54 @@ def test_rebin_nd_averages_values_and_propagates_errors():
     np.testing.assert_allclose(result.bin_centers_list[0], [0.5, 1.5])
 
 
+@pytest.mark.parametrize("backend, workers, strategy", [
+    ("numpy", 1, "serial"), ("numba", 1, "serial"),
+    ("numba", 2, "dense"), ("numba", 2, "sparse"),
+])
+@pytest.mark.parametrize("fractional", [False, True])
+@pytest.mark.parametrize("normalize", [False, True])
+def test_uniform_and_explicit_edge_endpoints_clamp_with_identical_error_and_sample_weights(
+    backend, workers, strategy, fractional, normalize
+):
+    if backend == "numba":
+        pytest.importorskip("numba")
+    coordinates = np.array([np.nextafter(0., -np.inf), 0., np.nextafter(0., np.inf),
+                            np.nextafter(2., -np.inf), 2., np.nextafter(2., np.inf)])
+    data, errors = [100., 1., 2., 4., 8., 200.], [100., 1., 2., 3., 4., 200.]
+    kwargs = dict(fractional=fractional, normalize=normalize, backend=backend,
+                  workers=workers, parallel_strategy=strategy)
+    uniform = rebin_nd(data, coordinates, data_errs=errors, lower=.5, upper=1.5, num_bins=2, **kwargs)
+    explicit = rebin_nd(data, coordinates, data_errs=errors, bin_edges=[[0., 1., 2.]], **kwargs)
+    streamed = rebin_nd_stream(
+        ArrayRebinSource(data, coordinates[:, None], data_errs=errors, batch_size=2),
+        lower=.5, upper=1.5, num_bins=2, **kwargs)
+    for result in (uniform, explicit, streamed):
+        denominator = 2. if normalize else 1.
+        np.testing.assert_allclose(result.binned_data, np.array([3., 12.]) / denominator)
+        np.testing.assert_allclose(result.binned_data_errs, np.array([np.sqrt(5.), 5.]) / denominator)
+        np.testing.assert_array_equal(result.n_samples, [2., 2.])
+
+
+@pytest.mark.parametrize("fractional", [False, True])
+@pytest.mark.parametrize("normalize", [False, True])
+def test_streaming_disjoint_batches_keep_missing_bins_out_of_additive_sums(fractional, normalize):
+    pytest.importorskip("numba")
+    data, coords, errors, weights = [0., 4.], [.5, 2.5], [0., 3.], [2., 3.]
+    kwargs = dict(lower=.5, upper=2.5, num_bins=3, fractional=fractional, normalize=normalize)
+    direct = rebin_nd(data, coords, data_errs=errors, data_weights=weights, backend="numpy", **kwargs)
+    for backend in ("numpy", "numba"):
+        streamed = rebin_nd_stream(
+            ArrayRebinSource(data, np.asarray(coords)[:, None], data_errs=errors,
+                             data_weights=weights, batch_size=1), backend=backend, workers=1, **kwargs)
+        np.testing.assert_allclose(streamed.binned_data, direct.binned_data, equal_nan=True)
+        np.testing.assert_allclose(streamed.binned_data_errs, direct.binned_data_errs, equal_nan=True)
+        np.testing.assert_array_equal(streamed.n_samples, [1., 0., 1.])
+        np.testing.assert_array_equal(streamed._bd_sum, [0., 0., 12.])
+        np.testing.assert_array_equal(streamed._err_sum, [0., 0., 81.])
+        assert streamed.binned_data[0] == 0. and streamed.binned_data_errs[0] == 0.
+        assert np.isnan(streamed.binned_data[1]) and np.isnan(streamed.binned_data_errs[1])
+
+
 def test_rebin_nd_defaults_to_uniform_weighted_mean():
     result = rebin_nd(
         data=[0.0, 10.0],

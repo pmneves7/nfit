@@ -462,3 +462,16 @@ def test_incremental_symmetry_service_has_no_coordinator_or_reducer_imports():
     modules = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
     modules.extend(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names)
     assert not any(module.startswith(("raw_dgs", "mdevent", "project_", "PySide", "PyQt", "qt_")) for module in modules)
+
+
+def test_compiled_event_membership_has_one_owner_and_no_importer_dependencies():
+    from nfit import _dgs_event_numba, _event_bin_numba, _mdevent_numba
+
+    assert _dgs_event_numba.physical_bin_index is _event_bin_numba.physical_bin_index
+    assert _mdevent_numba.physical_bin_index is _event_bin_numba.physical_bin_index
+    assert _dgs_event_numba.uniform_edge_reciprocals is _event_bin_numba.uniform_edge_reciprocals
+    assert _mdevent_numba.uniform_edge_reciprocals is _event_bin_numba.uniform_edge_reciprocals
+    for name in ("_event_bin_numba", "_dgs_event_numba", "dgs_event_accumulation"):
+        tree = ast.parse((PACKAGE_ROOT / (name+".py")).read_text())
+        imports = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+        assert not any(module in ("raw_dgs", "mdevent") or "gui" in module or "Qt" in module for module in imports)

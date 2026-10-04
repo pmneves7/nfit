@@ -15,6 +15,9 @@ from . import _parallel
 
 FloatArray = NDArray[np.float64]
 
+REBIN_NUMERICAL_VERSION = 1
+"""General point/histogram binning rules, including endpoint and sum masking."""
+
 MeanWeighting = Literal["inverse_variance", "uniform"]
 RebinBackend = Literal["auto", "numpy", "numba"]
 ParallelStrategy = Literal["auto", "serial", "dense", "sparse"]
@@ -714,7 +717,7 @@ class NDRebin:
                 self.bin_inds[:, ind] = (self.coords_flat[:, ind] - this_min) / this_step
             self.bin_inds[self.coords_flat[:, ind] < self.bins_list[ind][0], ind] = np.nan
             self.bin_inds[self.coords_flat[:, ind] == self.bins_list[ind][-1], ind] = (
-                num_bins[ind] - 1
+                num_bins[ind] - (0.5 if self._fractional_axes[ind] else 1.0)
             )
             self.bin_inds[self.coords_flat[:, ind] > self.bins_list[ind][-1], ind] = np.nan
 
@@ -1146,6 +1149,9 @@ class NDRebin:
                 self.binned_data = np.divide(self.binned_data, self._normalization)
                 self.binned_data_errs = np.divide(np.sqrt(self.binned_data_errs), self._normalization)
             else:
+                # Missing-bin display masks must not poison retained additive
+                # sums, which the NumPy streaming path merges across batches.
+                self.binned_data = self.binned_data.copy()
                 self.binned_data_errs = np.sqrt(self.binned_data_errs)
 
         mask = self.n_samples == 0

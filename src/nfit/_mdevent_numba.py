@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 from numba import get_num_threads, get_thread_id, njit, prange, set_num_threads
 
+from ._event_bin_numba import physical_bin_index, uniform_edge_reciprocals
 from .dgs_reduction_policy import ENERGY_TO_K
 from .dgs_reduction_policy import ENERGY_TO_K2 as ENERGY_TO_K2
 
@@ -31,18 +32,7 @@ def accumulate_discrete_event_coordinates(
     bin_indices=None,
 ):
     """Find a bin and update all three sums in one ordered event pass."""
-    reciprocal_steps = np.zeros(coordinates.shape[1])
-    for dim in range(coordinates.shape[1]):
-        edge = edges[dim]
-        step = (edge[-1] - edge[0]) / (edge.size - 1)
-        tolerance = 16.0 * np.finfo(np.float64).eps * max(abs(edge[0]), abs(edge[-1]), abs(step))
-        uniform = step > 0.0 and np.isfinite(1.0 / step)
-        for index in range(edge.size):
-            if abs(edge[index] - (edge[0] + index * step)) > tolerance:
-                uniform = False
-                break
-        if uniform:
-            reciprocal_steps[dim] = 1.0 / step
+    reciprocal_steps = uniform_edge_reciprocals(edges)
     for row in range(coordinates.shape[0]):
         if enabled is not None and not enabled[row]:
             continue
@@ -51,20 +41,7 @@ def accumulate_discrete_event_coordinates(
         for dim in range(coordinates.shape[1]):
             edge = edges[dim]
             value = coordinates[row, dim]
-            if not np.isfinite(value) or value < edge[0] or value > edge[-1]:
-                valid = False
-                break
-            if reciprocal_steps[dim] > 0.0:
-                index = min(int((value - edge[0]) * reciprocal_steps[dim]), edge.size - 2)
-                # Correct against the saved edges rather than rounded arithmetic.
-                while index > 0 and value < edge[index]:
-                    index -= 1
-                while index < edge.size - 2 and value >= edge[index + 1]:
-                    index += 1
-            else:
-                index = np.searchsorted(edge, value, side="right") - 1
-                if value == edge[-1]:
-                    index = edge.size - 2
+            index = physical_bin_index(value, edge, reciprocal_steps[dim])
             if index < 0 or index >= shape[dim]:
                 valid = False
                 break

@@ -14,7 +14,7 @@ def _resolved_numeric(resolved, key):
 
 def _field_editor(field, value, *, object_name, on_changed, browse=None, resolved_value=None):
     """Build one editor; automatic values use an explicit checkbox, never a sentinel."""
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     if field.kind == "bool":
         editor = QtWidgets.QCheckBox()
@@ -24,6 +24,7 @@ def _field_editor(field, value, *, object_name, on_changed, browse=None, resolve
         editor = QtWidgets.QComboBox()
         for choice, title in field.choices:
             editor.addItem(title, choice)
+            editor.setItemData(editor.count() - 1, field.tooltip, QtCore.Qt.ItemDataRole.ToolTipRole)
         editor.setCurrentIndex(editor.findData(value))
         editor.currentIndexChanged.connect(lambda _index: on_changed(editor.currentData()))
     elif field.kind == "float":

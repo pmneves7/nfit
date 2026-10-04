@@ -952,10 +952,32 @@ version 8 and histogram policy version 4 invalidate prior DGS caches, including
 derived backgrounds, when requested. Explicit choices remain effective. No
 scientific project is rewritten by this application update.
 
-**Deferred performance follow-up (2026-10-04):** accelerate high-precision
-projection/accumulation with a compiled fused path after these decisions finish.
-Benchmark against the existing float64 path with declared numerical tolerances,
-including realistic fringes, loading/saving, memory and cached reuse.
+**Completed performance follow-up (2026-10-04):** Paul authorized the fused
+high-precision HKLE path, zero-count and fractional studies, and GUI audit while
+away. The fused path retains three float64 transform stages, ordered accumulation
+and shared physical membership. HYSPEC's full 361-run saved-MDE bin/save/reopen
+workflow is 1.7–2.0 times faster on node19; warm six/twelve-copy event kernels
+are about 3 times faster. Event numerator, variance, counts and masks are exact;
+exposure, intensity and uncertainties agree to roundoff across all finite cells.
+Evidence and scope are in `benchmarks/results/dgs-high-precision.md`.
+
+**Completed statistical and GUI review (2026-10-04):** controlled zero-count
+checks confirm retained exposure and valid unweighted Poisson intervals; weighted
+DGS and shared-background intervals still require validated forward models.
+A conditional physical-count exposure design is documented for future work.
+Fractional assignment improves smooth-field variance but can bias peaks, bridge
+unmeasured regions and understate cut uncertainties without cross-bin covariance.
+Native DGS remains discrete. The study fixed general fractional endpoint and
+streamed-sum masking bugs, with targeted cache invalidation. Supported reduction
+controls are visible and scriptable; native DGS controls now display actual pooled
+normalization and discrete assignment. Broader contract, interval, likelihood and
+smoothing editors remain scripting-only and are listed in permanent documentation.
+Evidence is in `benchmarks/results/dgs-zero-count-uncertainty.md` and
+`benchmarks/results/dgs-fractional-binning.md`.
+
+These investigations are complete. Implementing weighted DGS intervals,
+matched fractional trajectory kernels, covariance propagation and the broader
+statistical GUI remains later work requiring review.
 
 **Deferred statistical follow-ups:** these require later checkpoints and do not
 block acceptance of the intensity estimator.

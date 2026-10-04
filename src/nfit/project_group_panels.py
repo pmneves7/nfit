@@ -170,6 +170,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         rebin_presentation_policy,
     )
     from .project_rebin_panels import add_rebin_assignment_items, add_rebin_mode_items
+    from .reduction_recipes import reduction_family
 
     root = _composite_root(group)
     selection = group.node if isinstance(group, _CompositeScope) else group
@@ -304,9 +305,10 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     box = QtWidgets.QGroupBox("Composite dataset")
     box.setToolTip(
         "Combine compatible enabled datasets in this collection into one rebinned effective dataset. "
-        "Enable the checkbox to show the composite rebin controls. For MDEvent composites, detector-covered "
-        "zero-count bins stay at signal zero and use a finite conservative Poisson uncertainty; only bins with "
-        "no detector coverage are masked."
+        "Enable the checkbox to show the composite rebin controls. For native DGS/MDE composites, "
+        "positive-exposure zero-count bins have signal zero and zero observed event variance. "
+        "This standard error is not a low-count confidence interval. Bins with no exposure are masked; "
+        "explicit sample thresholds and masks can exclude additional bins."
     )
     layout = QtWidgets.QVBoxLayout(box)
     layout.setContentsMargins(10, 8, 10, 8)
@@ -465,6 +467,8 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         isinstance(raw_dgs, dict)
         and raw_dgs.get("format") == "corelli-correlation-nexus"
     )
+    native_events = reduction_family(group) is not None
+    discrete_dgs_events = native_events and not is_corelli
     show_momentum_matrix = (
         config.get("coordinate_mode") != "powder"
         and len(axes) == 4
@@ -611,17 +615,22 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         assignment_combo.setObjectName(f"group_composite_axis_assignment_{axis_index}")
         add_rebin_assignment_items(assignment_combo)
         assignment_combo.setCurrentIndex(
-            max(assignment_combo.findData(_rebin_axis_fractional(config, axis)), 0)
+            max(assignment_combo.findData(False if discrete_dgs_events else _rebin_axis_fractional(config, axis)), 0)
         )
         corelli_energy = is_corelli and axis_index == len(axes) - 1
         assignment_combo.setEnabled(
-            axis_mode not in {"discrete", "tolerance"} and not corelli_energy
+            axis_mode not in {"discrete", "tolerance"} and not corelli_energy and not discrete_dgs_events
         )
         assignment_combo.setToolTip(
-            "CORELLI reconstructs each requested DeltaE bin centre as a separate, "
+            "Native DGS/MDE histograms assign each event wholly to one bin and pool its "
+            "normalization exposure on that grid. Fractional event assignment is not implemented "
+            "for this adapter; a saved generic fractional setting has no effect here."
+            if discrete_dgs_events
+            else "CORELLI reconstructs each requested DeltaE bin centre as a separate, "
             "correlated energy channel, so energy assignment remains discrete."
             if corelli_energy
-            else "Fractional distributes a point between neighboring bins on this axis. "
+            else "Fractional uses center-based linear weights between neighboring bins on this axis, "
+            "clamped at the boundary; it is not a physical-bin integral. "
             "Discrete assigns it wholly to one bin. Tolerance always uses discrete "
             "assignment."
         )
@@ -653,7 +662,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     mean_label = QtWidgets.QLabel("Measurement target")
     mean_combo = QtWidgets.QComboBox()
     mean_combo.setObjectName("group_composite_mean_weighting")
-    measurement_average_choices(mean_combo)
+    measurement_average_choices(mean_combo, pooled_events=native_events, weighting=_rebin_mean_weighting(config))
     mean_label.setToolTip(mean_combo.toolTip())
     mean_combo.setCurrentIndex(max(mean_combo.findData(_rebin_mean_weighting(config)), 0))
     mean_combo.currentIndexChanged.connect(
@@ -693,6 +702,16 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     coverage_edit.setObjectName("group_composite_minimum_coverage")
     coverage_edit.setMaximumWidth(70)
     coverage_tooltip = (
+        "Native event coverage records whether normalization exposure is positive, not the "
+        "fraction of detector trajectories or a measure of statistical precision. A threshold "
+        "from 0 to 1 cannot remove bins with small but positive exposure; inspect the Exposure "
+        "and Error channels and use Minimum samples if appropriate."
+        if discrete_dgs_events
+        else "CORELLI coverage records populated bins, not a sub-bin geometric support fraction "
+        "or a measure of statistical precision. A threshold from 0 to 1 cannot distinguish "
+        "sparse from dense populated bins; inspect counts and errors separately."
+        if is_corelli
+        else
         "Mask composite output bins whose measured geometric support is below this fraction "
         "of the requested bin volume. Enter a value from 0 to 1."
     )
@@ -710,6 +729,16 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     samples_edit.setObjectName("group_composite_minimum_samples")
     samples_edit.setMaximumWidth(70)
     samples_tooltip = (
+        "Mask bins receiving less than this accumulated reconstruction-hypothesis count. "
+        "Fractional momentum weights and symmetry copies contribute; correlated energy "
+        "hypotheses are not independent measurements. This is not an exposure threshold."
+        if is_corelli
+        else
+        "Mask bins whose accumulated event count is below this threshold. Accepted events and "
+        "symmetry copies contribute to this count; it is not a number of independent measurements "
+        "or a threshold on exposure."
+        if native_events
+        else
         "Mask bins receiving less than this effective number of source samples. "
         "Fractional binning sums fractional sample contributions."
     )

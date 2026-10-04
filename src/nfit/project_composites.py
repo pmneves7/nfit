@@ -45,7 +45,11 @@ from .composite_scaling import composite_scaling, scale_composite_data
 from .data_workspace import temporary_data_directory
 from .dataset import PointData4D, PointListData
 from .dgs_normalization import trajectory_normalization_signature
-from .dgs_reduction_policy import DGS_REDUCTION_POLICY_VERSION, resolved_dgs_reduction_policies
+from .dgs_reduction_policy import (
+    DGS_REDUCTION_POLICY_VERSION,
+    dgs_histogram_convention_signature,
+    resolved_dgs_reduction_policies,
+)
 from .histogram_statistics import (
     EVENT_STATISTICS_KEY,
     EVENT_STATISTICS_METADATA,
@@ -83,7 +87,7 @@ from .project_point_lists import prepared_point_list_data
 from .project_rebinning import _rebin_axis_bound_is_auto
 from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group
 from .raw_dgs_cache import RAW_DGS_REDUCTION_VERSION, reduction_convention_signature
-from .rebin import rebin_nd
+from .rebin import REBIN_NUMERICAL_VERSION, rebin_nd
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET, RebinCache
 from .source_lineage import source_lineage_metadata
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
@@ -960,6 +964,14 @@ def _composite_cache_signature(
         )
     )
     numerical = _composite_numerical_config(group, config)
+    selected = _composite_candidates(group)
+    native_event_rebin = (
+        isinstance(node, DatasetGroup) and not child_scopes and bool(selected)
+        and all(dataset.kind in {"mdevent", "raw_dgs_nexus"} for dataset in selected)
+        and (not dimensions or event_pulse_metadata)
+    )
+    if not native_event_rebin:
+        numerical["general_rebin_numerical_version"] = REBIN_NUMERICAL_VERSION
     if include_backgrounds:
         if any(background.enabled for background in getattr(group, "backgrounds", [])):
             numerical["background_application_version"] = _BACKGROUND_APPLICATION_VERSION
@@ -974,12 +986,14 @@ def _composite_cache_signature(
         {
             **trajectory_normalization_signature(mdevent_config),
             **resolved_dgs_reduction_policies(mdevent_config, include_monitor=False),
+            **dgs_histogram_convention_signature(mdevent_config),
             "dgs_reduction_policy_version": DGS_REDUCTION_POLICY_VERSION,
             "histogram_statistics_version": EVENT_STATISTICS_VERSION,
         } if isinstance(mdevent_config, dict) else mdevent_config,
         {
             **trajectory_normalization_signature(raw_config),
             **resolved_dgs_reduction_policies(raw_config),
+            **dgs_histogram_convention_signature(raw_config),
             "dgs_reduction_policy_version": DGS_REDUCTION_POLICY_VERSION,
             "native_reduction_version": RAW_DGS_REDUCTION_VERSION,
             **reduction_convention_signature(raw_config),

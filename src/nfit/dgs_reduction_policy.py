@@ -30,6 +30,7 @@ SYMMETRY_VARIANCE_POLICIES = (
 )
 # Advance when existing DGS histograms must be recomputed under current defaults.
 DGS_REDUCTION_POLICY_VERSION = 4
+HIGH_PRECISION_PROJECTION_VERSION = 1
 
 # Mantid v6.16 PhysicalConstants (SI units). Keep these coefficients distinct:
 # ConvertToMD uses NeutronEToKSqr, while MDNorm constructs energyToK in the
@@ -77,6 +78,14 @@ def resolved_dgs_reduction_policies(config: Mapping[str, Any], *, include_monito
             config.get("monitor_variance_policy", DEFAULT_MONITOR_VARIANCE_POLICY)
         )
     return policies
+
+
+
+def dgs_histogram_convention_signature(config):
+    """Invalidate old float64 histograms when scalar projection rounding changes."""
+    if validated_event_precision_policy(config.get("event_precision_policy", DEFAULT_EVENT_PRECISION_POLICY)) == "high_precision":
+        return {"high_precision_projection_version": HIGH_PRECISION_PROJECTION_VERSION}
+    return {}
 
 
 def dgs_histogram_edges(edges, policy=DEFAULT_EVENT_PRECISION_POLICY):
@@ -263,6 +272,10 @@ def prepare_dgs_event_projector(ub, basis, operation, edges,
         def project(q_sample, energy):
             hkl = np.asarray(q_sample) @ hkl_transform
             return np.column_stack((hkl @ operation.T, energy)) @ inverse_basis, tuple(edges)
+        operation_transpose = operation.T.copy()
+        for matrix in (hkl_transform, operation_transpose, inverse_basis):
+            matrix.setflags(write=False)
+        project._dgs_float64_projection = (hkl_transform, operation_transpose, inverse_basis, tuple(edges))
         return project
     columns = np.zeros((4, 4))
     columns[:3, :3] = 2 * np.pi * np.asarray(ub) @ np.linalg.inv(operation) @ basis[:3, :3].T

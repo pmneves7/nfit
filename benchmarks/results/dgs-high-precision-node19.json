@@ -1,0 +1,83 @@
+{
+  "host": "analysis-node19.sns.gov",
+  "scope": "Matched high-precision paths in existing desktop runtime with staged source; no fresh raw reduction. Scientific receipts remain in IPTS.",
+  "hyspec": {
+    "source": "/SNS/HYS/IPTS-36860/shared/Ei15meV_50K_240Hz_s2_70.nxs",
+    "source_experiments": 361,
+    "source_events": 49415626,
+    "comparison_01": {
+      "order": [
+        "reference",
+        "fused"
+      ],
+      "workflow_seconds": {
+        "reference": 68.92272114299703,
+        "fused": 35.05459772399627
+      },
+      "bin_seconds": {
+        "reference": 61.817265415913425,
+        "fused": 27.31848259200342
+      },
+      "kernel_speedups": [
+        2.4328432053708235,
+        3.0079720478952354,
+        3.0071158744765265
+      ],
+      "event_numerator_variance_counts_masks_exact": true,
+      "max_exposure_relative_difference": 2.363e-15,
+      "max_signal_relative_difference": 2.458e-15,
+      "max_error_relative_difference": 2.494e-15
+    },
+    "comparison_02": {
+      "order": [
+        "fused",
+        "reference"
+      ],
+      "workflow_seconds": {
+        "reference": 64.877,
+        "fused": 38.134
+      },
+      "kernel_speedups": [
+        2.505,
+        2.925,
+        2.837
+      ],
+      "event_numerator_variance_counts_masks_exact": true,
+      "max_exposure_relative_difference": 2.618e-15,
+      "max_signal_relative_difference": 2.483e-15,
+      "max_error_relative_difference": 2.651e-15
+    },
+    "receipts_root": "/SNS/HYS/IPTS-36860/shared/nfit/benchmarks/high-precision-20261004"
+  },
+  "sequoia": {
+    "source": "/SNS/SEQ/IPTS-37189/shared/tempMDE/All_Ei60_T5K_with_UB.nxs",
+    "scope": "First600000 events; five alternating warm passes, one/six/twelve copies. Kernel only.",
+    "shape": [
+      67,
+      134,
+      101,
+      101
+    ],
+    "median_seconds": {
+      "reference": [
+        0.07597946503665298,
+        0.4405506270704791,
+        0.8755552259972319
+      ],
+      "fused": [
+        0.04464735696092248,
+        0.2572093339404091,
+        0.5233195859473199
+      ]
+    },
+    "speedups": [
+      1.7017684854929682,
+      1.7128096415526932,
+      1.6730794136288452
+    ],
+    "event_numerator_variance_counts_exact": true,
+    "source_unchanged": true,
+    "receipt": "/SNS/SEQ/IPTS-37189/shared/nfit/benchmarks/high-precision-20261004/kernel-02/receipt.json"
+  },
+  "filesystem_cache": "Uncontrolled; HYSPEC ran in both orders; timestamps confirm SEQUOIA started after HYSPEC control completed."
+}

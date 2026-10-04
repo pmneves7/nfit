@@ -34,16 +34,20 @@ releases. Current behavior is documented in the workflow and API pages.
 The temporary [Measurement pipeline implementation plan](measurement_pipeline_plan.md)
 tracks the staged implementation and review checkpoints for these changes.
 
-- Add fused compiled float64 DGS event projection and accumulation after the
-  current numerical-policy decisions. Preserve the requested high-precision
-  arithmetic, Mantid He-3 correction, ordered accumulation and uncertainty
-  treatment; validate boundary behavior and measure complete workflow costs.
 - Extend the native reduction settings schema to the remaining measurement
   adapters and present [measurement contracts](measurement_statistics.md) around
   physical targets. Native DGS/CORELLI/MDEvent source recipes, shared/run edits,
   resolved calibration values and lazy caches are already available. Unmarked
   saved statistical workflows retain compatibility provenance. Controls should
   explain common-response means versus coordinate averages and their assumptions.
+- Add adapter-validated GUI editors for declared measurement contracts,
+  model-specific final-bin count intervals, and count likelihood choices. These
+  scientific choices currently use public scripting APIs; **Statistics and
+  provenance** is read-only. Native DGS/MDE controls already expose their
+  supported reduction policies and show the fixed pooled event estimator and
+  discrete assignment. A fractional DGS/MDE method needs a defined estimator,
+  consistent exposure assignment, and covariance validation before a GUI choice
+  can be offered.
 - Preserve native MACS count/exposure statistics and an explicit target through
   histograms and final profiles. The current point importer retains its effective
   denominator, but legacy point histograms discard it and later precision profiles

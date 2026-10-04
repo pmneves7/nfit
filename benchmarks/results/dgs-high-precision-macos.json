@@ -1,0 +1,526 @@
+{
+  "runs": [
+    {
+      "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+      "source": {
+        "path": "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70.nxs",
+        "size": 2356544664,
+        "mtime_ns": 1784639414000000000
+      },
+      "numpy": "2.5.3",
+      "kernel": {
+        "rows": 600000,
+        "shape": [
+          40,
+          50,
+          25,
+          57
+        ],
+        "input_loading_seconds": 0.006972333998419344,
+        "initial_two_event_compile_or_cache_load_seconds": {
+          "reference": 0.05933033407200128,
+          "fused": 0.302179167047143
+        },
+        "results": [
+          {
+            "copies": 1,
+            "implementations": {
+              "reference": {
+                "seconds": [
+                  0.016112084034830332,
+                  0.014039458008483052,
+                  0.013906707987189293,
+                  0.014776375028304756,
+                  0.014769874978810549,
+                  0.014557042042724788,
+                  0.014308250043541193
+                ],
+                "median_seconds": 0.014557042042724788,
+                "extra_tracked_peak_bytes": 52801568,
+                "accepted_copies": 12304.0
+              },
+              "fused": {
+                "seconds": [
+                  0.005984292016364634,
+                  0.0059900409542024136,
+                  0.005978583008982241,
+                  0.005963125033304095,
+                  0.005968625075183809,
+                  0.005895083071663976,
+                  0.005845624953508377
+                ],
+                "median_seconds": 0.005968625075183809,
+                "extra_tracked_peak_bytes": 2096,
+                "accepted_copies": 12304.0
+              }
+            },
+            "comparison": {
+              "numerator": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "variance": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "counts": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              }
+            },
+            "speedup": 2.4389272000430506
+          },
+          {
+            "copies": 6,
+            "implementations": {
+              "reference": {
+                "seconds": [
+                  0.07679712492972612,
+                  0.07459591701626778,
+                  0.07496133295353502,
+                  0.07561729196459055,
+                  0.07482041697949171,
+                  0.07459612505044788,
+                  0.07480395794846117
+                ],
+                "median_seconds": 0.07482041697949171,
+                "extra_tracked_peak_bytes": 52801608,
+                "accepted_copies": 37270.0
+              },
+              "fused": {
+                "seconds": [
+                  0.02543725003488362,
+                  0.025333042023703456,
+                  0.025595958926714957,
+                  0.02580129203852266,
+                  0.025417249999009073,
+                  0.025374250020831823,
+                  0.025419041980057955
+                ],
+                "median_seconds": 0.025419041980057955,
+                "extra_tracked_peak_bytes": 2136,
+                "accepted_copies": 37270.0
+              }
+            },
+            "comparison": {
+              "numerator": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "variance": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "counts": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              }
+            },
+            "speedup": 2.9434790279740164
+          },
+          {
+            "copies": 12,
+            "implementations": {
+              "reference": {
+                "seconds": [
+                  0.150638208957389,
+                  0.14980954094789922,
+                  0.1516445839079097,
+                  0.15100979199633002,
+                  0.15098775003571063,
+                  0.1498905000044033,
+                  0.15050049999263138
+                ],
+                "median_seconds": 0.150638208957389,
+                "extra_tracked_peak_bytes": 52801656,
+                "accepted_copies": 49574.0
+              },
+              "fused": {
+                "seconds": [
+                  0.04830470809247345,
+                  0.04825537500437349,
+                  0.048390832962468266,
+                  0.04819970903918147,
+                  0.048775041941553354,
+                  0.049291249946691096,
+                  0.049623875063844025
+                ],
+                "median_seconds": 0.048390832962468266,
+                "extra_tracked_peak_bytes": 2184,
+                "accepted_copies": 49574.0
+              }
+            },
+            "comparison": {
+              "numerator": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "variance": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "counts": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              }
+            },
+            "speedup": 3.112949286783788
+          }
+        ],
+        "input_bytes": 43200000,
+        "common_histogram_bytes": 68400000,
+        "scope": "Warm event projection/accumulation only; excludes trajectories, source loading, save, clearing. Tracked peak is temporary Python/NumPy allocation, not total RSS."
+      },
+      "workflow": {
+        "results": {
+          "reference": {
+            "phases": {
+              "import_metadata": 0.6901280420133844,
+              "load_events_trajectory_normalization_and_bin_12_copies": 21.415998209035024,
+              "save": 1.9891413330333307,
+              "reopen_metadata": 0.04125350003596395,
+              "load_cached_histogram": 0.08589429093990475
+            },
+            "total_seconds": 24.222857915912755,
+            "saved_bytes": 5093900
+          },
+          "fused": {
+            "phases": {
+              "import_metadata": 0.8182305420050398,
+              "load_events_trajectory_normalization_and_bin_12_copies": 8.860317916958593,
+              "save": 1.9387775829527527,
+              "reopen_metadata": 0.04018000001087785,
+              "load_cached_histogram": 0.088582249940373
+            },
+            "total_seconds": 11.747547582956031,
+            "saved_bytes": 5095005
+          }
+        },
+        "array_hashes": {
+          "reference": {
+            "signal": "678ed9670742825d6e3f672b9ee2e9ff47e12125261a5e57e9fa3e5c2e20e99b",
+            "errors": "7c7a7cbc638e6af9e622c319765a395656d686bd48252147f169853597a88415",
+            "counts": "e26d61939ff369f12eaef9d4a51451ab454383c22d866b63f65a6b9ecd9b7c56",
+            "mask": "04afabd076233c2790f3991d28c8fe12eaefdd8edbf97c767f57ed3fbdd3672f",
+            "numerator": "f8121b495ec536a95dde349d31703f444faec166dd54dcb761372dbd596c245c",
+            "variance": "339d28df8ba3526b758db39a01709005649ac6637f209812b2d795f0c1dfce00",
+            "exposure": "c05a2ec0267bc19261b70c56c55d000cabd7b70700f75a5f90fca2101e02e04e"
+          },
+          "fused": {
+            "signal": "a4cdb80e21f7f3107777b09ca41666eb9ef49909c96788a51f798440402ec075",
+            "errors": "c069a914c84db843c5caf64ede550997a209cf2ee9607f2339ef85010831f49c",
+            "counts": "e26d61939ff369f12eaef9d4a51451ab454383c22d866b63f65a6b9ecd9b7c56",
+            "mask": "04afabd076233c2790f3991d28c8fe12eaefdd8edbf97c767f57ed3fbdd3672f",
+            "numerator": "f8121b495ec536a95dde349d31703f444faec166dd54dcb761372dbd596c245c",
+            "variance": "339d28df8ba3526b758db39a01709005649ac6637f209812b2d795f0c1dfce00",
+            "exposure": "40c8b7ef36072eb997180698b0230a76e27cf76e47d9c9fd4dbc694fef2e2627"
+          }
+        },
+        "comparison": {
+          "signal": {
+            "different_cells": 34893,
+            "max_absolute_difference": 2.914335439641036e-16,
+            "max_relative_difference": 3.5668470446042566e-15
+          },
+          "errors": {
+            "different_cells": 34893,
+            "max_absolute_difference": 1.3877787807814457e-17,
+            "max_relative_difference": 3.5170169752665047e-15
+          },
+          "counts": {
+            "different_cells": 0,
+            "max_absolute_difference": 0.0,
+            "max_relative_difference": 0.0
+          },
+          "mask": {
+            "different_cells": 0,
+            "max_absolute_difference": 0.0,
+            "max_relative_difference": 0.0
+          },
+          "numerator": {
+            "different_cells": 0,
+            "max_absolute_difference": 0.0,
+            "max_relative_difference": 0.0
+          },
+          "variance": {
+            "different_cells": 0,
+            "max_absolute_difference": 0.0,
+            "max_relative_difference": 0.0
+          },
+          "exposure": {
+            "different_cells": 46327,
+            "max_absolute_difference": 8.731149137020111e-11,
+            "max_relative_difference": 3.5377523012508627e-15
+          }
+        },
+        "speedup": 2.0619501853354114,
+        "scope": "One complete real saved-MDE input, 12 symmetry copies, native histogram save/reopen/view. No raw reduction. Reference runs first; filesystem cache is uncontrolled."
+      },
+      "source_unchanged": true,
+      "script_sha256": "8271634aac9a376b66b586b02455a837ec498dec6bb786a6c6a6bc94e6fb908c"
+    },
+    {
+      "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+      "source": {
+        "path": "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/LiV2O4/2026_05_HYSPEC/data/Ei15meV_50K_240Hz_s2_70.nxs",
+        "size": 2356544664,
+        "mtime_ns": 1784639414000000000
+      },
+      "numpy": "2.5.3",
+      "kernel": {
+        "rows": 600000,
+        "shape": [
+          40,
+          50,
+          25,
+          57
+        ],
+        "input_loading_seconds": 0.00614408403635025,
+        "initial_two_event_compile_or_cache_load_seconds": {
+          "reference": 0.05686570797115564,
+          "fused": 0.001622208976186812
+        },
+        "results": [
+          {
+            "copies": 1,
+            "implementations": {
+              "reference": {
+                "seconds": [
+                  0.01698712504003197,
+                  0.014382541994564235,
+                  0.013981999945826828,
+                  0.014093791949562728,
+                  0.01391883403994143,
+                  0.01390500005800277,
+                  0.013924916973337531
+                ],
+                "median_seconds": 0.013981999945826828,
+                "extra_tracked_peak_bytes": 52801568,
+                "accepted_copies": 12304.0
+              },
+              "fused": {
+                "seconds": [
+                  0.006010625045746565,
+                  0.0059215419460088015,
+                  0.0059393339324742556,
+                  0.005905958008952439,
+                  0.005915916990488768,
+                  0.005887542036361992,
+                  0.005922166048549116
+                ],
+                "median_seconds": 0.0059215419460088015,
+                "extra_tracked_peak_bytes": 2096,
+                "accepted_copies": 12304.0
+              }
+            },
+            "comparison": {
+              "numerator": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "variance": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "counts": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              }
+            },
+            "speedup": 2.361209305500383
+          },
+          {
+            "copies": 6,
+            "implementations": {
+              "reference": {
+                "seconds": [
+                  0.07581025001127273,
+                  0.07728895894251764,
+                  0.07617912499699742,
+                  0.07555583294015378,
+                  0.07496162503957748,
+                  0.07594383298419416,
+                  0.0765465839067474
+                ],
+                "median_seconds": 0.07594383298419416,
+                "extra_tracked_peak_bytes": 52801608,
+                "accepted_copies": 37270.0
+              },
+              "fused": {
+                "seconds": [
+                  0.02590633404906839,
+                  0.026008417014963925,
+                  0.025656917016021907,
+                  0.0256683750776574,
+                  0.025744292070157826,
+                  0.025794000015594065,
+                  0.02690983295906335
+                ],
+                "median_seconds": 0.025794000015594065,
+                "extra_tracked_peak_bytes": 2136,
+                "accepted_copies": 37270.0
+              }
+            },
+            "comparison": {
+              "numerator": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "variance": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "counts": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              }
+            },
+            "speedup": 2.9442441241483066
+          },
+          {
+            "copies": 12,
+            "implementations": {
+              "reference": {
+                "seconds": [
+                  0.1506250409875065,
+                  0.15375966602005064,
+                  0.15069075010251254,
+                  0.1515792499994859,
+                  0.1513659170595929,
+                  0.15128333400934935,
+                  0.15167658403515816
+                ],
+                "median_seconds": 0.1513659170595929,
+                "extra_tracked_peak_bytes": 52801656,
+                "accepted_copies": 49574.0
+              },
+              "fused": {
+                "seconds": [
+                  0.04839458304923028,
+                  0.04872412502299994,
+                  0.04822729097213596,
+                  0.04826091695576906,
+                  0.048495833994820714,
+                  0.049165708012878895,
+                  0.04854562506079674
+                ],
+                "median_seconds": 0.048495833994820714,
+                "extra_tracked_peak_bytes": 2184,
+                "accepted_copies": 49574.0
+              }
+            },
+            "comparison": {
+              "numerator": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "variance": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              },
+              "counts": {
+                "different_cells": 0,
+                "max_absolute_difference": 0.0
+              }
+            },
+            "speedup": 3.121214846532149
+          }
+        ],
+        "input_bytes": 43200000,
+        "common_histogram_bytes": 68400000,
+        "scope": "Warm event projection/accumulation only; excludes trajectories, source loading, save, clearing. Tracked peak is temporary Python/NumPy allocation, not total RSS."
+      },
+      "workflow": {
+        "results": {
+          "fused": {
+            "phases": {
+              "import_metadata": 0.7041536249453202,
+              "load_events_trajectory_normalization_and_bin_12_copies": 9.879061250016093,
+              "save": 1.95292937499471,
+              "reopen_metadata": 0.039321707910858095,
+              "load_cached_histogram": 0.08907195902429521
+            },
+            "total_seconds": 12.664952791994438,
+            "saved_bytes": 5094475
+          },
+          "reference": {
+            "phases": {
+              "import_metadata": 0.7301641249796376,
+              "load_events_trajectory_normalization_and_bin_12_copies": 18.25827874999959,
+              "save": 1.8730780000332743,
+              "reopen_metadata": 0.09079237503465265,
+              "load_cached_histogram": 0.0875272920820862
+            },
+            "total_seconds": 21.041376458946615,
+            "saved_bytes": 5095240
+          }
+        },
+        "array_hashes": {
+          "fused": {
+            "signal": "f4461f2803aa5aeca8163ba560b74dac72f58688e5d6b94fe5b6dbecf801e75b",
+            "errors": "4701a79631a648846e64663d4c60ed7300425522bfcb21b283a19910e5ac554a",
+            "counts": "e26d61939ff369f12eaef9d4a51451ab454383c22d866b63f65a6b9ecd9b7c56",
+            "mask": "04afabd076233c2790f3991d28c8fe12eaefdd8edbf97c767f57ed3fbdd3672f",
+            "numerator": "f8121b495ec536a95dde349d31703f444faec166dd54dcb761372dbd596c245c",
+            "variance": "339d28df8ba3526b758db39a01709005649ac6637f209812b2d795f0c1dfce00",
+            "exposure": "c98bb6707b132f55f6592ba7f7c74c13d4ca79c71e6a1865abed2e088f238e12"
+          },
+          "reference": {
+            "signal": "1348821ff9ace82bc7dacedecddfef77391fad3a1c849242cc8bd5a61a6bafc0",
+            "errors": "9f814cd54160c008020474445e4fc4b6870a5d06e124741f418fa55645bdde7b",
+            "counts": "e26d61939ff369f12eaef9d4a51451ab454383c22d866b63f65a6b9ecd9b7c56",
+            "mask": "04afabd076233c2790f3991d28c8fe12eaefdd8edbf97c767f57ed3fbdd3672f",
+            "numerator": "f8121b495ec536a95dde349d31703f444faec166dd54dcb761372dbd596c245c",
+            "variance": "339d28df8ba3526b758db39a01709005649ac6637f209812b2d795f0c1dfce00",
+            "exposure": "71ba6d1db78529f314010d5286ba84d680954c6da26e532d6f72173853f40eff"
+          }
+        },
+        "comparison": {
+          "signal": {
+            "different_cells": 41888,
+            "max_absolute_difference": 2.914335439641036e-16,
+            "max_relative_difference": 4.253859110026764e-15
+          },
+          "errors": {
+            "different_cells": 41781,
+            "max_absolute_difference": 1.214306433183765e-17,
+            "max_relative_difference": 4.143089574598633e-15
+          },
+          "counts": {
+            "different_cells": 0,
+            "max_absolute_difference": 0.0,
+            "max_relative_difference": 0.0
+          },
+          "mask": {
+            "different_cells": 0,
+            "max_absolute_difference": 0.0,
+            "max_relative_difference": 0.0
+          },
+          "numerator": {
+            "different_cells": 0,
+            "max_absolute_difference": 0.0,
+            "max_relative_difference": 0.0
+          },
+          "variance": {
+            "different_cells": 0,
+            "max_absolute_difference": 0.0,
+            "max_relative_difference": 0.0
+          },
+          "exposure": {
+            "different_cells": 55796,
+            "max_absolute_difference": 1.1641532182693481e-10,
+            "max_relative_difference": 4.280118130556434e-15
+          }
+        },
+        "speedup": 1.6613860947233017,
+        "scope": "One complete real saved-MDE input, 12 symmetry copies, native histogram save/reopen/view. No raw reduction. Filesystem cache is uncontrolled.",
+        "order": [
+          "fused",
+          "reference"
+        ]
+      },
+      "source_unchanged": true,
+      "script_sha256": "35036014e257de4443f90fb53ffebcb2423d21706981d8f767998924b6fda488"
+    }
+  ]
+}

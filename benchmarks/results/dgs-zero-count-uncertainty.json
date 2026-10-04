@@ -1,0 +1,265 @@
+{
+  "acceptance": "Independent tail inversions, exact probability sums, model rejection/support/likelihood guards and bounded simulation checks passed.",
+  "backgrounds": {
+    "independent_sample_background_cases": [
+      {
+        "background_exposure": 0.05,
+        "both_zero_probability": 0.49658530379140947,
+        "both_zero_signed_difference_interval_95": [
+          -87.6405326934777,
+          21.910133173369424
+        ],
+        "exact_simultaneous_difference_coverage": 0.9999999574962436,
+        "gaussian_95_percent_coverage": 0.5028666666666667,
+        "sample_exposure": 0.2,
+        "simulated_simultaneous_difference_coverage": 1.0
+      },
+      {
+        "background_exposure": 4.0,
+        "both_zero_probability": 1.670170079024566e-05,
+        "both_zero_signed_difference_interval_95": [
+          -1.0955066586684712,
+          4.382026634673885
+        ],
+        "exact_simultaneous_difference_coverage": 0.9995440575074805,
+        "gaussian_95_percent_coverage": 0.9042083333333333,
+        "sample_exposure": 1.0,
+        "simulated_simultaneous_difference_coverage": 0.9995916666666667
+      }
+    ],
+    "shared_background": {
+      "all_sources_zero_observed_variance": 0.0,
+      "analytic_final_variance": 22.5,
+      "empirical_final_variance": 22.748459939664237,
+      "joint_all_zero_probability": 0.02237077185616558,
+      "mean_false_independent_variance": 5.859241898148148,
+      "mean_reported_correct_variance": 22.6522974537037,
+      "sample_angles": 6,
+      "scope": "Six sample observations and one background observation; background replay creates neither six independent counts nor additional physical counting exposure."
+    }
+  },
+  "calibration_uncertainty": {
+    "cases": [
+      {
+        "conditional_zero_upper_when_sample_0_monitor_1": 194.99999999999983,
+        "exact_conditional_interval_coverage": 0.9993025539179917,
+        "mean_monitor_counts": 0.5,
+        "plugin_interval_coverage_among_resolved_exposures": 0.9993180171348195,
+        "plugin_zero_upper_when_sample_0_monitor_1": 18.44439727056968,
+        "simulated_conditional_interval_coverage": 0.9993166666666666,
+        "true_exposure": 0.1,
+        "true_rate": 2.0,
+        "unresolved_plugin_exposure_frequency": 0.6089833333333333
+      },
+      {
+        "conditional_zero_upper_when_sample_0_monitor_1": 194.99999999999983,
+        "exact_conditional_interval_coverage": 0.9915568164274149,
+        "mean_monitor_counts": 2.5,
+        "plugin_interval_coverage_among_resolved_exposures": 0.9753741015671026,
+        "plugin_zero_upper_when_sample_0_monitor_1": 18.44439727056968,
+        "simulated_conditional_interval_coverage": 0.9913166666666666,
+        "true_exposure": 0.5,
+        "true_rate": 2.0,
+        "unresolved_plugin_exposure_frequency": 0.080575
+      },
+      {
+        "conditional_zero_upper_when_sample_0_monitor_1": 194.99999999999983,
+        "exact_conditional_interval_coverage": 0.9757748232324848,
+        "mean_monitor_counts": 10.0,
+        "plugin_interval_coverage_among_resolved_exposures": 0.9301370091339423,
+        "plugin_zero_upper_when_sample_0_monitor_1": 18.44439727056968,
+        "simulated_conditional_interval_coverage": 0.9764666666666667,
+        "true_exposure": 2.0,
+        "true_rate": 2.0,
+        "unresolved_plugin_exposure_frequency": 6.666666666666667e-05
+      }
+    ],
+    "delta_method_observed_variance_at_zero": 0.0,
+    "model": "independent sample K~Poisson(q*I) and monitor M~Poisson(q*5); monitor response 5 known",
+    "scope": "Conditional nuisance-exposure reference only; present DGS caches do not retain this complete sample/monitor/calibration likelihood."
+  },
+  "defaults_changed": false,
+  "known_exposure": {
+    "0.682689492137": {
+      "cases": [
+        {
+          "exact_interval_coverage": 1.0,
+          "observed_variance_gaussian_coverage": 1.0,
+          "simulated_interval_coverage": 1.0,
+          "true_mean_count": 0.0,
+          "zero_probability": 1.0
+        },
+        {
+          "exact_interval_coverage": 0.951229424500714,
+          "observed_variance_gaussian_coverage": 0.04911666666666667,
+          "simulated_interval_coverage": 0.9496333333333333,
+          "true_mean_count": 0.05,
+          "zero_probability": 0.951229424500714
+        },
+        {
+          "exact_interval_coverage": 0.9824769036935782,
+          "observed_variance_gaussian_coverage": 0.16319166666666668,
+          "simulated_interval_coverage": 0.982075,
+          "true_mean_count": 0.2,
+          "zero_probability": 0.8187307530779818
+        },
+        {
+          "exact_interval_coverage": 0.9525774039285098,
+          "observed_variance_gaussian_coverage": 0.50265,
+          "simulated_interval_coverage": 0.951875,
+          "true_mean_count": 0.8,
+          "zero_probability": 0.44932896411722156
+        },
+        {
+          "exact_interval_coverage": 0.7217881772619343,
+          "observed_variance_gaussian_coverage": 0.45150833333333334,
+          "simulated_interval_coverage": 0.7218333333333333,
+          "true_mean_count": 2.0,
+          "zero_probability": 0.1353352832366127
+        },
+        {
+          "exact_interval_coverage": 0.7343230017368295,
+          "observed_variance_gaussian_coverage": 0.644375,
+          "simulated_interval_coverage": 0.7339333333333333,
+          "true_mean_count": 10.0,
+          "zero_probability": 4.5399929762484854e-05
+        }
+      ],
+      "central_zero_upper_per_unit_exposure": 1.841021645008993,
+      "one_sided_zero_upper_per_unit_exposure": 1.1478744644490475
+    },
+    "0.95": {
+      "cases": [
+        {
+          "exact_interval_coverage": 1.0,
+          "observed_variance_gaussian_coverage": 1.0,
+          "simulated_interval_coverage": 1.0,
+          "true_mean_count": 0.0,
+          "zero_probability": 1.0
+        },
+        {
+          "exact_interval_coverage": 0.9987908957257497,
+          "observed_variance_gaussian_coverage": 0.049708333333333334,
+          "simulated_interval_coverage": 0.9987666666666667,
+          "true_mean_count": 0.05,
+          "zero_probability": 0.951229424500714
+        },
+        {
+          "exact_interval_coverage": 0.9824769036935782,
+          "observed_variance_gaussian_coverage": 0.182825,
+          "simulated_interval_coverage": 0.9821416666666667,
+          "true_mean_count": 0.2,
+          "zero_probability": 0.8187307530779818
+        },
+        {
+          "exact_interval_coverage": 0.9909201421998459,
+          "observed_variance_gaussian_coverage": 0.5508833333333333,
+          "simulated_interval_coverage": 0.9908666666666667,
+          "true_mean_count": 0.8,
+          "zero_probability": 0.44932896411722156
+        },
+        {
+          "exact_interval_coverage": 0.9834363915193856,
+          "observed_variance_gaussian_coverage": 0.8628583333333333,
+          "simulated_interval_coverage": 0.9835166666666667,
+          "true_mean_count": 2.0,
+          "zero_probability": 0.1353352832366127
+        },
+        {
+          "exact_interval_coverage": 0.9753863357270266,
+          "observed_variance_gaussian_coverage": 0.9241666666666667,
+          "simulated_interval_coverage": 0.9748166666666667,
+          "true_mean_count": 10.0,
+          "zero_probability": 4.5399929762484854e-05
+        }
+      ],
+      "central_zero_upper_per_unit_exposure": 3.6888794541139354,
+      "one_sided_zero_upper_per_unit_exposure": 2.99573227355399
+    }
+  },
+  "original_projects_accessed": false,
+  "provenance": {
+    "benchmarks/validate_dgs_zero_count_uncertainty.py": "d35701f63e917000ca774aaf592303e34c0d86346d01c0a5a6380d1645254359",
+    "src/nfit/histogram_statistics.py": "e23f81d24309849d7dfd768022024a936696abdc7b3fe6f2f6e91308a1399ebc",
+    "src/nfit/mdhisto.py": "7a45812bf54900b15905079802e0827a39b848c1437add367e8639fa31231cb3",
+    "src/nfit/measurement_diagnostics.py": "62e1913633710215b7908747f006c87524f58b9263e68780f34c4b10c4066fbb",
+    "src/nfit/measurement_fit_data.py": "a56b445ea894f36b2d5828801b7058ac622a8e17968fb4ba1c9c9f5836e834c0",
+    "src/nfit/measurement_likelihoods.py": "b06c65af7e7a9eeae478f49ce34670f99cae242489229e8c21f4f2c129ba356f",
+    "src/nfit/measurement_statistics.py": "f9c2b29ef2687a977f5642618bd1398df4085cdbfd6d747e017cb205ff42c828"
+  },
+  "public_contract_checks": {
+    "absent_and_masked_excluded": true,
+    "covered_zero_gaussian_positive_sigma_guard": true,
+    "covered_zero_measured": true,
+    "pooled_with_zero_rate": 0.4,
+    "pooled_with_zero_variance": 0.04,
+    "rejected_interval_models": [
+      "undeclared_weights",
+      "symmetry_copies",
+      "background_difference",
+      "uncertain_exposure",
+      "heterogeneous_weight_variance"
+    ],
+    "zero_deviance_for_predicted_mean_2": -2.0
+  },
+  "replicates_per_case": 120000,
+  "scope": "Controlled exact Poisson/compound-event/monitor/background models; no instrument files or Mantid.",
+  "seed": 20261004,
+  "weighted_events": {
+    "cases": [
+      {
+        "analytic_corrected_rate_variance": 50.0,
+        "empirical_corrected_rate_variance": 50.61045330933313,
+        "exposure": 0.1,
+        "gaussian_95_percent_coverage": 0.18170833333333333,
+        "known_mark_law_count_interval_coverage": 0.9819583333333334,
+        "known_mark_law_zero_upper": 47.955432903481174,
+        "mean_observed_rate_variance": 50.323333333333316,
+        "rms_weight_zero_upper_if_imposed": 58.326305443993135,
+        "true_corrected_rate": 2.6,
+        "zero_observed_variance_frequency": 0.8182916666666666
+      },
+      {
+        "analytic_corrected_rate_variance": 5.0,
+        "empirical_corrected_rate_variance": 4.989053661488847,
+        "exposure": 1.0,
+        "gaussian_95_percent_coverage": 0.865825,
+        "known_mark_law_count_interval_coverage": 0.9830583333333334,
+        "known_mark_law_zero_upper": 4.795543290348117,
+        "mean_observed_rate_variance": 4.992925,
+        "rms_weight_zero_upper_if_imposed": 5.832630544399314,
+        "true_corrected_rate": 2.6,
+        "zero_observed_variance_frequency": 0.13395
+      },
+      {
+        "analytic_corrected_rate_variance": 0.5,
+        "empirical_corrected_rate_variance": 0.5019932670265308,
+        "exposure": 10.0,
+        "gaussian_95_percent_coverage": 0.9165833333333333,
+        "known_mark_law_count_interval_coverage": 0.9571083333333333,
+        "known_mark_law_zero_upper": 0.47955432903481177,
+        "mean_observed_rate_variance": 0.5006710833333333,
+        "rms_weight_zero_upper_if_imposed": 0.5832630544399314,
+        "true_corrected_rate": 2.6,
+        "zero_observed_variance_frequency": 0.0
+      }
+    ],
+    "identical_observed_zero_C_V_N_different_known_constant_weights": {
+      "C": 0.0,
+      "N": 1.0,
+      "V": 0.0,
+      "conclusion": "C=V=0 contains no event-weight information; a source response/mark model is required.",
+      "weight_1_upper_95": 3.6888794541139363,
+      "weight_4_upper_95": 14.755517816455745
+    },
+    "known_mark_probabilities": [
+      0.9,
+      0.1
+    ],
+    "scope": "The known mark-law estimator uses source integer counts and mean weight, not the realized corrected C/N estimator; no universal weighted interval is inferred.",
+    "weights": [
+      1.0,
+      4.0
+    ]
+  }
+}

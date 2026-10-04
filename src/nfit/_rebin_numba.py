@@ -65,7 +65,7 @@ def accumulate_batch(
             if np.isinf(step_size[dim]):
                 position = 0.0
             elif coordinate == upper[dim]:
-                position = float(num_bins[dim] - 1)
+                position = float(num_bins[dim]) - (0.5 if fractional_axes[dim] else 1.0)
             else:
                 position = (coordinate - lower[dim]) / step_size[dim]
             positions[dim] = position - 0.5 if fractional_axes[dim] else position
@@ -169,7 +169,7 @@ def accumulate_batch_sparse(
             if np.isinf(step_size[dim]):
                 position = 0.0
             elif coordinate == upper[dim]:
-                position = float(num_bins[dim] - 1)
+                position = float(num_bins[dim]) - (0.5 if fractional_axes[dim] else 1.0)
             else:
                 position = (coordinate - lower[dim]) / step_size[dim]
             positions[dim] = position - 0.5 if fractional_axes[dim] else position

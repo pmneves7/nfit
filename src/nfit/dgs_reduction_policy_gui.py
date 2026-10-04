@@ -3,12 +3,6 @@
 from __future__ import annotations
 
 from .dgs_reduction_policy import (
-    DEFAULT_EVENT_PRECISION_POLICY,
-    DEFAULT_MONITOR_VARIANCE_POLICY,
-    DEFAULT_SYMMETRY_VARIANCE_POLICY,
-    EVENT_PRECISION_POLICIES,
-    MONITOR_VARIANCE_POLICIES,
-    SYMMETRY_VARIANCE_POLICIES,
     validated_event_precision_policy,
     validated_monitor_variance_policy,
     validated_symmetry_variance_policy,
@@ -19,45 +13,29 @@ def add_dgs_policy_controls(layout, config, *, start_row, prefix, raw, on_change
     """Add policy editors and a script export using GUI-independent services."""
     from PySide6 import QtWidgets
 
+    from .reduction_recipes import reduction_settings_schema
+
+    settings = {field.key: field for field in reduction_settings_schema(
+        "raw-direct-geometry-nexus" if raw else "mantid-mdevent"
+    )}
     fields = [
-        (
-            "Event precision", "event_precision_policy", EVENT_PRECISION_POLICIES,
-            DEFAULT_EVENT_PRECISION_POLICY, validated_event_precision_policy,
-            "Mantid compatibility follows its event-coordinate and histogram rounding "
-            "and ray-derived He-3 tube geometry. "
-            "High precision keeps double precision. Both modes use Mantid's He-3 correction; a saved MDE file cannot "
-            "recover precision already lost during reduction. Changing raw event "
-            "precision can require regeneration of reduced-event caches.",
-        ),
-        (
-            "Symmetry uncertainty", "symmetry_variance_policy", SYMMETRY_VARIANCE_POLICIES,
-            DEFAULT_SYMMETRY_VARIANCE_POLICY, validated_symmetry_variance_policy,
-            "Independent copies matches Mantid's diagonal event-variance convention. "
-            "Within-bin covariance includes shared-source terms when symmetry copies "
-            "land in the same final bin. It does not propagate covariance between "
-            "different bins through later slices or cuts; bin original events directly "
-            "onto the final grid for that calculation.",
-        ),
+        ("Event precision", "event_precision_policy", validated_event_precision_policy),
+        ("Symmetry uncertainty", "symmetry_variance_policy", validated_symmetry_variance_policy),
     ]
     if raw:
-        fields.insert(0, (
-            "Monitor peak fitting", "monitor_variance_policy", MONITOR_VARIANCE_POLICIES,
-            DEFAULT_MONITOR_VARIANCE_POLICY, validated_monitor_variance_policy,
-            "Mantid compatibility reproduces GetEi peak-tail arithmetic and stopping "
-            "rules without calling Mantid. Stable variance uses a nonnegative "
-            "equivalent derivative variance; peak selection and resolved Ei/T0 can "
-            "change slightly. Changing this setting regenerates reduced events.",
-        ))
+        fields.insert(0, ("Monitor peak fitting", "monitor_variance_policy", validated_monitor_variance_policy))
     row = start_row
-    for label, key, choices, default, validate, tooltip in fields:
+    for label, key, validate in fields:
+        field = settings[key]
+        tooltip = field.tooltip
         caption = QtWidgets.QLabel(label)
         selector = QtWidgets.QComboBox()
         selector.setObjectName(f"{prefix}_{key}")
         caption.setToolTip(tooltip)
         selector.setToolTip(tooltip)
-        for value, title in choices:
+        for value, title in field.choices:
             selector.addItem(title, value)
-        selector.setCurrentIndex(selector.findData(validate(config.get(key, default))))
+        selector.setCurrentIndex(selector.findData(validate(config.get(key, field.default))))
         selector.currentIndexChanged.connect(
             lambda _index, key=key, selector=selector: on_changed(key, selector.currentData())
         )

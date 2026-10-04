@@ -512,7 +512,7 @@ from .project_view_data import (
     _with_viewer_dataset_metadata as _with_viewer_dataset_metadata,
 )
 from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group  # noqa: F401
-from .rebin import rebin_nd, rebin_nd_symmetry  # noqa: F401
+from .rebin import REBIN_NUMERICAL_VERSION, rebin_nd, rebin_nd_symmetry  # noqa: F401
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET, RebinCache
 from .spectral_channels import (  # noqa: F401
     SPECTRAL_CHANNEL_CONFIG_KEY,
@@ -1063,7 +1063,8 @@ def _viewer_view_signature(
     config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
     rebin = (
         json.dumps(
-            {key: value for key, value in config.items() if key not in {"stale", "auto_rebin"}},
+            {key: value for key, value in config.items() if key not in {"stale", "auto_rebin"}}
+            | {"general_rebin_numerical_version": REBIN_NUMERICAL_VERSION},
             sort_keys=True, default=str,
         )
         if bool(config.get("enabled"))
