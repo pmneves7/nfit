@@ -112,6 +112,24 @@ def test_windows_uses_native_document_association(monkeypatch, tmp_path):
     assert opened == [str(document)]
 
 
+@pytest.mark.parametrize("platform", ["linux", "darwin", "win32"])
+def test_project_location_opens_containing_folder_with_default_application(monkeypatch, tmp_path, platform):
+    folder = tmp_path / "project folder with spaces"
+    folder.mkdir()
+    project = folder / "sample; name.nfit"
+    monkeypatch.setattr(desktop_launch.sys, "platform", platform)
+    calls = []
+    monkeypatch.setattr(desktop_launch.shutil, "which", lambda name, **kw: f"/usr/bin/{name}")
+    monkeypatch.setattr(desktop_launch.subprocess, "Popen", lambda argv, **kw: calls.append(argv))
+    monkeypatch.setattr(desktop_launch.os, "startfile", lambda path: calls.append(path), raising=False)
+    desktop_launch.show_in_file_manager(project)
+    if platform == "win32":
+        assert calls == [str(folder)]
+    else:
+        opener = "open" if platform == "darwin" else "xdg-open"
+        assert calls == [[f"/usr/bin/{opener}", folder.as_uri()]]
+
+
 def test_desktop_launch_service_has_no_gui_imports():
     tree = ast.parse(Path(desktop_launch.__file__).read_text())
     modules = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]

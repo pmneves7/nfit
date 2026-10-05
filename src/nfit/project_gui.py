@@ -7246,6 +7246,7 @@ class NfitProjectExplorer:
         self.file_menu = None
         self.recent_projects_menu = None
         self.reload_project_action = None
+        self.show_project_location_action = None
         self.cache_binnings_action = None
         self.rebin_stale_binnings_action = None
         self.clear_project_caches_action = None
@@ -8407,6 +8408,14 @@ class NfitProjectExplorer:
             if action == "save_as" and not self.save_as():
                 return False
         return self._load_project_path(path, remember=True)
+
+    def show_project_location(self) -> bool:
+        """Open the saved project's containing folder in the system desktop."""
+        from .qt_desktop_launch import show_in_file_manager_in_desktop
+
+        if self.project_path is None:
+            return False
+        return show_in_file_manager_in_desktop(self.window, self.project_path)
 
     def check_for_external_project_change(self) -> bool:
         """Prompt once when the open project has been replaced on disk."""
@@ -17595,6 +17604,8 @@ class NfitProjectExplorer:
         self.window.setWindowTitle(f"nfit Project Explorer - {suffix}{size}{marker}")
         if self.reload_project_action is not None:
             self.reload_project_action.setEnabled(self.project_path is not None)
+        if self.show_project_location_action is not None:
+            self.show_project_location_action.setEnabled(self.project_path is not None)
 
     def _mark_dirty(self) -> None:
         self.has_unsaved_changes = True

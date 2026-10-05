@@ -87,3 +87,8 @@ def open_local_document(path: str | Path) -> subprocess.Popen | None:
         shell=False,
         start_new_session=True,
     )
+
+
+def show_in_file_manager(path: str | Path) -> subprocess.Popen | None:
+    """Open a file's containing directory in the default desktop file manager."""
+    return open_local_document(Path(path).expanduser().absolute().parent)

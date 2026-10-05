@@ -165,13 +165,18 @@ project after the usual unsaved-change check.
 Drag and drop reorders compatible objects. Copy and paste transfer project
 items between compatible containers; copied collections include their contents.
 
-The **File** menu provides New, Open, Recent projects, Reload from Disk, Save,
+The **File** menu provides New, Open, Recent projects, Reload from Disk,
+Show in File Manager, Save,
 Save As, Close, and Quit. Closing or reloading a modified project asks before
 discarding changes. While the GUI is running, nfit checks whether another
 process replaced the open project file. It then offers to reload the external
 version, save the in-memory version under another name, or keep the current
 state. An explicit Save never overwrites a detected external change without a
 separate confirmation.
+
+**Show in File Manager**, after **Reload from Disk**, opens the saved project's
+containing folder in your operating system's default file manager. Save a new
+project first to enable this action.
 
 File choosers remember their last successfully selected directory for the local
 nfit installation. Before a directory has been remembered, they start beside

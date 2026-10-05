@@ -12,6 +12,32 @@ from nfit.app_distribution import application_version
 from nfit.project_gui import NfitProject, NfitProjectExplorer
 
 
+def test_project_location_action_tracks_saved_project_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from nfit import qt_desktop_launch
+
+    calls = []
+    monkeypatch.setattr(qt_desktop_launch, "show_in_file_manager_in_desktop",
+                        lambda parent, path: calls.append((parent, path)) or True)
+    explorer = NfitProjectExplorer(NfitProject())
+    try:
+        action = explorer.show_project_location_action
+        assert not action.isEnabled()
+        assert action.toolTip()
+        assert not explorer.show_project_location()
+        for name in ("first.nfit", "saved elsewhere.nfit"):
+            explorer.project_path = tmp_path / name
+            explorer._sync_window_title()
+            assert action.isEnabled()
+            action.trigger()
+            assert calls[-1] == (explorer.window, explorer.project_path)
+        explorer.project_path = None
+        explorer._sync_window_title()
+        assert not action.isEnabled()
+    finally:
+        explorer.window.close()
+
+
 def _method_node(cls: type, name: str) -> ast.FunctionDef:
     source = inspect.getsource(cls)
     tree = ast.parse(source)
@@ -121,6 +147,7 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
         "New": "new_project",
         "Open": "open_project",
         "Reload from Disk": "reload_project_from_disk",
+        "Show in File Manager": "show_project_location",
         "Cache binnings": "_set_cache_binnings_enabled",
         "Rebin stale binnings": "rebin_stale_project_binnings",
         "Clear all caches in project": "clear_all_project_caches",
@@ -182,6 +209,7 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
             "New",
             "Open",
             "Reload from Disk",
+            "Show in File Manager",
             "Cache binnings",
             "Rebin stale binnings",
             "Clear all caches in project",

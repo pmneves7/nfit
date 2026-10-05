@@ -84,3 +84,16 @@ def test_destroyed_parent_retires_help_failure_monitor(desktop, monkeypatch):
     assert not isValid(parent)
     assert not isValid(timer)
     assert messages == []
+
+
+def test_file_manager_failure_reports_project_location(desktop, monkeypatch):
+    module, parent, document, messages, _core, _app = desktop
+
+    def launch(path):
+        assert path == document
+        raise FileNotFoundError("xdg-open unavailable")
+
+    monkeypatch.setattr(module, "show_in_file_manager", launch)
+    assert not module.show_in_file_manager_in_desktop(parent, document)
+    assert "default file manager" in messages[0]
+    assert str(document) in messages[0]

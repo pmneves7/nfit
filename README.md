@@ -35,6 +35,8 @@ On macOS, a [local app launcher](https://nfit.readthedocs.io/en/stable/getting_s
 provides double-click startup and a Dock icon using your existing environment.
 
 Mouse-wheel input scrolls panels and lists without changing settings or plot views.
+**File → Show in File Manager** opens the current project's containing folder
+in the system's default file manager.
 
 A few of its main capabilities are:
 

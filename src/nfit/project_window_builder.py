@@ -117,6 +117,15 @@ def _build_window_shell(
     self.reload_project_action.setStatusTip(
         "Reload the current project from disk."
     )
+    self.show_project_location_action = menu.addAction(
+        "Show in File Manager", self.show_project_location
+    )
+    self.show_project_location_action.setToolTip(
+        "Open the current project file's folder in the system's default file manager."
+    )
+    self.show_project_location_action.setStatusTip(
+        self.show_project_location_action.toolTip()
+    )
     menu.addSeparator()
     self.cache_binnings_action = menu.addAction("Cache binnings")
     self.cache_binnings_action.setObjectName("cache_binnings_action")
