@@ -290,6 +290,9 @@ def show_fermi_surface_result(
     application = QtWidgets.QApplication.instance()
     if application is None:
         application = QtWidgets.QApplication([])
+    from .qt_controls import configure_gui_input_policy
+
+    configure_gui_input_policy(application)
 
     window = MainWindow(parent=parent, title="Fermi surface")
     window.setObjectName("fermi_surface_viewer")

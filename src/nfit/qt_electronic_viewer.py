@@ -772,6 +772,9 @@ def show_electronic_figure(
     owns_application = application is None
     if application is None:
         application = QtWidgets.QApplication([])
+    from .qt_controls import configure_gui_input_policy
+
+    configure_gui_input_policy(application)
 
     window = QtWidgets.QMainWindow(parent)
     window.setObjectName(f"{viewer_key}_viewer")

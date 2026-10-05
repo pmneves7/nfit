@@ -617,6 +617,9 @@ def show_brillouin_zone_scene(
     application = QtWidgets.QApplication.instance()
     if application is None:
         application = QtWidgets.QApplication([])
+    from .qt_controls import configure_gui_input_policy
+
+    configure_gui_input_policy(application)
 
     window = MainWindow(parent=parent, title="First Brillouin zone")
     window.setObjectName("brillouin_zone_viewer")

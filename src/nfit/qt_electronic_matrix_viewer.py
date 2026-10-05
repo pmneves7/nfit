@@ -49,6 +49,9 @@ def show_electronic_matrix_catalog(
     application = QtWidgets.QApplication.instance()
     if application is None:
         application = QtWidgets.QApplication([])
+    from .qt_controls import configure_gui_input_policy
+
+    configure_gui_input_policy(application)
     window = QtWidgets.QMainWindow(parent)
     window.setObjectName("electronic_matrix_viewer")
     window.setWindowTitle("Electronic matrix inspector")

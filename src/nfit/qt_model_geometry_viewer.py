@@ -407,6 +407,9 @@ def show_model_geometry_scene(
     application = QtWidgets.QApplication.instance()
     if application is None:
         application = QtWidgets.QApplication([])
+    from .qt_controls import configure_gui_input_policy
+
+    configure_gui_input_policy(application)
     window = QtWidgets.QMainWindow(parent)
     window.setWindowTitle(f"Model geometry — {scene.model_name}")
     central = QtWidgets.QWidget()
@@ -449,6 +452,9 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
     application = QtWidgets.QApplication.instance()
     if application is None:
         application = QtWidgets.QApplication([])
+    from .qt_controls import configure_gui_input_policy
+
+    configure_gui_input_policy(application)
 
     class Viewer(QtWidgets.QMainWindow):
         def __init__(self):

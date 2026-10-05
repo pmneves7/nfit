@@ -32,6 +32,9 @@ class QtKPathViewer:
         self.app = QtWidgets.QApplication.instance()
         if self.app is None:
             self.app = QtWidgets.QApplication([])
+        from .qt_controls import configure_gui_input_policy
+
+        configure_gui_input_policy(self.app)
         self.data = data
         self.lattice_parameters = dict(lattice_parameters)
         self.spacegroup = str(spacegroup)

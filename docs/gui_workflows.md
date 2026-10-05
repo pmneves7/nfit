@@ -83,6 +83,16 @@ clipboard actions and deletion operate on that selection. See
 [Organize a project](project_explorer.md) for collection actions, compatible paste
 destinations, and protected history and result entries.
 
+## Mouse-wheel policy
+
+The scroll wheel and trackpad scroll gestures only scroll panels, lists, tables,
+text areas, and scrollbars. They never change dropdown choices, numeric/date
+fields, sliders, dials, tabs, or plot views, even when a control has keyboard
+focus. Scrolling over a control inside a scrollable panel scrolls that panel.
+Use typing, keyboard arrows, clicks, or deliberate dragging to edit settings;
+use plot toolbar controls and dragging to change a plot view. This policy also
+applies to standalone nfit analysis viewers and exported viewer scripts.
+
 ## Launch
 
 Activate the nfit environment and run:

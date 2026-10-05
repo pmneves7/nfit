@@ -34,6 +34,8 @@ nfit
 On macOS, a [local app launcher](https://nfit.readthedocs.io/en/stable/getting_started.html#macos-local-app-launcher)
 provides double-click startup and a Dock icon using your existing environment.
 
+Mouse-wheel input scrolls panels and lists without changing settings or plot views.
+
 A few of its main capabilities are:
 
 - compiled fractional N-dimensional point binning on uniform and nonuniform grids,
