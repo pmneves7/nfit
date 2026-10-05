@@ -199,7 +199,7 @@ def _build_window_shell(
     add_resource_monitor(toolbar)
     resource_button = QtWidgets.QPushButton()
     resource_button.setObjectName("resource_manager_button")
-    resource_button.setText("Resources…")
+    resource_button.setText("Resources")
     resource_button.setToolTip("Inspect RAM and disk caches, load or unload selected data, and change resource budgets.")
     resource_button.clicked.connect(self.open_resource_manager)
     toolbar.addWidget(resource_button)

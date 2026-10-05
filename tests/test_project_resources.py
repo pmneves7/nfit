@@ -93,6 +93,55 @@ def row_of(snapshot, *, kind=None, key=None):
     return next(row for row in snapshot.rows if (kind is None or row.kind == kind) and (key is None or row.key == key))
 
 
+@pytest.mark.parametrize("collection", [False, True])
+def test_explorer_resource_inventory_and_load_use_real_binning_recipes(resources, monkeypatch, collection):
+    from nfit import project_composites, project_data, project_resource_gui
+
+    calls = []
+    if collection:
+        owner = resources.group
+        config = project_composites.data_group_composite_config(owner)
+        named = project_composites.add_data_group_composite_binning(owner, name="Overview")
+        named_config = project_composites.data_group_composite_config_by_id(owner, named)
+        monkeypatch.setattr(project_composites, "composite_dataset_entry", lambda target, **kwargs:
+                            calls.append((target, kwargs)))
+        cache = resources.composite_cache
+        keys = (project_composites._composite_cache_key(owner),
+                project_composites._composite_cache_key(owner, named))
+    else:
+        owner = resources.dataset
+        config = project_data.dataset_rebin_config(owner)
+        named = project_data.add_dataset_rebin_binning(owner, name="Overview")
+        named_config = project_data.dataset_rebin_config_by_id(owner, named)
+        monkeypatch.setattr(project_data, "dataset_for_slice_viewer", lambda target, **kwargs:
+                            calls.append((target, kwargs)))
+        cache = resources.viewer_cache
+        keys = (owner.id, f"{owner.id}:{named}")
+    config["enabled"] = named_config["enabled"] = True
+    explorer = SimpleNamespace(project=resources.project, _slice_viewers={}, _mark_dirty=lambda: None)
+    service = project_resource_gui.project_resources(explorer)
+    rows = [row for row in service.snapshot().rows if row.kind == "Histogram"]
+    assert len(rows) == 2
+    assert all(row.can_load for row in rows)
+    assert calls == []
+    recipes = tuple(project_resource_gui._recipes(explorer))
+    assert tuple(recipe[1] for recipe in recipes) == keys
+    assert all(recipe[0] is cache for recipe in recipes)
+    for recipe in recipes:
+        recipe[-1]()
+    assert all(target is owner for target, _kwargs in calls)
+    if collection:
+        assert calls[0][1]["config_override"] is None
+        assert calls[0][1]["binning_id"] is None
+        assert calls[1][1]["config_override"] is named_config
+        assert calls[1][1]["binning_id"] == named
+    else:
+        assert calls[0][1]["rebin_config"] is config
+        assert calls[0][1]["cache_id"] is None
+        assert calls[1][1]["rebin_config"] is named_config
+        assert calls[1][1]["cache_id"] == named
+
+
 def test_inventory_lists_cold_cache_without_decoding(resources, tmp_path, monkeypatch):
     _payload, _member, compressed_size = saved_histogram(resources, tmp_path)
     monkeypatch.setattr(resources.viewer_cache, "get", lambda *_args: pytest.fail("inventory decoded a cube"))

@@ -41,14 +41,14 @@ def _recipes(explorer):
     for kind, label, group, target, binning_id, config in _project_binning_targets(explorer.project):
         member = project_binning_member(explorer.project, kind, group, target, binning_id)
         if kind == "dataset":
-            fit = config is project_data._fit_dataset_rebin_config(target)
+            fit = config is project_data.dataset_rebin_config(target)
             key = target.id if fit else f"{target.id}:{binning_id}"
             def load(t=target, g=group, c=config, bid=binning_id, fit=fit):
                 return project_data.dataset_for_slice_viewer(t, extra_masks=effective_dataset_masks(g, t),
                     force_rebin=True, rebin_config=c, cache_id=None if fit else bid)
             yield project_data._VIEWER_VIEW_CACHE, key, label, member, load
         else:
-            fit = config is comp._fit_data_group_composite_config(target)
+            fit = config is comp.data_group_composite_config(target)
             key = comp._composite_cache_key(target, None if fit else binning_id)
             def load(t=target, c=config, bid=binning_id, fit=fit):
                 return comp.composite_dataset_entry(t, force_rebin=True,

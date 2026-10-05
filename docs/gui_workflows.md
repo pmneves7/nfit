@@ -34,7 +34,7 @@ RAM is the system used-memory percentage. Project readings exclude child process
 means a reading is not yet available. Monitoring does not run for command-line
 or scripting use without the project window.
 
-**Resources…**, immediately to the right of these readings, opens a sortable
+**Resources**, immediately to the right of these readings, opens a sortable
 memory and disk inventory. Select multiple rows to load or unload them, or
 confirm deleting their saved caches. The same window edits CPU/RAM budgets and
 future temporary storage. See [Resource Manager](resources.md).

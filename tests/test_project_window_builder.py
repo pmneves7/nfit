@@ -168,6 +168,7 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
         assert monitor.toolTip()
         resources = toolbar.widgetForAction(toolbar.actions()[-1])
         assert resources.objectName() == "resource_manager_button"
+        assert resources.text() == "Resources"
         assert isinstance(resources, QtWidgets.QPushButton)
         assert not resources.isFlat()
         assert resources.toolTip()

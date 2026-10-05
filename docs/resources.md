@@ -1,6 +1,6 @@
 # Resource Manager
 
-Click the **Resources…** button to the right of the Project/System CPU and RAM readings.
+Click the **Resources** button to the right of the Project/System CPU and RAM readings.
 The window lists flat rows that can be sorted by any column in either direction.
 Use Shift-click for a range and Ctrl-click (Command-click on macOS) for separate
 rows. The table lists source data, histogram stages and prepared views, reduced
