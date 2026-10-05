@@ -48,21 +48,26 @@ from .quantities import display_axis_label, display_channel_label, display_unit
 
 
 def align_mdhisto_cut_axes(ax_image: Any, ax_xcut: Any = None, ax_ycut: Any = None) -> None:
-    """Keep shared profile axes aligned when an image has a fixed aspect."""
+    """Align profiles with the image while retaining layout's label margins.
+
+    The original axes positions contain constrained layout's resolved cells.
+    Reading positions directly from GridSpec instead would discard its margins
+    and feed conflicting geometry back into each subsequent layout pass.
+    """
 
     from matplotlib.transforms import Bbox
 
     if ax_xcut is not None:
         def x_locator(axis, _renderer):
             image = ax_image.get_position()
-            cell = axis.get_subplotspec().get_position(axis.figure)
+            cell = axis.get_position(original=True)
             return Bbox.from_extents(image.x0, cell.y0, image.x1, cell.y1)
 
         ax_xcut.set_axes_locator(x_locator)
     if ax_ycut is not None:
         def y_locator(axis, _renderer):
             image = ax_image.get_position()
-            cell = axis.get_subplotspec().get_position(axis.figure)
+            cell = axis.get_position(original=True)
             return Bbox.from_extents(cell.x0, image.y0, cell.x1, image.y1)
 
         ax_ycut.set_axes_locator(y_locator)

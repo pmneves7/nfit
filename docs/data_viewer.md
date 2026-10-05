@@ -374,6 +374,9 @@ own x and y sides. Rotation uses the numerical coordinates of the displayed axes
 the axes have different units, the angle describes this plotted coordinate
 plane rather than a physical angle between like quantities.
 
+The embedded cut panels reserve space for axis labels at the selected font
+size and keep their spacing stable when resized or redrawn.
+
 **Show x/y cuts** controls both profiles. Check **Pop out x/y cuts** to put
 each profile in its own one-dimensional data viewer instead of panels beside
 the image. The viewers update after the box moves, resizes, or rotates and
