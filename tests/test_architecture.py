@@ -72,6 +72,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "axes_ratio.py",
     PACKAGE_ROOT / "box_cuts.py",
     PACKAGE_ROOT / "cached_background_replay.py",
+    PACKAGE_ROOT / "dgs_background_sources.py",
     PACKAGE_ROOT / "background_profile_queries.py",
     PACKAGE_ROOT / "array_archive.py",
     PACKAGE_ROOT / "analysis" / "artifacts.py",

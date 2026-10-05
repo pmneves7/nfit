@@ -18,6 +18,12 @@ from .cached_background_replay import (
     background_replay_payload,
     background_replay_source_recipe,
 )
+from .dgs_background_sources import (
+    open_event_stream,
+    raw_source,
+    sample_exposures,
+    trajectory_payloads,
+)
 from .event_masks import reduce_masked_event_runs
 from .mdhisto import MDHistoChannel, MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup, MaskSpec
@@ -53,7 +59,7 @@ def project_measured_background_mdevent(
 ) -> MDHistoData:
     """Bin a measured background as if acquired at every selected sample angle.
 
-    Both groups must be QSample or QLab MDEvent data with matching detector geometry
+    Both groups must be native raw DGS or QSample/QLab MDEvent data with matching detector geometry
     and incident energy (meV). Sample proton charges and fit weights determine
     the relative exposure at each angle. Background calibration scales multiply
     counts and uncertainties; its fit weights also weight the normalization.
@@ -66,13 +72,15 @@ def project_measured_background_mdevent(
     materialized. A compact persisted recipe supports explicit final-profile
     covariance replay. The source's private powder binning does not enter this mode.
     """
-    if any("mdevent" not in group.metadata for group in (sample, background)):
-        raise ValueError("measured-event replay requires sample and background MDEvent groups")
+    if any("mdevent" not in group.metadata and not raw_source(group) for group in (sample, background)):
+        raise ValueError("measured-event replay requires native DGS or MDEvent groups")
     if len(target.axes) != 4 or target.signal.ndim != 4:
         raise ValueError("measured-event replay requires a four-dimensional HKLE target")
     if background.backgrounds:
         raise ValueError("measured-event replay requires an unsubtracted background source group")
     for group in (sample, background):
+        if raw_source(group):
+            continue
         dimensions = group.metadata["mdevent"].get("dimensions", [])
         frames = {axis.get("frame") for axis in dimensions[:3]}
         if len(dimensions) != 4 or frames not in ({"QSample"}, {"QLab"}):
@@ -108,7 +116,7 @@ def project_measured_background_mdevent(
     source_masks = list(
         background.masks if background_inherited_masks is None else background_inherited_masks
     )
-    exposure = np.asarray([float(run.metadata["proton_charge"]) * run.fit_weight for run in runs])
+    exposure = sample_exposures(sample, runs)
     if np.any(~np.isfinite(exposure)) or np.any(exposure <= 0):
         raise ValueError("sample exposures must be finite and positive for measured-event replay")
     exposure /= exposure.sum()
@@ -145,7 +153,7 @@ def project_measured_background_mdevent(
                 ),
             })
 
-        detectors, payloads = mdevent._trajectory_payloads(
+        detectors, payloads = trajectory_payloads(
             sample,
             [run],
             inverse_basis,
@@ -197,14 +205,13 @@ def _matching_directions(theta, phi, sample_theta, sample_phi):
 def _replay_runs(
     background, sources, target, prepared, *, reference_energy, max_batch_bytes, progress_callback,
 ):
-    import h5py
-
     shape = target.shape
     edges = [np.asarray(axis.values, dtype=float) for axis in target.axes]
     size = int(np.prod(shape))
     numerator, variance, events, denominator = (np.zeros(size) for _ in range(4))
     recorded_sources = []
-    config = background.metadata["mdevent"]
+    config = background.metadata["raw_dgs" if raw_source(background) else "mdevent"]
+    frame = "QLab" if raw_source(background) else config["dimensions"][0]["frame"]
     normalization_angles = len(prepared)
     normalization_total = (
         len(sources)
@@ -212,7 +219,10 @@ def _replay_runs(
         * _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
     )
     for run_index, source in enumerate(sources):
-        source_detectors, source_payloads = mdevent._trajectory_payloads(
+        from .reduction_recipes import effective_reduction_config
+
+        source_config = effective_reduction_config(background, source) if raw_source(background) else config
+        source_detectors, source_payloads = trajectory_payloads(
             background,
             [source],
             np.eye(4),
@@ -372,17 +382,14 @@ def _replay_runs(
             MAX_REPLAY_TRANSFORM_TASKS // max(transform_count, 1),
         ))
         workers = min(workers, rows)
-        with h5py.File(source.metadata["source_file"], "r") as handle:
-            workspace = handle[config["workspace_path"]]
-            index = int(source.metadata["mdevent_experiment_index"])
-            gonio = mdevent._read_goniometer_matrix(workspace[f"experiment{index}"])
-            values = workspace["event_data/event_data"]
+        with open_event_stream(background, source, rows=rows) as (gonio, event_shape, event_dtype, blocks):
+            index = int(source.metadata.get("mdevent_experiment_index", 0))
             content_digest = hashlib.sha256()
-            workers = min(workers, max(1, values.shape[0]))
+            workers = min(workers, max(1, event_shape[0]))
 
             def report(
                 completed, *, workers=workers, accelerated=accelerated,
-                total=values.shape[0], backend=backend, run_index=run_index,
+                total=event_shape[0], backend=backend, run_index=run_index,
             ):
                 if progress_callback is not None:
                     mode = "compiled parallel replay" if accelerated else "NumPy fallback"
@@ -400,9 +407,9 @@ def _replay_runs(
                     })
 
             report(0)
-            for start in range(0, values.shape[0], rows):
+            completed = 0
+            for raw in blocks:
                 batch_workers = workers
-                raw = np.asarray(values[start : start + rows])
                 content_digest.update(raw.tobytes())
                 block = np.asarray(raw, dtype=float)
                 block = block[block[:, 2].astype(np.int64) == index]
@@ -412,7 +419,7 @@ def _replay_runs(
                             "measured-event replay currently requires one goniometer matrix per experiment"
                         )
                     lab = block[:, 5:8]
-                    if config["dimensions"][0]["frame"] == "QSample":
+                    if frame == "QSample":
                         lab = lab @ gonio.T
                     if accelerated:
                         detector_ids = block[:, 4].astype(np.int64)
@@ -433,11 +440,14 @@ def _replay_runs(
                             block, lab, transforms, accepted_ids, excluded_bins,
                             edges, shape, weights, numerator, variance, events,
                         )
-                report(min(start + rows, values.shape[0]), workers=batch_workers)
+                completed += len(raw)
+                report(completed, workers=batch_workers)
+            report(event_shape[0])
             recorded_sources.append(background_replay_source_recipe(
-                source, workspace_path=config["workspace_path"],
-                frame=config["dimensions"][0]["frame"], gonio=gonio,
-                shape=values.shape, dtype=values.dtype, content_sha256=content_digest.hexdigest(),
+                source, workspace_path=config.get("workspace_path", "native-raw-dgs"),
+                frame=frame, gonio=gonio,
+                shape=event_shape, dtype=event_dtype, content_sha256=content_digest.hexdigest(),
+                raw_dgs_config=(source_config if raw_source(background) else None),
                 transforms=transforms, weights=weights, detector_ids=ids,
                 accepted_ids=accepted_ids, excluded_bins=excluded_bins,
             ))

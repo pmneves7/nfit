@@ -72,7 +72,8 @@ A few of its main capabilities are:
   CORELLI and WAND² single-crystal data, with conventional major-tick or
   Brillouin-zone gridline overlays, trajectory-projected powder-background
   subtraction with masked correction windows, directional measured-background
-  replay at sample angles with bounded compiled parallel acceleration, reversible displayed-axis
+  replay from raw DGS or MDE sources at sample angles with bounded compiled
+  parallel acceleration, reversible displayed-axis
   coarsening, held cross-dataset viewer settings, copy/paste of compatible viewer settings,
   symmetric color limits, and
   rotatable histogram box cuts with one-dimensional pop-out viewers, selectable

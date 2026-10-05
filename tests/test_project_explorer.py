@@ -270,6 +270,7 @@ def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch,
         "Cache binnings": "",
         "Rebin stale binnings": "Meta+U" if sys.platform == "darwin" else "Ctrl+U",
         "Clear all caches in project": "",
+        "Show in File Manager": "",
         "Save": _standard_shortcut_text(
             QtGui, QtGui.QKeySequence.StandardKey.Save
         ),

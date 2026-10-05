@@ -1306,7 +1306,7 @@ coverage rather than extrapolating the background.
 
 **Measured background at sample angles** preserves directional background
 structure, including variation perpendicular to the scattering plane. Choose a
-matching **live MDEvent background group** as the source. nfit transforms its
+matching **live raw DGS or MDEvent background group** as the source. nfit transforms its
 measured $\mathbf Q$ (in Å⁻¹) back into the laboratory frame, then reconstructs
 the background at every selected sample goniometer angle on the sample's HKLE
 grid. This uses the same basis, symmetry operations and detector-trajectory
@@ -1320,8 +1320,8 @@ weight. Background run scales calibrate signal and uncertainty; background fit
 weights weight counts and exposure; the background link scale is applied last.
 
 This mode requires matching incident energy and detector geometry (for example,
-the same HYSPEC bank setting), QSample or QLab MDEvents with one goniometer matrix per
-experiment, and an unsubtracted source group. QLab coordinates are already in
+the same HYSPEC bank setting), native raw DGS sources or QSample/QLab MDEvents
+with one goniometer matrix per run or experiment, and an unsubtracted source group. QLab coordinates are already in
 the laboratory frame and are not rotated back. Small calibration differences
 are accepted (detector directions within 0.1°, incident energy within 0.1%);
 the replay retains the measured background geometry for both event coordinates
@@ -1357,7 +1357,13 @@ intervals are not observed count variances.
 Each source and sample group resolves its selected first-run incident energy
 before preparing trajectories or partitioning masks. Selecting **Each run Ei**
 or a per-run override retains that explicit convention. These normalization
-choices do not reconstruct the measured source events again.
+choices do not reconstruct stored MDE source events again. Native raw sources
+use their configured pulse filtering, HYSPEC preprocessing, detector calibration,
+and event corrections. Their reduced-event caches are reused across sample
+binnings. Dummy rotations are pooled in laboratory coordinates, with accepted
+proton charge determining their exposure; each retains its measured detector
+geometry. Cached-field covariance queries can reconstruct these raw sources
+without a Mantid installation or intermediate MDE file.
 
 Detector-trajectory normalization batches angles with identical output-mask
 acceptance into shared accumulators, avoiding a separate full-grid allocation

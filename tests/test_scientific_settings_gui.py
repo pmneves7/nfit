@@ -81,6 +81,10 @@ def test_all_native_schema_settings_are_visible_and_scriptable(native_explorer):
     prefix = "mdevent" if family == "mde" else "raw_dgs"
     for field in reduction_settings_schema(group):
         editor = explorer.details_widget.findChild(QtWidgets.QWidget, f"{prefix}_{field.key}")
+        if family == "raw" and field.key.startswith("hyspec_"):
+            assert editor is None  # The raw fixture is SEQUOIA.
+            assert explorer.details_widget.findChild(QtWidgets.QWidget, f"{prefix}_run_{field.key}") is None
+            continue
         assert editor is not None and editor.toolTip() == field.tooltip
         override = explorer.details_widget.findChild(QtWidgets.QWidget, f"{prefix}_run_{field.key}")
         assert (override is not None) == field.per_run

@@ -71,7 +71,7 @@ def _file_identity(path):
 
 def background_replay_source_recipe(
     source, *, workspace_path, frame, gonio, shape, dtype, content_sha256,
-    transforms, weights, detector_ids, accepted_ids, excluded_bins,
+    transforms, weights, detector_ids, accepted_ids, excluded_bins, raw_dgs_config=None,
 ):
     """Capture the complete resolved event projection after its source stream."""
     path = str(Path(source.metadata["source_file"]).expanduser().resolve())
@@ -86,17 +86,26 @@ def background_replay_source_recipe(
         if flags not in exclusions:
             exclusions.append(flags)
         exclusion_indices.append(exclusions.index(flags))
-    return {"source_file": path, "file_identity": _file_identity(path),
+    recipe = {"source_file": path, "file_identity": _file_identity(path),
             "source_lineage_ids": list(tracked_source_ids(source)),
             "workspace_path": workspace_path, "event_shape": list(shape),
             "event_dtype": str(dtype), "event_sha256": content_sha256,
-            "experiment_index": int(source.metadata["mdevent_experiment_index"]),
+            "experiment_index": int(source.metadata.get("mdevent_experiment_index", 0)),
             "frame": frame, "goniometer": np.asarray(gonio).tolist(),
             "transforms": [np.asarray(inverse).tolist() for inverse, _ in transforms],
             "energy_bounds": [np.asarray(bounds).tolist() for _, bounds in transforms],
             "weights": np.asarray(weights).tolist(), "detector_ids": ids.tolist(),
             "acceptance": acceptance, "acceptance_indices": acceptance_indices,
             "exclusions": exclusions, "exclusion_indices": exclusion_indices}
+    if raw_dgs_config is not None:
+        from .reduction_recipes import reduction_settings_schema
+        recipe.update(source_format="raw-direct-geometry-nexus",
+            raw_dgs_config={"format": "raw-direct-geometry-nexus", **{
+                setting.key: copy.deepcopy(raw_dgs_config.get(setting.key, setting.default))
+                for setting in reduction_settings_schema("raw-direct-geometry-nexus")}},
+            raw_run_metadata={key: copy.deepcopy(source.metadata[key])
+                              for key in ("incident_energy", "event_count", "proton_charge")})
+    return recipe
 
 
 def background_replay_payload(data, sources):
@@ -456,7 +465,7 @@ def _validate_payload(data):
 
 def _projection_variance(data, payload, selected, indices, weights, bins, progress_callback, max_batch_bytes):
     """Stream primitive coefficients, combining all signed reuse before squaring."""
-    import h5py
+    from .dgs_background_sources import open_event_stream, replay_group
 
     shape = data.shape
     size = data.signal.size
@@ -478,7 +487,9 @@ def _projection_variance(data, payload, selected, indices, weights, bins, progre
             grouped.setdefault(key, []).append((source, coefficient))
     variance = np.zeros(bins)
     receipts = []
-    for (path, workspace_path), terms in grouped.items():
+    for (path, _workspace_path), terms in grouped.items():
+        if any(source.get("raw_dgs_config") != terms[0][0].get("raw_dgs_config") for source, _ in terms):
+            raise SourceReplayRequired("Shared raw background has different reduction settings; replay a common primitive reduction")
         identity = _file_identity(path)
         for source, _ in terms:
             # Device/inode can change when moving an unchanged source. Size and
@@ -494,13 +505,13 @@ def _projection_variance(data, payload, selected, indices, weights, bins, progre
             excluded = [_unpack(mask, size) for mask in source["exclusions"]]
             prepared.append((source, coefficient, ids, accepted, excluded))
         digest = hashlib.sha256()
-        with h5py.File(path, "r") as handle:
-            values = handle[f"{workspace_path}/event_data/event_data"]
-            if any(list(values.shape) != source["event_shape"] or str(values.dtype) != source["event_dtype"]
+        source_group, source_entry = replay_group(terms[0][0])
+        with open_event_stream(source_group, source_entry, rows=rows) as (_gonio, event_shape, event_dtype, blocks):
+            if any(list(event_shape) != source["event_shape"] or str(event_dtype) != source["event_dtype"]
                    for source, _ in terms):
                 raise SourceReplayRequired("Background source event layout changed")
-            for start in range(0, values.shape[0], rows):
-                raw = np.asarray(values[start:start + rows])
+            completed = 0
+            for raw in blocks:
                 digest.update(raw.tobytes())
                 block = np.asarray(raw, float)
                 # Each original event remains one primitive even when multiple
@@ -549,8 +560,9 @@ def _projection_variance(data, payload, selected, indices, weights, bins, progre
                         raise SourceReplayRequired("Background source has invalid primitive variance")
                     np.add.at(variance, output[valid], source_variance * combined[valid]**2)
                 if progress_callback is not None:
-                    progress_callback({"stage": "cached_background_covariance", "iteration": min(start + rows, values.shape[0]),
-                                       "total": values.shape[0], "message": "Replaying background covariance for the explicit final profile"})
+                    progress_callback({"stage": "cached_background_covariance", "iteration": min(completed + len(raw), event_shape[0]),
+                                       "total": event_shape[0], "message": "Replaying background covariance for the explicit final profile"})
+                completed += len(raw)
             actual_digest = digest.hexdigest()
             if any(actual_digest != source["event_sha256"] for source, _ in terms):
                 raise SourceReplayRequired("Background event contents differ from the cached histogram")

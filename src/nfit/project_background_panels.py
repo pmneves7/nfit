@@ -109,18 +109,23 @@ def build_background_details(
     projection.setObjectName("background_projection")
     projection.addItem("Voxel center", "center")
     supports_trajectory_projection = isinstance(owner, DatasetGroup) and "mdevent" in owner.metadata
+    supports_measured_projection = supports_trajectory_projection or (
+        isinstance(owner, DatasetGroup)
+        and owner.metadata.get("raw_dgs", {}).get("format") == "raw-direct-geometry-nexus"
+    )
     if supports_trajectory_projection or background.projection == "sample_trajectories":
         projection.addItem("Powder through sample trajectories", "sample_trajectories")
-    if supports_trajectory_projection or background.projection == "measured_events":
+    if supports_measured_projection or background.projection == "measured_events":
         projection.addItem("Measured background at sample angles", "measured_events")
     projection.setToolTip(
         "Voxel center is the fast interpolation of B(|Q|, E) at each target-bin center. "
         "Powder through sample trajectories forward-projects a spherical powder background through "
         "every MDEvent sample angle and the same detector-trajectory normalization; "
         "Measured background at sample angles instead replays the measured lab-frame events, "
-        "preserving out-of-plane dependence. It requires a referenced MDEvent group with "
+        "preserving out-of-plane dependence. It requires a referenced raw DGS or MDEvent group with "
         "matching detector geometry and incident energy; its powder binning and interpolation "
-        "are not used. These replay modes require an MDEvent sample group."
+        "are not used. Powder trajectory replay requires an MDEvent sample group; "
+        "measured replay also accepts native raw DGS sample groups."
     )
     projection.setCurrentIndex(max(projection.findData(background.projection), 0))
     projection.currentIndexChanged.connect(

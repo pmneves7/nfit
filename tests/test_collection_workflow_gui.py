@@ -20,6 +20,9 @@ def test_collection_sections_separate_reduction_and_histogram_settings(recipe_ex
     for field in reduction_settings_schema(group):
         target = tabs.widget(2 if field.scope == "histogram" else 1)
         editor = target.findChild(QtWidgets.QWidget, f"raw_dgs_{field.key}")
+        if field.key.startswith("hyspec_"):
+            assert editor is None  # The fixture is SEQUOIA.
+            continue
         assert editor is not None and editor.toolTip()
     assert tabs.widget(0).findChild(QtWidgets.QTableWidget, "group_datasets_table") is not None
     assert tabs.widget(3).findChild(QtWidgets.QPushButton, "collection_open_viewer").toolTip()
