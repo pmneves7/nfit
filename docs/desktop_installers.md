@@ -243,6 +243,7 @@ python tools/distribution/retention.py
 
 The script uses an authenticated `gh` CLI and paginated GitHub API requests.
 Pass `--apply` to execute the printed plan.
+Transient network failures are retried; already removed items are safe to revisit.
 
 ## Authorship and AI assistance
 

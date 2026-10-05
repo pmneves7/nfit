@@ -94,8 +94,18 @@ def api(endpoint: str, *, method: str = "GET"):
         if result.returncode == 0:
             body = result.stdout.split("\r\n\r\n", 1)[-1] if "\r\n\r\n" in result.stdout else result.stdout.split("\n\n", 1)[-1]
             return json.loads(body) if body.strip() else None
-        if method == "DELETE" and "HTTP 404" in result.stderr:
+        status_match = re.search(r"(?m)^HTTP/[\d.]+\s+(\d+)", result.stdout)
+        status = int(status_match.group(1)) if status_match else None
+        if method == "DELETE" and (status == 404 or "HTTP 404" in result.stderr):
             return None  # A previous cleanup already removed this planned item.
+        transient = any(message in result.stderr.lower() for message in (
+            "unexpected end of json input", "unexpected eof", "connection reset",
+            "http 500", "http 502", "http 503", "http 504",
+        ))
+        if transient and attempt < 5:
+            # GET and DELETE are idempotent, including a response lost after deletion.
+            time.sleep(2 ** (attempt + 1))
+            continue
         rate_limited = "HTTP 429" in result.stderr or (
             "HTTP 403" in result.stderr
             and "rate limit" in (result.stderr + result.stdout).lower()

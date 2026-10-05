@@ -125,14 +125,29 @@ def test_api_rate_limit_honors_retry_after_and_serial_delete_delay(monkeypatch):
     assert waits == [1, 120, 1]
 
 
-def test_api_failure_stops_instead_of_continuing_deletions(monkeypatch):
+def test_api_permission_failure_stops_instead_of_continuing_deletions(monkeypatch):
     from types import SimpleNamespace
 
     monkeypatch.setattr(retention.subprocess, 'run', lambda *args, **kwargs:
-                        SimpleNamespace(returncode=1, stdout='', stderr='server error (HTTP 500)'))
+                        SimpleNamespace(returncode=1, stdout='', stderr='forbidden (HTTP 403)'))
     monkeypatch.setattr(retention.time, 'sleep', lambda delay: None)
-    with pytest.raises(RuntimeError, match='HTTP 500'):
+    with pytest.raises(RuntimeError, match='HTTP 403'):
         retention.api('repos/owner/repo/releases/assets/1', method='DELETE')
+
+
+def test_lost_delete_response_can_retry_an_already_removed_asset(monkeypatch):
+    from types import SimpleNamespace
+
+    responses = iter([
+        SimpleNamespace(returncode=1, stdout='', stderr='unexpected end of JSON input'),
+        SimpleNamespace(returncode=1, stdout='HTTP/2.0 404 Not Found\n\n',
+                        stderr='unexpected end of JSON input'),
+    ])
+    waits = []
+    monkeypatch.setattr(retention.subprocess, 'run', lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(retention.time, 'sleep', waits.append)
+    assert retention.api('repos/owner/repo/releases/assets/1', method='DELETE') is None
+    assert waits == [1, 2, 1]
 
 
 def test_workflows_expire_build_outputs_and_run_the_bounded_cleanup():
