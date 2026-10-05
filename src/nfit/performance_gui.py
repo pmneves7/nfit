@@ -20,6 +20,8 @@ from .performance_benchmark import (
     export_benchmark_script,
 )
 
+_GB_PER_MIB = 1024**2 / 1_000_000_000
+
 
 class _BenchmarkWorker(QtCore.QThread):
     row = QtCore.Signal(object)
@@ -199,19 +201,22 @@ class PerformancePage(QtWidgets.QWidget):
             "system allocation; individual operations may use fewer workers."
         )
         form.addRow("CPU limit", self.cpu_limit)
-        self.ram_limit_mb = QtWidgets.QSpinBox()
-        self.ram_limit_mb.setObjectName("preferences_ram_limit_mb")
-        self.ram_limit_mb.setRange(0, 1_048_576)
-        self.ram_limit_mb.setSpecialValueText("Auto")
-        self.ram_limit_mb.setSuffix(" MiB")
-        self.ram_limit_mb.setValue(settings["ram_limit_mb"])
-        self.ram_limit_mb.setToolTip(
+        self.ram_limit_gb = QtWidgets.QDoubleSpinBox()
+        self.ram_limit_gb.setObjectName("preferences_ram_limit_gb")
+        self.ram_limit_gb.setDecimals(3)
+        self.ram_limit_gb.setRange(0, 1_048_576 * _GB_PER_MIB)
+        self.ram_limit_gb.setSingleStep(1.0)
+        self.ram_limit_gb.setSpecialValueText("Auto")
+        self.ram_limit_gb.setSuffix(" GB")
+        self.ram_limit_gb.setValue(settings["ram_limit_mb"] * _GB_PER_MIB)
+        self.ram_limit_gb.setToolTip(
             "Maximum RAM nfit manages for shared scientific caches and temporary "
             "numerical work. This does not limit all memory used by the process. "
+            "GB means 1,000,000,000 bytes; saved settings use the nearest MiB. "
             "Auto uses a conservative share of available RAM; it also retains a "
             "legacy percentage-based preference until this value is saved."
         )
-        form.addRow("RAM limit", self.ram_limit_mb)
+        form.addRow("RAM limit", self.ram_limit_gb)
         save = QtWidgets.QPushButton("Save defaults")
         save.setToolTip(
             "Persist the application-wide CPU and RAM limits. Existing saved "
@@ -231,7 +236,7 @@ class PerformancePage(QtWidgets.QWidget):
         try:
             save_resource_limits(
                 cpu_limit=self.cpu_limit.value(),
-                ram_limit_mb=self.ram_limit_mb.value(),
+                ram_limit_mb=round(self.ram_limit_gb.value() / _GB_PER_MIB),
             )
         except OSError as exc:
             QtWidgets.QMessageBox.warning(self, "Save preferences", str(exc))

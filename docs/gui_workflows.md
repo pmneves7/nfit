@@ -23,11 +23,12 @@ documentation home page (`docs/_build/html/index.html`) in your default web
 browser. If it has not been built, Help shows the build command instead.
 
 The right side of the toolbar shows the running nfit version followed by live
-nfit and system CPU and RAM percentages.
+**Project CPU/RAM** and **System CPU/RAM** percentages.
 Readings are sampled on a background thread every two seconds while the display
-is visible. CPU percentages use the total capacity of all logical CPUs; nfit RAM
-is resident process memory divided by physical RAM, and system RAM is the
-system used-memory percentage. nfit readings exclude child processes. A dash
+is visible. Project readings cover the nfit process, including the current
+project and open viewers. CPU percentages use the total capacity of all logical
+CPUs; Project RAM is resident process memory divided by physical RAM, and System
+RAM is the system used-memory percentage. Project readings exclude child processes. A dash
 means a reading is not yet available. Monitoring does not run for command-line
 or scripting use without the project window.
 

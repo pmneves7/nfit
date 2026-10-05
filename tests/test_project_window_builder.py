@@ -164,7 +164,7 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
 
         monitor = toolbar.widgetForAction(toolbar.actions()[-1])
         assert monitor.objectName() == "resource_monitor"
-        assert monitor.text().startswith(f"nfit {application_version()} | CPU —")
+        assert monitor.text().startswith(f"nfit {application_version()} | Project CPU —")
         assert monitor.toolTip()
 
         all_actions = {

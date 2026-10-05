@@ -180,7 +180,9 @@ number of symmetry operations.
 ## Performance preferences and benchmarks
 
 **File → Preferences → Performance** provides one **CPU limit** and one **RAM
-limit** in MiB (1 MiB = 1,048,576 bytes). The CPU limit bounds nfit's shared
+limit** in GB (1 GB = 1,000,000,000 bytes). The GUI accepts three decimal
+places and saves the nearest MiB (1 MiB = 1,048,576 bytes), preserving existing
+budgets and the scripting API's `ram_limit_mb` units. The CPU limit bounds nfit's shared
 worker allocation, including large-array archive compression and loading.
 The RAM limit bounds managed numerical caches and temporary working buffers;
 it is not an operating-system limit on the application's total resident memory.

@@ -274,7 +274,7 @@ def test_performance_preferences_save_and_apply(qt_app, monkeypatch, tmp_path):
     monkeypatch.setenv("NFIT_PERFORMANCE_FILE", str(tmp_path / "performance.json"))
     page = PerformancePage()
     page.cpu_limit.setValue(2)
-    page.ram_limit_mb.setValue(4096)
+    page.ram_limit_gb.setValue(4.295)
     assert load_performance_settings()["workers"] == 0
     page._save()
     assert load_performance_settings() == {
@@ -283,8 +283,27 @@ def test_performance_preferences_save_and_apply(qt_app, monkeypatch, tmp_path):
         "transient_memory_percent": 0,
     }
     assert load_resource_limits() == {"cpu_limit": 2, "ram_limit_mb": 4096}
-    assert page.ram_limit_mb.toolTip()
+    assert page.ram_limit_gb.toolTip()
+    assert page.ram_limit_gb.suffix() == " GB"
     page.close()
+
+
+@pytest.mark.parametrize("ram_limit_mb", [0, 1, 4096, 200000, 1048576])
+def test_gb_ram_editor_preserves_existing_budget(qt_app, monkeypatch, tmp_path, ram_limit_mb):
+    from nfit.performance import load_resource_limits, save_resource_limits
+    from nfit.performance_gui import PerformancePage
+
+    monkeypatch.setenv("NFIT_PERFORMANCE_FILE", str(tmp_path / "performance.json"))
+    save_resource_limits(cpu_limit=2, ram_limit_mb=ram_limit_mb)
+    page = PerformancePage()
+    try:
+        assert page.ram_limit_gb.value() == pytest.approx(
+            ram_limit_mb * 1024**2 / 1_000_000_000, abs=0.0005
+        )
+        page._save()
+        assert load_resource_limits()["ram_limit_mb"] == ram_limit_mb
+    finally:
+        page.close()
 
 
 def test_performance_calibration_preserves_the_ram_limit(qt_app, monkeypatch, tmp_path):

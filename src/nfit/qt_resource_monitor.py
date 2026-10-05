@@ -12,7 +12,8 @@ from .resource_usage import ResourceUsageSampler
 _SAMPLE_SECONDS = 2.0
 _TOOLTIP = (
     "Resource usage, refreshed every 2 seconds. CPU is a percentage of total "
-    "logical CPU capacity (0–100%). nfit RAM is this process's resident memory "
+    "logical CPU capacity (0–100%). Project readings cover the nfit process, "
+    "including its current project and open viewers. Project RAM is resident memory "
     "as a percentage of physical RAM; system RAM is the system used-memory "
     "percentage. Child processes are excluded from nfit readings."
 )
@@ -78,10 +79,10 @@ class ResourceMonitor(QtWidgets.QLabel):
     def _refresh(self):
         usage = self._latest[0]
         if usage is None:
-            self.setText(f"nfit {self._version} | CPU —  RAM —   |   System CPU —  RAM —")
+            self.setText(f"nfit {self._version} | Project CPU —  RAM —   |   System CPU —  RAM —")
             return
         self.setText(
-            f"nfit {self._version} | CPU {usage.process_cpu_percent:.1f}%  "
+            f"nfit {self._version} | Project CPU {usage.process_cpu_percent:.1f}%  "
             f"RAM {usage.process_memory_percent:.1f}%   |   "
             f"System CPU {usage.system_cpu_percent:.1f}%  "
             f"RAM {usage.system_memory_percent:.1f}%"
