@@ -20,7 +20,8 @@ def test_staging_is_created_beside_owner_and_cleaned(tmp_path, monkeypatch):
     before = set(tmp_path.iterdir())
     with temporary_data_directory(tmp_path / "project.nfit", prefix="nfit-data-") as name:
         staging = Path(name)
-        assert staging.parent == tmp_path
+        assert staging.is_relative_to(tmp_path / ".nfit-work")
+        assert staging.parent.name.startswith("session-")
         (staging / "data.bin").write_bytes(b"payload")
     assert not staging.exists()
     assert set(tmp_path.iterdir()) == before
@@ -51,7 +52,9 @@ def test_write_failure_does_not_fall_back(tmp_path, monkeypatch):
     monkeypatch.setattr(data_workspace.tempfile, "TemporaryDirectory", denied)
     with pytest.raises(DataWorkspaceError, match="writable project"):
         temporary_data_directory(tmp_path / "project.nfit", prefix="nfit-data-")
-    assert attempted == [tmp_path]
+    assert len(attempted) == 1
+    assert attempted[0].is_relative_to(tmp_path / ".nfit-work")
+    assert not (tmp_path / ".nfit-work").exists()
 
 
 def test_independent_project_ownership_and_failed_save_restoration(tmp_path):
@@ -108,9 +111,9 @@ def test_temporary_directory_changes_only_future_allocations(tmp_path):
         with temporary_data_directory(path, prefix="nfit-old-") as old:
             data_workspace.set_project_temporary_directory(project, str(second))
             with temporary_data_directory(path, prefix="nfit-new-") as new:
-                assert Path(old).parent == first
+                assert Path(old).is_relative_to(first / ".nfit-work")
                 assert Path(old).is_dir()
-                assert Path(new).parent == second
+                assert Path(new).is_relative_to(second / ".nfit-work")
     finally:
         data_workspace.set_project_temporary_directory(project, None)
 

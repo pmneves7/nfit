@@ -36,6 +36,7 @@ class _DiskBinning:
     project_member: str | None = None
     owned: bool = True
     project_identity: tuple[int, int, int, int] | None = None
+    prepare_data: Callable[[Any], Any] | None = None
 
     def available(self) -> bool:
         if not self.path.exists():
@@ -58,9 +59,10 @@ class _DiskBinning:
             return read_dataset_artifact(self.path, memory_map=False)
         if not self.available():
             raise OSError("the project archive changed since this cache was registered")
-        return read_project_dataset_artifact(
+        data = read_project_dataset_artifact(
             self.path, self.project_member, memory_map=False
         )
+        return self.prepare_data(data) if self.prepare_data is not None else data
 
 
 class CompressedBinning:
@@ -527,6 +529,7 @@ class RebinCache(OrderedDict):
         project_path: str | Path,
         member: str,
         lazy: bool = False,
+        prepare_data: Callable[[Any], Any] | None = None,
     ) -> None:
         """Record a reusable saved artifact, optionally as the active lazy tier."""
 
@@ -537,6 +540,7 @@ class RebinCache(OrderedDict):
                 project_path=project_path,
                 member=member,
                 lazy=lazy,
+                prepare_data=prepare_data,
             )
 
     def _set_project_backing_locked(
@@ -547,6 +551,7 @@ class RebinCache(OrderedDict):
         project_path: str | Path,
         member: str,
         lazy: bool,
+        prepare_data: Callable[[Any], Any] | None,
     ) -> None:
 
         path = Path(project_path)
@@ -555,6 +560,7 @@ class RebinCache(OrderedDict):
             signature=str(signature),
             path=path,
             project_member=str(member),
+            prepare_data=prepare_data,
             owned=False,
             project_identity=(
                 int(stat.st_dev),

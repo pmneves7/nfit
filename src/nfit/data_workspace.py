@@ -15,6 +15,15 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 
+from .workspace_sessions import (
+    SessionTemporaryDirectory,
+    WorkspaceSessionInfo,
+    cleanup_owner_workspaces,
+    inspect_owner_workspaces,
+    owner_temporary_directory,
+    owner_workspace_path,
+)
+
 _WORKSPACE_OVERRIDES: dict[str, str] = {}
 _TEMPORARY_DIRECTORIES: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 _TEMPORARY_FILES: dict[str, dict[str, int]] = {}
@@ -121,8 +130,8 @@ def temporary_data_directory(
     owner_path: str | os.PathLike[str] | None,
     *,
     prefix: str,
-) -> tempfile.TemporaryDirectory:
-    """Allocate staging beside a project, output, or unsaved source file.
+) -> tempfile.TemporaryDirectory | SessionTemporaryDirectory:
+    """Allocate staging in an owner's hidden, private session workspace.
 
     The parent must already exist. Unavailable storage fails at the operation;
     it never silently spills file-backed scientific data into system scratch.
@@ -138,7 +147,8 @@ def temporary_data_directory(
             "Choose an accessible project or output directory."
         )
     try:
-        directory = tempfile.TemporaryDirectory(prefix=prefix, dir=parent)
+        directory = (tempfile.TemporaryDirectory(prefix=prefix) if owner is None
+                     else owner_temporary_directory(owner, parent, prefix=prefix))
         with _STORAGE_LOCK:
             _TEMPORARY_DIRECTORIES[directory.name] = directory
         return directory
@@ -147,3 +157,47 @@ def temporary_data_directory(
             f"Cannot create scientific workspace in {parent or 'system temporary storage'}. "
             "Choose a writable project or output directory before retrying."
         ) from exc
+
+
+def _workspace_owner_parent(owner_path, directory=None) -> tuple[Path, Path]:
+    if owner_path is None:
+        raise ValueError("An owner path is required for scientific workspace inspection")
+    owner = Path(owner_path).absolute()
+    parent = (Path(directory).expanduser().absolute() if directory is not None
+              else Path(_WORKSPACE_OVERRIDES.get(str(owner), owner.parent)))
+    return owner, parent
+
+
+def temporary_workspace_path(owner_path, *, directory=None) -> Path:
+    """Return the hidden workspace location without creating it."""
+
+    return owner_workspace_path(*_workspace_owner_parent(owner_path, directory))
+
+
+def inspect_temporary_workspaces(owner_path, *, directory=None, include_legacy=False) -> tuple[WorkspaceSessionInfo, ...]:
+    """Inspect ownership without decoding data, creating folders, or deleting.
+
+    Old flat ``nfit-*`` directories have no reliable process identity. Optional
+    legacy records flag them for manual review; they are never eligible for
+    automatic cleanup. Sessions from other hosts remain protected too.
+    """
+
+    owner, parent = _workspace_owner_parent(owner_path, directory)
+    records = inspect_owner_workspaces(owner, parent)
+    if include_legacy and parent.is_dir():
+        records += tuple(WorkspaceSessionInfo(path, None, None, None, "legacy",
+                         "No session ownership marker; manual review required")
+                         for path in sorted(parent.iterdir())
+                         if path.name.startswith("nfit-") and path.is_dir())
+    return records
+
+
+def cleanup_temporary_workspaces(owner_path, *, directory=None, session_paths=None) -> tuple[Path, ...]:
+    """Remove confirmed dead local sessions; live/foreign/legacy files remain.
+
+    ``session_paths`` optionally narrows cleanup to inspected session paths.
+    Ownership is rechecked immediately before removal. Scientific data in
+    current sessions is retained until its last cache or reader releases it.
+    """
+
+    return cleanup_owner_workspaces(*_workspace_owner_parent(owner_path, directory), paths=session_paths)

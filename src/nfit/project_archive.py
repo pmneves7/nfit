@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import struct
 import tempfile
 import zipfile
@@ -427,6 +428,14 @@ def _rewrite_archive_reserved(
         with temporary.open("rb") as stream:
             os.fsync(stream.fileno())
         report_operation("Publishing the saved project…")
+        if target.exists():
+            # Atomic replacement must retain the shared destination's access
+            # settings rather than publish NamedTemporaryFile's private mode.
+            # copystat also retains supported ACL/xattrs, without changing
+            # ownership. Keep the timestamp of this newly completed save.
+            saved = temporary.stat()
+            shutil.copystat(target, temporary)
+            os.utime(temporary, ns=(saved.st_atime_ns, saved.st_mtime_ns))
         temporary.replace(target)
     except Exception:
         if temporary is not None:

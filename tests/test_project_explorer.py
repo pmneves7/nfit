@@ -195,9 +195,9 @@ def test_waterfall_group_keys_follow_immediate_dataset_groups():
 @pytest.mark.parametrize("built", [True, False])
 def test_project_explorer_help_opens_local_documentation(monkeypatch, tmp_path, built):
     import nfit.project_gui as project_gui
+    from nfit import qt_desktop_launch
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    QtGui = pytest.importorskip("PySide6.QtGui")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     opened = []
     messages = []
@@ -207,7 +207,7 @@ def test_project_explorer_help_opens_local_documentation(monkeypatch, tmp_path, 
         index.parent.mkdir(parents=True)
         index.write_text("<html>Help</html>")
     monkeypatch.setattr(QtWidgets.QMessageBox, "information", lambda *args: messages.append(args[2]))
-    monkeypatch.setattr(QtGui.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True)
+    monkeypatch.setattr(qt_desktop_launch, "open_local_document", lambda path: opened.append(path.as_uri()))
     explorer = NfitProjectExplorer(NfitProject([]))
     toolbar = explorer.window.findChild(QtWidgets.QToolBar)
     buttons = [toolbar.widgetForAction(action) for action in toolbar.actions()]

@@ -53,6 +53,7 @@ def background_binning_artifacts(project, directory, format_version):
 
 def restore_background_binning_backing(project, path, entries, *, lazy):
     """Validate source/grid signatures and register saved histograms lazily."""
+    prepare_data = getattr(getattr(project, "_path_resolution", None), "prepare_data", None)
     for entry in entries:
         if not isinstance(entry, dict) or entry.get('type') != 'composite_background':
             continue
@@ -69,6 +70,7 @@ def restore_background_binning_backing(project, path, entries, *, lazy):
             comp._COMPOSITE_DATA_CACHE.set_project_backing(
                 comp._composite_background_cache_key(scope, background, config),
                 signature=signature, project_path=path, member=entry['member'], lazy=lazy,
+                prepare_data=prepare_data,
             )
         except (IndexError, KeyError, OSError, StopIteration, TypeError, ValueError):
             continue

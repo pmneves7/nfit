@@ -62,6 +62,31 @@ The temporary total covers live nfit-owned staging directories, not unrelated
 files in the chosen directory. Atomic archive replacements stage beside their
 save destination so that publication stays on the same filesystem.
 
+Scientific staging is grouped under `.nfit-work` in the selected directory, or
+beside the project or source file when no directory is selected. Each owner has
+a private session folder containing the operation folders and a small ownership
+marker with the hostname, process ID, and process creation time. Opening an empty
+application creates no workspace. File-backed scientific data never falls back
+to system temporary storage when its owner directory is unavailable.
+
+A newly created `.nfit-work` container on POSIX is shared and sticky, like a shared scratch
+directory: users can create their own entries but cannot remove another user's
+entries. Each effective user ID has a separate private owner namespace, and owner
+and session folders have `0700` permissions. Existing container permissions are
+preserved. This keeps staging private while allowing collaborators to use the
+same writable experiment directory.
+On Windows, namespaces use the user's home identity and privacy follows the
+directory access controls; POSIX permission bits are not used to judge them.
+
+Successful saves adopt project-backed cache references. The corresponding
+temporary files disappear after their last runtime owner or reader releases
+them; copied dataset entries may still need them. Empty session and owner folders
+are removed automatically. After a crash, inspect the remaining sessions before
+cleanup. Automatic cleanup removes only confirmed dead processes on the current
+host, checking process creation time to distinguish reused process IDs. Live
+sessions, other hosts, invalid markers, and older flat `nfit-*` folders are
+protected. Old folders without ownership markers require manual review.
+
 An allocation that would exceed the configured budget or available system RAM
 stops and offers Resource Manager. Unload objects or raise the budget, then retry.
 Archive headers, resolved output grids, working buffers and concurrent
@@ -93,6 +118,25 @@ resources.load(saved_cache_keys)
 resources.delete(cache_keys)  # removal is committed by the next project save
 set_project_temporary_directory(project, "/path/to/experiment/work")
 ```
+
+Inspect crash leftovers independently of a loaded project:
+
+```python
+from nfit.data_workspace import (
+    inspect_temporary_workspaces, cleanup_temporary_workspaces,
+)
+
+owner = "/path/to/experiment/project.nfit"
+for session in inspect_temporary_workspaces(owner, include_legacy=True):
+    print(session.path, session.state, session.reason)
+
+# Rechecks ownership and removes only dead same-host managed sessions.
+removed = cleanup_temporary_workspaces(owner)
+```
+
+For a project that used a separate temporary directory, pass that directory as
+`directory="/path/to/experiment/work"` to inspection and cleanup. These calls do
+not relocate live staging or create a workspace.
 
 Scripts with external consumers can supply `viewer_payloads` and
 `release_viewers` callbacks to declare those references. Missing recipe loaders

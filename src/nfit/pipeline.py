@@ -201,6 +201,8 @@ class DatasetEntry:
         if self._raw_dgs_reduction_cache is not None and "metadata" not in changes:
             changes["metadata"] = copy.deepcopy(self.metadata)
         copied = replace(self, id=uuid4().hex, **changes)
+        if hasattr(self, "_project_path_resolution"):
+            copied._project_path_resolution = self._project_path_resolution
         if "data" in changes:
             copied._data_matches_source = False
             copied._source_data_identity = None
@@ -221,6 +223,8 @@ class DatasetEntry:
         memo[id(self)] = copied
         for item in fields(self):
             setattr(copied, item.name, copy.deepcopy(getattr(self, item.name), memo))
+        if hasattr(self, "_project_path_resolution"):
+            copied._project_path_resolution = self._project_path_resolution
         copied.data = _immutable_data(copied.data)
         copied._data_matches_source = self.data_matches_source
         copied._source_data_identity = (
@@ -265,6 +269,9 @@ class DatasetEntry:
         the replacement arrays rather than the original file.
         """
 
+        resolution = getattr(self, "_project_path_resolution", None)
+        if source_backed and data is not None and resolution is not None:
+            data = resolution.prepare_data(data)
         canonical = _immutable_data(data)
         self.data = canonical
         self._data_revision += 1

@@ -573,7 +573,7 @@ def bin_raw_dgs_group(
         with cache.open() if cache is not None else nullcontext() as archive:
             if cache is not None:
                 header = json.loads(str(archive["header_json"].item()))
-                info = _run_info_from_cache(header["run_info"])
+                info = _run_info_from_cache({**header["run_info"], "path": str(source)})
                 hyspec_setup = header.get("hyspec_preprocessing")
                 normalization_payload = {
                     key: np.asarray(archive[key])

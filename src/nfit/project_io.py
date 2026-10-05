@@ -135,7 +135,34 @@ def _project_to_dict(project: NfitProject) -> dict[str, Any]:
     }
 
 
-def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
+def _project_manifest_for_save(project: NfitProject, path) -> dict[str, Any]:
+    """Encode declared paths for this destination without editing live state."""
+    from .project_paths import portable_project_manifest
+
+    return portable_project_manifest(_project_to_dict(project), path,
+                                     resolution=getattr(project, "_path_resolution", None))
+
+
+def _project_from_manifest(payload, path, *, path_mappings=None) -> NfitProject:
+    """Resolve external references before constructing lazy project owners."""
+    from .project_paths import resolve_project_manifest
+
+    resolved, resolution = resolve_project_manifest(payload, path, path_mappings=path_mappings)
+    return _project_from_dict(resolved, _resolved_paths=resolution)
+
+
+def _project_from_dict(payload: dict[str, Any], *, _resolved_paths=None) -> NfitProject:
+    # Compatibility callers with a manifest alone can use its recorded origin.
+    # Opening a moved archive must use _project_from_manifest/load_project.
+    recorded_paths = payload.get("paths")
+    if _resolved_paths is None and isinstance(recorded_paths, dict) and recorded_paths.get("origin"):
+        from pathlib import Path
+
+        from .project_paths import resolve_project_manifest
+
+        payload, _resolved_paths = resolve_project_manifest(
+            payload, Path(recorded_paths["origin"]) / ".nfit-origin"
+        )
     if payload.get("format") != "nfit-project":
         raise ValueError("not a nfit project file")
     version = int(payload.get("version", 0))
@@ -194,6 +221,11 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
         project.data_groups.append(group)
     _validate_unique_dataset_ids(project)
     _link_project_backgrounds(project)
+    if _resolved_paths is not None:
+        project._path_resolution = _resolved_paths
+        for group in project.data_groups:
+            for dataset in group.iter_datasets():
+                dataset._project_path_resolution = _resolved_paths
     return project
 
 

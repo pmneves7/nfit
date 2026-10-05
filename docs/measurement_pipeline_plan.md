@@ -1065,6 +1065,23 @@ byte-compilation, diff checks and the strict Sphinx build. Permanent behavior an
 scripting documentation is in `resources.md`. Interactive acceptance remains
 pending; this checkpoint does not authorize starting 6B migration work.
 
+Follow-up fixes for the first interactive review:
+
+- [x] Preserve the saved state when refreshing a selected fit-history row.
+- [x] Save relative source/calibration references and rebase older shared paths
+  without decoding or recomputing numerical caches; preserve destination access
+  metadata when replacing an existing archive.
+- [x] Group scientific staging into lazy, private sessions under `.nfit-work`;
+  preserve live, foreign and unmarked legacy folders during cleanup.
+- [x] Launch offline Help with the system desktop environment instead of bundled
+  library search paths; report opener failures without blocking the GUI.
+- [x] Complete automated validation: release 0.117.1 passes 3,678 tests with
+  two optional-platform/backend skips, Ruff, byte-compilation, diff checks and
+  the strict Sphinx build.
+- [x] After Paul closed the older GUI and authorized cleanup, remove its 1,355
+  loose reduced-event staging folders (27.45 GB); preserve saved project caches.
+- [ ] Review the updated ORNL application with Paul.
+
 ### Deferred instrument work
 
 The initial survey covered continuous measurements, reduced CW tables and real

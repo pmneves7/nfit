@@ -63,7 +63,7 @@ def test_reduced_event_staging_follows_project_instead_of_source_or_tmp(tmp_path
     loaded_group = loaded.data_groups[0].subgroups[0]
     bin_raw_dgs_group(loaded_group, **OPTIONS)
     staged = loaded_group.datasets[0]._raw_dgs_reduction_cache.content
-    assert staged.parent.parent == outputs
+    assert staged.is_relative_to(outputs / ".nfit-work")
     assert not list(sources.glob("nfit-reduced-events-*"))
     save_project(loaded, path)
     assert not staged.exists()
@@ -85,7 +85,27 @@ def test_new_imported_runs_inherit_saved_project_workspace(tmp_path):
     entries = import_dataset_paths(group, [source], data_type="single_crystal_inelastic")
     assert entries[0].metadata["_project_path"] == str(path)
     bin_raw_dgs_group(group.subgroups[0], **OPTIONS)
-    assert entries[0]._raw_dgs_reduction_cache.content.parent.parent == outputs
+    assert entries[0]._raw_dgs_reduction_cache.content.is_relative_to(outputs / ".nfit-work")
+
+
+def test_saved_staging_retires_after_last_copied_dataset_and_open_reader(tmp_path):
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    bin_raw_dgs_group(group, **OPTIONS)
+    dataset = group.datasets[0]
+    old_path = dataset._raw_dgs_reduction_cache.content
+    copied = copy.deepcopy(dataset)
+    assert copied._raw_dgs_reduction_cache is dataset._raw_dgs_reduction_cache
+    project = NfitProject(data_groups=[DataGroup("runs", subgroups=[group])])
+    save_project(project, tmp_path / "project.nfit")
+    assert old_path.exists()  # The copied dataset still uses this cache.
+    with copied._raw_dgs_reduction_cache.open() as archive:
+        clear_reduced_event_cache(copied)
+        assert old_path.exists()  # An in-flight reader also owns the old cache.
+        assert "header_json" in archive.files
+    assert not old_path.exists()
+    assert not (tmp_path / ".nfit-work").exists()
 
 
 @pytest.mark.parametrize('empty', [False, True])

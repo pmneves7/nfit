@@ -18,9 +18,11 @@ and **Plots and cuts**. Source membership and reduction settings can be edited
 independently of named histogram recipes. See [data import](data_import.md),
 [reduction recipes](reduction_recipes.md), and [workflow scripts](workflow_scripts.md).
 
-Click **Help** beside **File** in the project explorer toolbar to open the local
-documentation home page (`docs/_build/html/index.html`) in your default web
-browser. If it has not been built, Help shows the build command instead.
+Click **Help** beside **File** in the project explorer toolbar to open the
+packaged offline documentation in your default web browser. Source checkouts
+use `docs/_build/html/index.html`; if it has not been built, Help shows the build
+command. If the desktop opener is unavailable or reports a failure, the message
+includes the HTML file's location so you can open it directly in a browser.
 
 The right side of the toolbar shows the running nfit version followed by live
 **Project CPU/RAM** and **System CPU/RAM** percentages.

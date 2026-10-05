@@ -106,6 +106,39 @@ remembered fit path selects its tree entry without restoring the historical
 snapshot. It also detects external file replacement and requires an explicit
 reload, Save As, keep, or overwrite decision before either version is lost.
 
+### Moving and sharing a project
+
+Source files, detector normalization, masks, flux files, UB references, and
+external model sources are saved as paths relative to the `.nfit` archive.
+Moving an experiment directory with its existing internal layout preserves
+these references. Opening through a filesystem alias resolves them to the
+accessible location of the opened archive. Saving records the original location
+as a fallback for inputs outside the moved directory.
+
+For older projects with absolute references, nfit can recover an unavailable
+prefix from a matching sequence of at least two parent-directory names and an
+existing exact target beside the opened project. It does not search by filename
+or rewrite notes and arbitrary text. Ambiguous locations require an explicit
+root mapping:
+
+```python
+from nfit import load_project
+
+project = load_project(
+    "experiment/shared/analysis.nfit",
+    path_mappings={"/previous/external-data": "/accessible/external-data"},
+)
+```
+
+Relocation updates declared reduction settings, provenance, source identities,
+and machine-generated cache signatures together. It preserves the numerical
+recipe and file fingerprints; a changed input still invalidates its cache.
+Saved histogram and dataset arrays remain lazy, and their provenance is rebased
+when they are decoded without copying the numerical arrays. Save As can reuse
+compressed members with their historical labels because the manifest retains
+the corresponding relocation map. A plugin with additional external-path fields
+must add those fields to the declared path schema.
+
 ## Shared registry metadata
 
 Masks, model components, and other registry-backed features declare defaults,

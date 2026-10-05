@@ -126,9 +126,12 @@ different Python.
   release of viewer-owned numerical payloads.
 - `src/nfit/project_io.py`, `project_history.py`, and `project_models.py`: project
   serialization, fit-history snapshots, and model-state reconciliation.
+- `src/nfit/project_paths.py`: declared file references, portable project paths,
+  relocation, and lazy metadata path resolution.
 - `src/nfit/mapped_archive.py`: bounded temporary-disk array loading and
   accounting for heap and mapped numerical storage.
-- `src/nfit/data_workspace.py`: operation-owned temporary scientific storage
+- `src/nfit/data_workspace.py` and `workspace_sessions.py`: operation-owned
+  temporary scientific storage, lazy hidden sessions, ownership inspection,
   and save-destination ownership without startup filesystem dependencies.
 - `src/nfit/project_resources.py`, `resource_budget.py`, and `storage_budget.py`:
   flat resource inventory, explicit cache lifecycle and memory/disk admission.
@@ -150,6 +153,8 @@ different Python.
 - `src/nfit/app_distribution.py`, `app_updates.py`, `app_updates_gui.py`, and
   `tools/distribution/`: desktop packaging metadata, verified updates, installers,
   and startup presentation.
+- `src/nfit/desktop_launch.py` and `qt_desktop_launch.py`: system desktop child
+  environments, document launching, and asynchronous launch-error presentation.
 - `src/nfit/fit_config.py`, `fit_config_electronic.py`, and
   `fit_config_heisenberg_rpa.py`: model-component compilation and parameter mapping.
 - `src/nfit/fitting.py`: optimizer-facing fitting framework.

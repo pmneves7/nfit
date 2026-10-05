@@ -244,6 +244,10 @@ live workspace is loaded unchanged, and the remembered fit entry is highlighted
 only for orientation. Select a fit-history node explicitly when you intend to
 replace the live workspace with that snapshot.
 
+Refreshing the currently selected fit's controls, including after **Save** or
+**Save As**, preserves the live workspace and its viewer caches. It does not
+restore that snapshot or mark a successfully saved project as edited.
+
 Running from the latest state appends a result. Running from an earlier result,
 or enabling **Branch timeline**, creates a nested branch so alternative fits do
 not overwrite one another. Editing the latest result creates a sibling

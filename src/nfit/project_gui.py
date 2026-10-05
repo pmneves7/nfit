@@ -213,8 +213,10 @@ from .project_io import (
     _fit_entry_from_dict,  # noqa: F401 - compatibility re-export
     _fit_entry_to_dict,  # noqa: F401 - compatibility re-export
     _json_mapping,  # noqa: F401 - compatibility re-export
-    _project_from_dict,
-    _project_to_dict,
+    _project_from_dict,  # noqa: F401 - compatibility re-export
+    _project_from_manifest,
+    _project_manifest_for_save,
+    _project_to_dict,  # noqa: F401 - compatibility re-export
 )
 from .project_model_editor import (
     CUSTOM_FORM_FACTOR_CHOICE,
@@ -5898,6 +5900,7 @@ def _adopt_saved_project_binning_backing(
 
     from .project_background_cache import restore_background_binning_backing
 
+    prepare_data = getattr(getattr(project, "_path_resolution", None), "prepare_data", None)
     restore_background_binning_backing(project, path, entries, lazy=False)
     for entry in entries:
         try:
@@ -5922,6 +5925,7 @@ def _adopt_saved_project_binning_backing(
                     signature=signature,
                     project_path=path,
                     member=member,
+                    prepare_data=prepare_data,
                 )
             elif entry.get("type") == "composite":
                 node_id = entry.get("node_id")
@@ -5951,6 +5955,7 @@ def _adopt_saved_project_binning_backing(
                     signature=signature,
                     project_path=path,
                     member=member,
+                    prepare_data=prepare_data,
                 )
         except (IndexError, KeyError, StopIteration, TypeError, ValueError):
             continue
@@ -5966,6 +5971,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
         return
     from .project_background_cache import restore_background_binning_backing
 
+    prepare_data = getattr(getattr(project, "_path_resolution", None), "prepare_data", None)
     restore_background_binning_backing(project, path, entries, lazy=True)
     base_members = {str(e.get("member")) for e in entries if isinstance(e, dict) and e.get("stage") == "unsubtracted"}
     resolved: list[
@@ -6000,6 +6006,8 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                 if format_version >= 6
                 else read_project_dataset_artifact(path, member)
             )
+            if data is not None and prepare_data is not None:
+                data = prepare_data(data)
             if entry.get("type") == "dataset":
                 dataset = next(
                     item
@@ -6111,6 +6119,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                     project_path=path,
                     member=member,
                     lazy=True,
+                    prepare_data=prepare_data,
                 )
             else:
                 _lru_store(
@@ -6140,6 +6149,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                     project_path=path,
                     member=member,
                     lazy=True,
+                    prepare_data=prepare_data,
                 )
             else:
                 _lru_store(
@@ -6208,7 +6218,7 @@ def _save_project_archive(
             try:
                 write_project_manifest(
                     target,
-                    _project_to_dict(project),
+                    _project_manifest_for_save(project, target),
                     asset_source=asset_source,
                     preserve_existing=asset_source is not None,
                     binning_artifacts=artifacts,
@@ -6224,7 +6234,7 @@ def _save_project_archive(
         try:
             write_project_manifest(
                 target,
-                _project_to_dict(project),
+                _project_manifest_for_save(project, target),
                 asset_source=asset_source,
                 preserve_existing=asset_source is not None,
                 binning_artifacts={},
@@ -6246,6 +6256,7 @@ def _bind_project_analysis_sources(
     *,
     load_data: bool = True,
 ) -> None:
+    prepare_data = getattr(getattr(project, "_path_resolution", None), "prepare_data", None)
     for group in project.data_groups:
         for dataset in group.iter_datasets():
             if not (
@@ -6277,6 +6288,8 @@ def _bind_project_analysis_sources(
                 continue
             try:
                 data = read_project_dataset_artifact(project_path, str(artifact))
+                if prepare_data is not None:
+                    data = prepare_data(data)
             except (KeyError, OSError, TypeError, ValueError):
                 dataset.metadata["import_status"] = "error"
                 dataset.metadata["import_error"] = "analysis artifact is unavailable"
@@ -6286,11 +6299,12 @@ def _bind_project_analysis_sources(
             dataset.metadata.pop("import_error", None)
 
 
-def load_project(path: str | Path) -> NfitProject:
+def load_project(path: str | Path, *, path_mappings=None) -> NfitProject:
     """Load a project saved by :func:`save_project`."""
 
     project_path = Path(path)
-    project = _project_from_dict(read_project_manifest(project_path))
+    project = _project_from_manifest(read_project_manifest(project_path), project_path,
+                                     path_mappings=path_mappings)
     project._project_path = project_path
     from .raw_dgs_cache import bind_project_reduced_event_caches
 
@@ -11669,9 +11683,10 @@ class NfitProjectExplorer:
 
     def show_help(self) -> None:
         """Open bundled offline documentation or the local source build."""
-        from PySide6 import QtCore, QtGui, QtWidgets
+        from PySide6 import QtWidgets
 
         from .app_distribution import local_help_index
+        from .qt_desktop_launch import open_local_document_in_desktop
 
         index = local_help_index(source_file=__file__)
         if index is None:
@@ -11683,7 +11698,7 @@ class NfitProjectExplorer:
                 "python -m sphinx -b html docs docs/_build/html",
             )
             return
-        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(index)))
+        open_local_document_in_desktop(self.window, index)
 
     def show_preferences(self) -> None:
         from .preferences_gui import PreferencesDialog
@@ -12585,10 +12600,10 @@ class NfitProjectExplorer:
             enabled=same_selection,
             is_current=lambda: self._tree_item_state_key(self._current_item()) == key,
         ):
-            self._sync_details_contents()
+            self._sync_details_contents(selection_changed=not same_selection)
         self._displayed_details_key = self._tree_item_state_key(self._current_item())
 
-    def _sync_details_contents(self) -> None:
+    def _sync_details_contents(self, *, selection_changed: bool) -> None:
         current_item = self._current_item()
         self._refresh_cache_badges(current_item)
         group, entry, mask, model, role = self._objects_for_item(current_item)
@@ -12810,6 +12825,10 @@ class NfitProjectExplorer:
             self.title_label.setText(fit_entry.name)
             if (
                 role == "fit"
+                # Refreshing the selected fit's controls (including after a
+                # save) must not replay its snapshot into the live workspace.
+                # Historical restoration belongs to a change of selection.
+                and selection_changed
                 and not self._restoring_fit_selection
                 and not self._is_multi_select_gesture()
             ):

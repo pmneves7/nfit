@@ -13,6 +13,7 @@ from typing import Any
 from PySide6 import QtCore, QtWidgets
 
 from .application_preferences import application_settings
+from .desktop_launch import system_process_environment
 
 LAST_FILE_DIALOG_DIRECTORY_KEY = "files/last_directory"
 _active_project_path: Path | None = None
@@ -162,12 +163,7 @@ def _gtk_file_dialog(
         command.extend(_zenity_filters(file_filter))
     if multiple and mode == "open":
         command.extend(("--multiple", "--separator=\n"))
-    environment = os.environ.copy()
-    original_library_path = environment.get("LD_LIBRARY_PATH_ORIG")
-    if original_library_path is None:
-        environment.pop("LD_LIBRARY_PATH", None)
-    else:
-        environment["LD_LIBRARY_PATH"] = original_library_path
+    environment = system_process_environment()
     try:
         completed = subprocess.run(
             command,

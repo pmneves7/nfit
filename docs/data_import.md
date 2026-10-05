@@ -585,6 +585,12 @@ Changes to these inputs regenerate affected caches. If a source file is absent,
 its last saved file signature is retained so a current-version cached reduction
 remains usable. An invalidated cache still requires the original inputs.
 Changed reduction settings still require the original inputs for regeneration.
+Source and calibration references are saved relative to the project archive.
+Opening a moved or shared experiment rebases declared paths and cached source
+identities together; changing a username or filesystem alias alone does not
+change the reduction recipe. External directories can be relocated with
+`load_project(..., path_mappings={old_root: new_root})`. See
+[Moving and sharing a project](data_philosophy.md#moving-and-sharing-a-project).
 Instrument geometry is
 contained in the raw file and is checked independently on a new reduction.
 Caches do not assume that different runs share an instrument definition.

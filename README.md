@@ -99,7 +99,9 @@ A few of its main capabilities are:
   compressed artifacts when saving, and manage cached results through shared
   CPU/RAM budgets, allocation reservations, shared resident viewer arrays,
   explicit memory management, cancellable background archive I/O, and selectable
-  temporary scientific storage beside the owning project or output;
+  hidden temporary scientific workspaces beside the owning project or output;
+- share and move projects with relative source and calibration references,
+  preserving lazy cached data and allowing explicit directory mappings;
 - organize project items with drag and drop, batch copy, paste, and delete,
   including lazy run pages and nested collections;
 - guard editor and viewer interactions during rebinning, saves, and background
