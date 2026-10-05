@@ -56,6 +56,7 @@ class _DatasetViewState:
     brillouin_zone_color: str = "#000000"
     brillouin_zone_linewidth: float = 1.5
     brillouin_zone_alpha: float = 1.0
+    waterfall_center_bounds: tuple[float | None, float | None] | None = None
     tile_dim: int | None = None
     tile_range: tuple[float, float] = (0.0, 0.0)
     tile_step: float = 1.0

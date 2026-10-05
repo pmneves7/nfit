@@ -34,9 +34,30 @@ from .slice_viewer_state import _option_name
 class _SliceNavigationToolbar(NavigationToolbar2QT):
     """Keep nfit plot state authoritative after navigation-history restores."""
 
-    def __init__(self, canvas: Any, parent: Any, restored_callback: Any) -> None:
+    def __init__(
+        self, canvas: Any, parent: Any, restored_callback: Any,
+        navigation_callback: Any,
+    ) -> None:
         self._restored_callback = restored_callback
+        self._navigation_callback = navigation_callback
         super().__init__(canvas, parent)
+
+    def pan(self, *args: Any) -> None:
+        super().pan(*args)
+        if self.mode:
+            self._navigation_callback()
+
+    def zoom(self, *args: Any) -> None:
+        super().zoom(*args)
+        if self.mode:
+            self._navigation_callback()
+
+    def deactivate_navigation(self) -> None:
+        """Release navigation's canvas lock and synchronize toolbar buttons."""
+        if self.mode.name == "PAN":
+            self.pan()
+        elif self.mode.name == "ZOOM":
+            self.zoom()
 
     def home(self, *args: Any) -> None:
         super().home(*args)
@@ -191,6 +212,7 @@ def _build_plot_panel(viewer: Any) -> Any:
         viewer.canvas,
         viewer.window,
         viewer._on_navigation_history_restored,
+        lambda: viewer.roi_button.setChecked(False),
     )
     viewer.toolbar.setToolTip(
         "Matplotlib navigation toolbar for pan, zoom, home, configure, and save actions."
@@ -1025,6 +1047,21 @@ def _build_waterfall_controls(
     waterfall_layout.addWidget(viewer.waterfall_step_auto_check, 1, 2, 1, 2)
     waterfall_layout.addWidget(viewer.waterfall_step_slider, 2, 0, 1, 4)
 
+    viewer.waterfall_center_label = QtWidgets.QLabel("Bin centers: min / max")
+    waterfall_layout.addWidget(viewer.waterfall_center_label, 3, 0, 1, 2)
+    for which, column in (("min", 2), ("max", 3)):
+        spin = _make_float_spinbox(-1.0e12, 1.0e12)
+        spin.setDecimals(8)
+        spin.setObjectName(f"waterfall_center_{which}")
+        spin.setToolTip(
+            "Inclusive bound on trace bin centers along the waterfall axis, in axis units. "
+            "Whole coarse bins are retained; their integration and coverage are unchanged."
+        )
+        spin.valueChanged.connect(lambda value, which=which: viewer._set_waterfall_center_bound(which, value))
+        setattr(viewer, f"waterfall_center_{which}_spin", spin)
+        waterfall_layout.addWidget(spin, 3, column)
+    viewer.waterfall_center_label.setToolTip("Minimum and maximum waterfall trace bin centers, in waterfall-axis units.")
+
     waterfall_coverage_label = QtWidgets.QLabel("Coverage")
     viewer.waterfall_coverage_threshold_spin = _make_float_spinbox(0.0, 1.0)
     viewer.waterfall_coverage_threshold_spin.setObjectName("waterfall_coverage_threshold")
@@ -1041,8 +1078,8 @@ def _build_waterfall_controls(
     viewer.waterfall_coverage_threshold_spin.valueChanged.connect(
         viewer._set_waterfall_coverage_threshold
     )
-    waterfall_layout.addWidget(waterfall_coverage_label, 3, 0)
-    waterfall_layout.addWidget(viewer.waterfall_coverage_threshold_spin, 3, 1)
+    waterfall_layout.addWidget(waterfall_coverage_label, 4, 0)
+    waterfall_layout.addWidget(viewer.waterfall_coverage_threshold_spin, 4, 1)
 
     viewer.waterfall_offset_spin = _make_float_spinbox(0.0, 1.0e12)
     viewer.waterfall_offset_spin.setDecimals(8)
@@ -1064,10 +1101,10 @@ def _build_waterfall_controls(
         "Set the trace offset to half the largest absolute intensity among the prepared traces."
     )
     viewer.waterfall_offset_auto_check.toggled.connect(viewer._set_waterfall_offset_auto)
-    waterfall_layout.addWidget(QtWidgets.QLabel("Trace offset"), 4, 0)
-    waterfall_layout.addWidget(viewer.waterfall_offset_spin, 4, 1)
-    waterfall_layout.addWidget(viewer.waterfall_offset_auto_check, 4, 2, 1, 2)
-    waterfall_layout.addWidget(viewer.waterfall_offset_slider, 5, 0, 1, 4)
+    waterfall_layout.addWidget(QtWidgets.QLabel("Trace offset"), 5, 0)
+    waterfall_layout.addWidget(viewer.waterfall_offset_spin, 5, 1)
+    waterfall_layout.addWidget(viewer.waterfall_offset_auto_check, 5, 2, 1, 2)
+    waterfall_layout.addWidget(viewer.waterfall_offset_slider, 6, 0, 1, 4)
 
     viewer.waterfall_cmap_combo = _TopScrolledComboBox()
     populate_qt_colormap_combo(
@@ -1086,9 +1123,9 @@ def _build_waterfall_controls(
         "Reverse the order of colors sampled from the sequence."
     )
     viewer.waterfall_reverse_check.toggled.connect(viewer._set_waterfall_reverse_colors)
-    waterfall_layout.addWidget(QtWidgets.QLabel("Colors"), 6, 0)
-    waterfall_layout.addWidget(viewer.waterfall_cmap_combo, 6, 1)
-    waterfall_layout.addWidget(viewer.waterfall_reverse_check, 6, 2, 1, 2)
+    waterfall_layout.addWidget(QtWidgets.QLabel("Colors"), 7, 0)
+    waterfall_layout.addWidget(viewer.waterfall_cmap_combo, 7, 1)
+    waterfall_layout.addWidget(viewer.waterfall_reverse_check, 7, 2, 1, 2)
 
     viewer.waterfall_color_range_slider = _DualRangeSlider()
     viewer.waterfall_color_range_slider.set_values(0, 1000)
@@ -1097,10 +1134,10 @@ def _build_waterfall_controls(
     )
     viewer.waterfall_color_range_slider.changed.connect(viewer._set_waterfall_color_range)
     viewer.waterfall_color_range_label = QtWidgets.QLabel("Color range")
-    waterfall_layout.addWidget(viewer.waterfall_color_range_label, 7, 0)
+    waterfall_layout.addWidget(viewer.waterfall_color_range_label, 8, 0)
     waterfall_layout.addWidget(
         viewer.waterfall_color_range_slider,
-        7,
+        8,
         1,
         1,
         3,
@@ -1120,8 +1157,8 @@ def _build_waterfall_controls(
     viewer.waterfall_zero_color_combo.setToolTip("Color of the per-trace zero reference lines.")
     _compact_combobox(viewer.waterfall_zero_color_combo)
     viewer.waterfall_zero_color_combo.currentTextChanged.connect(viewer._set_waterfall_zero_color)
-    waterfall_layout.addWidget(viewer.waterfall_zero_check, 8, 0, 1, 2)
-    waterfall_layout.addWidget(viewer.waterfall_zero_color_combo, 8, 2, 1, 2)
+    waterfall_layout.addWidget(viewer.waterfall_zero_check, 9, 0, 1, 2)
+    waterfall_layout.addWidget(viewer.waterfall_zero_color_combo, 9, 2, 1, 2)
 
     viewer.waterfall_zero_style_combo = QtWidgets.QComboBox()
     viewer.waterfall_zero_style_combo.addItems(
@@ -1137,10 +1174,10 @@ def _build_waterfall_controls(
     viewer.waterfall_zero_width_spin.setValue(viewer.waterfall_zero_width)
     viewer.waterfall_zero_width_spin.setToolTip("Line width of the zero references.")
     viewer.waterfall_zero_width_spin.valueChanged.connect(viewer._set_waterfall_zero_width)
-    waterfall_layout.addWidget(QtWidgets.QLabel("Reference style"), 9, 0)
-    waterfall_layout.addWidget(viewer.waterfall_zero_style_combo, 9, 1)
-    waterfall_layout.addWidget(QtWidgets.QLabel("Width"), 9, 2)
-    waterfall_layout.addWidget(viewer.waterfall_zero_width_spin, 9, 3)
+    waterfall_layout.addWidget(QtWidgets.QLabel("Reference style"), 10, 0)
+    waterfall_layout.addWidget(viewer.waterfall_zero_style_combo, 10, 1)
+    waterfall_layout.addWidget(QtWidgets.QLabel("Width"), 10, 2)
+    waterfall_layout.addWidget(viewer.waterfall_zero_width_spin, 10, 3)
 
     viewer.waterfall_model_color_combo = QtWidgets.QComboBox()
     viewer.waterfall_model_color_combo.addItems(
@@ -1159,9 +1196,9 @@ def _build_waterfall_controls(
         "or each 1D trace by its dataset name."
     )
     viewer.waterfall_trace_labels_check.toggled.connect(viewer._set_waterfall_trace_labels)
-    waterfall_layout.addWidget(QtWidgets.QLabel("Model colors"), 10, 0)
-    waterfall_layout.addWidget(viewer.waterfall_model_color_combo, 10, 1)
-    waterfall_layout.addWidget(viewer.waterfall_trace_labels_check, 10, 2, 1, 2)
+    waterfall_layout.addWidget(QtWidgets.QLabel("Model colors"), 11, 0)
+    waterfall_layout.addWidget(viewer.waterfall_model_color_combo, 11, 1)
+    waterfall_layout.addWidget(viewer.waterfall_trace_labels_check, 11, 2, 1, 2)
 
     viewer.waterfall_trace_label_suffix_edit = QtWidgets.QLineEdit()
     viewer.waterfall_trace_label_suffix_edit.setText(viewer.waterfall_trace_label_suffix)
@@ -1176,10 +1213,10 @@ def _build_waterfall_controls(
     viewer.waterfall_trace_label_suffix_edit.textChanged.connect(
         viewer._set_waterfall_trace_label_suffix
     )
-    waterfall_layout.addWidget(QtWidgets.QLabel("Label suffix"), 11, 0)
+    waterfall_layout.addWidget(QtWidgets.QLabel("Label suffix"), 12, 0)
     waterfall_layout.addWidget(
         viewer.waterfall_trace_label_suffix_edit,
-        11,
+        12,
         1,
         1,
         3,
@@ -1206,16 +1243,16 @@ def _build_waterfall_controls(
     viewer.waterfall_trace_label_color_combo.currentTextChanged.connect(
         viewer._set_waterfall_trace_label_color
     )
-    waterfall_layout.addWidget(QtWidgets.QLabel("Label size"), 12, 0)
+    waterfall_layout.addWidget(QtWidgets.QLabel("Label size"), 13, 0)
     waterfall_layout.addWidget(
         viewer.waterfall_trace_label_font_size_spin,
-        12,
+        13,
         1,
     )
-    waterfall_layout.addWidget(QtWidgets.QLabel("Label color"), 12, 2)
+    waterfall_layout.addWidget(QtWidgets.QLabel("Label color"), 13, 2)
     waterfall_layout.addWidget(
         viewer.waterfall_trace_label_color_combo,
-        12,
+        13,
         3,
     )
 

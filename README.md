@@ -86,8 +86,8 @@ A few of its main capabilities are:
 - smooth count numerator and exposure through an optional bounded Python API
   that retains primitive covariance for subsequent cuts;
 - preserve count and continuous-mean statistics through binning, slices, box
-  profiles and waterfalls, with bounded shared-source uncertainty and statistical
-  CSV exports;
+  profiles and waterfalls, with bounded shared-source uncertainty, inclusive
+  waterfall trace-center bounds, and statistical CSV exports;
 - fit with explicit independent Gaussian, tracked GLS, or audited integer-count
   objectives while retaining each objective's assumptions;
 - inspect the subtracted signal, retained background, and on-demand unsubtracted

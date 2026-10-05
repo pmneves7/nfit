@@ -360,6 +360,11 @@ aggregation; diagonal errors alone cannot reconstruct missing covariance.
 
 ### Histogram box cuts
 
+**Box tool**, toolbar **Pan**, and toolbar **Zoom** are mutually exclusive.
+Selecting one deselects the others. Switching to navigation keeps the box
+outline and its cuts visible, but disables box editing until you select
+**Box tool** again.
+
 Enable **Box tool** to draw and resize a rectangular selection. Drag the round
 handle above the rectangle to rotate it about its center; hold Shift while
 dragging to snap to 15-degree increments. The outline follows the pointer;
@@ -719,6 +724,12 @@ Choose **Visualization > Waterfall** to stack one-dimensional traces.
   that sibling's immediate group.
 - **Bin width** controls coarsening along the waterfall axis; **Auto** targets
   roughly ten traces.
+- **Bin centers: min / max**, below the bin-width slider, selects traces whose
+  centers fall within these inclusive bounds along the waterfall axis, in that
+  axis's units. Each center is the mean of the native bin centers in its coarse
+  trace bin. Filtering retains whole bins and preserves their integration,
+  uncertainties, coverage, and model overlays. These controls are hidden for
+  groups of one-dimensional datasets.
 - **Minimum coverage** is specific to waterfall trace bins. It is independent
   of the slice and histogram cutoff and also defaults to 0.
 
@@ -729,7 +740,12 @@ default.
 
 The axis **Reset** buttons and Matplotlib **Home** button use the current trace
 extent. That extent is recomputed when the dataset group, displayed axes, or
-waterfall binning changes.
+waterfall binning or center bounds change.
+
+Python callers pass `waterfall_center_bounds=(minimum, maximum)` to
+`prepare_mdhisto_waterfall` or `plot_mdhisto_waterfall`; `None` bounds retain the
+full axis. Saved plots, exported scripts, copied settings, and held settings
+retain the bounds. CSV export contains the selected traces.
 
 ## Tiled 2D slices
 

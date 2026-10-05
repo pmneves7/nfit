@@ -1019,6 +1019,7 @@ def prepare_mdhisto_waterfall(
     selections: dict[int, tuple[float, float]] | None = None,
     integrate_checks: dict[int, bool] | None = None,
     waterfall_step: float | None = None,
+    waterfall_center_bounds: tuple[float | None, float | None] | None = None,
     coverage_threshold: float = 0.0,
     masked: bool = True,
     smoothing_sigma_x: float = 0.0,
@@ -1184,6 +1185,7 @@ def prepare_mdhisto_waterfall(
         errors,
         model_values,
         step=waterfall_step,
+        center_bounds=waterfall_center_bounds,
         coverage_threshold=coverage_threshold,
         unmask_model=unmask_model,
         axis_name=axis.name,
@@ -1202,6 +1204,7 @@ def plot_mdhisto_waterfall(
     selections: dict[int, tuple[float, float]] | None = None,
     integrate_checks: dict[int, bool] | None = None,
     waterfall_step: float | None = None,
+    waterfall_center_bounds: tuple[float | None, float | None] | None = None,
     coverage_threshold: float = 0.0,
     trace_offset: float | None = None,
     cmap: str = "viridis",
@@ -1254,6 +1257,7 @@ def plot_mdhisto_waterfall(
         selections=selections,
         integrate_checks=integrate_checks,
         waterfall_step=waterfall_step,
+        waterfall_center_bounds=waterfall_center_bounds,
         coverage_threshold=coverage_threshold,
         masked=masked,
         smoothing_sigma_x=smoothing_sigma_x,
@@ -1534,6 +1538,7 @@ def _coarsen_waterfall_view(
     model_values: np.ndarray | None,
     *,
     step: float | None,
+    center_bounds: tuple[float | None, float | None] | None,
     coverage_threshold: float,
     unmask_model: bool,
     axis_name: str,
@@ -1550,10 +1555,18 @@ def _coarsen_waterfall_view(
     stop = float(y_edges[-1])
     boundaries = start + np.arange(max(int(np.ceil((stop - start) / width)), 1) + 1) * width
     boundaries[-1] = max(boundaries[-1], stop)
+    lower, upper = center_bounds or (None, None)
+    if any(value is not None and not np.isfinite(value) for value in (lower, upper)):
+        raise ValueError("waterfall center bounds must be finite")
+    if lower is not None and upper is not None and lower > upper:
+        raise ValueError("waterfall center minimum must not exceed maximum")
     traces: list[WaterfallTrace] = []
     for index, (low, high) in enumerate(zip(boundaries[:-1], boundaries[1:], strict=True)):
         selected = (y >= low) & ((y < high) if index < len(boundaries) - 2 else (y <= high))
         if not np.any(selected):
+            continue
+        coordinate = float(np.nanmean(y[selected]))
+        if (lower is not None and coordinate < lower) or (upper is not None and coordinate > upper):
             continue
         selected_values = np.asarray(values[selected, :], dtype=float)
         selected_errors = None if errors is None else np.asarray(errors[selected, :], dtype=float)

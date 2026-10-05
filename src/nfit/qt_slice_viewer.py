@@ -339,6 +339,10 @@ class QtMDHistoSliceViewer:
         self.tile_step_slider = None
         self.tile_step_auto_check = None
         self.waterfall_source_label = None
+        self.waterfall_center_bounds = None
+        self.waterfall_center_min_spin = None
+        self.waterfall_center_max_spin = None
+        self.waterfall_center_label = None
         self.waterfall_step_label = None
         self.waterfall_step_spin = None
         self.waterfall_step_slider = None
@@ -820,6 +824,7 @@ class QtMDHistoSliceViewer:
             "show_box_tool": bool(self.show_box_check and self.show_box_check.isChecked()),
             "roi_enabled": bool(self.roi_button and self.roi_button.isChecked()),
             "waterfall_step": self.waterfall_step,
+            "waterfall_center_bounds": self.waterfall_center_bounds,
             "waterfall_coverage_threshold": self.waterfall_coverage_threshold,
             "waterfall_step_auto": self.waterfall_step_auto,
             "waterfall_offset": self.waterfall_offset,
@@ -986,6 +991,8 @@ class QtMDHistoSliceViewer:
             redraw=False,
         )
         self.waterfall_step = float(settings.get("waterfall_step", self.waterfall_step))
+        bounds = settings.get("waterfall_center_bounds", self.waterfall_center_bounds)
+        self.waterfall_center_bounds = None if bounds is None else tuple(bounds)
         self.waterfall_coverage_threshold = float(
             settings.get(
                 "waterfall_coverage_threshold",
@@ -1660,6 +1667,7 @@ class QtMDHistoSliceViewer:
                 f"    selections={self._export_selections()!r},",
                 f"    integrate_checks={self._export_integrate_checks()!r},",
                 f"    waterfall_step={self.waterfall_step!r},",
+                f"    waterfall_center_bounds={self.waterfall_center_bounds!r},",
                 f"    coverage_threshold={self.waterfall_coverage_threshold!r},",
                 f"    trace_offset={self.waterfall_offset!r},",
                 f"    cmap={self.waterfall_cmap!r},",
@@ -2294,6 +2302,7 @@ class QtMDHistoSliceViewer:
                 "roi_angle",
                 "xlim",
                 "ylim",
+                "waterfall_center_bounds",
                 "tile_dim",
                 "tile_range",
                 "tile_step",
@@ -2344,6 +2353,7 @@ class QtMDHistoSliceViewer:
                 target_model.x_dim = target_names.index(x_name)
                 target_model.y_dim = target_names.index(y_name)
                 compatible_xy = True
+                target.waterfall_center_bounds = source.waterfall_center_bounds
             for source_dim, selection in source_model.selections.items():
                 axis_name = source_names[int(source_dim)]
                 if axis_name in target_names:
@@ -2429,6 +2439,7 @@ class QtMDHistoSliceViewer:
             brillouin_zone_alpha=float(self.brillouin_zone_alpha),
             tile_dim=self.tile_dim,
             tile_range=self.tile_range,
+            waterfall_center_bounds=self.waterfall_center_bounds,
             tile_step=float(self.tile_step),
             tile_step_auto=bool(self.tile_step_auto),
             tile_label_decimals=self.tile_label_decimals,
@@ -2531,6 +2542,7 @@ class QtMDHistoSliceViewer:
             self.brillouin_zone_linewidth = float(state.brillouin_zone_linewidth)
             self.brillouin_zone_alpha = float(state.brillouin_zone_alpha)
             self.tile_dim = state.tile_dim
+            self.waterfall_center_bounds = state.waterfall_center_bounds
             self.tile_range = tuple(state.tile_range)
             self.tile_step = float(state.tile_step)
             self.tile_step_auto = bool(state.tile_step_auto)
@@ -2700,6 +2712,10 @@ class QtMDHistoSliceViewer:
     def _sync_waterfall_controls(self) -> None:
         if self.waterfall_step_spin is None:
             return
+        centers = self.data.axes[self.model.y_dim].centers
+        lower, upper = self.waterfall_center_bounds or (None, None)
+        self._set_spin_silent(self.waterfall_center_min_spin, centers[0] if lower is None else lower)
+        self._set_spin_silent(self.waterfall_center_max_spin, centers[-1] if upper is None else upper)
         self._set_spin_silent(self.waterfall_step_spin, self.waterfall_step)
         self._set_spin_silent(
             self.waterfall_coverage_threshold_spin,
@@ -2986,6 +3002,8 @@ class QtMDHistoSliceViewer:
             return
         show_box = bool(self.show_box_check.isChecked())
         active = show_box and bool(self.roi_button.isChecked())
+        if active:
+            self.toolbar.deactivate_navigation()
         self.rectangle_selector.set_visible(show_box)
         self.rectangle_selector.set_active(active)
         self._set_rectangle_selector_style(active=active)
@@ -3576,6 +3594,23 @@ class QtMDHistoSliceViewer:
         if self.waterfall_step_auto_check is not None and self.waterfall_step_auto_check.isChecked():
             self._set_checkbox_silent(self.waterfall_step_auto_check, False)
             self.waterfall_step_auto = False
+        self.update_plot(preserve_view=False)
+
+    def _set_waterfall_center_bound(self, which: str, value: float) -> None:
+        if self._restoring_dataset_state:
+            return
+        centers = self.data.axes[self.model.y_dim].centers
+        lower, upper = self.waterfall_center_bounds or (float(centers[0]), float(centers[-1]))
+        lower = float(centers[0]) if lower is None else lower
+        upper = float(centers[-1]) if upper is None else upper
+        if which == "min":
+            lower = float(value)
+            upper = max(lower, upper)
+        else:
+            upper = float(value)
+            lower = min(lower, upper)
+        self.waterfall_center_bounds = (lower, upper)
+        self._sync_waterfall_controls()
         self.update_plot(preserve_view=False)
 
     def _set_waterfall_coverage_threshold(self, value: float) -> None:
@@ -4209,6 +4244,9 @@ class QtMDHistoSliceViewer:
                     f"{waterfall_axis_display_name(self.data.axes[self.model.y_dim].name)}"
                 )
         for widget in (
+            self.waterfall_center_label,
+            self.waterfall_center_min_spin,
+            self.waterfall_center_max_spin,
             self.waterfall_step_label,
             self.waterfall_step_spin,
             self.waterfall_step_slider,
@@ -4556,6 +4594,7 @@ class QtMDHistoSliceViewer:
             bool(self.model.masked),
             float(self.coverage_threshold),
             float(self.waterfall_coverage_threshold),
+            self.waterfall_center_bounds,
             self.tile_dim,
             tuple(self.tile_range),
             float(self.tile_step),
@@ -4772,6 +4811,7 @@ class QtMDHistoSliceViewer:
 
     def _set_roi_enabled(self, enabled: bool) -> None:
         if enabled:
+            self.toolbar.deactivate_navigation()
             if self.show_box_check is not None and not self.show_box_check.isChecked():
                 self.show_box_check.setChecked(True)
             if self.hist_axes_check is not None and not self.hist_axes_check.isChecked():

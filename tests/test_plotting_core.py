@@ -850,3 +850,31 @@ def test_slice_pooling_excludes_masked_and_unexposed_cells():
     view = viewer.slice_arrays()
     np.testing.assert_allclose(view["signal"], 1)
     np.testing.assert_allclose(view["errors"], 0.5)
+
+
+def test_waterfall_center_bounds_select_whole_coarse_traces_inclusively():
+    data = _with_fit_channels(_tiny_2d_mdhisto_data_with_singletons())
+    options = dict(x_dim=3, waterfall_dim=2, waterfall_step=1.0, include_model=True)
+    full = prepare_mdhisto_waterfall(data, **options)
+    center = full[0].waterfall_coordinate
+    selected = prepare_mdhisto_waterfall(data, waterfall_center_bounds=(center, center), **options)
+    assert len(selected) == 1
+    assert selected[0].waterfall_coordinate == center
+    np.testing.assert_array_equal(selected[0].values, full[0].values)
+    np.testing.assert_array_equal(selected[0].errors, full[0].errors)
+    np.testing.assert_array_equal(selected[0].model_values, full[0].model_values)
+    assert prepare_mdhisto_waterfall(data, waterfall_center_bounds=(center + 100, None), **options) == []
+    with pytest.raises(ValueError, match="minimum"):
+        prepare_mdhisto_waterfall(data, waterfall_center_bounds=(2., 1.), **options)
+    with pytest.raises(ValueError, match="finite"):
+        prepare_mdhisto_waterfall(data, waterfall_center_bounds=(np.nan, None), **options)
+
+
+def test_waterfall_plot_passes_center_bounds_to_preparation():
+    data = _tiny_2d_mdhisto_data_with_singletons()
+    full = prepare_mdhisto_waterfall(data, x_dim=3, waterfall_dim=2, waterfall_step=1.)
+    center = full[-1].waterfall_coordinate
+    ax = plot_mdhisto_waterfall(data, x_dim=3, waterfall_dim=2, waterfall_step=1.,
+                               waterfall_center_bounds=(center, center))
+    assert len(ax._nfit_waterfall_traces) == 1
+    assert ax._nfit_waterfall_traces[0].waterfall_coordinate == center

@@ -81,6 +81,7 @@ def render_plot(
             selections=_selections(settings),
             integrate_checks=_integrate_checks(settings),
             waterfall_step=float(settings.get("waterfall_step", 1.0)),
+            waterfall_center_bounds=settings.get("waterfall_center_bounds"),
             coverage_threshold=float(
                 settings.get("waterfall_coverage_threshold", 0.0)
             ),

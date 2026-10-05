@@ -489,6 +489,7 @@ class WaterfallController(_ViewerController):
             self.waterfall_step = float(
                 np.clip(self.waterfall_step, step_low, step_high)
             )
+            self._sync_waterfall_controls()
             self._sync_waterfall_step_slider()
             self._set_spin_silent(
                 self.waterfall_step_spin,
@@ -502,6 +503,7 @@ class WaterfallController(_ViewerController):
                 selections=self._export_selections(),
                 integrate_checks=self._export_integrate_checks(),
                 waterfall_step=self.waterfall_step,
+                waterfall_center_bounds=self.waterfall_center_bounds,
                 coverage_threshold=self.waterfall_coverage_threshold,
                 masked=self.model.masked,
                 smoothing_sigma_x=self.smoothing_x,

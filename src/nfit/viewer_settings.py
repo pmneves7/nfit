@@ -38,6 +38,8 @@ def compatible_viewer_settings(payload: Mapping, axis_names: Sequence[str]) -> d
             if 0 <= index < len(source_names) and source_names[index] in names:
                 remapped[names.index(source_names[index])] = value
         values[key] = remapped
+    if values.get("y_dim") not in names:
+        values.pop("waterfall_center_bounds", None)
     compatible_xy = (
         values.get("x_dim") in names
         and values.get("y_dim") in names

@@ -54,9 +54,13 @@ def viewers(monkeypatch):
         data = MDHistoData(axes, signal, np.ones_like(signal),
                            np.zeros_like(signal, dtype=bool), np.ones_like(signal))
         results.append(QtMDHistoSliceViewer(data, x_dim=names.index("x"), y_dim=names.index("y")))
-    yield results
-    for viewer in results:
-        viewer.window.close()
+    try:
+        yield results
+    finally:
+        from PySide6 import QtWidgets
+        QtWidgets.QApplication.clipboard().clear()
+        for viewer in results:
+            viewer.window.close()
 
 
 def test_clipboard_buttons_transfer_real_controls_and_keep_destination_data(viewers):
@@ -135,3 +139,59 @@ def test_single_axis_plot_retains_limits():
     result = compatible_viewer_settings(payload, ["E"])
     assert result["xlim"] == [1, 2]
     assert result["ylim"] == [3, 4]
+
+
+def test_waterfall_center_controls_restore_clipboard_and_invalidate_cache(viewers):
+    source, target = viewers
+    source.apply_plot_settings({"view_mode": "waterfall", "waterfall_step_auto": False,
+                               "waterfall_step": 1., "waterfall_center_bounds": (.5, 1.5)})
+    assert len(source._current_waterfall_traces) == 2
+    before = source._slice_source_key()
+    source.waterfall_center_min_spin.setValue(1.5)
+    assert source.waterfall_center_bounds == (1.5, 1.5)
+    assert source._slice_source_key() != before
+    assert len(source._current_waterfall_traces) == 1
+    assert source._current_waterfall_traces[0].waterfall_coordinate == 1.5
+    source.copy_settings_button.click()
+    target.paste_settings_button.click()
+    assert target.waterfall_center_bounds == (1.5, 1.5)
+    assert target.waterfall_center_min_spin.value() == 1.5
+    assert len(target._current_waterfall_traces) == 1
+    script = source.figure_script()
+    assert "waterfall_center_bounds=(1.5, 1.5)" in script
+    compile(script, "waterfall_centers.py", "exec")
+    from nfit.plot_recipes import new_plot_entry, render_plot
+
+    entry = new_plot_entry("Selected traces", None, source.current_plot_settings(),
+                            plot_type="mdhisto_waterfall")
+    figure = render_plot(entry, source.data)
+    assert len(figure.axes[0]._nfit_waterfall_traces) == 1
+    for spin in (source.waterfall_center_min_spin, source.waterfall_center_max_spin):
+        assert spin.toolTip()
+    layout = source.waterfall_group.layout()
+    assert layout.getItemPosition(layout.indexOf(source.waterfall_step_slider))[0] < layout.getItemPosition(layout.indexOf(source.waterfall_center_min_spin))[0]
+    assert layout.getItemPosition(layout.indexOf(source.waterfall_center_min_spin))[0] < layout.getItemPosition(layout.indexOf(source.waterfall_coverage_threshold_spin))[0]
+
+
+def test_waterfall_bounds_held_only_for_compatible_axes(viewers):
+    source, target = viewers
+    source.apply_plot_settings({"waterfall_center_bounds": (.5, 1.5)})
+    state = source._capture_dataset_state()
+    assert state.waterfall_center_bounds == (.5, 1.5)
+    target.datasets = [target.data, source.data]
+    held = target._held_view_state(state, 0)
+    assert held.waterfall_center_bounds == (.5, 1.5)
+    target._restore_dataset_state(held)
+    assert target.waterfall_center_bounds == (.5, 1.5)
+    payload = copy_viewer_settings(source.current_plot_settings(), [a.name for a in source.data.axes])
+    assert "waterfall_center_bounds" not in compatible_viewer_settings(payload, ["x", "temperature"])
+
+
+def test_waterfall_control_grid_has_no_overlaps(viewers):
+    layout = viewers[0].waterfall_group.layout()
+    occupied = set()
+    for index in range(layout.count()):
+        row, col, rows, cols = layout.getItemPosition(index)
+        cells = {(r, c) for r in range(row, row + rows) for c in range(col, col + cols)}
+        assert occupied.isdisjoint(cells)
+        occupied.update(cells)
