@@ -347,6 +347,11 @@ Projects with earlier raw DGS caches rebuild them on the next requested
 reduction/binning, so a cached arithmetic angle cannot survive this correction.
 Opening a project alone does not trigger that rebuild.
 
+HYSPEC-specific editors appear only for collections containing HYSPEC runs,
+and individual-run overrides appear only for a selected HYSPEC run. Instrument
+identity comes from saved source metadata; other instruments do not show these
+controls.
+
 **HYSPEC raw TOF window** applies Shiver's flight-path window to recorded TOFs
 before time-zero subtraction. **HYSPEC Tank Y offset** defaults to the offset
 from polarization logs; an explicit zero disables that additional rotation.

@@ -12,6 +12,15 @@ def _resolved_numeric(resolved, key):
     return value.get("value") if isinstance(value, dict) else value
 
 
+def _applicable_fields(fields, datasets):
+    """Use retained instrument metadata; panel construction never opens sources."""
+    hyspec = any(
+        str(dataset.metadata.get(key, "")).strip().upper() == "HYSPEC"
+        for dataset in datasets for key in ("instrument_name", "instrument", "instrument_id")
+    )
+    return tuple(field for field in fields if not field.key.startswith("hyspec_") or hyspec)
+
+
 def _field_editor(field, value, *, object_name, on_changed, browse=None, resolved_value=None):
     """Build one editor; automatic values use an explicit checkbox, never a sentinel."""
     from PySide6 import QtCore, QtWidgets
@@ -125,8 +134,10 @@ def build_reduction_recipe_panel(
         "an explicit override. Edits invalidate only affected reductions and dependent histograms."
     )
     layout = QtWidgets.QVBoxLayout(box)
+    datasets = list(group.iter_datasets())
     fields = tuple(field for field in reduction_settings_schema(group)
                    if scopes is None or field.scope in scopes)
+    fields = _applicable_fields(fields, datasets)
 
     def browse(field, edit, apply):
         path, _filter = get_open_file_name(
@@ -204,7 +215,6 @@ def build_reduction_recipe_panel(
     selector = QtWidgets.QComboBox()
     selector.setObjectName(f"{prefix}_reduction_run_selector")
     selector.setToolTip("Choose a run without loading its reduced events or histogram caches.")
-    datasets = list(group.iter_datasets())
     for dataset in datasets:
         selector.addItem(dataset.name, dataset.id)
     run_layout.addWidget(selector)
@@ -264,7 +274,7 @@ def build_reduction_recipe_panel(
         resolved.setText(resolved_summary(dataset))
         settings = effective_reduction_config(group, dataset)
         explicit = get_reduction_overrides(group, dataset)
-        for field in fields:
+        for field in _applicable_fields(fields, (dataset,)):
             if not field.per_run:
                 continue
             key = field.key

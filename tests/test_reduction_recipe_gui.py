@@ -34,6 +34,10 @@ def test_every_schema_setting_has_a_tooltip_and_override_scope(recipe_explorer):
 
     for field in reduction_settings_schema(group):
         editor = explorer.details_widget.findChild(QtWidgets.QWidget, f"raw_dgs_{field.key}")
+        if field.key.startswith("hyspec_"):
+            assert editor is None
+            assert explorer.details_widget.findChild(QtWidgets.QWidget, f"raw_dgs_run_{field.key}") is None
+            continue
         assert editor is not None and editor.toolTip()
         run_editor = explorer.details_widget.findChild(QtWidgets.QWidget, f"raw_dgs_run_{field.key}")
         assert (run_editor is not None) == field.per_run
@@ -90,6 +94,9 @@ def test_hyspec_window_and_zero_offset_controls_update_public_recipe(recipe_expl
     from nfit.reduction_recipes import effective_reduction_config
 
     explorer, group = recipe_explorer
+    for dataset in group.datasets:
+        dataset.metadata["instrument_name"] = "HYSPEC"
+    explorer._refresh_tree(select_dataset_group=group)
     crop = explorer.details_widget.findChild(QtWidgets.QCheckBox, "raw_dgs_hyspec_tof_crop")
     crop.setChecked(False)
     assert effective_reduction_config(group)["hyspec_tof_crop"] is False
@@ -103,6 +110,30 @@ def test_hyspec_window_and_zero_offset_controls_update_public_recipe(recipe_expl
     assert effective_reduction_config(group)["hyspec_tank_offset_override"] == 0.
     automatic.setChecked(True)
     assert effective_reduction_config(group)["hyspec_tank_offset_override"] is None
+
+
+@pytest.mark.parametrize("instruments", [("SEQUOIA", "ARCS"), ("unknown", ""), ("HYSPEC", "HYSPEC"), ("SEQUOIA", "HYSPEC")])
+def test_hyspec_controls_follow_shared_and_selected_run_instruments(recipe_explorer, instruments):
+    from PySide6 import QtWidgets
+
+    explorer, group = recipe_explorer
+    for dataset, instrument in zip(group.datasets, instruments, strict=True):
+        dataset.metadata["instrument_name"] = instrument
+    explorer._refresh_tree(select_dataset_group=group)
+    for key in ("hyspec_tof_crop", "hyspec_tank_offset_override"):
+        shared = explorer.details_widget.findChild(QtWidgets.QWidget, f"raw_dgs_{key}")
+        assert (shared is not None) == ("HYSPEC" in instruments)
+        if shared is not None:
+            assert shared.toolTip()
+    selector = explorer.details_widget.findChild(QtWidgets.QComboBox, "raw_dgs_reduction_run_selector")
+    for index, instrument in enumerate(instruments):
+        selector.setCurrentIndex(index)
+        for key in ("hyspec_tof_crop", "hyspec_tank_offset_override"):
+            editor = explorer.details_widget.findChild(QtWidgets.QWidget, f"raw_dgs_run_{key}")
+            assert (editor is not None) == (instrument == "HYSPEC")
+            if editor is not None:
+                assert editor.toolTip()
+    assert all(dataset.data is None for dataset in group.datasets)
 
 
 def test_run_override_is_explicit_and_reinherits_shared_setting(recipe_explorer):
