@@ -55,6 +55,7 @@ jobs:
         with:
           name: nfit-${{ runner.os }}-${{ runner.arch }}
           path: dist/installers/*
+          retention-days: 7
           if-no-files-found: error
 
   linux-compatibility:
@@ -116,6 +117,7 @@ jobs:
         with:
           name: linux-render-failure-${{ strategy.job-index }}
           path: vtk-smoke-failure.png
+          retention-days: 7
           if-no-files-found: ignore
 
   beta-release:

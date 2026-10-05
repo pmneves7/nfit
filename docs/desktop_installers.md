@@ -222,6 +222,28 @@ The output is written to `dist/installers`. The build always constructs the
 offline help and runs the standalone application smoke test before creating an
 installer. It does not upload or publish anything.
 
+## Download retention
+
+GitHub keeps the compiled installers and checksum metadata for the three newest
+complete installer versions. A complete release includes Linux x86-64,
+Apple-silicon macOS, Intel macOS, and Windows x86-64 installers with checksum
+metadata. Older complete releases retain their tags, release notes, and release
+pages; their compiled downloads are removed. Drafts, incomplete newer releases, and unrecognized attachments are preserved.
+An interrupted cleanup can resume deleting remaining recognized downloads from
+older versions once three complete newer versions exist.
+
+Temporary GitHub Actions artifacts expire after seven days. Scheduled cleanup
+also removes older artifacts after their workflow runs have completed. Cleanup
+runs daily and after installer builds. Maintainers can inspect its deletion plan
+without changing GitHub:
+
+```bash
+python tools/distribution/retention.py
+```
+
+The script uses an authenticated `gh` CLI and paginated GitHub API requests.
+Pass `--apply` to execute the printed plan.
+
 ## Authorship and AI assistance
 
 nfit was authored and is maintained by Paul M. Neves (Johns Hopkins

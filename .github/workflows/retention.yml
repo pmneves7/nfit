@@ -1,0 +1,32 @@
+name: Retain recent installers and build artifacts
+
+on:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Build beta installers]
+    types: [completed]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: distribution-retention
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Retain three complete installer releases and seven days of artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python tools/distribution/retention.py --repository '${{ github.repository }}' --apply
