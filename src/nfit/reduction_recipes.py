@@ -153,6 +153,8 @@ def reduction_settings_schema(group_or_format) -> tuple[ReductionSetting, ...]:
                                  "Upper reconstructed energy-transfer bound divided by Ei; must be below one and above Emin / Ei.", maximum=1.0),
                 ReductionSetting("monitor_variance_policy", "Monitor variance convention", "choice", DEFAULT_MONITOR_VARIANCE_POLICY,
                                  "Mantid reproduces GetEi peak-tail arithmetic and stopping without calling Mantid. Stable uses an algebraically nonnegative derivative variance; peak selection and resolved Ei/T0 can change. Improved calibration accuracy has not been established.", choices=MONITOR_VARIANCE_POLICIES),
+                ReductionSetting("hyspec_default_mask", "Apply default HYSPEC mask", "bool", True,
+                                 "Mask pixels 1–8 and 121–128 on every HYSPEC detector tube, matching the Shiver single-crystal default. Applies to events and exposure, in addition to any supplied detector mask. Other instruments are unaffected."),
                 ReductionSetting("hyspec_tof_crop", "HYSPEC raw TOF window", "bool", True,
                                  "Apply Shiver's HYSPEC TOF frame window before time-zero correction. Uses the run msd and effective Ei; other instruments are unaffected."),
                 ReductionSetting("hyspec_tank_offset_override", "HYSPEC Tank Y offset", "float", None,

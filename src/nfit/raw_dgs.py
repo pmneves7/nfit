@@ -87,7 +87,11 @@ from .raw_dgs_geometry_precision import (
     mantid_he3_exponent,
 )
 from .raw_dgs_goniometer import GONIOMETER_AVERAGING_CONVENTION, sample_rotation
-from .raw_dgs_hyspec import raw_hyspec_tof_keep, resolved_hyspec_preprocessing
+from .raw_dgs_hyspec import (
+    hyspec_default_detector_keep,
+    raw_hyspec_tof_keep,
+    resolved_hyspec_preprocessing,
+)
 from .raw_dgs_monitors import (
     TOF_US_PER_M_SQRT_MEV,
     _mantid_getei_v2_peak,
@@ -365,6 +369,7 @@ def raw_dgs_dataset_group(
         "trajectory_energy_policy": trajectory_energy_policy,
         **policies,
         "t0_override": None,
+        "hyspec_default_mask": True,
         "hyspec_tof_crop": True,
         "hyspec_tank_offset_override": None,
         "energy_min_fraction": -0.95,
@@ -891,6 +896,8 @@ def _run_normalization_payload(info, geometry, detector_norm, detector_mask, con
     )
     if detector_mask is not None:
         solid[detector_mask.value_for_ids(geometry.detector_ids) <= 0.0] = 0.0
+    solid[~hyspec_default_detector_keep(geometry.detector_ids, instrument_name=info.instrument_name,
+        enabled=config.get("hyspec_default_mask", True))] = 0.0
     import h5py
 
     with h5py.File(info.path, "r") as handle:
@@ -928,6 +935,9 @@ def _iter_reduced_event_chunks(info, config, geometry, ei, energy_bounds, max_ba
                 indices, exponents, valid = geometry.event_indices_for_ids(
                     event_ids, mantid_precision=config.get("he3_detector_efficiency_correction", True),
                 )
+                if str(info.instrument_name).upper() == "HYSPEC":
+                    valid &= hyspec_default_detector_keep(event_ids, instrument_name=info.instrument_name,
+                        enabled=config.get("hyspec_default_mask", True))
                 if hyspec_preprocessing is not None:
                     valid &= raw_hyspec_tof_keep(raw_tof, hyspec_preprocessing)
                 if pulse_keep is not None:

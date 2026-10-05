@@ -352,6 +352,14 @@ and individual-run overrides appear only for a selected HYSPEC run. Instrument
 identity comes from saved source metadata; other instruments do not show these
 controls.
 
+**Apply default HYSPEC mask** is enabled by default. It excludes pixels 1–8
+and 121–128 on every tube from both events and detector-trajectory exposure,
+matching Shiver’s default single-crystal mask. An additional detector mask
+file is applied alongside this selection. Disable the checkbox to retain the
+tips; supplied mask files continue to apply. The setting is saved in reduction
+recipes, supports per-run overrides, and invalidates affected reduced-event
+and binning caches when changed.
+
 **HYSPEC raw TOF window** applies Shiver's flight-path window to recorded TOFs
 before time-zero subtraction. **HYSPEC Tank Y offset** defaults to the offset
 from polarization logs; an explicit zero disables that additional rotation.
@@ -364,8 +372,8 @@ To reproduce a particular Shiver recipe, also match its bad-pulse threshold,
 mask, normalization, energy limits and UB. Shiver's data-to-MDE recipe and the
 HYSPEC histogram autoreduction can differ in background subtraction, pulse
 filtering and grouping. nfit does not silently infer these choices. In
-particular, select an explicit tube-tip mask when reproducing a Shiver recipe
-that used its default tip masking.
+particular, leave **Apply default HYSPEC mask** enabled when reproducing its
+default tube-tip masking.
 The native HYSPEC path covers ungrouped data-to-MDE reduction. Time-independent
 background subtraction, polarization/transmission corrections and grouped
 histogram autoreduction require their own reduction steps; they are not inferred

@@ -44,6 +44,7 @@ _REDUCTION_DEFAULTS = {
     "he3_detector_efficiency_correction": True,
     "monitor_variance_policy": DEFAULT_MONITOR_VARIANCE_POLICY,
     "event_precision_policy": DEFAULT_EVENT_PRECISION_POLICY,
+    "hyspec_default_mask": True,
     "hyspec_tof_crop": True,
     "hyspec_tank_offset_override": None,
 }

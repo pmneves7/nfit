@@ -97,6 +97,10 @@ def test_hyspec_window_and_zero_offset_controls_update_public_recipe(recipe_expl
     for dataset in group.datasets:
         dataset.metadata["instrument_name"] = "HYSPEC"
     explorer._refresh_tree(select_dataset_group=group)
+    mask = explorer.details_widget.findChild(QtWidgets.QCheckBox, "raw_dgs_hyspec_default_mask")
+    assert mask.isChecked() and "121–128" in mask.toolTip()
+    mask.setChecked(False)
+    assert effective_reduction_config(group)["hyspec_default_mask"] is False
     crop = explorer.details_widget.findChild(QtWidgets.QCheckBox, "raw_dgs_hyspec_tof_crop")
     crop.setChecked(False)
     assert effective_reduction_config(group)["hyspec_tof_crop"] is False
@@ -120,7 +124,7 @@ def test_hyspec_controls_follow_shared_and_selected_run_instruments(recipe_explo
     for dataset, instrument in zip(group.datasets, instruments, strict=True):
         dataset.metadata["instrument_name"] = instrument
     explorer._refresh_tree(select_dataset_group=group)
-    for key in ("hyspec_tof_crop", "hyspec_tank_offset_override"):
+    for key in ("hyspec_default_mask", "hyspec_tof_crop", "hyspec_tank_offset_override"):
         shared = explorer.details_widget.findChild(QtWidgets.QWidget, f"raw_dgs_{key}")
         assert (shared is not None) == ("HYSPEC" in instruments)
         if shared is not None:
@@ -128,7 +132,7 @@ def test_hyspec_controls_follow_shared_and_selected_run_instruments(recipe_explo
     selector = explorer.details_widget.findChild(QtWidgets.QComboBox, "raw_dgs_reduction_run_selector")
     for index, instrument in enumerate(instruments):
         selector.setCurrentIndex(index)
-        for key in ("hyspec_tof_crop", "hyspec_tank_offset_override"):
+        for key in ("hyspec_default_mask", "hyspec_tof_crop", "hyspec_tank_offset_override"):
             editor = explorer.details_widget.findChild(QtWidgets.QWidget, f"raw_dgs_run_{key}")
             assert (editor is not None) == (instrument == "HYSPEC")
             if editor is not None:

@@ -91,6 +91,7 @@ def resolved_hyspec_preprocessing(entry, config, incident_energy, *, instrument_
         "instrument_name": "HYSPEC",
         "incident_energy_meV": ei,
         "tof_crop_enabled": bool(crop),
+        "default_detector_mask_enabled": bool(config.get("hyspec_default_mask", True)),
         "raw_tof_bounds_microseconds": bounds,
         "raw_tof_center_microseconds": center,
         "tof_filter_stage": "raw_event_time_offset_before_t0",
@@ -114,6 +115,24 @@ def raw_hyspec_tof_keep(raw_tof_microseconds, resolved):
         return np.ones(tofs.shape, dtype=bool)
     lower, upper = resolved["raw_tof_bounds_microseconds"]
     return (tofs >= lower) & (tofs <= upper)
+
+
+def hyspec_default_detector_keep(detector_ids, *, instrument_name, enabled=True):
+    """Keep HYSPEC pixels 9–120 of each 128-pixel tube.
+
+    HYSPEC physical detector IDs are zero based, with 128 consecutive IDs per
+    tube. This reproduces MaskBTP(Pixel="1-8,121-128") without a mask file.
+    Other instrument identities are unaffected, including mixed collections.
+    """
+    ids = np.asarray(detector_ids, dtype=np.int64)
+    if str(instrument_name).upper() != "HYSPEC":
+        return np.ones(ids.shape, dtype=bool)
+    if not isinstance(enabled, (bool, np.bool_)):
+        raise ValueError("hyspec_default_mask must be true or false")
+    if not enabled:
+        return np.ones(ids.shape, dtype=bool)
+    pixels = ids % 128
+    return (pixels >= 8) & (pixels < 120)
 
 
 def tank_y_rotation_matrix(offset_degrees):
