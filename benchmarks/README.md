@@ -83,6 +83,44 @@ The [serial-stage audit](results/dgs-serial-stage-audit.md) maps the raw and
 cached-event execution paths, explains their parallelism constraints, and
 records the read-only node23 process observations from the active GUI workflow.
 
+### Isolated raw-pipeline trials
+
+`trial_dgs_raw_pipeline.py` patches only its benchmark process. It tests bounded
+chunk threading, ordered prefetch, larger fresh-event blocks, geometry-owned
+detector-ID lookup, fused kinematics, and independent per-run cache producers.
+`run_dgs_raw_trials.py` runs selected modes sequentially in the existing ORNL
+desktop runtime, reversing their order on alternate rounds:
+
+```bash
+/usr/bin/python3 benchmarks/run_dgs_raw_trials.py /path/inside/IPTS/settings.json \
+  --rounds 2 --modes baseline,runs2,runs4
+```
+
+Keep the configuration and code inside the configured IPTS benchmark root.
+Each mode needs a new tag and directory. Use `runs1` to measure the extra cache
+read without concurrency, `processes2|processes4` to test separate runtimes, and
+`pulse-linear` to test event membership from contiguous pulse ranges. Process
+workers return completed disk references, retain each run's resolved geometry,
+and record their own resource logs. They do not build private histogram grids.
+The initial workflow timer includes their startup and cache production; the
+preproduced-cache receipt field distinguishes these hits from skipped reduction.
+
+AST extraction in this manual prototype preserves the installed reducer's
+arithmetic. It is not a production extension API. A retained application change
+would need a focused service, operation resource admission and complete
+cancellation/publication handling.
+
+`compare_dgs_raw_trial_caches.py` additionally streams reduced events from saved
+projects. It compares source membership, reduction signatures, headers, detector
+payloads, event order, corrected weights/variances and raw totals. The histogram
+gate remains necessary to check counts, edges and exposure support. Run numerical
+comparisons after timing jobs finish to avoid I/O contention. A source identity
+change invalidates the comparison; use an unchanged benchmark-owned calibration
+snapshot when the shared calibration may have its metadata updated.
+
+See [the node23 trial results](results/dgs-raw-pipeline-trials-node23.md) for
+measured complete-workflow gains, rejected strategies and numerical gates.
+
 `validate_dgs_estimator_alternatives.py` separately checks estimator bias,
 variance and interval coverage against analytic and simulated truth, including
 unequal exposure, symmetry copies, trajectory energy and dummy-angle targets.

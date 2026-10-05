@@ -17,6 +17,12 @@ SYMMETRY = {
     "12": "x,y,z;y,z,x;z,x,y;y,x,z;x,z,y;z,y,x;-x,-y,-z;-y,-z,-x;-z,-x,-y;-y,-x,-z;-x,-z,-y;-z,-y,-x",
 }
 
+RAW_PIPELINE_TRIAL_MODES = (
+    "baseline", "coalesced", "lookup", "lookup-coalesced", "compiled", "compiled-coalesced",
+    "runs1", "runs2", "runs4", "processes2", "processes4", "pulse-linear", "prefetch", "threads2", "threads4",
+    "threads2-coalesced", "threads4-coalesced",
+)
+
 
 def center_edges(lower, upper, step):
     """The existing nfit center-limit rule, expressed without a NumPy import."""

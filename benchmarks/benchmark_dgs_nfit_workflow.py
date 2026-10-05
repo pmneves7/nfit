@@ -403,7 +403,11 @@ def main():
                                                                         progress_callback=receipt.progress)
                 cache_usage = histograms[str(primary)].metadata.get("reduced_event_cache", {})
                 receipt.payload["initial_reduction_cache_usage"] = cache_usage
-                if cache_usage != {"hits": 0, "misses": len(group.datasets)}:
+                preproduced = bool(os.environ.get("NFIT_DGS_TRIAL_PREPRODUCE"))
+                receipt.payload["initial_reduction_preproduced_within_timed_call"] = preproduced
+                expected = ({"hits": len(group.datasets), "misses": 0} if preproduced else
+                            {"hits": 0, "misses": len(group.datasets)})
+                if cache_usage != expected:
                     raise AssertionError(f"Initial binning did not construct all reduced caches: {cache_usage}")
                 with receipt.timed(f"native_project_save_{primary}"):
                     save_project(project, project_path, progress_callback=receipt.progress)

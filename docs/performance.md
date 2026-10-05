@@ -12,6 +12,12 @@ workers when the compiled backend is available. The CPU limit is a ceiling,
 not a request to parallelize every stage. In the main window, 1.6% Project CPU
 on a 64-CPU machine corresponds to approximately one fully occupied core.
 
+Manual DGS trials compare saved-project wall time as well as event-kernel time.
+Independent producers are not enabled solely to increase CPU utilization:
+scheduling, cache reads, HDF5 serialization and worker setup can erase their
+compute gains. The benchmark tooling records raw-event and whole-histogram
+parity separately; see `benchmarks/README.md` for the reproducible trial route.
+
 Small rebinning jobs use NumPy. Large jobs can use a fused Numba kernel with
 memory-bounded private accumulators. Extremely sparse output grids may use
 touched-bin maps when their estimated occupancy is at most 5%; otherwise nfit
