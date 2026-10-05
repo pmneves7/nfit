@@ -14,6 +14,8 @@ accesses its saved histogram, calculates a twelve-operation binning and saves
 again. Initial saved-dataset time and later rebin/save time are reported
 separately. Diagnostic exports/comparisons are untimed. Process producer startup
 and the extra cache read are included in the initial workflow.
+The cached rebin/save column excludes reopening and accessing the saved primary
+histogram; those operations are included in the combined user-workflow total.
 
 Trials run sequentially with eight normalization workers and one BLAS thread.
 Small sweeps use two rounds in reversed order; the first eight-run SEQUOIA screen
@@ -61,8 +63,8 @@ The same 256 sources and immutable calibration snapshot, with the main project's
 | Workflow | Serial | Four processes | Time saved |
 | --- | ---: | ---: | ---: |
 | Import, reduce, cache, six-copy binning, save | 138.99 s | 113.62 s | 18.3% |
-| Reopen, cached twelve-copy rebinning, save | 45.64 s | 44.54 s | 2.4% |
-| Both stages | 184.62 s | 158.15 s | 14.3% |
+| Cached twelve-copy rebinning and save | 45.64 s | 44.54 s | 2.4% |
+| Complete workflow, including reopen and saved-histogram access | 185.34 s | 158.87 s | 14.3% |
 
 This pair runs processes first, then serial. Counts, raw event payloads and
 exposure support pass the same numerical gates as the earlier trials.
