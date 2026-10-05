@@ -53,6 +53,7 @@ from .rebin import (
     rebin_nd_stream,
     rebin_nd_symmetry,
 )
+from .resource_budget import memory_guard
 from .symmetry import resolve_symmetry, symmetry_spec_from_config
 
 DEFAULT_REBIN_MAX_BATCH_MB = 192
@@ -289,6 +290,28 @@ def estimated_rebin_shape(config: Mapping[str, Any]) -> tuple[int, ...]:
                 pass
         shape.append(count)
     return tuple(shape)
+
+
+def _project_rebin_memory(arguments):
+    """Plan retained channels, source preparation, and one bounded batch."""
+
+    data = arguments.arguments["data"]
+    config = arguments.arguments["config"]
+    shape = estimated_rebin_shape(config)
+    source_size = int(data.signal.size if isinstance(data, MDHistoData) else data.size)
+    output_size = math.prod(shape) if shape else source_size
+    # An unresolved data-driven grid can contain at most one distinct center
+    # per source point on each axis. The actual rebin planner is guarded too.
+    output_size = max(1, output_size)
+    source_work = source_size * 96
+    if isinstance(data, MDHistoData):
+        axes = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
+        if len(axes) != len(data.axes):
+            axes = _default_rebin_axes(data)
+        if _mdhisto_streaming_supported(data, config, axes):
+            source_work = min(source_work, _rebin_max_batch_bytes(config))
+    batch = min(max(1, source_size) * 128, _rebin_max_batch_bytes(config))
+    return output_size * 128 + source_work + batch
 
 
 def _resolve_auto_rebin_axes(
@@ -1537,6 +1560,7 @@ def _background_rebin_weights(
     return result
 
 
+@memory_guard(_project_rebin_memory, operation="Rebinning histogram")
 def _rebin_mdhisto_data(
     data: MDHistoData,
     config: dict[str, Any],
@@ -2051,6 +2075,7 @@ def _rebin_mdhisto_data(
     return preserve_reduced_background_original(output, original_values, original_errors)
 
 
+@memory_guard(_project_rebin_memory, operation="Rebinning measured points")
 def _rebin_point_data(
     data: PointData4D,
     config: dict[str, Any],

@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from . import _parallel
+from .resource_budget import reserve_memory
 
 FloatArray = NDArray[np.float64]
 
@@ -55,7 +56,8 @@ def _uniform_center_edges(lower: float, upper: float, *, step=None, count=None) 
         return np.array([lower, upper], dtype=float)
     else:
         step = (upper - lower) / (count - 1)
-    return lower + (np.arange(count + 1, dtype=float) - 0.5) * step
+    with reserve_memory((count + 1) * 32, operation="Constructing histogram edges"):
+        return lower + (np.arange(count + 1, dtype=float) - 0.5) * step
 
 
 def _validated_bin_edges(bin_edges, ndim) -> list[FloatArray | None]:
@@ -416,7 +418,10 @@ class NDRebin:
                 }
             )
         if not self._prepared:
-            self._prepare()
+            coordinate_dimensions = max(1, int(self.coords.size) // max(1, int(self.data.size)))
+            preparation_bytes = int(self.data.size) * 8 * max(8, coordinate_dimensions * 4)
+            with reserve_memory(preparation_bytes, operation="Preparing rebin coordinates"):
+                self._prepare()
         prepared = time.perf_counter()
         if self.progress_callback is not None:
             self.progress_callback(
@@ -429,41 +434,42 @@ class NDRebin:
                 }
             )
 
-        if self.resolved_backend == "numba":
-            self._calculate_numba_bins()
-        elif self._uses_fractional_binning():
-            self._calculate_fractional_bins()
-        else:
-            self._calculate_bins()
-        accumulated = time.perf_counter()
-        if self.progress_callback is not None:
-            self.progress_callback(
-                {
-                    "stage": "rebin_finalize",
-                    "iteration": int(self.Nvals or 0),
-                    "total": int(self.Nvals or 0),
-                    "message": "propagating uncertainties and finalizing output bins",
-                    **self._progress_details(),
-                }
-            )
-        self._norm_data()
-        finished = time.perf_counter()
-        if self.progress_callback is not None:
-            self.progress_callback(
-                {
-                    "stage": "rebin_complete",
-                    "iteration": int(self.Nvals or 0),
-                    "total": int(self.Nvals or 0),
-                    "message": "rebin complete",
-                    **self._progress_details(),
-                }
-            )
-        self.timings = {
-            "prepare": prepared - started,
-            "accumulate": accumulated - prepared,
-            "normalize": finished - accumulated,
-            "total": finished - started,
-        }
+        with reserve_memory(self._output_peak_memory(), operation="Binning resolved grid"):
+            if self.resolved_backend == "numba":
+                self._calculate_numba_bins()
+            elif self._uses_fractional_binning():
+                self._calculate_fractional_bins()
+            else:
+                self._calculate_bins()
+            accumulated = time.perf_counter()
+            if self.progress_callback is not None:
+                self.progress_callback(
+                    {
+                        "stage": "rebin_finalize",
+                        "iteration": int(self.Nvals or 0),
+                        "total": int(self.Nvals or 0),
+                        "message": "propagating uncertainties and finalizing output bins",
+                        **self._progress_details(),
+                    }
+                )
+            self._norm_data()
+            finished = time.perf_counter()
+            if self.progress_callback is not None:
+                self.progress_callback(
+                    {
+                        "stage": "rebin_complete",
+                        "iteration": int(self.Nvals or 0),
+                        "total": int(self.Nvals or 0),
+                        "message": "rebin complete",
+                        **self._progress_details(),
+                    }
+                )
+            self.timings = {
+                "prepare": prepared - started,
+                "accumulate": accumulated - prepared,
+                "normalize": finished - accumulated,
+                "total": finished - started,
+            }
 
     def _prepare(self) -> None:
         if self._prepared:
@@ -1035,6 +1041,24 @@ class NDRebin:
 
         self._store_accumulators(bd_sum, err_sum, norm_sum, ns_sum)
 
+    def _output_peak_memory(self) -> int:
+        """Bound output arrays, finalization, and the selected worker scratch."""
+        assert self.num_bins is not None
+        size = int(np.prod(self.num_bins, dtype=object))
+        workers, strategy = self._parallel_plan(size) if self.resolved_backend == "numba" else (1, "serial")
+        if strategy == "dense":
+            parallel = workers * size * 32
+        elif strategy == "sparse":
+            # Each touched bin can hold an index and four additive statistics,
+            # plus sorting and temporary sparse-kernel work.
+            parallel = min(workers * size, (self.Nvals or 0) * self._fractional_contribution_factor()) * 160
+        else:
+            parallel = 0
+        points = self.Nvals or 0
+        workspace = points * 8 * max(8, (self.Ndims or 1) * (6 + self._fractional_contribution_factor()))
+        batch = min(workspace, self.max_batch_bytes) if self.max_batch_bytes > 0 else workspace
+        return size * 96 + parallel + batch
+
     def _empty_accumulators(self, size: int) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray]:
         return (
             np.zeros(size, dtype=float),
@@ -1339,37 +1363,90 @@ def rebin_nd_stream(
     lower_arr, upper_arr = template.lower, template.upper
     assert template.num_bins is not None and template.step_size is not None
     size = int(np.prod(template.num_bins))
-    bd_sum, err_sum, norm_sum, ns_sum = template._empty_accumulators(size)
     template.Nvals = int(source.n_points)
-    if use_numba:
-        template.resolved_backend = "numba"
-        template.resolved_workers, template.resolved_parallel_strategy = template._parallel_plan(size)
-    if progress_callback is not None:
-        progress_callback(
-            {
-                "stage": "rebin_ready",
-                "iteration": 0,
-                "total": int(source.n_points),
-                "message": "output grid prepared; starting accumulation",
-                **template._progress_details(),
-            }
+    with reserve_memory(template._output_peak_memory(), operation="Binning resolved streaming grid"):
+        bd_sum, err_sum, norm_sum, ns_sum = template._empty_accumulators(size)
+        if use_numba:
+            template.resolved_backend = "numba"
+            template.resolved_workers, template.resolved_parallel_strategy = template._parallel_plan(size)
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "rebin_ready",
+                    "iteration": 0,
+                    "total": int(source.n_points),
+                    "message": "output grid prepared; starting accumulation",
+                    **template._progress_details(),
+                }
+            )
+        executor = (
+            ThreadPoolExecutor(max_workers=template.resolved_workers, thread_name_prefix="nfit-rebin-stream")
+            if use_numba and template.resolved_workers > 1
+            else None
         )
-    executor = (
-        ThreadPoolExecutor(max_workers=template.resolved_workers, thread_name_prefix="nfit-rebin-stream")
-        if use_numba and template.resolved_workers > 1
-        else None
-    )
-    # Allocated once for the whole stream, not once per source batch.
-    partials = template._numba_worker_partials(size) if executor is not None else []
-    processed = 0
-    try:
-        for batch in source.iter_batches():
-            data = np.asarray(batch.data, dtype=float).reshape(-1)
-            coords = np.asarray(batch.coords, dtype=float)
-            if coords.shape != (data.size, ndim):
-                raise ValueError("each streaming coordinate batch must have shape (batch_points, ndim)")
-            progress_count = data.size if batch.progress_count is None else int(batch.progress_count)
-            if data.size == 0:
+        # Allocated once for the whole stream, not once per source batch.
+        partials = template._numba_worker_partials(size) if executor is not None else []
+        processed = 0
+        try:
+            for batch in source.iter_batches():
+                data = np.asarray(batch.data, dtype=float).reshape(-1)
+                coords = np.asarray(batch.coords, dtype=float)
+                if coords.shape != (data.size, ndim):
+                    raise ValueError("each streaming coordinate batch must have shape (batch_points, ndim)")
+                progress_count = data.size if batch.progress_count is None else int(batch.progress_count)
+                if data.size == 0:
+                    processed += progress_count
+                    if progress_callback is not None:
+                        progress_callback({
+                            "stage": "rebin", "iteration": processed,
+                            "total": int(source.n_points),
+                            "message": f"rebinning {processed:,}/{source.n_points:,} point contributions",
+                            **template._progress_details(),
+                        })
+                    continue
+                projected = coords if axes_inv is None else coords @ axes_inv
+                errors = np.zeros(data.size) if batch.data_errs is None else np.asarray(batch.data_errs, dtype=float).reshape(-1)
+                weights = np.ones(data.size) if batch.data_weights is None else np.asarray(batch.data_weights, dtype=float).reshape(-1)
+                if errors.size != data.size or weights.size != data.size:
+                    raise ValueError("streaming errors and weights must match each data batch")
+                if not use_numba:
+                    partial = rebin_nd(
+                        data, projected, data_errs=batch.data_errs, data_weights=batch.data_weights,
+                        lower=lower_arr, upper=upper_arr, step_size=template.step_size,
+                        bin_edges=template.bins_list,
+                        fractional=fractional, fractional_axes=fractional_axes,
+                        normalize=normalize, mean_weighting=mean_weighting,
+                        minimum_samples=0.0, backend="numpy", workers=1,
+                    )
+                    bd_sum += partial._bd_sum
+                    err_sum += partial._err_sum
+                    norm_sum += partial._normalization.reshape(-1)
+                    ns_sum += partial._ns_sum
+                else:
+                    kernel_lower = lower_arr
+                    kernel_upper = upper_arr
+                    kernel_steps = np.asarray(template.step_size)
+                    template.coords_flat = projected
+                    template.data_flat = data
+                    template.errors_flat = errors
+                    template.weights_flat = weights
+                    template.has_data_errs = batch.data_errs is not None
+                    num_bins_array = np.asarray(template.num_bins, dtype=np.int64)
+                    if executor is None:
+                        template._accumulate_numba_range(
+                            0, data.size, kernel_lower, kernel_upper, kernel_steps, num_bins_array,
+                            bd_sum, err_sum, norm_sum, ns_sum,
+                        )
+                    else:
+                        template._accumulate_numba_parallel(
+                            executor,
+                            partials,
+                            _split_range(0, data.size, template.resolved_workers),
+                            kernel_lower,
+                            kernel_upper,
+                            kernel_steps,
+                            num_bins_array,
+                        )
                 processed += progress_count
                 if progress_callback is not None:
                     progress_callback({
@@ -1378,88 +1455,36 @@ def rebin_nd_stream(
                         "message": f"rebinning {processed:,}/{source.n_points:,} point contributions",
                         **template._progress_details(),
                     })
-                continue
-            projected = coords if axes_inv is None else coords @ axes_inv
-            errors = np.zeros(data.size) if batch.data_errs is None else np.asarray(batch.data_errs, dtype=float).reshape(-1)
-            weights = np.ones(data.size) if batch.data_weights is None else np.asarray(batch.data_weights, dtype=float).reshape(-1)
-            if errors.size != data.size or weights.size != data.size:
-                raise ValueError("streaming errors and weights must match each data batch")
-            if not use_numba:
-                partial = rebin_nd(
-                    data, projected, data_errs=batch.data_errs, data_weights=batch.data_weights,
-                    lower=lower_arr, upper=upper_arr, step_size=template.step_size,
-                    bin_edges=template.bins_list,
-                    fractional=fractional, fractional_axes=fractional_axes,
-                    normalize=normalize, mean_weighting=mean_weighting,
-                    minimum_samples=0.0, backend="numpy", workers=1,
-                )
-                bd_sum += partial._bd_sum
-                err_sum += partial._err_sum
-                norm_sum += partial._normalization.reshape(-1)
-                ns_sum += partial._ns_sum
-            else:
-                kernel_lower = lower_arr
-                kernel_upper = upper_arr
-                kernel_steps = np.asarray(template.step_size)
-                template.coords_flat = projected
-                template.data_flat = data
-                template.errors_flat = errors
-                template.weights_flat = weights
-                template.has_data_errs = batch.data_errs is not None
-                num_bins_array = np.asarray(template.num_bins, dtype=np.int64)
-                if executor is None:
-                    template._accumulate_numba_range(
-                        0, data.size, kernel_lower, kernel_upper, kernel_steps, num_bins_array,
-                        bd_sum, err_sum, norm_sum, ns_sum,
-                    )
-                else:
-                    template._accumulate_numba_parallel(
-                        executor,
-                        partials,
-                        _split_range(0, data.size, template.resolved_workers),
-                        kernel_lower,
-                        kernel_upper,
-                        kernel_steps,
-                        num_bins_array,
-                    )
-            processed += progress_count
-            if progress_callback is not None:
-                progress_callback({
-                    "stage": "rebin", "iteration": processed,
+            if executor is not None:
+                template._merge_worker_partials(partials, bd_sum, err_sum, norm_sum, ns_sum)
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=True, cancel_futures=True)
+        template.resolved_backend = "numba" if use_numba else "numpy"
+        template._store_accumulators(bd_sum, err_sum, norm_sum, ns_sum)
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "rebin_finalize",
+                    "iteration": int(source.n_points),
                     "total": int(source.n_points),
-                    "message": f"rebinning {processed:,}/{source.n_points:,} point contributions",
+                    "message": "propagating uncertainties and finalizing output bins",
                     **template._progress_details(),
-                })
-        if executor is not None:
-            template._merge_worker_partials(partials, bd_sum, err_sum, norm_sum, ns_sum)
-    finally:
-        if executor is not None:
-            executor.shutdown(wait=True, cancel_futures=True)
-    template.resolved_backend = "numba" if use_numba else "numpy"
-    template._store_accumulators(bd_sum, err_sum, norm_sum, ns_sum)
-    if progress_callback is not None:
-        progress_callback(
-            {
-                "stage": "rebin_finalize",
-                "iteration": int(source.n_points),
-                "total": int(source.n_points),
-                "message": "propagating uncertainties and finalizing output bins",
-                **template._progress_details(),
-            }
-        )
-    template._norm_data()
-    template.bin_inds = None
-    if progress_callback is not None:
-        progress_callback(
-            {
-                "stage": "rebin_complete",
-                "iteration": int(source.n_points),
-                "total": int(source.n_points),
-                "message": "rebin complete",
-                **template._progress_details(),
-            }
-        )
-    return template
+                }
+            )
+        template._norm_data()
+        template.bin_inds = None
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "rebin_complete",
+                    "iteration": int(source.n_points),
+                    "total": int(source.n_points),
+                    "message": "rebin complete",
+                    **template._progress_details(),
+                }
+            )
+        return template
 
 
 def rebin_nd_symmetry(

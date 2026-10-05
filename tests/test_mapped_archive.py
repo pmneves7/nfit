@@ -66,7 +66,7 @@ def test_decoded_array_view_survives_payload_eviction(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_unsupported_platform_falls_back_to_resident_artifact_read(monkeypatch):
+def test_unsupported_mapping_never_falls_back_to_unbudgeted_resident_read(monkeypatch):
     import nfit.analysis.artifacts as artifacts
 
     source = _tiny_mdhisto_data(2.0)
@@ -76,10 +76,8 @@ def test_unsupported_platform_falls_back_to_resident_artifact_read(monkeypatch):
     )
     monkeypatch.setattr(artifacts, "_MAPPED_MEMBER_MIN_BYTES", 1)
 
-    decoded = read_dataset_artifact(archive, memory_map=True)
-
-    np.testing.assert_equal(decoded.signal, source.signal)
-    assert not is_mapped_array(decoded.signal)
+    with pytest.raises(MappedWorkspaceError, match="POSIX"):
+        read_dataset_artifact(archive, memory_map=True)
 
 
 def test_storage_accounting_separates_heap_and_mapped_arrays(tmp_path):

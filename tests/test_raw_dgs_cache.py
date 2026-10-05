@@ -25,6 +25,29 @@ from tests.test_raw_dgs import _rewrite_instrument_xml, _write_raw_dgs
 OPTIONS = dict(lower=[-10, -10, -10, -100], upper=[10, 10, 10, 20], num_bins=[2]*4)
 
 
+def test_abandoned_cache_generator_does_not_restore_finished_binning_reservation(tmp_path, monkeypatch):
+    from nfit import raw_dgs_cache
+    from nfit.pipeline import DatasetEntry
+    from nfit.resource_budget import reserve_memory, snapshot_memory
+
+    monkeypatch.setattr(raw_dgs_cache, "_EVENT_BLOCK_ROWS", 7)
+    dataset = DatasetEntry(name="run", data=None,
+                           metadata={"source_file": str(tmp_path / "raw.nxs")})
+    events = np.arange(114.).reshape(19, 6)
+    generator = cache_event_chunks(dataset, "signature", {}, {}, iter([(events, 19)]))
+    before = snapshot_memory().reserved_bytes
+    try:
+        with reserve_memory(1024**2):
+            assert next(generator)[0] is events
+            assert snapshot_memory().reserved_bytes == before + 1024**2
+        assert snapshot_memory().reserved_bytes == before
+    finally:
+        generator.close()
+    assert snapshot_memory().reserved_bytes == before
+    assert dataset._raw_dgs_reduction_cache is None
+    assert not list(tmp_path.iterdir())
+
+
 def test_reduced_event_staging_follows_project_instead_of_source_or_tmp(tmp_path):
     sources = tmp_path / "raw"
     outputs = tmp_path / "projects"

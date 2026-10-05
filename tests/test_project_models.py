@@ -1774,10 +1774,18 @@ def test_request_overlay_refresh_coalesces_without_event_loop(monkeypatch):
     assert refreshed == []
     assert id(group) in explorer._pending_overlay_groups
     assert explorer._overlay_refresh_timer is not None
+    # A nested progress loop must not re-enter scientific preparation while
+    # a resource worker owns the project. Keep the queued edit for later.
+    explorer._resource_operation_active = True
+    explorer._run_pending_overlay_refresh()
+    assert refreshed == []
+    assert id(group) in explorer._pending_overlay_groups
+    explorer._resource_operation_active = False
     # Firing the debounced slot runs exactly one refresh and clears the queue.
     explorer._run_pending_overlay_refresh()
     assert refreshed == [(group, {"force_rebin": True})]
     assert not explorer._pending_overlay_groups
+    explorer._overlay_refresh_timer.stop()
 
 
 def test_fit_parameter_checkbox_does_not_recompute_open_viewer(monkeypatch):
@@ -1883,7 +1891,7 @@ def test_viewer_view_cache_invalidates_when_dataset_data_is_replaced():
     assert second.signal.flat[0] == pytest.approx(editable.signal.flat[0])
 
 
-def test_viewer_view_cache_uses_lru_eviction_instead_of_clear_all(monkeypatch):
+def test_viewer_view_cache_retains_all_entries_until_explicit_unload(monkeypatch):
     project_gui._VIEWER_VIEW_CACHE.clear()
     monkeypatch.setattr(project_data, "_VIEWER_VIEW_CACHE_LIMIT", 3)
     datasets = [
@@ -1896,13 +1904,14 @@ def test_viewer_view_cache_uses_lru_eviction_instead_of_clear_all(monkeypatch):
     project_gui._viewer_data_before_scale(datasets[3])
 
     assert list(project_gui._VIEWER_VIEW_CACHE) == [
+        datasets[1].id,
         datasets[2].id,
         datasets[0].id,
         datasets[3].id,
     ]
 
 
-def test_viewer_view_cache_does_not_retain_entry_over_byte_budget(monkeypatch):
+def test_reducing_cache_budget_does_not_evict_an_existing_view(monkeypatch):
     import gc
     import weakref
 
@@ -1913,11 +1922,14 @@ def test_viewer_view_cache_does_not_retain_entry_over_byte_budget(monkeypatch):
     result = project_gui._viewer_data_before_scale(dataset)
 
     assert isinstance(result, MDHistoData)
-    assert project_gui._VIEWER_VIEW_CACHE.peek_resident(dataset.id) is None
+    assert project_gui._VIEWER_VIEW_CACHE.peek_resident(dataset.id)[1] is result
     assert project_gui._viewer_data_before_scale(dataset) is result
     reference = weakref.ref(result)
     key = dataset.id
     del result, dataset
+    gc.collect()
+    assert reference() is not None
+    project_gui._VIEWER_VIEW_CACHE.unload(key)
     gc.collect()
     assert reference() is None
     assert key not in project_gui._VIEWER_VIEW_CACHE

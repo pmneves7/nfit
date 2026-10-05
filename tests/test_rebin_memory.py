@@ -34,7 +34,7 @@ def test_batch_cache_preflight_warns_at_eighty_percent_of_limit():
 
 
 def test_rebin_result_estimate_matches_panel_payload_rule():
-    assert performance.estimate_rebin_result_bytes(123) == 123 * 33
+    assert performance.estimate_rebin_result_bytes(123) == 123 * 57
 
 
 def test_step_grid_estimate_uses_saved_spacing():
@@ -47,20 +47,23 @@ def test_step_grid_estimate_uses_saved_spacing():
 def test_gui_cache_preflight_uses_changed_central_ram_limit(monkeypatch):
     from types import SimpleNamespace
 
-    from nfit import project_cache_gui, project_data, project_gui
+    from nfit import project_gui, project_resource_gui, resource_budget
 
     limit = [10_000]
     prompts = []
-    monkeypatch.setattr(project_data, "scientific_cache_budget_bytes", lambda: limit[0])
-    monkeypatch.setattr(project_gui.SHARED_REBIN_CACHE_BUDGET, "total_bytes", lambda: 0)
+    monkeypatch.setattr(resource_budget, "_rss_provider", lambda: 0)
+    monkeypatch.setattr(resource_budget, "_managed_provider", lambda: 0)
+    monkeypatch.setattr(resource_budget, "_available_provider", lambda: 100_000)
+    monkeypatch.setattr(resource_budget, "_limit_provider", lambda: limit[0])
     monkeypatch.setattr(
-        project_cache_gui, "confirm_rebin_cache_preflight",
-        lambda _parent, **kwargs: prompts.append(kwargs) or False,
+        project_resource_gui, "handle_resource_limit",
+        lambda _parent, error: prompts.append(error) or False,
     )
     explorer = SimpleNamespace(window=None, _compressed_cache_prompt=None)
     confirm = project_gui.NfitProjectExplorer._confirm_rebin_cache_memory
     assert confirm(explorer, [900], operation="Preparing viewer")
     assert prompts == []
-    limit[0] = 1000
+    limit[0] = 800
     assert not confirm(explorer, [900], operation="Preparing viewer")
-    assert prompts[0]["limit_bytes"] == 1000
+    assert prompts[0].limit_bytes == 800
+    assert prompts[0].requested_bytes == 900

@@ -2141,20 +2141,19 @@ def _cached_composite_dataset_data(
     apply_spectral_channels: bool = True,
     prepare_scaling_cache: bool = False,
 ) -> MDHistoData | PointListData | PointData4D | None:
-    from .composite_spectral import apply_composite_spectral_channels
+    from .composite_spectral import cached_composite_spectral_view
 
     def finish(data):
-        from .source_lineage import with_source_lineage
-
-        data = with_source_lineage(data, source_lineage_metadata(_composite_candidates(group)))
-        if not apply_spectral_channels:
-            return data
-        return apply_composite_spectral_channels(
+        return cached_composite_spectral_view(
             data,
             config_override if config_override is not None else data_group_composite_config(group),
             _composite_candidates(
                 group, include_backgrounds=bool(group.metadata.get("metadata_dimensions"))
             ),
+            cache=_COMPOSITE_DATA_CACHE,
+            key=(_composite_cache_key(group), "viewer-finish", binning_id, bool(apply_spectral_channels)),
+            source_signature=signature,
+            apply_spectral=apply_spectral_channels,
         )
 
     signature = _composite_cache_signature(
@@ -2310,7 +2309,7 @@ def composite_dataset_entry(
     )
     first = datasets[0] if datasets else None
     config = data_group_composite_config(group, config_override=config_override)
-    return DatasetEntry(
+    entry = DatasetEntry(
         name=_composite_dataset_name(group),
         data=_cached_composite_dataset_data(
             group,
@@ -2349,6 +2348,9 @@ def composite_dataset_entry(
         fit_weight=composite_scaling(group)["fit_weight"],
         scale_factor=1.0,
     )
+    entry._viewer_composite_cache_owner = _composite_cache_key(group)
+    entry._viewer_composite_binning_id = str(binning_id or FIT_BINNING_ID)
+    return entry
 
 
 def materialize_composite_dataset(

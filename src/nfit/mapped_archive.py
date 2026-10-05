@@ -62,9 +62,9 @@ def read_mapped_array_archive(
 
     The caller may pass the returned mapping directly to an existing payload
     decoder.  Failures leave no named temporary files behind and never alter
-    ``source``. Callers may fall back to resident loading after
-    ``MappedWorkspaceError``. Archive corruption and invalid array contents
-    propagate separately and should not trigger a second decoding attempt.
+    ``source``. Workspace failures propagate without triggering a second,
+    resident decoding attempt. Archive corruption and invalid array contents
+    propagate separately.
     """
 
     threshold = max(int(mapped_min_bytes), 0)
@@ -137,6 +137,18 @@ def array_storage_nbytes(value: Any) -> ArrayStorageBytes:
 
     heap, mapped = _storage_nbytes(value, seen=set(), seen_storage=set())
     return ArrayStorageBytes(heap=heap, mapped=mapped)
+
+
+def array_storage_owners(value: Any) -> tuple[np.ndarray, ...]:
+    """Return distinct ndarray owners retained by a nested numerical payload.
+
+    Following the actual storage owner lets weak accounting survive replacement
+    of a data container while another container still holds an array view.
+    """
+
+    owners: dict[tuple[str, int], np.ndarray] = {}
+    _storage_nbytes(value, seen=set(), seen_storage=set(), owners=owners)
+    return tuple(owners.values())
 
 
 def _array_members(archive: ZipFile) -> dict[str, Any]:
@@ -383,7 +395,8 @@ def _load_array(source: BinaryIO) -> np.ndarray:
 
 
 def _storage_nbytes(
-    value: Any, *, seen: set[int], seen_storage: set[tuple[str, int]]
+    value: Any, *, seen: set[int], seen_storage: set[tuple[str, int]],
+    owners: dict[tuple[str, int], np.ndarray] | None = None,
 ) -> tuple[int, int]:
     if value is None or isinstance(value, (str, bytes, bytearray)):
         return 0, 0
@@ -399,12 +412,16 @@ def _storage_nbytes(
             if token in seen_storage:
                 return 0, 0
             seen_storage.add(token)
+            if owners is not None:
+                owners[token] = owner
             return 0, int(owner.nbytes)
         owner = _array_owner(value, mapped=False)
         token = ("heap", id(owner))
         if token in seen_storage:
             return 0, 0
         seen_storage.add(token)
+        if owners is not None:
+            owners[token] = owner
         return int(owner.nbytes), 0
     if hasattr(value, "__cuda_array_interface__") and hasattr(value, "nbytes"):
         # GPU allocations are not file mappings. Preserve the existing cache
@@ -433,7 +450,7 @@ def _storage_nbytes(
     heap = mapped = 0
     for child in children:
         child_heap, child_mapped = _storage_nbytes(
-            child, seen=seen, seen_storage=seen_storage
+            child, seen=seen, seen_storage=seen_storage, owners=owners
         )
         heap += child_heap
         mapped += child_mapped

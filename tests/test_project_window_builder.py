@@ -162,10 +162,13 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
             for action in toolbar.actions()[:2]
         ] == ["File", "Help"]
 
-        monitor = toolbar.widgetForAction(toolbar.actions()[-1])
+        monitor = toolbar.widgetForAction(toolbar.actions()[-2])
         assert monitor.objectName() == "resource_monitor"
         assert monitor.text().startswith(f"nfit {application_version()} | Project CPU —")
         assert monitor.toolTip()
+        resources = toolbar.widgetForAction(toolbar.actions()[-1])
+        assert resources.objectName() == "resource_manager_button"
+        assert resources.toolTip()
 
         all_actions = {
             action.text(): action

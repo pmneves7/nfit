@@ -37,6 +37,9 @@ instrument or file format.
   Histogram normalization grids are
   stored as arrays rather than expanded into JSON, so large cached binnings
   remain practical to save and reopen.
+  [Resource Manager](resources.md) distinguishes runtime owners from saved
+  backings. Explicit unloading preserves recipes and disk references; confirmed
+  cache deletion removes selected saved members on the next atomic save.
 - **Dataset identity is unique.** Importing or copying a dataset assigns a new
   ID, even when the source file is the same. Project loading rejects duplicate
   IDs because analysis and background references would otherwise be ambiguous.

@@ -11,6 +11,7 @@ import numpy as np
 from .dataset import PointListData
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from .measurement_profiles import MeasurementProfile
+from .qt_operation_guard import close_operation_window
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,7 @@ class LiveBoxCutViewers:
         self.viewers.clear()
         for viewer in viewers:
             viewer.set_close_callback(None)
-            viewer.window.close()
+            close_operation_window(viewer.window)
 
     def update(
         self,
@@ -101,7 +102,7 @@ class LiveBoxCutViewers:
                     # must not toggle the parent's popout choice for the other
                     # side or leave the last nonempty profile visible.
                     viewer.set_close_callback(None)
-                    viewer.window.close()
+                    close_operation_window(viewer.window)
                 continue
             data = _profile_dataset(context, axis, cut, (measurements or {}).get(axis))
             name = f"{context.dataset_name} — {axis} box cut"

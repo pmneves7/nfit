@@ -138,6 +138,10 @@ def lru_store(
     cache[key] = value
     cache.move_to_end(key)
     entry_limit = None if limit is None else max(int(limit), 0)
+    if managed_budget and getattr(getattr(cache, "_budget", None), "manual_retention", False):
+        # Project resources remain resident until the user explicitly unloads
+        # them. Entry-count eviction must not bypass this ownership policy.
+        entry_limit = None
     byte_limit = (
         None if max_array_bytes is None else max(int(max_array_bytes), 0)
     )

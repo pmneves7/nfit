@@ -3,6 +3,7 @@
 from . import project_composites as comp
 from .analysis.artifacts import write_dataset_artifact
 from .project_archive import ArchiveMember, binning_artifact_member, project_artifact_exists
+from .project_resources import excluded_project_cache
 
 
 def background_binning_artifacts(project, directory, format_version):
@@ -25,9 +26,15 @@ def background_binning_artifacts(project, directory, format_version):
                     owner = node_id or f'root-{group_index}'
                     cache_id = f'background-{owner}-{binning["id"]}-{index}'
                     member = binning_artifact_member(cache_id)
+                    if excluded_project_cache(project, member):
+                        continue
                     backing = cache.project_backing(key, signature)
+                    if backing is not None and excluded_project_cache(project, backing[1]):
+                        continue
                     if signature in shared_members:
                         member = shared_members[signature]
+                        if excluded_project_cache(project, member):
+                            continue
                     elif backing is not None:
                         artifacts[member] = ArchiveMember(*backing)
                     else:

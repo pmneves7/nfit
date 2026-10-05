@@ -209,13 +209,15 @@ def test_dataset_benchmark_is_isolated_and_reports_memory(monkeypatch, tmp_path)
     from nfit.performance import save_resource_limits
 
     monkeypatch.setenv("NFIT_PERFORMANCE_FILE", str(tmp_path / "performance.json"))
-    save_resource_limits(cpu_limit=1, ram_limit_mb=1)
+    # The whole-process budget must cover the benchmark interpreter as well
+    # as scientific arrays; one MiB cannot admit a Python process.
+    save_resource_limits(cpu_limit=1, ram_limit_mb=512)
     project, entry = _project()
     before = copy.deepcopy(entry.parameters)
     rows = []
     result = benchmark_rebin(project, dataset_id=entry.id,
                              candidates=[dict(max_batch_mb=4, workers=8)], progress=rows.append)
-    assert result["recommendation"] == {"max_batch_mb": 1, "workers": 1}
+    assert result["recommendation"] == {"max_batch_mb": 4, "workers": 1}
     assert rows[0]["seconds"] > 0
     assert rows[0]["peak_mib"] > 0
     assert entry.parameters == before

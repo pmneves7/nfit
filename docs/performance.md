@@ -44,10 +44,10 @@ File-backed datasets are loaded on first use and retained by their
 `DatasetEntry`; viewers, analyses, and composites share that single loading
 path. nfit does not keep a second raw-array cache.
 
-Before a 4D MDEvent reduction, the GUI estimates peak memory from the output
-bin counts and normalization arrays. It warns above 70% of available RAM. The
-lower-level API rejects an over-budget allocation unless the caller explicitly
-disables enforcement.
+Before reduction or binning, nfit checks the planned allocation against the
+remaining process RAM budget and available system RAM. Resolved-grid checks run
+before output buffers are allocated, including automatically determined grids.
+See [Resource Manager](resources.md) for explicit loading and unloading.
 
 Use `benchmarks/benchmark_rebin.py` to measure representative grids on the
 target machine.
@@ -190,8 +190,9 @@ limit** in GB (1 GB = 1,000,000,000 bytes). The GUI accepts three decimal
 places and saves the nearest MiB (1 MiB = 1,048,576 bytes), preserving existing
 budgets and the scripting API's `ram_limit_mb` units. The CPU limit bounds nfit's shared
 worker allocation, including large-array archive compression and loading.
-The RAM limit bounds managed numerical caches and temporary working buffers;
-it is not an operating-system limit on the application's total resident memory.
+Admission checks charge current process RAM, managed array storage, and pending
+numerical work against the RAM limit. This is not an operating-system memory
+cap; third-party allocations can occur outside managed entry points.
 Small operations run serially, and large operations may use fewer workers to
 stay within the memory allowance. Batch sizes and archive thresholds are
 chosen internally. Existing scientific rebin and saved-plot recipes remain
@@ -265,110 +266,48 @@ rebin settings, backgrounds, or model structure. `DatasetEntry.replace_data`
 advances the revision; changing only a model parameter can still reuse compiled
 geometry.
 
-Cache entries are process-local and evicted by least-recent use. Completed
-viewer and composite binnings share one total memory allowance. Recent results
-use resident arrays; older results are chunk-compressed in RAM as the combined
-cache approaches that allowance. When the compressed tier fills, the GUI can
-discard old binnings, export the oldest as a standalone compressed `.npz`, or
-choose a disk-cache folder. A folder choice is remembered for the rest of the
-session: this and later evictions are stored in a private nfit subdirectory and
-remain available to cache lookups without another prompt. The files are removed
-when their result is replaced or the application exits. If **Cache binnings**
-is enabled for the project, a successful save embeds disk-backed binnings in
-the `.nfit` archive, switches the live cache to that project copy, and removes
-the separate session spill files. A standalone NPZ export is not added to the
-project automatically, and choosing export or discard retains the prior policy
-of silently discarding later old binnings for that session. A binning too large
-for the compressed tier is not retained there. Scripting workflows evict old
-results without a GUI prompt. The shared budget counts distinct NumPy array
-payloads and compressed bytes, with small Python-object overhead excluded.
-Repeated requests for an unchanged result share its live immutable arrays,
-including after the resident cache has compressed or evicted its own reference.
-An open viewer or another caller can keep those arrays alive; the shared cache
-budget continues to account for them until they are released. Evicting a cache
-entry cannot free arrays still in use, so this live-data floor can exceed the
-configured allowance. Replacing a result invalidates its cache lookup while
-existing readers retain their original immutable data.
+Completed viewer and composite binnings stay resident until explicitly unloaded
+or invalidated by changed data/settings. There is no automatic compression,
+oldest-result eviction, or separate disk-cache prompt for these project caches.
+Repeated preparations share immutable arrays, including scaled and spectral
+views. Multiple viewers can hold the same cube without copying it.
+[Resource Manager](resources.md) lists the owners, shared storage, saved project
+caches, and estimated memory freed by an unload.
 
-On macOS and Linux, large saved histogram caches can instead load into read-only NumPy memory maps.
-This is automatic when an artifact's expanded size is at least 2 GiB and at
-least one quarter of the managed RAM allowance. Smaller results retain the
-in-memory loader. Compressed archive members are expanded into private files
-beside their owning project or source archive; the saved project remains
-unchanged. The files live as long as their arrays or views, then their storage is released.
-Their directory entries are removed immediately, so they
-also disappear after a process exit or crash. nfit requires free disk headroom
-of at least 1 GiB or 10% of current free space, whichever is larger. If temporary
-storage is unavailable or Linux identifies the temporary directory as a
-RAM-backed filesystem, loading falls back to resident arrays. Other operating
-systems retain the resident loader.
+Archive readers inspect NumPy headers before allocating the expanded arrays.
+Process-wide reservations prevent concurrent operations from spending the same
+available RAM. The logical cache footprint also counts untouched output arrays
+and retained mapped storage, even when their pages are not resident. Checks
+include temporary working arrays and resolved output grids; the process RSS
+includes sources, viewers, models, analysis, libraries and other allocations.
+These safeguards cover managed entry points, rather than imposing an OS memory
+cap on Qt or third-party code.
 
-Scientific temporary storage is allocated **when an operation needs it**, rather
-than at application startup. Saved histogram mapping uses the owning project's
-directory. Save staging uses the chosen output directory; materialized composites
-and analysis outputs stage beside their project. Reduced-event caches stage
-beside the loaded/saved project, or beside the raw source for an unsaved standalone
-input. Save a new project in a writable directory before reducing data from a
-read-only source location.
+Whole histogram cubes load into RAM for responsive viewing. Low-level scripts
+can still request `read_dataset_artifact(..., memory_map=True, temp_dir=...)`;
+mapping failure raises rather than falling back to an unplanned heap allocation.
+Project viewers do not automatically select that storage mode.
 
-These choices are per operation and per dataset, with no process-global active
-project, hard-coded experiment path, or instrument-specific storage policy.
-A save selects its destination before preparing caches; a failed save restores
-the previous dataset ownership. Retained reduced-event staging remains until the
-project adopts the saved archive references or the cache is released. Short-lived
-save and analysis staging is removed at the end of the operation.
+Scientific temporary storage is allocated when an operation needs it. By
+default, reduced-event and analysis staging lives beside the owning project or
+source; save staging lives beside its destination. Resource Manager can select
+an existing writable temporary directory for future allocations. Existing files
+stay where their current owners placed them. The choice is recorded in the
+project but is checked only when storage is used, so an unavailable old path
+does not prevent opening an empty application or inspecting a project.
 
-If project storage is unavailable, mapped loading can use resident RAM instead;
-file-backed staging never silently falls back to another temporary filesystem.
-Opening an empty nfit window requires no scientific scratch storage. Filesystem
-errors occur when opening, saving, or reducing the affected data.
+File-backed operations never silently move scientific staging into another
+filesystem. On clusters requiring data in experiment directories, keep the
+project and selected temporary directory there. Save replacement space is
+reserved on the destination filesystem while the old archive remains intact;
+filesystem quotas can still reject a write. Archive copy and decode work runs
+outside the GUI thread, with bounded buffers and cooperative cancellation.
+Unchanged saved NPZ members are streamed without recompression.
 
-On clusters that require scientific data inside an experiment directory, save the
-project and its diagnostics there. Check that the **experiment directory itself**
-is accessible on the node where nfit runs; a parent containing dangling links is
-insufficient. nfit does not create or repair missing instrument mounts. Session
-disk-cache preferences control a separate cache tier: choose an allowed writable
-location for that tier as well.
-
-Standalone stream/bytes artifact reads have no inferred owner. Their scripting
-API accepts `read_dataset_artifact(..., temp_dir=...)`; without an explicit
-location, they retain Python's standard temporary-directory policy. Low-level
-mapped-array readers likewise accept an explicit `temp_dir`.
-
-Mapped arrays retain float64 precision and the ordinary NumPy interface. They
-avoid a permanent heap allocation for the expanded histogram, but initial
-decompression still takes time and a page evicted from RAM must be read from
-disk again. Their pages can appear in process RSS while hot; the operating
-system can reclaim them. The managed cache budget counts their small heap
-metadata rather than their file-backed payload. This does not impose a hard
-RSS limit. Mapping does not yet apply to newly computed results or compressed
-in-memory cache entries.
-
-Scripts can request the same reader with
-`read_dataset_artifact(path, memory_map=None)` from `nfit.analysis.artifacts`;
-`memory_map=True` requests mapping without the size/pressure threshold, while
-the default `False` keeps the existing resident behavior. Both modes return the
-same immutable data containers. No additional preference controls are needed.
-
-On Linux and remote desktops, the memory-choice dialog is attached to the
-active rebin window so it remains visible and interactive above progress.
-The prepared-table cache defaults to 128 MiB and the model-overlay cache to
-256 MiB. Viewer and composite bin results use the combined **RAM limit**
-configured in **Preferences → Performance**; there are no
-per-result, per-bin, or per-stage memory quotas. The same ceiling controls
-temporary rebin batches and parallel worker accumulators. This capacity is not allocated in
-advance: small projects retain only the arrays they produce. The adaptive
-budget can retain a practical four-dimensional reduction that exceeded the old
-256 MiB limit, avoiding immediate eviction and duplicate work while preparing
-derived datasets or reopening a viewer.
-Parent composites also retain child reductions on matching grids; saving the
-children later reuses those results. Changed source data, masks, backgrounds,
-or numerical bin settings invalidate the corresponding cached results.
-An unchanged numerical signature reuses its binning. Changed settings may
-temporarily require both the old viewer result and the new result, even when
-their grid dimensions are similar. Distinct named binnings retain distinct
-results. Closing an unneeded viewer releases its references, although the
-Python allocator or operating system may retain freed pages for reuse.
+Closing a project releases its process-local binning and model cache references.
+Explicitly unloading a cube preserves its saved backing and recipe. Closing a
+viewer releases its references; arrays still owned by another viewer or cache
+remain live. Python or the OS may retain freed pages for reuse.
 
 Single-crystal MDEvent detector normalization groups runs with identical
 detector geometry and evaluates all requested symmetry operations in the
@@ -407,39 +346,19 @@ test a custom candidate list when a cluster node warrants a broader sweep. The
 default benchmark sweep includes the machine's full detected CPU allowance in
 addition to conservative smaller ceilings.
 
-**Preferences → Performance → RAM limit** controls the managed memory allowance.
-The automatic value is normally 25% of currently available memory; a fixed
-limit is also bounded by available memory. The same ceiling limits thread-private rebin
-accumulators and determines automatic batch sizes. There are no per-binning
-batch or CPU controls. The setting applies to
-existing projects because it describes the current machine rather than project
-state. The separate MDEvent output-grid preflight continues to warn when the
-estimated complete reduction exceeds 50% of currently available memory. Other
-dataset and composite rebins use an estimate of their output-array workspace
-plus the batch target and warn at the same threshold. The native reducer still
-blocks an unapproved estimate above 70%. Opening a data viewer also warns
-before starting pending large rebins. A memory estimate is advisory: source
-data, other caches, and the operating system can change the actual peak.
-The rebin-settings panel separately displays the estimated persistent result
-payload for its configured grid. An exact value is shown when the result is
-already resident in memory; inspecting the panel does not decode a saved binning. It reports the actual compressed artifact size when that
-binning is embedded in the saved `.nfit` project, and a dash otherwise. A
-future compressed size is not estimated because sparse masks, repeated values,
-and numerical content change the compression ratio.
+**Preferences → Performance → RAM limit** controls the shared managed memory
+allowance. Resource Manager edits the same machine-local limits in decimal GB.
+Auto normally uses 25% of currently available memory. A fixed ceiling is checked
+against both current process usage and available RAM before additional
+allocations. Thread-private accumulators and batch planning use the same
+resource policy; no per-binning CPU or batch controls are needed.
 
-Before a GUI operation starts one or more pending rebins, nfit also adds their
-estimated result payloads to the memory already occupied by the shared rebin
-cache. It warns when that projected total reaches 80% of the **RAM limit**.
-This preflight applies to explicit single and batch rebins,
-dataset and composite materialization, data and project saves, fitting and
-posterior sampling, and opening the data viewer. The dialog defaults to
-**Cancel**, so the operation can stop before numerical work begins; **Continue
-anyway** accepts that cached results may be evicted, while **Choose disk cache
-& continue…** designates the session folder before numerical work begins. Later
-evictions then use that folder without interrupting the operation. This estimate is
-conservative when an operation replaces an existing cached result, and dynamic
-Discrete or Tolerance axes remain approximate until their coordinates are
-resolved.
+An over-budget request stops before its managed allocation and offers Resource
+Manager. Increase the budget or unload selected objects, then retry. Pending
+results and peak working arrays are estimates; checks for automatic grids run
+again once their actual dimensions are known. The rebin panel reports the
+persistent payload estimate, or the actual resident bytes when available, and
+the compressed saved artifact size without decoding the binning.
 
 On macOS, available memory includes inactive and speculative pages that the
 operating system can reclaim; this prevents the worker planner from falling to

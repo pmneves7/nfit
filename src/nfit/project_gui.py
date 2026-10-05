@@ -102,7 +102,6 @@ from .importers import (
     importers_for_data_type,
 )
 from .mdevent import (
-    assess_mdevent_memory,
     inspect_mdevent_workspace,
 )
 from .mdhisto import (
@@ -123,8 +122,6 @@ from .model_registry import (
     model_types_in_category,
 )
 from .performance import (
-    assess_output_rebin_memory,
-    assess_rebin_cache_memory,
     estimate_rebin_result_bytes,
 )
 from .pipeline import (
@@ -248,7 +245,6 @@ from .qt_operation_guard import (
     guarded_gui_operation,
 )
 from .qt_widget_state import preserve_widget_state
-from .rebin_cache import SHARED_REBIN_CACHE_BUDGET
 from .spectral_channels import (
     SPECTRAL_CHANNEL_CONFIG_KEY,
     default_spectral_channel_config,  # noqa: F401 - compatibility re-export
@@ -5651,9 +5647,11 @@ def _composite_cached_binnings_current(group: DataGroup, node: DataGroup | Datas
 def project_binnings_need_refresh(project: NfitProject) -> bool:
     """Return whether any configured binning lacks a current process cache."""
 
+    from .project_resources import excluded_project_cache, project_binning_member
     return any(
         not _project_binning_is_current(kind, group, target, binning_id, config)
         for kind, _name, group, target, binning_id, config in _project_binning_targets(project)
+        if not excluded_project_cache(project, project_binning_member(project, kind, group, target, binning_id))
     )
 
 
@@ -5664,7 +5662,9 @@ def prepare_project_binning_cache(
 ) -> int:
     """Recompute only stale/missing configured binnings and return their count."""
 
-    targets = _project_binning_targets(project)
+    from .project_resources import excluded_project_cache, project_binning_member
+    targets = [item for item in _project_binning_targets(project)
+        if not excluded_project_cache(project, project_binning_member(project, item[0], item[2], item[3], item[4]))]
     stale = [
         target
         for target in targets
@@ -5755,6 +5755,7 @@ def _project_binning_artifacts(
     """Write current signature-matching rebin caches to temporary artifacts."""
 
     from .project_binning_policy import controlling_composite
+    from .project_resources import excluded_project_cache
 
     artifacts: dict[str, ArchiveContent] = {}
     entries: list[dict[str, Any]] = []
@@ -5776,6 +5777,8 @@ def _project_binning_artifacts(
                 key = dataset.id if is_fit else f"{dataset.id}:{binning['id']}"
                 cache_id = f"dataset-{dataset.id}-{binning['id']}"
                 member = binning_artifact_member(cache_id)
+                if excluded_project_cache(project, member):
+                    continue
                 backing = (
                     _VIEWER_VIEW_CACHE.project_backing(key, signature)
                     if hasattr(_VIEWER_VIEW_CACHE, "project_backing")
@@ -5839,6 +5842,8 @@ def _project_binning_artifacts(
                 owner = node_id if node_id is not None else f"root-{group_index}"
                 cache_id = f"composite-{owner}-{binning['id']}"
                 member = binning_artifact_member(cache_id)
+                if excluded_project_cache(project, member):
+                    continue
                 base_key = _composite_base_cache_key(scope, None if is_fit else binning["id"])
                 base_signature = _composite_cache_signature(scope, config_override=config, binning_id=None if is_fit else binning["id"], include_backgrounds=False)
                 stage = "final"
@@ -6290,6 +6295,8 @@ def load_project(path: str | Path) -> NfitProject:
     from .raw_dgs_cache import bind_project_reduced_event_caches
 
     bind_project_reduced_event_caches(project, project_path)
+    from .data_workspace import set_project_temporary_directory
+    set_project_temporary_directory(project, project.settings.get("temporary_storage_directory"), validate=False)
     _bind_project_analysis_sources(project, project_path)
     _restore_project_binning_cache(project, project_path)
     return project
@@ -7382,6 +7389,10 @@ class NfitProjectExplorer:
         self.window.activateWindow()
         return self
 
+    def open_resource_manager(self):
+        from .project_resource_gui import open_resource_manager
+        return open_resource_manager(self)
+
     def run(self) -> int:
         self.show()
         splash = getattr(self.app, "_nfit_startup_splash", None)
@@ -8081,6 +8092,8 @@ class NfitProjectExplorer:
         if not self._confirm_save_before_closing_project():
             return False
         self._close_all_slice_viewers()
+        from .project_resource_gui import retire_project_resources
+        retire_project_resources(self)
         self.project = _new_gui_project()
         self.project_path = None
         self._saved_project_size_bytes = None
@@ -8103,6 +8116,8 @@ class NfitProjectExplorer:
         if not self._confirm_save_before_closing_project():
             return False
         self._close_all_slice_viewers()
+        from .project_resource_gui import retire_project_resources
+        retire_project_resources(self)
         self._allow_window_close = True
         self.window.close()
         self._allow_window_close = False
@@ -8316,7 +8331,19 @@ class NfitProjectExplorer:
 
     def _load_project_path(self, path: Path, *, remember: bool) -> bool:
         self._close_all_slice_viewers()
-        self.project = load_project(path)
+        from .project_resource_gui import retire_project_resources, run_project_resource_job
+        retire_project_resources(self)
+        try:
+            loaded = run_project_resource_job(self, "Opening nfit project…", lambda report: load_project(path))
+        except RebinCancellationRequested:
+            return False
+        except MemoryError as exc:
+            from .project_resource_gui import handle_resource_limit
+            return handle_resource_limit(self, exc)
+        except (OSError, ValueError) as exc:
+            from .project_resource_gui import handle_resource_io_error
+            return handle_resource_io_error(self, exc, operation="Opening project")
+        self.project = loaded
         self.project_path = path
         self._saved_project_size_bytes = _project_file_size(path)
         set_active_project_path(path)
@@ -8414,13 +8441,17 @@ class NfitProjectExplorer:
             else None
         )
         try:
-            save_project(
-                self.project,
-                self.project_path,
-                progress_callback=progress,
-            )
+            from .project_resource_gui import run_project_resource_job
+            run_project_resource_job(self, "Saving nfit project…", lambda report: save_project(
+                self.project, self.project_path, progress_callback=report), on_progress=progress)
         except RebinCancellationRequested:
             return False
+        except MemoryError as exc:
+            from .project_resource_gui import handle_resource_limit
+            return handle_resource_limit(self, exc)
+        except (OSError, ValueError) as exc:
+            from .project_resource_gui import handle_resource_io_error
+            return handle_resource_io_error(self, exc, operation="Saving project")
         finally:
             self._close_rebin_progress(progress)
         self.has_unsaved_changes = False
@@ -8463,14 +8494,17 @@ class NfitProjectExplorer:
             else None
         )
         try:
-            save_project(
-                self.project,
-                new_path,
-                asset_source=old_path,
-                progress_callback=progress,
-            )
+            from .project_resource_gui import run_project_resource_job
+            run_project_resource_job(self, "Saving nfit project…", lambda report: save_project(
+                self.project, new_path, asset_source=old_path, progress_callback=report), on_progress=progress)
         except RebinCancellationRequested:
             return False
+        except MemoryError as exc:
+            from .project_resource_gui import handle_resource_limit
+            return handle_resource_limit(self, exc)
+        except (OSError, ValueError) as exc:
+            from .project_resource_gui import handle_resource_io_error
+            return handle_resource_io_error(self, exc, operation="Saving project")
         finally:
             self._close_rebin_progress(progress)
         self.project_path = new_path
@@ -9094,31 +9128,14 @@ class NfitProjectExplorer:
     ) -> bool:
         """Warn before an operation approaches the shared result-cache ceiling."""
 
-        estimates = [int(value) for value in result_bytes if int(value) > 0]
-        current = SHARED_REBIN_CACHE_BUDGET.total_bytes()
-        added, projected, limit, warn = assess_rebin_cache_memory(
-            estimates,
-            current_cache_bytes=current,
-            cache_limit_bytes=_project_data.scientific_cache_budget_bytes(),
-        )
-        if not warn:
-            return True
-        from .project_cache_gui import confirm_rebin_cache_preflight
+        from .project_resource_gui import handle_resource_limit
+        from .resource_budget import ResourceLimitError, check_memory
 
-        return confirm_rebin_cache_preflight(
-            self.window,
-            operation=operation,
-            result_count=len(estimates),
-            added_bytes=added,
-            current_bytes=current,
-            projected_bytes=projected,
-            limit_bytes=limit,
-            choose_disk_cache=(
-                self._compressed_cache_prompt.choose_cache_directory
-                if self._compressed_cache_prompt is not None
-                else None
-            ),
-        )
+        try:
+            check_memory(sum(max(0, int(value)) for value in result_bytes), operation=operation)
+        except ResourceLimitError as exc:
+            return handle_resource_limit(self, exc)
+        return True
 
     def _pending_project_rebin_cache_bytes(
         self,
@@ -9128,6 +9145,8 @@ class NfitProjectExplorer:
     ) -> list[int]:
         """Return result estimates for stale binnings an operation may compute."""
 
+        from .project_resources import excluded_project_cache, project_binning_member
+
         estimates = []
         for kind, _name, owner, target, binning_id, config in _project_binning_targets(
             self.project
@@ -9135,6 +9154,10 @@ class NfitProjectExplorer:
             if group is not None and owner is not group:
                 continue
             if kind != "dataset" and not include_composites:
+                continue
+            if excluded_project_cache(self.project, project_binning_member(
+                self.project, kind, owner, target, binning_id
+            )):
                 continue
             if _project_binning_is_current(
                 kind, owner, target, binning_id, config
@@ -9155,42 +9178,9 @@ class NfitProjectExplorer:
     ) -> bool:
         """Confirm an ordinary rebin when its output workspace is very large."""
 
-        from PySide6 import QtWidgets
-
-        if not self._confirm_rebin_cache_memory(
-            [
-                self._estimated_rebin_cache_bytes(item["config"], composite=False)
-                for item in binnings
-            ],
-            operation=operation,
-        ):
-            return False
-
-        risky = []
-        for item in binnings:
-            config = item["config"]
-            output_bins = _dataset_rebin_output_bins(config)
-            if not output_bins:
-                continue
-            estimate, available, warn = assess_output_rebin_memory(
-                output_bins, max_batch_bytes=_rebin_max_batch_bytes(config)
-            )
-            if warn:
-                risky.append((item, output_bins, estimate, available))
-        if not risky:
-            return True
-        item, output_bins, estimate, available = max(risky, key=lambda row: row[2])
-        answer = QtWidgets.QMessageBox.warning(
-            self.window,
-            "Rebin memory estimate",
-            f"The requested {item['name']!r} rebin has {output_bins:,} output bins. "
-            f"Its estimated array workspace is {estimate / 1024**3:.1f} GB, "
-            f"over half of the currently available {available / 1024**3:.1f} GB "
-            "of RAM. Continue?",
-            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
-            QtWidgets.QMessageBox.StandardButton.No,
-        )
-        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+        estimates = [self._estimated_rebin_cache_bytes(item["config"], composite=False)
+                     for item in binnings]
+        return self._confirm_rebin_cache_memory(estimates, operation=operation)
 
     def _confirm_composite_rebin_memory(
         self,
@@ -9201,140 +9191,19 @@ class NfitProjectExplorer:
     ) -> bool:
         """Confirm large native or ordinary composite grids before rebinning."""
 
-        from PySide6 import QtWidgets
-
-        if not self._confirm_rebin_cache_memory(
-            [
-                self._estimated_rebin_cache_bytes(item["config"], composite=True)
-                for item in binnings
-            ],
-            operation=operation,
-        ):
-            return False
-
-        candidates = _composite_candidates(group)
-        if not candidates:
-            return True
-        native = _dataset_composite_kind(candidates[0]) == "mdevent"
-        risky = []
-        for item in binnings:
-            config = item["config"]
-            _lower, _upper, num_bins = _composite_rebin_bounds(config)
-            if native:
-                estimate, available, warn = assess_mdevent_memory(
-                    num_bins, max_batch_bytes=_rebin_max_batch_bytes(config)
-                )
-            else:
-                estimate, available, warn = assess_output_rebin_memory(
-                    math.prod(num_bins), max_batch_bytes=_rebin_max_batch_bytes(config)
-                )
-            if warn:
-                risky.append((item, num_bins, estimate, available))
-        if not risky:
-            return True
-        item, num_bins, estimate, available = max(risky, key=lambda values: values[2])
-        grid = " x ".join(str(value) for value in num_bins)
-        prefix = (
-            f"{len(risky)} requested binnings may use over half the currently available RAM. "
-            f"The largest is {item['name']!r}: "
-            if len(risky) > 1
-            else "The requested "
-        )
-        answer = QtWidgets.QMessageBox.warning(
-            self.window,
-            "Rebin memory estimate",
-            f"{prefix}{grid} grid ({math.prod(num_bins):,} bins) is estimated to use "
-            f"{estimate / 1024**3:.1f} GB. Currently available RAM is "
-            f"{available / 1024**3:.1f} GB; this is over half of that allowance.\n\n"
-            "Continuing may cause heavy swapping or terminate nfit. "
-            "Do you want to continue anyway?",
-            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
-            QtWidgets.QMessageBox.StandardButton.No,
-        )
-        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
-            return False
-        for risky_item, _bins, _estimate, _available in risky:
-            risky_item["config"]["_allow_memory_overcommit_once"] = True
-        return True
+        estimates = [self._estimated_rebin_cache_bytes(item["config"], composite=True)
+                     for item in binnings]
+        return self._confirm_rebin_cache_memory(estimates, operation=operation)
 
     def _confirm_viewer_rebin_memory(
         self, group: DataGroup, *, use_composite: bool
     ) -> bool:
         """Warn once for the largest pending output in a viewer load."""
 
-        from PySide6 import QtWidgets
-
-        if not self._confirm_rebin_cache_memory(
-            self._pending_project_rebin_cache_bytes(
-                group=group, include_composites=use_composite
-            ),
+        return self._confirm_rebin_cache_memory(
+            self._pending_project_rebin_cache_bytes(group=group, include_composites=use_composite),
             operation="Opening the data viewer",
-        ):
-            return False
-
-        risky = []
-        for dataset in group.iter_datasets():
-            if not isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict):
-                continue
-            for item in dataset_rebin_binnings(dataset):
-                config = item["config"]
-                if not config.get("enabled", False) or _project_binning_is_current(
-                    "dataset", group, dataset, item["id"], config
-                ):
-                    continue
-                bins = estimated_rebin_shape(config)
-                if not bins:
-                    continue
-                estimate, available, warn = assess_output_rebin_memory(
-                    math.prod(bins), max_batch_bytes=_rebin_max_batch_bytes(config)
-                )
-                if warn:
-                    risky.append((item, bins, estimate, available))
-        if use_composite:
-            for scope in _composite_scopes(group):
-                if not data_group_composite_enabled(scope):
-                    continue
-                candidates = _composite_candidates(scope)
-                if not candidates:
-                    continue
-                native = _dataset_composite_kind(candidates[0]) == "mdevent"
-                for item in data_group_composite_binnings(scope):
-                    config = item["config"]
-                    if not config.get("enabled", False) or _project_binning_is_current(
-                        "dataset group", group, scope, item["id"], config
-                    ):
-                        continue
-                    _lower, _upper, bins = _composite_rebin_bounds(config)
-                    if native:
-                        estimate, available, warn = assess_mdevent_memory(
-                            bins, max_batch_bytes=_rebin_max_batch_bytes(config)
-                        )
-                    else:
-                        estimate, available, warn = assess_output_rebin_memory(
-                            math.prod(bins),
-                            max_batch_bytes=_rebin_max_batch_bytes(config),
-                        )
-                    if warn:
-                        risky.append((item, bins, estimate, available))
-        if not risky:
-            return True
-        item, bins, estimate, available = max(risky, key=lambda row: row[2])
-        answer = QtWidgets.QMessageBox.warning(
-            self.window,
-            "Data viewer memory estimate",
-            f"Opening the viewer may rebin {len(risky)} large result(s). The largest, "
-            f"{item['name']!r}, has a {' x '.join(map(str, bins))} grid "
-            f"({math.prod(bins):,} bins). Its estimated peak is "
-            f"{estimate / 1024**3:.1f} GB, over half of the currently available "
-            f"{available / 1024**3:.1f} GB of RAM. Continue?",
-            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
-            QtWidgets.QMessageBox.StandardButton.No,
         )
-        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
-            return False
-        for risky_item, _bins, _estimate, _available in risky:
-            risky_item["config"]["_allow_memory_overcommit_once"] = True
-        return True
 
     def rebin_composite_now(self, group: DataGroup | _CompositeScope) -> bool:
         from PySide6 import QtWidgets
@@ -10565,18 +10434,20 @@ class NfitProjectExplorer:
         """Bind per-selection progress and input protection to the public loader."""
         progress = None
         progress_owner = None
+        worker_report = None
 
-        def report(event):
+        def display_report(event):
             nonlocal progress
             if not self._interactive:
                 return
-            if progress is None:
-                progress = self._make_rebin_progress_callback(
-                    "Loading selected viewer binning...",
-                    parent=progress_owner,
-                )
             if progress is not None:
                 progress(event)
+
+        def report(event):
+            if worker_report is not None:
+                worker_report(event)
+            else:
+                display_report(event)
 
         source, names = slice_viewer_datasets(
             group, use_composite=use_composite, preload=False,
@@ -10590,12 +10461,14 @@ class NfitProjectExplorer:
 
         @guarded_gui_operation
         def load(index):
-            nonlocal progress, progress_owner
-            if self._interactive:
-                from PySide6 import QtWidgets
+            nonlocal progress, progress_owner, worker_report
+            from .project_resource_gui import handle_resource_limit, run_project_resource_job
+            from .qt_resource_jobs import ResourceJobCancelled
+            from .resource_budget import ResourceLimitError
 
-                progress_owner = QtWidgets.QApplication.activeWindow()
             try:
+                if source.is_loaded(index):
+                    return source[index]
                 descriptor = source.descriptors[index]
                 for kind, _name, owner, target, binning_id, config in _project_binning_targets(self.project):
                     if owner is not group or str(binning_id) != descriptor.binning_id:
@@ -10612,15 +10485,29 @@ class NfitProjectExplorer:
                     )
                     if not allowed:
                         raise RebinCancellationRequested("Viewer loading cancelled.")
-                result = source[index]
+                def task(callback):
+                    nonlocal worker_report
+                    worker_report = callback
+                    try:
+                        return source[index]
+                    finally:
+                        worker_report = None
+                result = run_project_resource_job(self, "Loading selected viewer binning…",
+                    task, on_progress=display_report)
                 self._refresh_cache_badges()
                 return result
+            except ResourceLimitError as exc:
+                handle_resource_limit(self, exc)
+                raise RebinCancellationRequested("Viewer loading stopped at the RAM budget.") from exc
+            except ResourceJobCancelled as exc:
+                raise RebinCancellationRequested(str(exc)) from exc
             finally:
                 self._close_rebin_progress(progress)
                 progress = None
                 progress_owner = None
 
-        return DeferredViewerDatasets(source.descriptors, load, initial_index=source.initial_index), names
+        return DeferredViewerDatasets(source.descriptors, load, initial_index=source.initial_index,
+                                      release_callback=lambda index: source.release(index)), names
 
     @guarded_gui_operation
     def open_slice_viewer(
@@ -10641,11 +10528,11 @@ class NfitProjectExplorer:
         progress = self._rebin_progress_callback_for_group(group, use_composite=use_composite) if preload else None
         try:
             if preload:
-                datasets, names = slice_viewer_datasets(
-                    group, use_composite=use_composite, force_rebin=True,
-                    progress_callback=progress,
-                    defer_progress_completion=progress is not None,
-                )
+                from .project_resource_gui import run_project_resource_job
+                datasets, names = run_project_resource_job(self, "Loading viewer data…", lambda report:
+                    slice_viewer_datasets(group, use_composite=use_composite, force_rebin=True,
+                        progress_callback=report, defer_progress_completion=progress is not None),
+                    on_progress=progress)
             else:
                 datasets, names = self._deferred_viewer_data(
                     group, use_composite=use_composite,
@@ -11077,6 +10964,10 @@ class NfitProjectExplorer:
         timer.start()
 
     def _run_pending_overlay_refresh(self) -> None:
+        if getattr(self, "_resource_operation_active", False) or self._fit_worker_thread is not None:
+            if self._overlay_refresh_timer is not None:
+                self._overlay_refresh_timer.start()
+            return
         pending = list(self._pending_overlay_groups.values())
         self._pending_overlay_groups.clear()
         for group, force_rebin in pending:
@@ -20782,6 +20673,12 @@ class NfitProjectExplorer:
             )
         if viewer.window is not None:
             viewer.window.setWindowTitle(f"nfit Data Viewer - {group.name}")
+        if hasattr(viewer, "current_plot_settings") and hasattr(viewer, "apply_plot_settings"):
+            current = viewer.current_plot_settings()
+            retained = getattr(self, "_resource_retired_plot_settings", {})
+            key = (current.get("dataset_name"), current.get("binning_name"))
+            if key in retained:
+                viewer.apply_plot_settings(retained.pop(key))
         return viewer
 
     def _forget_slice_viewer(

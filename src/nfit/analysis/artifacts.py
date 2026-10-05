@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
+from dataclasses import dataclass
 from io import BytesIO
 from os import PathLike
 from pathlib import Path
@@ -12,18 +14,122 @@ import numpy as np
 
 from ..array_archive import write_array_archive
 from ..background_channel_io import background_metadata_payload, restore_background_metadata
+from ..data_workspace import record_temporary_file
 from ..dataset import PointData4D, PointListData
-from ..mapped_archive import MappedWorkspaceError, read_mapped_array_archive
+from ..mapped_archive import read_mapped_array_archive
 from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
-from ..performance import operation_worker_count, scientific_memory_limit_bytes
+from ..operation_control import report_operation
+from ..performance import operation_worker_count
 from ..point_data_archive import point_data_archive_payload, restore_point_data_archive
 from ..project_archive import _project_artifact_reader_factory, open_project_artifact
+from ..resource_budget import reserve_memory
+from ..storage_budget import reserve_disk_space
 from .core import DatasetOutput, TableOutput
 
-# Mapping is a pressure relief path for large saved histograms. Ordinary
-# artifact reads keep their existing in-memory behavior unless opted in.
-_MAPPED_ARTIFACT_MIN_BYTES = 2 * 1024**3
+# Mapping is an explicit scripting option; project viewers load whole cubes.
 _MAPPED_MEMBER_MIN_BYTES = 8 * 1024**2
+
+
+@dataclass(frozen=True)
+class ArtifactCapacity:
+    """Expanded array storage and conservative decode peak, from NPZ headers."""
+
+    expanded_bytes: int
+    peak_bytes: int
+    member_bytes: tuple[tuple[str, int], ...]
+
+
+def _array_header(stream: BinaryIO):
+    version = np.lib.format.read_magic(stream)
+    if version == (1, 0):
+        return np.lib.format.read_array_header_1_0(stream)
+    if version == (2, 0):
+        return np.lib.format.read_array_header_2_0(stream)
+    if version == (3, 0):
+        # NumPy exposes public readers for versions 1/2 only; version 3 uses
+        # UTF-8 field names and must not be decoded with the Latin-1 reader.
+        return np.lib.format._read_array_header(stream, version)
+    raise ValueError(f"unsupported NumPy member version {version!r}")
+
+
+def _decoded_array_dtype(name: str, dtype: np.dtype) -> np.dtype:
+    """Account for dtype normalization performed by the dataset codecs."""
+
+    if name == "mask":
+        return np.dtype(bool)
+    if name in {
+        "signal", "errors", "num_events", "H", "K", "L", "E",
+        "intensity", "sigma", "temperature", "magnetic_field",
+        "normalization_denominator",
+    }:
+        return np.dtype(float)
+    for prefix in ("column_", "measurement_payload_"):
+        if name.startswith(prefix) and name[len(prefix):].isdigit():
+            return np.dtype(float)
+    for prefix in ("axis_", "aux_", "auxiliary_"):
+        if name.startswith(prefix):
+            index, _, field = name[len(prefix):].partition("_")
+            if index.isdigit() and field in {"values", "errors"}:
+                return np.dtype(float)
+    for prefix in (
+        "source_dependencies_", "counting_numerator_dependencies_",
+        "counting_exposure_dependencies_",
+    ):
+        if name.startswith(prefix):
+            field = name[len(prefix):]
+            if field in {"source_variances", "coefficients"}:
+                return np.dtype(float)
+            if field in {"observation_indices", "source_indices"}:
+                return np.dtype(np.int64)
+    # Optional numerical payloads can also require float64 normalization.
+    return np.dtype(float) if dtype.kind == "f" else dtype
+
+
+def _archive_capacity(archive: Any) -> ArtifactCapacity:
+    sizes = []
+    conversion = 0
+    for info in archive.zip.infolist():
+        if not info.filename.endswith(".npy"):
+            continue
+        with archive.zip.open(info) as stream:
+            shape, _fortran, dtype = _array_header(stream)
+            if dtype.hasobject:
+                raise ValueError("object arrays are not supported")
+            count = int(np.prod(shape, dtype=object))
+            size = count * dtype.itemsize
+            if size != info.file_size - stream.tell():
+                raise ValueError(f"array member {info.filename!r} has an invalid declared size")
+            decoded_dtype = _decoded_array_dtype(info.filename[:-4], dtype)
+            if dtype != decoded_dtype:
+                # A cast can create a writable array, then the immutable
+                # container isolates it. Integer columns and byte masks need
+                # this allowance just as non-float64 numerical arrays do.
+                conversion += 2 * count * decoded_dtype.itemsize
+            sizes.append((info.filename[:-4], size))
+    expanded = sum(size for _name, size in sizes)
+    return ArtifactCapacity(expanded, expanded + conversion + 16 * 1024**2, tuple(sizes))
+
+
+def dataset_artifact_capacity(
+    source: str | PathLike[str] | bytes | BinaryIO,
+) -> ArtifactCapacity:
+    """Inspect an artifact without decoding any numerical array payload."""
+
+    stream = BytesIO(source) if isinstance(source, bytes) else source
+    position = stream.tell() if hasattr(stream, "tell") else None
+    try:
+        with np.load(stream, allow_pickle=False) as archive:
+            return _archive_capacity(archive)
+    finally:
+        if position is not None:
+            stream.seek(position)
+
+
+def project_dataset_artifact_capacity(project_path: str | Path, artifact_path: str) -> ArtifactCapacity:
+    """Inspect a project member without loading its histogram."""
+
+    with open_project_artifact(project_path, artifact_path) as stream:
+        return dataset_artifact_capacity(stream)
 
 
 def write_dataset_artifact(
@@ -34,13 +140,20 @@ def write_dataset_artifact(
     payload = _payload(data)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".npz", delete=False) as stream:
-            temporary = Path(stream.name)
-            if compressed:
-                write_array_archive(stream, payload)
-            else:
-                np.savez(stream, **payload)
-        temporary.replace(target)
+        expanded = sum(np.asarray(value).nbytes for value in payload.values())
+        # DEFLATE can expand incompressible input slightly; headers and ZIP
+        # directory entries also occupy space in the atomic sibling file.
+        with reserve_disk_space(target.parent, expanded + expanded // 100 + 1024**2):
+            report_operation("Saving dataset artifact")
+            with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".npz", delete=False) as stream:
+                temporary = Path(stream.name)
+                if compressed:
+                    write_array_archive(stream, payload)
+                else:
+                    np.savez(stream, **payload)
+            report_operation("Publishing dataset artifact")
+            temporary.replace(target)
+            record_temporary_file(target)
     except Exception:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -50,9 +163,15 @@ def write_dataset_artifact(
 def dataset_artifact_bytes(data: MDHistoData | PointData4D | PointListData) -> bytes:
     """Serialize an analysis dataset for storage inside a project archive."""
 
-    stream = BytesIO()
-    write_array_archive(stream, _payload(data))
-    return stream.getvalue()
+    payload = _payload(data)
+    expanded = sum(np.asarray(value).nbytes for value in payload.values())
+    # Unlike the normal disk writer, this public helper retains the compressed
+    # archive in RAM. Allow incompressible output and a possible getvalue copy.
+    with reserve_memory(2 * (expanded + expanded // 100 + 1024**2),
+                        operation="Serializing in-memory dataset artifact"):
+        stream = BytesIO()
+        write_array_archive(stream, payload)
+        return stream.getvalue()
 
 
 def read_project_dataset_artifact(
@@ -75,43 +194,33 @@ def read_dataset_artifact(
     memory_map: bool | None = False,
     temp_dir: str | PathLike[str] | None = None,
 ) -> MDHistoData | PointData4D | PointListData:
-    """Read immutable data; ``None`` maps large histograms under RAM pressure.
+    """Read immutable data after reserving its expanded RAM footprint.
 
-    ``True`` requests mapping regardless of size, mainly for batch workflows.
-    File-backed reads map beside their source by default. Stream/bytes callers
-    can supply ``temp_dir``. Unavailable disk storage falls back to the normal
-    resident reader, without choosing another temporary filesystem.
+    ``True`` explicitly requests mapping for batch workflows. ``None`` retains
+    ordinary whole-cube RAM loading. File-backed mappings expand beside their
+    source unless ``temp_dir`` is supplied. Mapping failures propagate: a disk
+    failure must never silently trigger a much larger resident allocation.
     """
 
     stream: str | PathLike[str] | BinaryIO
     stream = BytesIO(source) if isinstance(source, bytes) else source
     if temp_dir is None and isinstance(source, (str, PathLike)):
         temp_dir = Path(source).absolute().parent
-    initial_position = stream.tell() if hasattr(stream, "tell") else None
-    if memory_map is not False:
-        with np.load(stream, allow_pickle=False) as archive:
-            histogram = str(np.asarray(archive["container"]).item()) in {"mdhisto", "point4d"}
-            payload_bytes = sum(info.file_size for info in archive.zip.infolist())
-        use_mapping = histogram and (
-            memory_map is True
-            or payload_bytes >= max(
-                _MAPPED_ARTIFACT_MIN_BYTES, scientific_memory_limit_bytes() // 4
-            )
-        )
-        if initial_position is not None:
-            stream.seek(initial_position)
-        if use_mapping:
-            try:
+    capacity = dataset_artifact_capacity(stream)
+    position = stream.tell() if hasattr(stream, "tell") else None
+    with reserve_memory(capacity.peak_bytes, operation="Loading saved dataset"):
+        if memory_map is True:
+            with np.load(stream, allow_pickle=False) as archive:
+                histogram = str(np.asarray(archive["container"]).item()) in {"mdhisto", "point4d"}
+            if hasattr(stream, "seek"):
+                stream.seek(position or 0)
+            if histogram:
                 payload = read_mapped_array_archive(
                     stream, mapped_min_bytes=_MAPPED_MEMBER_MIN_BYTES, temp_dir=temp_dir
                 )
-            except MappedWorkspaceError:
-                if initial_position is not None:
-                    stream.seek(initial_position)
-            else:
                 return dataset_artifact_from_payload(payload)
-    with np.load(stream, allow_pickle=False) as archive:
-        return dataset_artifact_from_payload(_OwnedArchiveArrays(archive))
+        with np.load(stream, allow_pickle=False) as archive:
+            return dataset_artifact_from_payload(_OwnedArchiveArrays(archive))
 
 
 class _OwnedArchiveArrays:
@@ -156,15 +265,21 @@ class _OwnedArchiveArrays:
             self.independent_reader_factory = _project_artifact_reader_factory(archive.zip.fp)
             self.parallel_names = frozenset(names)
             with ThreadPoolExecutor(max_workers=workers) as executor:
-                self.loaded.update(zip(names, executor.map(self._read, names), strict=True))
+                futures = [executor.submit(copy_context().run, self._read, name) for name in names]
+                try:
+                    self.loaded.update((name, future.result()) for name, future in zip(names, futures, strict=True))
+                except BaseException:
+                    for future in futures:
+                        future.cancel()
+                    raise
 
     def _read(self, name: str) -> np.ndarray:
         if self.independent_reader_factory is not None and name in self.parallel_names:
             with self.independent_reader_factory() as stream:
                 with np.load(stream, allow_pickle=False) as archive:
-                    array = np.asarray(archive[name])
+                    array = _decode_array_member(archive, name)
         else:
-            array = np.asarray(self.archive[name])
+            array = _decode_array_member(self.archive, name)
         array.setflags(write=False)
         return array
 
@@ -175,6 +290,32 @@ class _OwnedArchiveArrays:
         if name in self.loaded:
             return self.loaded.pop(name)
         return self._read(name)
+
+
+def _decode_array_member(archive: Any, name: str) -> np.ndarray:
+    """Decode a single member in bounded cancellable chunks, without copies."""
+
+    with archive.zip.open(f"{name}.npy") as stream:
+        shape, fortran, dtype = _array_header(stream)
+        if dtype.hasobject:
+            raise ValueError("object arrays are not supported")
+        report_operation(f"Decoding {name}")
+        array = np.empty(shape, dtype=dtype, order="F" if fortran else "C")
+        raw = memoryview(array.ravel(order="K")).cast("B")
+        interval = 64 * 1024**2
+        chunk = 4 * 1024**2
+        for offset in range(0, len(raw), chunk):
+            if offset % interval == 0:
+                report_operation(f"Decoding {name}", completed=offset, total=len(raw))
+            view = raw[offset:offset + chunk]
+            filled = 0
+            while filled < len(view):
+                count = stream.readinto(view[filled:])
+                if not count:
+                    raise EOFError(f"array member {name!r} ended before its declared size")
+                filled += count
+        report_operation(f"Decoded {name}", completed=len(raw), total=len(raw))
+        return array
 
 
 def dataset_artifact_from_payload(archive: Any) -> MDHistoData | PointData4D | PointListData:

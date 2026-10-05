@@ -12,6 +12,9 @@ This page gives the detailed capability inventory. Start with
 
 nfit provides:
 
+- a flat sortable Resource Manager with multi-row loading, unloading, confirmed
+  project-cache deletion, shared viewer storage and pre-allocation RAM checks,
+  GB budgets, selectable temporary storage and cancellable background archive I/O;
 - native MDHisto, single-crystal and direct-powder MDEvent, and compatible raw
   ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or direct-powder workflows,
   including processed-vanadium normalization, with project-owned composite

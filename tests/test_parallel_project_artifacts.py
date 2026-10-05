@@ -213,7 +213,7 @@ def test_parallel_reader_preserves_archive_error_checks(tmp_path, force_parallel
         stream = io.BytesIO()
         np.save(stream, np.full(16, object(), dtype=object), allow_pickle=True)
         payload = _replace_inner_member(payload, "signal.npy", stream.getvalue())
-        message = "allow_pickle=False"
+        message = "object arrays are not supported"
     elif damage == "npy_header":
         stream = io.BytesIO()
         np.save(stream, np.arange(16.), allow_pickle=False)
@@ -233,11 +233,17 @@ def test_parallel_reader_preserves_archive_error_checks(tmp_path, force_parallel
 
 @pytest.mark.parametrize("budget_mib,expected_workers", [(16, 1), (32, 2)])
 def test_parallel_restore_honors_cpu_and_memory_worker_budget(tmp_path, monkeypatch, budget_mib, expected_workers):
-    from nfit import performance
+    from nfit import performance, resource_budget
 
     # 750k cells exceed the normal parallel threshold; each largest member is
     # 6 MB, so the unchanged 16 MiB per-worker floor gives this exact RAM cap.
     project = _project(tmp_path / "project.nfit", _histogram(size=750_000))
+    # These tiny limits constrain worker scratch only. The independent whole-
+    # process admission ceiling must cover the interpreter and decoded cube.
+    monkeypatch.setattr(resource_budget, "_limit_provider", lambda: 1024**3)
+    monkeypatch.setattr(resource_budget, "_rss_provider", lambda: 100 * 1024**2)
+    monkeypatch.setattr(resource_budget, "_managed_provider", lambda: 0)
+    monkeypatch.setattr(resource_budget, "_available_provider", lambda: 1024**3)
     monkeypatch.setattr(performance, "scientific_memory_limit_bytes", lambda: budget_mib*1024**2)
     executor = artifacts.ThreadPoolExecutor
     workers = []

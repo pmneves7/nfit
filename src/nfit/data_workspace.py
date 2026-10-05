@@ -10,8 +10,59 @@ from __future__ import annotations
 
 import os
 import tempfile
+import weakref
 from contextlib import contextmanager
 from pathlib import Path
+from threading import RLock
+
+_WORKSPACE_OVERRIDES: dict[str, str] = {}
+_TEMPORARY_DIRECTORIES: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+_TEMPORARY_FILES: dict[str, dict[str, int]] = {}
+_STORAGE_LOCK = RLock()
+
+
+def record_temporary_file(path, byte_count=None):
+    """Record completed staging on its writer thread, avoiding GUI disk scans."""
+    target = Path(path).absolute()
+    with _STORAGE_LOCK:
+        root = next((name for name in tuple(_TEMPORARY_DIRECTORIES)
+                     if target.is_relative_to(Path(name))), None)
+        if root is not None:
+            size = target.stat().st_size if byte_count is None else int(byte_count)
+            _TEMPORARY_FILES.setdefault(root, {})[str(target)] = size
+
+
+def set_project_temporary_directory(project, directory: str | None, *, validate=True) -> None:
+    """Choose storage for future allocations without moving existing files."""
+    if directory:
+        root = Path(directory).expanduser().absolute()
+        if validate and (not root.is_dir() or not os.access(root, os.W_OK)):
+            raise DataWorkspaceError(f"Choose an existing writable directory: {root}")
+        directory = str(root)
+    if hasattr(project, "settings"):
+        project.settings["temporary_storage_directory"] = directory or ""
+    owner = getattr(project, "_project_path", None)
+    paths = [owner] if owner else []
+    paths.extend(dataset.metadata.get("_project_path") or dataset.metadata.get("source_file")
+                 for group in project.data_groups for dataset in group.iter_datasets())
+    for path in paths:
+        if path:
+            identity = str(Path(path).absolute())
+            if directory:
+                _WORKSPACE_OVERRIDES[identity] = directory
+            else:
+                _WORKSPACE_OVERRIDES.pop(identity, None)
+
+
+def temporary_storage_usage() -> tuple[tuple[str, int], ...]:
+    """List nfit-owned live staging directories, without scanning other data."""
+    with _STORAGE_LOCK:
+        live = {name for name, owner in tuple(_TEMPORARY_DIRECTORIES.items())
+                if owner._finalizer.alive}
+        for name in tuple(_TEMPORARY_FILES):
+            if name not in live:
+                _TEMPORARY_FILES.pop(name, None)
+        return tuple((name, sum(_TEMPORARY_FILES.get(name, {}).values())) for name in live)
 
 
 class DataWorkspaceError(OSError):
@@ -49,6 +100,7 @@ def project_data_workspace(project, path):
     previous_nodes = [getattr(node, "_data_workspace_owner_path", missing) for node in nodes]
     for group in project.data_groups:
         bind_data_workspace(group, path)
+    set_project_temporary_directory(project, getattr(project, "settings", {}).get("temporary_storage_directory"), validate=False)
     try:
         yield
     except BaseException:
@@ -77,14 +129,19 @@ def temporary_data_directory(
     The returned object owns cleanup, including retained reduced-event caches.
     """
 
-    parent = None if owner_path is None else Path(owner_path).absolute().parent
+    owner = None if owner_path is None else Path(owner_path).absolute()
+    override = _WORKSPACE_OVERRIDES.get(str(owner)) if owner is not None else None
+    parent = Path(override) if override else (None if owner is None else owner.parent)
     if parent is not None and not parent.is_dir():
         raise DataWorkspaceError(
             f"Scientific workspace directory is unavailable: {parent}. "
             "Choose an accessible project or output directory."
         )
     try:
-        return tempfile.TemporaryDirectory(prefix=prefix, dir=parent)
+        directory = tempfile.TemporaryDirectory(prefix=prefix, dir=parent)
+        with _STORAGE_LOCK:
+            _TEMPORARY_DIRECTORIES[directory.name] = directory
+        return directory
     except OSError as exc:
         raise DataWorkspaceError(
             f"Cannot create scientific workspace in {parent or 'system temporary storage'}. "

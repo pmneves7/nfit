@@ -240,6 +240,63 @@ def test_live_resident_result_remains_canonical_after_budget_eviction():
     assert budget.total_bytes() == resident_bytes
 
 
+def test_shared_array_accounting_survives_original_container_release():
+    budget = RebinCacheBudget()
+    cache = RebinCache(budget)
+    original = _tiny_mdhisto_data(7.0)
+    cache["key"] = ("signature", original)
+    expected = budget.total_bytes()
+    replacement = original.with_updates(metadata={"viewer": True})
+    assert replacement.signal is original.signal
+    original_reference = weakref.ref(original)
+    cache.unload("key")
+    del original
+    gc.collect()
+
+    assert original_reference() is None
+    assert budget.total_bytes() == expected
+    del replacement
+    gc.collect()
+    assert budget.total_bytes() == 0
+
+
+def test_manual_retention_ignores_automatic_entry_and_memory_eviction():
+    budget = RebinCacheBudget(manual_retention=True)
+    cache = RebinCache(budget)
+    offered = []
+    cache.before_discard = lambda *args: offered.append(args)
+    for index in range(3):
+        lru_store(cache, index, (str(index), _tiny_mdhisto_data(1.0)), 1, 1)
+    assert len(cache) == 3
+    assert cache._compressed_bytes == 0
+    assert not offered
+    assert budget.total_bytes() > 1
+
+
+def test_resource_records_do_not_decode_and_unload_preserves_saved_backing(tmp_path, monkeypatch):
+    from nfit.analysis.artifacts import dataset_artifact_bytes
+
+    path = tmp_path / "project.nfit"
+    member = "assets/binnings/test/data.npz"
+    source = _tiny_mdhisto_data(2.0)
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(member, dataset_artifact_bytes(source))
+    cache = RebinCache(RebinCacheBudget(manual_retention=True))
+    cache.set_project_backing("key", signature="signature", project_path=path, member=member, lazy=True)
+    monkeypatch.setattr(_DiskBinning, "restore", lambda self: (_ for _ in ()).throw(AssertionError("decoded")))
+    record, = cache.resource_records()
+    assert record.data is None
+    assert record.project_path == path
+    assert record.project_member == member
+    cache["key"] = ("signature", source)
+    assert cache.unload("key")
+    assert cache.peek_resident("key") is None
+    assert cache.project_backing("key", "signature") == (path, member)
+    assert cache.delete_backing("key")
+    assert cache.project_backing("key", "signature") is None
+    assert path.exists()
+
+
 def test_disk_restore_remains_canonical_when_budget_immediately_evicts_it(tmp_path):
     budget = RebinCacheBudget()
     cache = RebinCache(budget)

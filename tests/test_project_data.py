@@ -171,11 +171,7 @@ def test_composite_preserves_nonidentity_histogram_coordinates():
 
 def test_save_reuses_binnings_evicted_from_memory(tmp_path, monkeypatch):
     project_gui._COMPOSITE_DATA_CACHE.clear()
-    monkeypatch.setattr(project_gui, "_COMPOSITE_DATA_CACHE_MAX_BYTES", 100_000)
-    # The service owns the budget; the GUI alias is retained for compatibility.
     from nfit import project_composites
-    monkeypatch.setattr(project_composites, "_COMPOSITE_DATA_CACHE_MAX_BYTES", 100_000)
-    monkeypatch.setattr(project_composites, "_COMPOSITE_DATA_CACHE_LIMIT", 0)
     subgroups = []
     for i in range(3):
         source = tmp_path / f"source-{i}.nxs"
@@ -187,14 +183,19 @@ def test_save_reuses_binnings_evicted_from_memory(tmp_path, monkeypatch):
     root = DataGroup("root", subgroups=subgroups)
     project = NfitProject([root], settings={"cache_binnings": True})
     expected, _ = project_gui.slice_viewer_datasets(root)
-    assert not project_gui._COMPOSITE_DATA_CACHE
-    assert len(project_gui._COMPOSITE_DATA_CACHE._compressed) == 3
-    with monkeypatch.context() as checks:
-        checks.setattr("nfit.rebin_cache.CompressedBinning.restore", lambda *a: pytest.fail("freshness checks must not read arrays"))
-        assert not project_gui.project_binnings_need_refresh(project)
-    monkeypatch.setattr(project_composites, "composite_dataset_data", lambda *a, **k: pytest.fail("saving current binnings must not rebin"))
     path = tmp_path / "overflow.nfit"
     save_project(project, path)
+    # A user's explicit unload keeps saved backing references. Saving an
+    # unchanged project must stream those members without inflating cubes.
+    for record in project_gui._COMPOSITE_DATA_CACHE.resource_records():
+        project_gui._COMPOSITE_DATA_CACHE.unload(record.key)
+    assert not project_gui._COMPOSITE_DATA_CACHE
+    assert not project_gui._COMPOSITE_DATA_CACHE._compressed
+    with monkeypatch.context() as checks:
+        checks.setattr("nfit.rebin_cache.read_project_dataset_artifact", lambda *a, **k: pytest.fail("freshness and save must not read arrays"))
+        assert not project_gui.project_binnings_need_refresh(project)
+        checks.setattr(project_composites, "composite_dataset_data", lambda *a, **k: pytest.fail("saving current binnings must not rebin"))
+        save_project(project, path)
     assert len(read_project_manifest(path)["settings"][project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]) == 3
     restored = load_project(path)
     actual, _ = project_gui.slice_viewer_datasets(restored.data_groups[0])
@@ -465,7 +466,12 @@ def test_viewer_batch_progress_and_cache_cover_more_than_four_composites():
         event["batch_operation"] == "Preparing data viewer"
         for event in batch_events
     )
-    assert len(project_gui._COMPOSITE_DATA_CACHE) == 6
+    # The six reduced histograms remain resident alongside their shared,
+    # prepared views. Count logical source cubes rather than cache stages.
+    assert all(
+        project_gui._COMPOSITE_DATA_CACHE.peek_resident(id(subgroup)) is not None
+        for subgroup in subgroups
+    )
 
     second_events = []
     project_gui.slice_viewer_datasets(group, progress_callback=second_events.append)

@@ -66,6 +66,7 @@ temperature. Instrument names alone must not determine the statistical estimator
 | 6A-P | Complete realistic performance comparisons and useful speedups | Complete; accepted by Paul |
 | 6A1 | Validate optional numerical and statistical methods | Complete; controlled checks reviewed, limitations recorded |
 | 6A2 | Review evidence and choose future defaults with Paul | Complete |
+| 6B-S | Make resident cubes and project storage safe; add Resource Manager | Pending review |
 | 6B | Validate migration, finish documentation, and remove this plan | Pending |
 
 Statuses are **Pending**, **Pending review**, **In progress**, **Complete**,
@@ -1035,6 +1036,34 @@ selected workflow. Distinguish correctness fixes from adopting a new estimator.
 - [ ] Finish permanent physics, workflow and limitation documentation; synchronize
   local/ORNL applications and documentation.
 - [ ] Review final acceptance with Paul, then delete this plan and navigation links.
+
+#### 6B-S — Resident data and resource safety
+
+Paul authorized this follow-up after the large SEQUOIA project exhausted memory
+with several data viewers open. Whole hypercubes remain resident for responsive
+switching and sliders; partial-cube viewing and slider caching are excluded.
+
+- [x] Share immutable prepared payloads between viewers and count distinct array
+  storage, including models, analysis, retained child views and compressed data.
+- [x] Admit managed allocations using expanded archive headers, resolved grids,
+  working-buffer estimates and process-wide reservations. Stop over-budget
+  operations and offer Resource Manager without automatic eviction or overcommit.
+- [x] Add a flat sortable resource table, Shift/Ctrl multi-selection, explicit
+  load/unload actions and confirmed cache deletion. Display parents, shared
+  owners and viewers below the actions; protect unsaved canonical data.
+- [x] Expose decimal-GB budgets, CPU limits and future temporary-storage location
+  beside project/system monitoring. Inspect unloaded resources without decoding
+  numerical arrays or scanning scientific staging directories.
+- [x] Keep large GUI I/O on guarded workers, support cooperative cancellation
+  and reserve atomic replacement disk space while preserving the prior archive.
+  Preserve standard project compression and lazy reduced-event caches.
+- [x] Complete automated release validation.
+- [ ] Review interactive behavior with Paul before continuing 6B migration work.
+
+Release 0.117.0 passes 3,604 tests with one optional-backend skip, Ruff,
+byte-compilation, diff checks and the strict Sphinx build. Permanent behavior and
+scripting documentation is in `resources.md`. Interactive acceptance remains
+pending; this checkpoint does not authorize starting 6B migration work.
 
 ### Deferred instrument work
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
 from typing import Any
 
@@ -564,6 +565,18 @@ class QtMDHistoSliceViewer:
     def slice_arrays(self) -> dict[str, np.ndarray]:
         return self.model.slice_arrays()
 
+    def loaded_resource_items(self):
+        """List held dataset payloads without loading any catalog entry."""
+        from .qt_viewer_resources import loaded_viewer_resources
+
+        return loaded_viewer_resources(self)
+
+    def release_loaded_data(self) -> None:
+        """Release a closed viewer's arrays while preserving its plot recipe."""
+        from .qt_viewer_resources import release_viewer_resources
+
+        release_viewer_resources(self)
+
     def replace_datasets(
         self,
         data: MDHistoData | PointListData | Sequence[MDHistoData | PointListData],
@@ -728,6 +741,18 @@ class QtMDHistoSliceViewer:
     def current_plot_settings(self) -> dict[str, object]:
         """Capture the current viewer state as a JSON-ready saved-plot recipe."""
 
+        if getattr(self, "_data_released", False):
+            return copy.deepcopy(self._released_plot_settings)
+        if getattr(self.model, "is_point_list", False):
+            from .qt_viewer_settings import _capture_settings
+
+            return {
+                **_capture_settings(self),
+                "dataset_name": self.source_dataset_names[self.dataset_index],
+                "binning_name": self.binning_names[self.dataset_index],
+                "hold_view_settings": self.hold_view_settings,
+            }
+
         xlim = self._export_limits("x") if self.ax_image is not None else None
         ylim = self._export_limits("y") if self.ax_image is not None else None
         view_mode = (
@@ -859,6 +884,14 @@ class QtMDHistoSliceViewer:
         )
         if selected is not None:
             self._set_dataset_index(selected)
+        if getattr(self.model, "is_point_list", False):
+            from .qt_viewer_settings import _apply_settings
+
+            _apply_settings(self, settings)
+            self.hold_view_settings_check.setChecked(
+                bool(settings.get("hold_view_settings", self.hold_view_settings))
+            )
+            return
         x_name = settings.get("x_dim")
         y_name = settings.get("y_dim")
         names = [axis.name for axis in self.data.axes]
@@ -1890,6 +1923,8 @@ class QtMDHistoSliceViewer:
             self.content_stack.removeWidget(panel)
         panel.setParent(None)
         panel.shutdown()
+        from .qt_viewer_resources import release_volume_resources
+        release_volume_resources(panel)
         panel.deleteLater()
 
     def _rebuild_hidden_axis_controls(self) -> None:

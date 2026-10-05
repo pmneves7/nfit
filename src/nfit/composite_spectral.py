@@ -2,15 +2,66 @@
 
 from __future__ import annotations
 
+import json
+from threading import RLock
+
 import numpy as np
 
+from .mapped_archive import array_storage_nbytes
 from .mdhisto import MDHistoData
 from .metadata_dimensions import metadata_temperature_grid
+from .resource_budget import reserve_memory
 from .spectral_channels import (
     SPECTRAL_CHANNEL_CONFIG_KEY,
     normalized_spectral_channel_config,
     with_paired_spectral_channels,
 )
+
+_COMPOSITE_VIEW_LOCK = RLock()
+
+
+def cached_composite_spectral_view(
+    data, config, datasets, *, cache, key, source_signature, apply_spectral=True,
+):
+    """Share the immutable final composite view, including source lineage.
+
+    Source temperatures and spectral settings remain part of the signature:
+    changing these presentation conventions does not invalidate reduction.
+    """
+    from .source_lineage import source_lineage_metadata, with_source_lineage
+
+    physical_keys = (
+        SPECTRAL_CHANNEL_CONFIG_KEY, "temperature", "incident_energy_meV",
+        "incident_energy", "Ei", "ei", "final_energy_meV", "final_energy", "Ef", "ef",
+    )
+    sources = list(datasets)
+    lineage = source_lineage_metadata(sources)
+    signature = json.dumps(
+        [source_signature, id(data), config.get(SPECTRAL_CHANNEL_CONFIG_KEY), lineage,
+         [[{name: source.parameters.get(name) for name in physical_keys},
+           {name: source.metadata.get(name) for name in physical_keys},
+           {name: getattr(source.data, "metadata", {}).get(name) for name in physical_keys},
+           (id(source.data.temperature), source.data.temperature.shape)
+           if isinstance(getattr(source.data, "temperature", None), np.ndarray)
+           else getattr(source.data, "temperature", None)] for source in sources],
+         [axis.metadata for axis in data.axes] if isinstance(data, MDHistoData) else None,
+         bool(apply_spectral)], sort_keys=True, default=str,
+    )
+    with _COMPOSITE_VIEW_LOCK:
+        cached = cache.get(key) if cache.has_signature(key, signature) else None
+        if cached is not None:
+            return cached[1]
+        spectral = config.get(SPECTRAL_CHANNEL_CONFIG_KEY)
+        transforms = apply_spectral and isinstance(spectral, dict) and spectral.get("enabled", True)
+        peak = 2 * array_storage_nbytes(data).total if transforms else 0
+        with reserve_memory(peak, operation="Preparing composite spectral channels"):
+            result = with_source_lineage(data, lineage)
+            if apply_spectral:
+                result = apply_composite_spectral_channels(result, config, sources)
+        if isinstance(result, MDHistoData):
+            cache.set_label(key, "Composite prepared spectral data")
+            cache[key] = (signature, result)
+        return result
 
 
 def common_source_value(datasets, names, *, point_temperature=False):

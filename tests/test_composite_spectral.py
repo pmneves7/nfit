@@ -52,6 +52,36 @@ def test_conversion_matches_public_spectral_api_and_cached_fit_entry(axis):
     assert group.datasets[0].data.intensity[0] == 10
 
 
+def test_cached_spectral_composite_and_final_viewer_share_arrays(monkeypatch):
+    import nfit.composite_spectral as spectral
+    from nfit import project_composites
+
+    group, config = collection([5, 5])
+    config["spectral_channels"] = {"enabled": True, "fit_representation": "chi_double_prime"}
+    calls = []
+    original = spectral.apply_composite_spectral_channels
+
+    def convert(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(spectral, "apply_composite_spectral_channels", convert)
+    try:
+        first = _cached_composite_dataset_data(group)
+        second = _cached_composite_dataset_data(group)
+        assert first is second
+        assert calls == [1]
+        left = nfit.dataset_for_slice_viewer(composite_dataset_entry(group))
+        right = nfit.dataset_for_slice_viewer(composite_dataset_entry(group))
+        assert left is right
+        assert left.signal is right.signal
+        assert calls == [1]
+    finally:
+        project_composites._COMPOSITE_DATA_CACHE.discard_matching(
+            lambda key: (key[0] if isinstance(key, tuple) else key) == id(group)
+        )
+
+
 @pytest.mark.parametrize("temperatures", [[5, 20], [5, None]])
 def test_mixed_or_missing_temperature_requires_axis_or_explicit_nominal(temperatures):
     group, config = collection([5, 20])

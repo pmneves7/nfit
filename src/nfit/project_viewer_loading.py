@@ -102,6 +102,10 @@ def viewer_binning_entry(
     owner = getattr(dataset, "_derived_owner_group", None)
     if owner is not None:
         alias._derived_owner_group = owner
+    composite_owner = getattr(dataset, "_viewer_composite_cache_owner", None)
+    if composite_owner is not None:
+        alias._viewer_composite_cache_owner = composite_owner
+        alias._viewer_composite_binning_id = str(binning["id"])
     alias._viewer_source_dataset_id = dataset.id
     if not fit:
         alias.id = f"{dataset.id}:{binning['id']}"
@@ -146,6 +150,11 @@ def deferred_viewer_datasets(
                 "spacegroup": group.spacegroup,
                 "lattice_parameters": copy.deepcopy(group.lattice_parameters),
             },
+            source_dataset_id=item.dataset.id if item.dataset is not None else "",
+            source_scope_id=(
+                id(getattr(item.scope, "node", item.scope))
+                if item.scope is not None else None
+            ),
         )
         for item, key in zip(items, group_keys, strict=True)
     ]

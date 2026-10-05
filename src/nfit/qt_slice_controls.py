@@ -45,9 +45,12 @@ def _make_data_viewer_window_class():
             self.viewer._close_cut_viewers()
             super().closeEvent(event)
             callback = self.viewer._close_callback
-            if callback is not None:
-                self.viewer._close_callback = None
-                callback()
+            try:
+                if callback is not None:
+                    self.viewer._close_callback = None
+                    callback()
+            finally:
+                self.viewer.release_loaded_data()
 
     return DataViewerWindow
 

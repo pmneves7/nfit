@@ -13,6 +13,28 @@ PROJECT_CACHE_BINNINGS_KEY = "cache_binnings"
 PROJECT_BINNING_CACHE_ENTRIES_KEY = "binning_cache_entries"
 
 
+def release_project_memory(project):
+    """Retire runtime caches when a project closes, without editing its recipes."""
+    nodes = [node for group in project.data_groups for node in (group, *group.iter_subgroups())]
+    datasets = [dataset for group in project.data_groups for dataset in group.iter_datasets()]
+    ids = {dataset.id for dataset in datasets}
+    node_ids = {id(node) for node in nodes}
+    def owner(key):
+        while isinstance(key, tuple) and key:
+            key = key[0]
+        return key
+    project_data._VIEWER_VIEW_CACHE.discard_matching(
+        lambda key: isinstance(key, str) and key.split(":", 1)[0] in ids)
+    project_data._COMPOSITE_DATA_CACHE.discard_matching(lambda key: owner(key) in node_ids)
+    for dataset in datasets:
+        project_data._PREPARED_POINT_LIST_CACHE.pop(dataset.id, None)
+    for node in nodes:
+        MODEL_OVERLAY_CACHE.pop(id(node), None)
+        MODEL_OVERLAY_ERRORS.pop(id(node), None)
+        for component in node.models.values() if hasattr(node, "models") else ():
+            component.__dict__.pop("_nfit_electronic_model_cache", None)
+
+
 def _mark_binnings_stale(container, fit_key, registry_key) -> None:
     """Mark existing recipes only, without normalization or data preparation."""
     config = container.get(fit_key)

@@ -511,6 +511,7 @@ from .project_view_data import (
 from .project_view_data import (
     _with_viewer_dataset_metadata as _with_viewer_dataset_metadata,
 )
+from .project_view_data import cached_viewer_preparation
 from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group  # noqa: F401
 from .rebin import REBIN_NUMERICAL_VERSION, rebin_nd, rebin_nd_symmetry  # noqa: F401
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET, RebinCache
@@ -556,8 +557,8 @@ MASK_AUTO_MAX_POINTS = 5_000_000
 _project_rebinning.configure_rebinning_compatibility(globals())
 
 # Loading, rebinning, and masking full datasets is reused across passive GUI
-# refreshes and script/API calls. Signatures are content based; scale factors
-# are deliberately applied after the cached preparation step.
+# refreshes and script/API calls. Source preparation and final physical views
+# have separate content signatures so scale/spectral changes share the source.
 _VIEWER_VIEW_CACHE: OrderedDict[str, tuple[str, Any]] = RebinCache(
     SHARED_REBIN_CACHE_BUDGET
 )
@@ -1032,9 +1033,33 @@ def dataset_for_slice_viewer(
     )
     if result is None:
         return None
-    scaled = _apply_dataset_scale(dataset, result)
-    prepared = _apply_spectral_channel_view(dataset, scaled)
-    return _with_viewer_dataset_metadata(dataset, prepared)
+
+    def prepare():
+        scaled = _apply_dataset_scale(dataset, result)
+        prepared = _apply_spectral_channel_view(dataset, scaled)
+        return _with_viewer_dataset_metadata(dataset, prepared)
+
+    cache, source_key = _viewer_preparation_cache(dataset, cache_id)
+    key = (
+        (source_key[0], "viewer-prepared", source_key[2])
+        if isinstance(source_key, tuple)
+        else f"{source_key}:viewer-prepared"
+    )
+    return cached_viewer_preparation(dataset, result, cache=cache, key=key, prepare=prepare)
+
+
+def _viewer_preparation_cache(dataset: DatasetEntry, cache_id: str | None = None):
+    """Resolve the canonical owner of a source or composite viewer payload."""
+
+    owner = getattr(dataset, "_viewer_composite_cache_owner", None)
+    if owner is not None:
+        binning = (
+            cache_id or dataset.metadata.get("binning_id")
+            or getattr(dataset, "_viewer_composite_binning_id", FIT_BINNING_ID)
+        )
+        return _COMPOSITE_DATA_CACHE, (owner, "viewer-source", str(binning))
+    key = dataset.id if cache_id is None else f"{dataset.id}:{cache_id}"
+    return _VIEWER_VIEW_CACHE, key
 
 
 def _mask_signature(masks: list[MaskSpec] | None) -> list[Any]:
@@ -1155,15 +1180,15 @@ def _viewer_data_before_scale(
     cache_id: str | None = None,
 ) -> MDHistoData | PointListData | None:
     config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
-    key = dataset.id if cache_id is None else f"{dataset.id}:{cache_id}"
+    view_cache, key = _viewer_preparation_cache(dataset, cache_id)
     signature = _viewer_view_signature(dataset, extra_masks, config)
     deferred_masks = _should_defer_dataset_masks(dataset, force_masks=force_masks)
-    cached = _VIEWER_VIEW_CACHE.get(key)
+    cached = view_cache.get(key)
     forced_stale_rebin = bool(
         force_rebin and config.get("enabled") and config.get("stale", False)
     )
     if cached is not None and cached[0] == signature and not forced_stale_rebin:
-        _VIEWER_VIEW_CACHE.move_to_end(key)
+        view_cache.move_to_end(key)
         if force_masks:
             dataset_mask_application_config(dataset)["stale"] = False
         return cached[1]
@@ -1192,9 +1217,9 @@ def _viewer_data_before_scale(
             (item["name"] for item in binning_names if item["id"] == cache_id),
             binning_names[0]["name"],
         )
-        _VIEWER_VIEW_CACHE.set_label(key, f"{dataset.name} · {label}")
+        view_cache.set_label(key, f"{dataset.name} · {label}")
         _lru_store(
-            _VIEWER_VIEW_CACHE,
+            view_cache,
             key,
             (signature, result),
             _VIEWER_VIEW_CACHE_LIMIT,
@@ -1219,11 +1244,11 @@ def _peek_cached_dataset_view(
     """
 
     config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
-    key = dataset.id if cache_id is None else f"{dataset.id}:{cache_id}"
+    view_cache, key = _viewer_preparation_cache(dataset, cache_id)
     cached = (
-        _VIEWER_VIEW_CACHE.peek_resident(key)
-        if resident_only and hasattr(_VIEWER_VIEW_CACHE, "peek_resident")
-        else _VIEWER_VIEW_CACHE.get(key)
+        view_cache.peek_resident(key)
+        if resident_only and hasattr(view_cache, "peek_resident")
+        else view_cache.get(key)
     )
     if cached is None or cached[0] != _viewer_view_signature(dataset, extra_masks, config):
         return None

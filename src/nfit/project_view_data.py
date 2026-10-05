@@ -2,19 +2,87 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable, MutableMapping
 from dataclasses import replace
+from threading import RLock
 from typing import Any
 
 import numpy as np
 
 from .background_channels import scale_background_channels
+from .cache_utils import dataset_content_signature
 from .dataset import PointData4D, PointListData
+from .mapped_archive import array_storage_nbytes
 from .mdhisto import MDHistoData
 from .measurement_scaling import scale_measurement_data
 from .pipeline import DatasetEntry
+from .resource_budget import reserve_memory
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY, with_paired_spectral_channels
 
 KINEMATIC_KF_KI_INCLUDED_KEY = "kf_ki_included"
+_VIEW_PREPARATION_LOCK = RLock()
+
+
+def cached_viewer_preparation(
+    dataset: DatasetEntry,
+    data: MDHistoData | PointListData | PointData4D,
+    *,
+    cache: MutableMapping,
+    key: Any,
+    prepare: Callable[[], MDHistoData | PointListData | PointData4D],
+) -> MDHistoData | PointListData | PointData4D:
+    """Share final immutable scale and spectral payloads across viewer windows.
+
+    The source container identity changes whenever masks, backgrounds, or grid
+    recipes produce replacement arrays. Physical presentation settings are
+    included separately because these transformations follow the source cache.
+    The lock prevents simultaneous viewers from duplicating a large conversion.
+    """
+
+    physical_keys = (
+        SPECTRAL_CHANNEL_CONFIG_KEY, "temperature", KINEMATIC_KF_KI_INCLUDED_KEY,
+        "incident_energy", "incident_energy_meV", "Ei", "ei",
+        "final_energy", "final_energy_meV", "Ef", "ef",
+    )
+    metadata_keys = (
+        "binning_id", "binning_name", "source_dataset_name", "visualization_binning",
+        *physical_keys,
+    )
+    signature = json.dumps(
+        [
+            dataset_content_signature(dataset), id(data), float(dataset.scale_factor),
+            dataset.data_type, dataset.kind,
+            {name: dataset.parameters.get(name) for name in physical_keys},
+            {name: dataset.metadata.get(name) for name in metadata_keys},
+            {name: data.metadata.get(name) for name in physical_keys},
+            [axis.metadata for axis in data.axes] if isinstance(data, MDHistoData) else None,
+        ],
+        sort_keys=True, default=str,
+    )
+    with _VIEW_PREPARATION_LOCK:
+        cached = (
+            cache.get(key)
+            if not hasattr(cache, "has_signature") or cache.has_signature(key, signature)
+            else None
+        )
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+        spectral = dataset.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY)
+        transforms_values = (
+            float(dataset.scale_factor) != 1.0
+            or not bool(dataset.parameters.get(KINEMATIC_KF_KI_INCLUDED_KEY, True))
+            or isinstance(spectral, dict) and bool(spectral.get("enabled", True))
+        )
+        peak = 2 * array_storage_nbytes(data).total if transforms_values else 0
+        with reserve_memory(peak, operation=f"Preparing viewer data: {dataset.name}"):
+            prepared = prepare()
+        # PointData4D is not a viewer catalog payload and has no NPZ rebin tier.
+        if isinstance(prepared, (MDHistoData, PointListData)):
+            if hasattr(cache, "set_label"):
+                cache.set_label(key, f"{dataset.name} · prepared viewer data")
+            cache[key] = (signature, prepared)
+        return prepared
 
 
 def _apply_spectral_channel_view(
@@ -65,14 +133,7 @@ def _with_viewer_dataset_metadata(
     if isinstance(data, MDHistoData):
         return replace(data, metadata=metadata)
     if isinstance(data, PointListData):
-        return PointListData(
-            columns={name: np.array(values, dtype=float) for name, values in data.columns.items()},
-            units=dict(data.units),
-            coordinate_names=list(data.coordinate_names),
-            channels=[dict(channel) for channel in data.channels],
-            metadata=metadata,
-            quantity_types=dict(data.quantity_types),
-        )
+        return data.with_updates(metadata=metadata)
     if isinstance(data, PointData4D):
         return data.with_updates(metadata=metadata)
     return data

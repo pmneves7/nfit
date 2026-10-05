@@ -102,6 +102,13 @@ retains more data, but makes subsequent switching faster. Waterfall comparisons
 and the volume viewer may load additional datasets when those modes are opened.
 The overall RAM and CPU preferences still control numerical preparation.
 
+Unchanged prepared cubes are shared across open viewers. Loaded choices remain
+resident until explicitly removed through [Resource Manager](resources.md).
+An over-budget load stops before allocation; it does not evict a different
+histogram. Cold loading uses cancellable background I/O; already loaded choices
+reuse their arrays. Removing a viewed resource closes its affected viewers and
+retains the current plot settings for reopening.
+
 Scripts retain eager loading by default. Request the same on-demand behavior
 explicitly when constructing a viewer:
 

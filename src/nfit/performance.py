@@ -12,7 +12,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
 
-REBIN_RESULT_BYTES_PER_BIN = 33
+# Signal, uncertainty, event counts, four retained statistic channels, and mask.
+REBIN_RESULT_BYTES_PER_BIN = 57
 REBIN_CACHE_WARNING_FRACTION = 0.8
 _DEFAULT_TRANSIENT_MEMORY_PERCENT = 25
 _MEBIBYTE = 1024**2

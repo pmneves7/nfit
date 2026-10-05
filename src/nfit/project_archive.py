@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import shutil
 import struct
 import tempfile
 import zipfile
@@ -12,6 +11,9 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO
+
+from .operation_control import report_operation
+from .storage_budget import reserve_disk_space
 
 PROJECT_MANIFEST = "project.json"
 ANALYSIS_ASSET_ROOT = PurePosixPath("assets", "analyses")
@@ -322,6 +324,40 @@ def _rewrite_archive(
     remove_members_prefixes: tuple[str, ...] = (),
 ) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
+    required = 0
+    if source is not None:
+        with zipfile.ZipFile(source) as archive:
+            required += sum(info.file_size + 256 + len(info.filename) * 2 for info in archive.infolist()
+                if info.filename not in replacements and not (
+                    remove_prefix is not None and info.filename.startswith(remove_prefix)
+                ) and not info.filename.startswith(remove_members_prefixes))
+    for content in replacements.values():
+        if isinstance(content, ArchiveMember):
+            with zipfile.ZipFile(content.path) as archive:
+                required += archive.getinfo(_safe_member(content.member)).file_size
+        elif isinstance(content, Path):
+            required += content.stat().st_size
+        else:
+            required += len(content)
+        required += 1024
+    with reserve_disk_space(target.parent, required, operation="Saving the project"):
+        _rewrite_archive_reserved(target, source, replacements,
+            remove_prefix=remove_prefix, remove_members_prefixes=remove_members_prefixes)
+
+
+def _copy_archive_stream(source, destination):
+    while True:
+        report_operation("Copying project cache data…")
+        block = source.read(_ARCHIVE_COPY_BUFFER_BYTES)
+        if not block:
+            break
+        destination.write(block)
+
+
+def _rewrite_archive_reserved(
+    target, source, replacements, *, remove_prefix=None, remove_members_prefixes=(),
+):
+    target.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -347,11 +383,7 @@ def _rewrite_archive(
                                 continue
                             with existing.open(info, "r") as source_stream:
                                 with destination.open(info, "w") as target_stream:
-                                    shutil.copyfileobj(
-                                        source_stream,
-                                        target_stream,
-                                        length=_ARCHIVE_COPY_BUFFER_BYTES,
-                                    )
+                                    _copy_archive_stream(source_stream, target_stream)
                 except zipfile.BadZipFile as exc:
                     raise ValueError(f"not a single-file nfit project: {source}") from exc
             with ExitStack() as sources:
@@ -378,18 +410,15 @@ def _rewrite_archive(
                             with destination.open(
                                 normalized, "w", force_zip64=True
                             ) as target_stream:
-                                shutil.copyfileobj(
-                                    source_stream,
-                                    target_stream,
-                                    length=_ARCHIVE_COPY_BUFFER_BYTES,
-                                )
+                                _copy_archive_stream(source_stream, target_stream)
                     elif isinstance(content, Path):
-                        destination.write(
-                            content,
-                            arcname=normalized,
-                            compress_type=compression,
-                        )
+                        info = zipfile.ZipInfo(normalized)
+                        info.compress_type = compression
+                        with content.open("rb") as source_stream:
+                            with destination.open(info, "w", force_zip64=True) as target_stream:
+                                _copy_archive_stream(source_stream, target_stream)
                     else:
+                        report_operation("Writing project settings…")
                         destination.writestr(
                             normalized,
                             content,
@@ -397,6 +426,7 @@ def _rewrite_archive(
                         )
         with temporary.open("rb") as stream:
             os.fsync(stream.fileno())
+        report_operation("Publishing the saved project…")
         temporary.replace(target)
     except Exception:
         if temporary is not None:

@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 
 from .array_archive import array_archive_writer
-from .data_workspace import bind_data_workspace, temporary_data_directory
+from .data_workspace import bind_data_workspace, record_temporary_file, temporary_data_directory
 from .dgs_reduction_policy import (
     DEFAULT_EVENT_PRECISION_POLICY,
     DEFAULT_MONITOR_VARIANCE_POLICY,
@@ -107,6 +107,7 @@ class _ReducedEventCache:
     content: Path | ArchiveMember
     # Own staging files until the project adopts a saved archive reference.
     staging: Any = None
+    disk_bytes: int = 0
 
     def __deepcopy__(self, memo):
         return self
@@ -165,7 +166,9 @@ def cache_event_chunks(dataset, signature, header, normalization, chunks):
                 write(f"raw_count_{chunk_count}", pending_raw_count)
                 chunk_count += 1
             write("header_json", json.dumps({**header, "chunk_count": chunk_count}))
-        dataset._raw_dgs_reduction_cache = _ReducedEventCache(signature, path, staging)
+        size = path.stat().st_size
+        record_temporary_file(path, size)
+        dataset._raw_dgs_reduction_cache = _ReducedEventCache(signature, path, staging, size)
         dataset.metadata[_CACHE_KEY] = {
             "version": RAW_DGS_REDUCTION_VERSION,
             "signature": signature,

@@ -1,4 +1,4 @@
-"""Large lazy histogram artifacts share reclaimable read-only array storage."""
+"""Project cubes use whole-array RAM; scripting mappings remain explicit."""
 
 import gc
 import io
@@ -16,34 +16,40 @@ from tests.project_gui_test_support import _tiny_mdhisto_data
 
 @pytest.fixture
 def mapped_policy(monkeypatch):
-    monkeypatch.setattr(artifacts, "_MAPPED_ARTIFACT_MIN_BYTES", 1)
     monkeypatch.setattr(artifacts, "_MAPPED_MEMBER_MIN_BYTES", 1)
-    monkeypatch.setattr(artifacts, "scientific_memory_limit_bytes", lambda: 1)
 
 
-def test_ordinary_reads_stay_resident_and_auto_reads_map(tmp_path, mapped_policy):
+def test_ordinary_and_none_reads_stay_resident_and_explicit_reads_map(tmp_path, mapped_policy):
     original = _tiny_mdhisto_data(3.0)
     source = tmp_path / "data.npz"
     artifacts.write_dataset_artifact(original, source)
     resident = artifacts.read_dataset_artifact(source)
-    mapped = artifacts.read_dataset_artifact(source, memory_map=None)
+    ordinary = artifacts.read_dataset_artifact(source, memory_map=None)
+    mapped = artifacts.read_dataset_artifact(source, memory_map=True)
     assert not is_mapped_array(resident.signal)
+    assert not is_mapped_array(ordinary.signal)
     assert is_mapped_array(mapped.signal)
     for name in ("signal", "errors", "mask", "num_events"):
         np.testing.assert_equal(getattr(mapped, name), getattr(original, name))
         assert not getattr(mapped, name).flags.writeable
 
 
-def test_auto_mapping_requires_both_size_and_memory_pressure(tmp_path, monkeypatch):
+def test_none_never_automatically_maps_under_memory_pressure(tmp_path, monkeypatch):
+    from nfit import resource_budget
+
     source = tmp_path / "data.npz"
     artifacts.write_dataset_artifact(_tiny_mdhisto_data(3.0), source)
     monkeypatch.setattr(artifacts, "_MAPPED_MEMBER_MIN_BYTES", 1)
-    monkeypatch.setattr(artifacts, "_MAPPED_ARTIFACT_MIN_BYTES", 10**9)
-    monkeypatch.setattr(artifacts, "scientific_memory_limit_bytes", lambda: 1)
+    monkeypatch.setattr(artifacts, "read_mapped_array_archive", lambda *args, **kwargs: pytest.fail("automatic mapping"))
+    capacity = artifacts.dataset_artifact_capacity(source)
+    monkeypatch.setattr(resource_budget, "_rss_provider", lambda: 100)
+    monkeypatch.setattr(resource_budget, "_managed_provider", lambda: 0)
+    monkeypatch.setattr(resource_budget, "_available_provider", lambda: capacity.peak_bytes * 2)
+    monkeypatch.setattr(resource_budget, "_limit_provider", lambda: capacity.peak_bytes + 100)
     assert not is_mapped_array(artifacts.read_dataset_artifact(source, memory_map=None).signal)
-    monkeypatch.setattr(artifacts, "_MAPPED_ARTIFACT_MIN_BYTES", 1)
-    monkeypatch.setattr(artifacts, "scientific_memory_limit_bytes", lambda: 10**9)
-    assert not is_mapped_array(artifacts.read_dataset_artifact(source, memory_map=None).signal)
+    monkeypatch.setattr(resource_budget, "_limit_provider", lambda: capacity.peak_bytes + 99)
+    with pytest.raises(resource_budget.ResourceLimitError):
+        artifacts.read_dataset_artifact(source, memory_map=None)
 
 
 def test_point_list_artifacts_keep_the_existing_reader(tmp_path, mapped_policy):
@@ -84,7 +90,7 @@ def test_file_and_project_mapping_use_owner_storage(tmp_path, mapped_policy, mon
 
 
 @pytest.mark.parametrize("outer_compression", [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED])
-def test_lazy_project_cache_mapping_and_escaped_view_lifetime(
+def test_lazy_project_cache_stays_in_ram_and_preserves_escaped_view_lifetime(
     tmp_path, mapped_policy, outer_compression
 ):
     original = _tiny_mdhisto_data(5.0)
@@ -99,11 +105,11 @@ def test_lazy_project_cache_mapping_and_escaped_view_lifetime(
         "key", signature="sig", project_path=project, member=member, lazy=True
     )
     decoded = cache.get("key")[1]
-    assert is_mapped_array(decoded.signal)
+    assert not is_mapped_array(decoded.signal)
     assert cache.get("key")[1] is decoded
     storage = array_storage_nbytes(decoded)
     assert budget.total_bytes() == storage.heap
-    assert storage.mapped > 0
+    assert storage.mapped == 0
     view = decoded.signal.reshape(-1)[1:]
     cache.clear()
     del decoded
@@ -112,7 +118,7 @@ def test_lazy_project_cache_mapping_and_escaped_view_lifetime(
     assert project.read_bytes() == before
 
 
-def test_workspace_failure_rewinds_before_resident_fallback(monkeypatch, mapped_policy):
+def test_explicit_mapping_workspace_failure_never_falls_back_to_ram(monkeypatch, mapped_policy):
     from nfit.mapped_archive import MappedWorkspaceError
 
     original = _tiny_mdhisto_data(2.0)
@@ -123,9 +129,9 @@ def test_workspace_failure_rewinds_before_resident_fallback(monkeypatch, mapped_
         raise MappedWorkspaceError("no temporary disk space")
 
     monkeypatch.setattr(artifacts, "read_mapped_array_archive", unavailable)
-    decoded = artifacts.read_dataset_artifact(stream, memory_map=None)
-    assert not is_mapped_array(decoded.signal)
-    np.testing.assert_equal(decoded.signal, original.signal)
+    monkeypatch.setattr(artifacts, "_OwnedArchiveArrays", lambda *args: pytest.fail("resident fallback"))
+    with pytest.raises(MappedWorkspaceError, match="no temporary disk space"):
+        artifacts.read_dataset_artifact(stream, memory_map=True)
 
 
 def test_corrupt_mapped_payload_is_not_retried_as_resident(monkeypatch, mapped_policy):
@@ -136,7 +142,7 @@ def test_corrupt_mapped_payload_is_not_retried_as_resident(monkeypatch, mapped_p
 
     monkeypatch.setattr(artifacts, "read_mapped_array_archive", corrupt)
     with pytest.raises(ValueError, match="invalid NPY"):
-        artifacts.read_dataset_artifact(stream, memory_map=None)
+        artifacts.read_dataset_artifact(stream, memory_map=True)
 
 
 def test_mapped_service_does_not_import_gui_or_facade():

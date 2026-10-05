@@ -82,6 +82,51 @@ def test_workspace_service_is_independent_and_has_no_startup_side_effects():
     assert not any(isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) for node in tree.body)
 
 
+def test_temporary_inventory_tracks_writer_sizes_without_directory_scans(tmp_path, monkeypatch):
+    with temporary_data_directory(tmp_path / "project.nfit", prefix="nfit-owned-") as name:
+        target = Path(name) / "cached.bin"
+        target.write_bytes(b"cached payload")
+        data_workspace.record_temporary_file(target)
+        monkeypatch.setattr(Path, "rglob", lambda *_args: pytest.fail("inventory scanned scientific storage"))
+        assert dict(data_workspace.temporary_storage_usage())[name] == len(b"cached payload")
+        target.write_bytes(b"new")
+        data_workspace.record_temporary_file(target, 3)
+        assert dict(data_workspace.temporary_storage_usage())[name] == 3
+    assert name not in dict(data_workspace.temporary_storage_usage())
+
+
+def test_temporary_directory_changes_only_future_allocations(tmp_path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    path = tmp_path / "project.nfit"
+    dataset = DatasetEntry("Source", None, metadata={"_project_path": str(path)})
+    project = SimpleNamespace(settings={}, data_groups=[DataGroup("Runs", datasets=[dataset])], _project_path=path)
+    try:
+        data_workspace.set_project_temporary_directory(project, str(first))
+        with temporary_data_directory(path, prefix="nfit-old-") as old:
+            data_workspace.set_project_temporary_directory(project, str(second))
+            with temporary_data_directory(path, prefix="nfit-new-") as new:
+                assert Path(old).parent == first
+                assert Path(old).is_dir()
+                assert Path(new).parent == second
+    finally:
+        data_workspace.set_project_temporary_directory(project, None)
+
+
+def test_unavailable_saved_temporary_choice_is_deferred_until_allocation(tmp_path):
+    path = tmp_path / "project.nfit"
+    project = SimpleNamespace(settings={}, data_groups=[], _project_path=path)
+    try:
+        data_workspace.set_project_temporary_directory(project, str(tmp_path / "missing"), validate=False)
+        with pytest.raises(DataWorkspaceError, match="unavailable"):
+            temporary_data_directory(path, prefix="nfit-data-")
+        assert not (tmp_path / "missing").exists()
+    finally:
+        data_workspace.set_project_temporary_directory(project, None)
+
+
 def test_empty_explorer_opens_without_temporary_storage(tmp_path, monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from nfit.project_gui import NfitProject, NfitProjectExplorer

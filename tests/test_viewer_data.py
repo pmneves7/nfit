@@ -50,6 +50,115 @@ def test_deferred_viewer_datasets_catalog_and_identity_do_not_load_payloads():
     assert datasets.cached_indices == (1,)
 
 
+def test_deferred_release_releases_selected_references_and_nested_catalog():
+    calls = []
+    source = _catalog(lambda index: calls.append(index) or tiny_mdhisto_data())
+    wrapped = _catalog(lambda index: source[index])
+    released = []
+    wrapped._release_callback = lambda index: (released.append(index), source.release(index))
+    first, second = wrapped[0], wrapped[1]
+
+    wrapped.release(0)
+
+    assert wrapped.cached_indices == source.cached_indices == (1,)
+    assert wrapped.cached_items() == ((1, second),)
+    assert calls == [0, 1]
+    assert wrapped[0] is not first
+    wrapped.release()
+    assert wrapped.cached_items() == source.cached_items() == ()
+    assert len(wrapped.descriptors) == 2
+    assert released == [0, None]
+    assert calls == [0, 1, 0]
+
+
+def test_deferred_release_during_loading_does_not_retain_pending_result():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    started, complete = Event(), Event()
+
+    def load(_index):
+        started.set()
+        assert complete.wait(5)
+        return tiny_mdhisto_data()
+
+    datasets = _catalog(load)
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        future = worker.submit(lambda: datasets[0])
+        assert started.wait(5)
+        assert datasets.cached_items() == ()
+        datasets.release(0)
+        complete.set()
+        assert future.result(timeout=5) is not None
+
+    assert datasets.cached_indices == ()
+
+
+def test_viewer_inventory_and_close_release_every_visited_payload(monkeypatch):
+    import gc
+    import weakref
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    calls = []
+    datasets = _catalog(lambda index: calls.append(index) or tiny_mdhisto_data())
+    viewer = QtMDHistoSliceViewer(datasets, x_dim=3, y_dim=2)
+    first = weakref.ref(viewer.data)
+    viewer.binning_combo.setCurrentIndex(1)
+    second = weakref.ref(viewer.data)
+    inventory = viewer.loaded_resource_items()
+    assert [item[1].binning_name for item in inventory] == ["Fine", "Coarse"]
+    assert calls == [0, 1]
+    del inventory
+    recipe = viewer.current_plot_settings()
+    seen = []
+    viewer.set_close_callback(lambda: seen.append(viewer.current_plot_settings()))
+
+    viewer.window.close()
+    gc.collect()
+
+    assert seen == [recipe]
+    assert viewer.current_plot_settings() == recipe
+    assert viewer.loaded_resource_items() == ()
+    assert viewer.data is viewer.model is None
+    assert datasets.cached_items() == ()
+    assert first() is second() is None
+
+
+def test_viewer_inventory_includes_old_payload_states_after_catalog_refresh(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    old = _catalog(lambda _index: tiny_mdhisto_data())
+    new_calls = []
+    new = _catalog(lambda index: new_calls.append(index) or tiny_mdhisto_data())
+    viewer = QtMDHistoSliceViewer(old, x_dim=3, y_dim=2)
+    viewer.binning_combo.setCurrentIndex(1)
+    old_second = viewer.data
+    viewer.replace_datasets(new, selected_dataset_name="scan", selected_binning_name="Fine")
+
+    items = viewer.loaded_resource_items()
+
+    assert new_calls == [0]
+    assert any(index == 1 and payload is old_second for index, _descriptor, payload in items)
+    viewer.window.close()
+
+
+def test_viewer_resource_helper_has_no_coordinator_imports():
+    import ast
+    from pathlib import Path
+
+    from nfit import qt_viewer_resources
+
+    tree = ast.parse(Path(qt_viewer_resources.__file__).read_text())
+    modules = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+    modules.extend(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names)
+    assert not any(name.startswith(("project_gui", "qt_slice_viewer", "project_data", "PySide")) for name in modules)
+
+
 @pytest.mark.parametrize("deferred", [False, True])
 def test_viewer_rejects_mismatched_explicit_crystal_contexts(monkeypatch, deferred):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")

@@ -1349,7 +1349,8 @@ def test_mdevent_group_gui_exposes_shared_setup_and_defaults_manual(tmp_path, mo
 
 def test_mdevent_rebin_warns_before_estimated_ram_overcommit(tmp_path, monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    pytest.importorskip("PySide6.QtWidgets")
+    from nfit.resource_budget import ResourceLimitError
     source = tmp_path / "events.nxs"
     _write_mdevent(source)
     root = DataGroup("Data")
@@ -1359,15 +1360,16 @@ def test_mdevent_rebin_warns_before_estimated_ram_overcommit(tmp_path, monkeypat
     data_group_composite_config(scope)["enabled"] = True
     explorer = NfitProjectExplorer(NfitProject([root]))
     warnings = []
-    monkeypatch.setattr("nfit.project_gui.assess_mdevent_memory", lambda *args, **kwargs: (100 * 1024**3, 10 * 1024**3, True))
-    monkeypatch.setattr(
-        QtWidgets.QMessageBox,
-        "warning",
-        lambda *args, **kwargs: warnings.append(args[2]) or QtWidgets.QMessageBox.StandardButton.No,
-    )
+    def reject(*args, **kwargs):
+        raise ResourceLimitError(requested_bytes=100 * 1024**3, used_bytes=0,
+                                 limit_bytes=10 * 1024**3, operation="DGS binning")
+
+    monkeypatch.setattr("nfit.resource_budget.check_memory", reject)
+    monkeypatch.setattr("nfit.project_resource_gui.handle_resource_limit",
+                        lambda parent, error: warnings.append(str(error)) or False)
 
     assert explorer.rebin_composite_now(scope) is False
-    assert "available RAM" in warnings[0]
+    assert "RAM budget" in warnings[0]
     assert "_allow_memory_overcommit_once" not in data_group_composite_config(scope)
 
 

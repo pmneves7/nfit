@@ -55,6 +55,7 @@ from .reduction_runtime import (
     mdevent_run_masks,
     run_calibrations,
 )
+from .resource_budget import memory_guard
 from .source_lineage import source_lineage_metadata
 
 try:
@@ -79,6 +80,32 @@ MDEVENT_EAGER_PARTIAL_MAX_BYTES = 8 * 1024**3
 MDEVENT_EAGER_PARTIAL_BUDGET_FRACTION = 8
 _EVENT_BOUNDS_CACHE: dict[tuple[Any, ...], tuple[tuple[float, float], ...]] = {}
 _EVENT_BOUNDS_CACHE_MAX = 8
+
+
+def _dgs_grid_memory(arguments):
+    """Resolve requested counts without allocating output-sized edge arrays."""
+
+    values = arguments.arguments
+    for name in ("lower", "upper", "num_bins", "step_size"):
+        if values.get(name) is not None:
+            values[name] = tuple(values[name])
+    if values.get("bin_edges") is not None:
+        values["bin_edges"] = tuple(
+            None if edge is None else edge if isinstance(edge, np.ndarray) else tuple(edge)
+            for edge in values["bin_edges"]
+        )
+    counts = list(values["num_bins"])
+    steps = values.get("step_size")
+    explicit = values.get("bin_edges")
+    if steps is not None and len(steps) == len(counts):
+        for index, (lower, upper, step) in enumerate(zip(values["lower"], values["upper"], steps, strict=True)):
+            if np.isfinite([lower, upper, step]).all() and step > 0 and upper >= lower:
+                counts[index] = int(math.ceil((upper - lower) / step)) + 1
+    if explicit is not None and len(explicit) == len(counts):
+        counts = [len(edge) - 1 if edge is not None else count for edge, count in zip(explicit, counts, strict=True)]
+    if any(int(count) < 1 for count in counts):
+        return 0  # The numerical entry point supplies its ordinary validation.
+    return estimate_mdevent_peak_memory(counts, max_batch_bytes=values["max_batch_bytes"])
 
 
 @dataclass(frozen=True)
@@ -397,6 +424,7 @@ def _require_qsample_momentum_dimensions(dimensions, *, operation: str) -> None:
         )
 
 
+@memory_guard(_dgs_grid_memory, operation="Binning DGS events")
 def bin_mdevent_group(
     group: DatasetGroup,
     *,
@@ -789,6 +817,7 @@ def mdevent_coordinate_bounds(
     return [tuple(bound) for bound in result]
 
 
+@memory_guard(_dgs_grid_memory, operation="Binning DGS powder events")
 def bin_mdevent_powder_group(
     group: DatasetGroup,
     *,

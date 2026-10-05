@@ -39,7 +39,8 @@ A few of its main capabilities are:
 - compiled fractional N-dimensional point binning on uniform and nonuniform grids,
   with consistent exposure weights and diagonal uncertainty propagation;
 - compiled DGS HKLE event projection and accumulation in Mantid-compatible and double precision modes;
-- monitor nfit and system CPU and RAM usage live in the project toolbar;
+- monitor Project and System CPU/RAM in the toolbar and manage sortable resource
+  rows with multi-selection loading, unloading, cache deletion and GB budgets;
 - set installation-wide figure font size and axes linewidth defaults in Preferences;
 - select numbered runs with directory/naming patterns, bounded run expressions,
   metadata previews, editable group membership, and optional ordinary dataset subfolders;
@@ -96,9 +97,9 @@ A few of its main capabilities are:
   histograms owned by each sample binning;
 - save complete `.nfit` projects, load cached binnings on demand, reuse unchanged
   compressed artifacts when saving, and manage cached results through shared
-  CPU/RAM preferences, memory estimates, automatic disk-backed loading of large
-  saved histograms under memory pressure, temporary scientific storage beside
-  the owning project or output, and optional session disk caching;
+  CPU/RAM budgets, allocation reservations, shared resident viewer arrays,
+  explicit memory management, cancellable background archive I/O, and selectable
+  temporary scientific storage beside the owning project or output;
 - organize project items with drag and drop, batch copy, paste, and delete,
   including lazy run pages and nested collections;
 - guard editor and viewer interactions during rebinning, saves, and background

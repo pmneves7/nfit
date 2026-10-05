@@ -21,8 +21,10 @@ from .analysis.artifacts import (
     read_project_dataset_artifact,
 )
 from .dataset import PointListData
-from .mapped_archive import array_storage_nbytes
+from .mapped_archive import array_storage_nbytes, array_storage_owners
 from .mdhisto import MDHistoData
+from .operation_control import report_operation
+from .resource_budget import reserve_memory
 
 _CHUNK_BYTES = 8 * 1024**2
 
@@ -53,11 +55,11 @@ class _DiskBinning:
 
     def restore(self) -> MDHistoData | PointListData:
         if self.project_member is None:
-            return read_dataset_artifact(self.path, memory_map=None)
+            return read_dataset_artifact(self.path, memory_map=False)
         if not self.available():
             raise OSError("the project archive changed since this cache was registered")
         return read_project_dataset_artifact(
-            self.path, self.project_member, memory_map=None
+            self.path, self.project_member, memory_map=False
         )
 
 
@@ -101,6 +103,7 @@ class CompressedBinning:
         raw = memoryview(array).cast("B")
         offset = 0
         for chunk in chunks:
+            report_operation(f"Decoding {name}", completed=offset, total=len(raw))
             decoded = zlib.decompress(chunk)
             raw[offset : offset + len(decoded)] = decoded
             offset += len(decoded)
@@ -111,10 +114,15 @@ class CompressedBinning:
     def restore(self) -> MDHistoData | PointListData:
         """Reconstruct the normal immutable nfit data container."""
 
-        arrays = {name: self._array(name) for name in self.arrays}
-        for array in arrays.values():
-            array.setflags(write=False)
-        return dataset_artifact_from_payload(arrays)
+        expanded = sum(
+            int(np.prod(shape, dtype=object)) * np.dtype(dtype).itemsize
+            for dtype, shape, _chunks in self.arrays.values()
+        )
+        with reserve_memory(expanded + _CHUNK_BYTES, operation="Decoding cached histogram"):
+            arrays = {name: self._array(name) for name in self.arrays}
+            for array in arrays.values():
+                array.setflags(write=False)
+            return dataset_artifact_from_payload(arrays)
 
     def write_npz(self, destination: str | Path) -> None:
         """Write a standard compressed NPZ only to the user's chosen path."""
@@ -154,7 +162,8 @@ class CompressedBinning:
 class RebinCacheBudget:
     """Enforce one memory and recency budget across result-cache stages."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, manual_retention: bool = False) -> None:
+        self.manual_retention = bool(manual_retention)
         self.limit_bytes: int | None = None
         self._caches: list[RebinCache] = []
         self._clock = 0
@@ -178,7 +187,7 @@ class RebinCacheBudget:
         resident_values = tuple(
             value
             for cache in self._caches
-            for value in OrderedDict.values(cache)
+            for value in tuple(OrderedDict.values(cache))
         )
         with self._borrowed_lock:
             borrowed_values = tuple(
@@ -186,31 +195,28 @@ class RebinCacheBudget:
                 for reference in self._borrowed.values()
                 if (value := reference()) is not None
             )
-        # File-backed pages can be reclaimed by the OS. Charge only owned
-        # heap allocations, deduplicating views of the same backing arrays.
-        return array_storage_nbytes((resident_values, borrowed_values)).heap + sum(
+        return array_storage_nbytes((resident_values, borrowed_values)).total + sum(
             cache._compressed_bytes for cache in self._caches
         )
 
     def register_borrowed(self, value: MDHistoData | PointListData) -> None:
         """Account for a decoded compressed result until its last user releases it."""
 
-        identity = id(value)
+        for owner in array_storage_owners(value):
+            identity = id(owner)
 
-        def released(reference: weakref.ReferenceType[Any]) -> None:
+            def released(reference: weakref.ReferenceType[Any], *, identity=identity) -> None:
+                with self._borrowed_lock:
+                    if self._borrowed.get(identity) is reference:
+                        self._borrowed.pop(identity, None)
+
             with self._borrowed_lock:
                 current = self._borrowed.get(identity)
-                if current is reference:
-                    self._borrowed.pop(identity, None)
-
-        reference = weakref.ref(value, released)
-        with self._borrowed_lock:
-            current = self._borrowed.get(identity)
-            if current is None or current() is not value:
-                self._borrowed[identity] = reference
+                if current is None or current() is not owner:
+                    self._borrowed[identity] = weakref.ref(owner, released)
 
     def enforce(self) -> None:
-        if self.limit_bytes is None:
+        if self.limit_bytes is None or self.manual_retention:
             return
         while self.total_bytes() > self.limit_bytes:
             candidates = [
@@ -230,7 +236,22 @@ class RebinCacheBudget:
                 cache._discard_compressed(key)
 
 
-SHARED_REBIN_CACHE_BUDGET = RebinCacheBudget()
+SHARED_REBIN_CACHE_BUDGET = RebinCacheBudget(manual_retention=True)
+
+
+@dataclass(frozen=True)
+class CacheResourceRecord:
+    """A cache row inspected without restoring or decompressing its payload."""
+
+    key: Any
+    label: str
+    signature: str
+    data: MDHistoData | PointListData | None = None
+    project_path: Path | None = None
+    project_member: str | None = None
+    disk_path: Path | None = None
+    compressed_bytes: int = 0
+    available: bool = True
 
 
 class RebinCache(OrderedDict):
@@ -379,6 +400,78 @@ class RebinCache(OrderedDict):
         """Return only an already-decoded value without changing cache recency."""
 
         return OrderedDict.get(self, key, default)
+
+    def resource_records(self) -> tuple[CacheResourceRecord, ...]:
+        """Describe resident and lazy cache entries without decoding arrays."""
+
+        with self._decode_lock:
+            keys = list(dict.fromkeys((
+                *OrderedDict.keys(self), *self._compressed, *self._disk,
+                *self._project_backings, *self._decoded,
+            )))
+            result = []
+            for index, key in enumerate(keys):
+                resident = OrderedDict.get(self, key)
+                decoded = self._decoded.get(key)
+                data = resident[1] if resident is not None else (
+                    decoded[1]() if decoded is not None else None
+                )
+                compressed = self._compressed.get(key)
+                backing = self._project_backings.get(key)
+                disk = self._disk.get(key)
+                signature = (resident[0] if resident is not None else
+                             decoded[0] if data is not None and decoded is not None else
+                             compressed[0] if compressed is not None else
+                             disk.signature if disk is not None else
+                             backing.signature if backing is not None else "")
+                result.append(CacheResourceRecord(
+                    key=key, label=self._labels.get(key, f"Cached histogram {index + 1}"),
+                    signature=signature, data=data,
+                    project_path=backing.path if backing is not None else None,
+                    project_member=backing.project_member if backing is not None else None,
+                    disk_path=disk.path if disk is not None and disk.owned else None,
+                    compressed_bytes=compressed[1].nbytes if compressed is not None else 0,
+                    available=(disk or backing).available() if (disk or backing) else True,
+                ))
+            return tuple(result)
+
+    def unload(self, key: Any) -> bool:
+        """Release cached RAM while preserving a reusable saved or temp copy.
+
+        A caller must first release viewers or other users of this object.
+        Their remaining shared arrays stay accounted for until the last user
+        releases them. Unsaved derived values can be reconstructed by callers.
+        """
+
+        with self._decode_lock:
+            changed = OrderedDict.__contains__(self, key) or key in self._compressed or key in self._decoded
+            if OrderedDict.__contains__(self, key):
+                OrderedDict.__delitem__(self, key)
+            compressed = self._compressed.pop(key, None)
+            if compressed is not None:
+                self._compressed_bytes -= compressed[1].nbytes
+            self._decoded.pop(key, None)
+            self._resident_ticks.pop(key, None)
+            self._compressed_ticks.pop(key, None)
+            backing = self._project_backings.get(key)
+            if backing is not None and backing.available():
+                if self._disk.get(key) is not backing:
+                    self._drop_disk(key)
+                self._disk[key] = backing
+            return changed
+
+    def delete_backing(self, key: Any) -> bool:
+        """Forget persistent cache references and remove owned temp copies.
+
+        This never edits an existing project archive. Its owner records the
+        removed member so that the next atomic project save can omit it.
+        """
+
+        with self._decode_lock:
+            changed = key in self._project_backings or key in self._disk
+            self._project_backings.pop(key, None)
+            self._drop_disk(key)
+            return changed
 
     def __contains__(self, key):
         decoded = self._decoded.get(key)

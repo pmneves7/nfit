@@ -197,6 +197,13 @@ def _build_window_shell(
     from .qt_resource_monitor import add_resource_monitor
 
     add_resource_monitor(toolbar)
+    resource_button = QtWidgets.QToolButton()
+    resource_button.setObjectName("resource_manager_button")
+    resource_button.setText("Resources…")
+    resource_button.setToolTip("Inspect RAM and disk caches, load or unload selected data, and change resource budgets.")
+    resource_button.clicked.connect(self.open_resource_manager)
+    toolbar.addWidget(resource_button)
+    self.resource_manager_button = resource_button
 
     splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
     self.window.setCentralWidget(splitter)

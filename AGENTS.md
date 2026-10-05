@@ -122,12 +122,18 @@ different Python.
   dataset summaries without retaining their array payloads.
 - `src/nfit/project_viewer_loading.py` and `viewer_data.py`: metadata-only
   viewer catalogs and on-demand dataset preparation.
+- `src/nfit/qt_viewer_resources.py`: loaded viewer inventory and explicit
+  release of viewer-owned numerical payloads.
 - `src/nfit/project_io.py`, `project_history.py`, and `project_models.py`: project
   serialization, fit-history snapshots, and model-state reconciliation.
 - `src/nfit/mapped_archive.py`: bounded temporary-disk array loading and
   accounting for heap and mapped numerical storage.
 - `src/nfit/data_workspace.py`: operation-owned temporary scientific storage
   and save-destination ownership without startup filesystem dependencies.
+- `src/nfit/project_resources.py`, `resource_budget.py`, and `storage_budget.py`:
+  flat resource inventory, explicit cache lifecycle and memory/disk admission.
+- `src/nfit/project_resource_gui.py`, `qt_resource_manager.py`, and
+  `qt_resource_jobs.py`: resource controls and guarded background archive work.
 - `src/nfit/project_clipboard.py`: GUI-independent project clipboard validation,
   copying, and reference remapping.
 - `src/nfit/project_background_panels.py`: background link and shared source-symmetry controls.
@@ -140,7 +146,7 @@ different Python.
 - `src/nfit/viewer_export.py`: GUI-independent profile, map, and waterfall CSV export.
 - `src/nfit/figure_export.py` and `qt_figure_export.py`: GUI-independent figure
   file export and its Qt destination chooser.
-- `src/nfit/project_caches.py`: project cache eviction and model-overlay cache ownership.
+- `src/nfit/project_caches.py`: project cache lifecycle and model-overlay ownership.
 - `src/nfit/app_distribution.py`, `app_updates.py`, `app_updates_gui.py`, and
   `tools/distribution/`: desktop packaging metadata, verified updates, installers,
   and startup presentation.

@@ -56,6 +56,7 @@ from .mdevent import (
     _accumulate_detector_trajectory,
     _accumulate_discrete_event_coordinates,
     _accumulate_powder_detector_trajectory,
+    _dgs_grid_memory,
     _requested_edges,
     _symmetry_matrices,
     _trajectory_worker_count,
@@ -100,6 +101,7 @@ from .reduction_runtime import (
     effective_trajectory_energies,
     record_resolved_reduction,
 )
+from .resource_budget import memory_guard
 from .source_lineage import source_lineage_metadata
 
 # Mantid's parameter files select these formula-driven GetEi v2 paths instead
@@ -427,6 +429,7 @@ def raw_dgs_dataset_group(
     return group
 
 
+@memory_guard(_dgs_grid_memory, operation="Reducing and binning raw DGS events")
 def bin_raw_dgs_group(
     group: DatasetGroup,
     *,

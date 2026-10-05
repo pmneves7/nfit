@@ -2730,9 +2730,12 @@ def test_unloaded_mdevent_viewer_uses_visible_progress_dialog(monkeypatch):
     QtWidgets.QApplication.processEvents()
 
 
-def test_deferred_viewer_progress_is_owned_by_active_viewer(monkeypatch):
+def test_deferred_viewer_worker_progress_is_owned_by_active_viewer(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from PySide6 import QtCore
+
+    from nfit import qt_resource_jobs
     from nfit.viewer_data import DeferredViewerDatasets, ViewerDatasetDescriptor
 
     group = DataGroup("Workspace1")
@@ -2741,34 +2744,39 @@ def test_deferred_viewer_progress_is_owned_by_active_viewer(monkeypatch):
     active_viewer = QtWidgets.QWidget()
     active_viewer.show()
     captured = []
+    original = qt_resource_jobs.run_resource_job
+
+    def run_job(parent, title, task, *, on_progress=None):
+        def observe(event):
+            dialogs = parent.findChildren(QtWidgets.QProgressDialog)
+            assert dialogs and dialogs[-1].isVisible()
+            assert QtCore.QThread.currentThread() == explorer.app.thread()
+            captured.append(dialogs[-1])
+            if on_progress is not None:
+                on_progress(event)
+        assert parent is active_viewer
+        return original(parent, title, task, on_progress=observe)
 
     def fake_viewer_datasets(*_args, progress_callback=None, **_kwargs):
         descriptor = ViewerDatasetDescriptor("scan")
-
         def load(_index):
-            progress_callback(
-                {"stage": "rebin", "iteration": 1, "total": 1}
-            )
+            progress_callback({"stage": "rebin", "iteration": 1, "total": 1})
             return _grid_mdhisto_data()
-
         return DeferredViewerDatasets([descriptor], load), ["scan"]
 
     monkeypatch.setattr(project_gui, "slice_viewer_datasets", fake_viewer_datasets)
     monkeypatch.setattr(QtWidgets.QApplication, "activeWindow", lambda: active_viewer)
-    monkeypatch.setattr(explorer, "_close_rebin_progress", captured.append)
-
-    datasets, _names = explorer._deferred_viewer_data(group)
-    datasets[0]
-
-    assert len(captured) == 1
-    progress = captured[0]
-    dialog = progress._nfit_progress_dialog
-    assert dialog.parentWidget() is active_viewer
-    assert dialog.isVisible()
-    project_gui.NfitProjectExplorer._close_rebin_progress(explorer, progress)
-    assert not dialog.isVisible()
-    active_viewer.close()
-    explorer.window.close()
+    monkeypatch.setattr(qt_resource_jobs, "run_resource_job", run_job)
+    try:
+        datasets, _names = explorer._deferred_viewer_data(group)
+        datasets[0]
+        assert captured
+        assert captured[0].parentWidget() is active_viewer
+        assert not captured[0].isVisible()
+    finally:
+        explorer._interactive = False
+        active_viewer.close()
+        explorer.window.close()
 
 
 def test_cache_binnings_file_action_is_project_specific(monkeypatch):

@@ -173,7 +173,15 @@ def _load_nfit_dataset_file(
 ) -> tuple[MDHistoData | PointData4D | PointListData, dict[str, Any]]:
     """Load an nfit dataset archive written by :func:`save_dataset_file`."""
 
+    from .analysis.artifacts import dataset_artifact_capacity
+    from .resource_budget import reserve_memory
     source = Path(path)
+    capacity = dataset_artifact_capacity(source)
+    with reserve_memory(capacity.peak_bytes + capacity.expanded_bytes, operation="Loading source dataset"):
+        return _decode_nfit_dataset_file(source)
+
+
+def _decode_nfit_dataset_file(source):
     try:
         archive = np.load(source, allow_pickle=False)
     except (OSError, ValueError) as exc:

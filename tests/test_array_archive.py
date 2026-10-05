@@ -142,3 +142,181 @@ def test_parallel_artifact_decode_is_lossless(monkeypatch):
     np.testing.assert_equal(decoded.errors, source.errors)
     np.testing.assert_equal(decoded.mask, source.mask)
     assert not decoded.signal.flags.writeable
+
+
+def test_artifact_capacity_only_reads_headers_and_rejects_before_decode(monkeypatch):
+    from nfit import resource_budget
+
+    source = _tiny_mdhisto_data(2.0)
+    encoded = artifacts.dataset_artifact_bytes(source)
+    capacity = artifacts.dataset_artifact_capacity(encoded)
+    assert capacity.expanded_bytes == sum(np.asarray(value).nbytes for value in artifacts._payload(source).values())
+    monkeypatch.setattr(resource_budget, "_rss_provider", lambda: 100)
+    monkeypatch.setattr(resource_budget, "_limit_provider", lambda: capacity.peak_bytes + 99)
+    monkeypatch.setattr(resource_budget, "_available_provider", lambda: capacity.peak_bytes * 2)
+    monkeypatch.setattr(resource_budget, "_managed_provider", lambda: 0)
+    monkeypatch.setattr(artifacts, "_OwnedArchiveArrays", lambda *args: (_ for _ in ()).throw(AssertionError("decoded")))
+    with pytest.raises(resource_budget.ResourceLimitError):
+        artifacts.read_dataset_artifact(encoded)
+
+
+def test_cancellable_decode_releases_reservation_without_publishing_result():
+    from nfit.operation_control import operation_progress
+    from nfit.resource_budget import snapshot_memory
+
+    source = _tiny_mdhisto_data(2.0)
+    encoded = artifacts.dataset_artifact_bytes(source)
+    before = snapshot_memory().reserved_bytes
+
+    def cancel(progress):
+        raise RuntimeError("cancel decode")
+
+    with operation_progress(cancel), pytest.raises(RuntimeError, match="cancel decode"):
+        artifacts.read_dataset_artifact(encoded)
+    assert snapshot_memory().reserved_bytes == before
+
+
+def test_bounded_member_decoder_handles_fortran_and_empty_arrays():
+    payload = {"fortran": np.asfortranarray(np.arange(24).reshape(4, 6)), "empty": np.empty((0, 4))}
+    stream = io.BytesIO()
+    np.savez_compressed(stream, **payload)
+    stream.seek(0)
+    with np.load(stream) as archive:
+        for name, expected in payload.items():
+            actual = artifacts._decode_array_member(archive, name)
+            np.testing.assert_equal(actual, expected)
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_compression_cancel_is_bounded_and_keeps_existing_artifact(tmp_path, monkeypatch, workers):
+    from nfit.mdhisto import MDHistoAxis, MDHistoData
+    from nfit.operation_control import operation_progress
+    from nfit.resource_budget import snapshot_memory
+
+    monkeypatch.setattr(array_archive, "_CHUNK_BYTES", 1024)
+    monkeypatch.setattr(array_archive, "_PARALLEL_MIN_BYTES", 2048)
+    monkeypatch.setattr(array_archive, "operation_worker_count", lambda *args, **kwargs: workers)
+    signal = np.arange(4096.)
+    data = MDHistoData((MDHistoAxis("E", np.arange(4097.), "meV", "energy"),),
+                      signal, np.ones_like(signal), np.zeros(signal.size, bool), np.ones_like(signal))
+    target = tmp_path / "original.npz"
+    target.write_bytes(b"existing saved artifact")
+    before = snapshot_memory().reserved_bytes
+    completed = []
+
+    def cancel(event):
+        if event["message"] == "Saving array signal":
+            completed.append(event["iteration"])
+            if event["iteration"] >= 2048:
+                raise RuntimeError("cancel compression")
+
+    with operation_progress(cancel), pytest.raises(RuntimeError, match="cancel compression"):
+        artifacts.write_dataset_artifact(data, target)
+    assert completed[-1] < signal.nbytes
+    assert target.read_bytes() == b"existing saved artifact"
+    assert list(tmp_path.iterdir()) == [target]
+    assert snapshot_memory().reserved_bytes == before
+
+
+def test_compression_reserves_scratch_before_writing_member(monkeypatch):
+    from nfit import resource_budget
+
+    monkeypatch.setattr(resource_budget, "_rss_provider", lambda: 100)
+    monkeypatch.setattr(resource_budget, "_managed_provider", lambda: 0)
+    monkeypatch.setattr(resource_budget, "_limit_provider", lambda: 1000)
+    monkeypatch.setattr(resource_budget, "_available_provider", lambda: 1000)
+    monkeypatch.setattr(np.lib.format, "write_array", lambda *args, **kwargs: pytest.fail("member write"))
+    output = io.BytesIO()
+    with pytest.raises(resource_budget.ResourceLimitError):
+        array_archive.write_array_archive(output, {"signal": np.arange(8192.)})
+    assert output.getvalue() == b""
+
+
+def test_in_memory_artifact_reserves_retained_output_before_serializing(monkeypatch):
+    from nfit import resource_budget
+
+    source = _tiny_mdhisto_data(2.0)
+    monkeypatch.setattr(resource_budget, "_rss_provider", lambda: 100)
+    monkeypatch.setattr(resource_budget, "_managed_provider", lambda: 0)
+    monkeypatch.setattr(resource_budget, "_limit_provider", lambda: 1000)
+    monkeypatch.setattr(resource_budget, "_available_provider", lambda: 1000)
+    monkeypatch.setattr(artifacts, "write_array_archive", lambda *args: pytest.fail("serialized"))
+    with pytest.raises(resource_budget.ResourceLimitError):
+        artifacts.dataset_artifact_bytes(source)
+
+
+def test_integer_point_columns_reserve_cast_and_immutable_copy_before_decode(monkeypatch):
+    from nfit import resource_budget
+    from nfit.dataset import PointListData
+
+    source = PointListData({"T": np.arange(4096.), "M": np.arange(4096.)},
+                           coordinate_names=["T"], channels=[{"value": "M"}])
+    payload = artifacts._payload(source)
+    payload["column_0"] = np.arange(4096, dtype=np.int32)
+    payload["column_1"] = np.arange(4096, dtype=np.uint8)
+    stream = io.BytesIO()
+    np.savez_compressed(stream, **payload)
+    encoded = stream.getvalue()
+    capacity = artifacts.dataset_artifact_capacity(encoded)
+    converted_bytes = 2 * 2 * 4096 * np.dtype(float).itemsize
+    assert capacity.peak_bytes == capacity.expanded_bytes + converted_bytes + 16 * 1024**2
+    decoded = artifacts.read_dataset_artifact(encoded)
+    for index, name in enumerate(("T", "M")):
+        np.testing.assert_equal(decoded.column(name), payload[f"column_{index}"])
+        assert decoded.column(name).dtype == np.dtype(float)
+        assert not decoded.column(name).flags.writeable
+
+    monkeypatch.setattr(resource_budget, "_rss_provider", lambda: 100)
+    monkeypatch.setattr(resource_budget, "_managed_provider", lambda: 0)
+    monkeypatch.setattr(resource_budget, "_limit_provider", lambda: capacity.peak_bytes + 99)
+    monkeypatch.setattr(resource_budget, "_available_provider", lambda: 2 * capacity.peak_bytes)
+    monkeypatch.setattr(artifacts, "_OwnedArchiveArrays", lambda *args: pytest.fail("decoded"))
+    with pytest.raises(resource_budget.ResourceLimitError):
+        artifacts.read_dataset_artifact(encoded)
+
+
+def test_byte_mask_conversion_is_in_capacity_and_normal_mask_reuses_owned_storage():
+    payload = artifacts._payload(_tiny_mdhisto_data(2.0))
+    payload["mask"] = payload["mask"].astype(np.uint8)
+    stream = io.BytesIO()
+    np.savez_compressed(stream, **payload)
+    encoded = stream.getvalue()
+    capacity = artifacts.dataset_artifact_capacity(encoded)
+    assert capacity.peak_bytes == capacity.expanded_bytes + 2 * payload["mask"].size + 16 * 1024**2
+    decoded = artifacts.read_dataset_artifact(encoded)
+    np.testing.assert_equal(decoded.mask, payload["mask"])
+    assert decoded.mask.dtype == np.dtype(bool)
+    assert not decoded.mask.flags.writeable
+
+    payload["mask"] = payload["mask"].astype(bool)
+    stream = io.BytesIO()
+    np.savez_compressed(stream, **payload)
+    stream.seek(0)
+    with np.load(stream) as archive:
+        owned = artifacts._OwnedArchiveArrays(archive)
+        mask = owned._read("mask")
+        owned.loaded["mask"] = mask
+        decoded = artifacts.dataset_artifact_from_payload(owned)
+        assert decoded.mask is mask
+
+
+def test_streaming_writer_has_no_reservation_between_members_or_after_early_close():
+    from nfit.resource_budget import reserve_memory, snapshot_memory
+
+    output = io.BytesIO()
+    writer = None
+    before = snapshot_memory().reserved_bytes
+    try:
+        with reserve_memory(1024**2):
+            writer = array_archive.array_archive_writer(output, max_member_bytes=8192,
+                                                        compressed=False)
+            write = writer.__enter__()
+            write("signal", np.arange(1024.))
+            assert snapshot_memory().reserved_bytes == before + 1024**2
+        assert snapshot_memory().reserved_bytes == before
+    finally:
+        if writer is not None:
+            writer.__exit__(None, None, None)
+    assert snapshot_memory().reserved_bytes == before
+    with np.load(io.BytesIO(output.getvalue())) as archive:
+        np.testing.assert_equal(archive["signal"], np.arange(1024.))
