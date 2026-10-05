@@ -2546,7 +2546,7 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     )
     assert rebin_dialog._nfit_current_label.text() == (
         "Current dataset group: MACS SPEC 5meV 2K · "
-        "1/3 rebins completed · Current rebin: Fd-3m"
+        "1/3 rebins completed\nCurrent rebin: Fd-3m"
     )
     assert len(rebin_dialog.findChildren(QtWidgets.QProgressBar)) == 2
     assert rebin_dialog._nfit_label.text().startswith(
@@ -2558,9 +2558,13 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     assert progress_layout.indexOf(rebin_dialog._nfit_batch_label) < progress_layout.indexOf(
         batch_bar
     )
-    assert progress_layout.indexOf(rebin_dialog._nfit_current_label) < progress_layout.indexOf(
+    assert progress_layout.indexOf(rebin_dialog._nfit_current_label) > progress_layout.indexOf(
         batch_bar
     )
+    assert progress_layout.indexOf(rebin_dialog._nfit_current_label) < progress_layout.indexOf(
+        rebin_dialog._nfit_label
+    )
+    assert rebin_dialog._nfit_current_label.contentsMargins().bottom() > 0
     assert progress_layout.indexOf(rebin_dialog._nfit_label) > progress_layout.indexOf(
         batch_bar
     )
@@ -2665,7 +2669,7 @@ def test_rebin_progress_dialog_grows_for_wrapped_aggregate_status(monkeypatch):
             "total": 6_660_000_000_000,
             "message": (
                 "replaying background run 1/1 at 222 sample angles "
-                "(computed parallel replay, 16 CPUs)"
+                "(compiled parallel replay)"
             ),
             "output_bins": 847_195_960_328,
             "workers": 16,
@@ -2675,6 +2679,8 @@ def test_rebin_progress_dialog_grows_for_wrapped_aggregate_status(monkeypatch):
 
     layout = dialog.layout()
     assert dialog.height() >= layout.sizeHint().height()
+    assert "CPU" not in dialog._nfit_label.text()
+    assert "847,195,960,328 output bins" in dialog._nfit_label.text()
     for label in (
         dialog._nfit_batch_label,
         dialog._nfit_current_label,

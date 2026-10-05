@@ -1075,6 +1075,8 @@ All rebin workflows use the same compact progress dialog. When a task prepares
 several datasets or dataset-group composites, it uses two levels: the upper bar
 reports completed viewer entries and the lower bar reports progress within the
 named current entry. A one-entry task hides the redundant upper status and bar.
+The current dataset group appears below the upper bar, followed by the current
+rebin on its own line and a gap before the detailed stage status.
 While rebinning, preparing viewers, saving, or running a background task, nfit
 blocks mouse, keyboard, shortcut, and close-window actions in the Project Explorer
 and other modeless windows, including data viewers. Progress controls, Cancel,
@@ -1087,7 +1089,9 @@ the progress bars and cancellation control remain visible.
 Stage descriptions use sentence capitalization. Both levels show elapsed time
 without predicting time remaining. Large integer
 counters use grouped thousands, and resource details below the lower status
-report output bins, CPUs, and estimated working memory. Symmetry-equivalent
+report output bins and estimated working memory. CPU utilization is shown by
+the live Project CPU indicator in the main window rather than a worker limit
+in the progress dialog. Symmetry-equivalent
 duplicates still count as examined work, so detailed progress reaches
 completion even when those duplicates are omitted from the histogram.
 

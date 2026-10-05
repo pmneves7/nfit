@@ -6,6 +6,12 @@ large jobs.
 
 ## Rebinning and event reduction
 
+Native DGS raw reconstruction and cached-event accumulation currently process
+runs and chunks sequentially. Detector-trajectory normalization uses parallel
+workers when the compiled backend is available. The CPU limit is a ceiling,
+not a request to parallelize every stage. In the main window, 1.6% Project CPU
+on a 64-CPU machine corresponds to approximately one fully occupied core.
+
 Small rebinning jobs use NumPy. Large jobs can use a fused Numba kernel with
 memory-bounded private accumulators. Extremely sparse output grids may use
 touched-bin maps when their estimated occupancy is at most 5%; otherwise nfit

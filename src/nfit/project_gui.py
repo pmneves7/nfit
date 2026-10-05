@@ -6584,7 +6584,7 @@ class _RebinProgressDialog:
         self.current_label.setObjectName("rebin_current_item_label")
         self.current_label.setWordWrap(True)
         self.current_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.current_label)
+        self.current_label.setContentsMargins(0, 0, 0, 6)
         self.batch_bar = QtWidgets.QProgressBar()
         self.batch_bar.setObjectName("rebin_batch_progress")
         self.batch_bar.setTextVisible(False)
@@ -6592,6 +6592,7 @@ class _RebinProgressDialog:
             "Completed work items across the complete rebin and preparation task."
         )
         layout.addWidget(self.batch_bar)
+        layout.addWidget(self.current_label)
 
         self.detail_label = QtWidgets.QLabel(title)
         self.detail_label.setObjectName("rebin_progress_label")
@@ -6664,11 +6665,12 @@ class _RebinProgressDialog:
             parts.append(
                 f"{self._rebin_completed:,}/{self._rebin_total:,} rebins completed"
             )
-            if self._rebin_name:
-                parts.append(f"Current rebin: {self._rebin_name}")
         elif self._batch_name:
             parts.append(f"Current {self._batch_kind}: {self._batch_name}")
-        self.current_label.setText(" · ".join(parts))
+        text = " · ".join(parts)
+        if self._rebin_name:
+            text += f"\nCurrent rebin: {self._rebin_name}"
+        self.current_label.setText(text)
 
     def reset(self, title: str | None = None) -> None:
         from PySide6 import QtWidgets
@@ -6783,9 +6785,6 @@ class _RebinProgressDialog:
         output_bins = int(event.get("output_bins") or 0)
         if output_bins:
             details.append(f"{output_bins:,} output bins")
-        workers = int(event.get("workers") or 0)
-        if workers:
-            details.append(f"{workers:,} CPU{'s' if workers != 1 else ''}")
         working_bytes = int(event.get("estimated_working_bytes") or 0)
         if working_bytes:
             details.append(f"~{working_bytes / 1024**2:.1f} MiB working memory")

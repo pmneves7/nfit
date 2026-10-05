@@ -385,7 +385,7 @@ def _replay_runs(
                 total=values.shape[0], backend=backend, run_index=run_index,
             ):
                 if progress_callback is not None:
-                    mode = f"compiled parallel replay, {workers} CPUs" if accelerated else "NumPy fallback, 1 CPU"
+                    mode = "compiled parallel replay" if accelerated else "NumPy fallback"
                     progress_callback({
                         "stage": "mdevent_background_replay",
                         "iteration": completed,

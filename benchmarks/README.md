@@ -79,6 +79,9 @@ The [symmetry-cache measurements](results/dgs-symmetry-cache-node19.md) use
 matched saved projects and report the benefit of calculating only new operations.
 The [remaining performance audit](results/dgs-remaining-performance.md)
 distinguishes worthwhile profiling candidates from measured or rejected gains.
+The [serial-stage audit](results/dgs-serial-stage-audit.md) maps the raw and
+cached-event execution paths, explains their parallelism constraints, and
+records the read-only node23 process observations from the active GUI workflow.
 
 `validate_dgs_estimator_alternatives.py` separately checks estimator bias,
 variance and interval coverage against analytic and simulated truth, including
