@@ -38,6 +38,38 @@ class ProjectViewerItem:
         return f"{self.source_name} · {self.binning['name']}"
 
 
+def event_collection_requires_binning(node: DataGroup | DatasetGroup) -> bool:
+    """Identify source collections whose individual runs are not viewer payloads.
+
+    Both reduced MDE events and native raw-event inputs are viewed through a
+    collection histogram. This check uses metadata only, including for native
+    elastic event collections carried by the raw-event import configuration.
+    """
+
+    return isinstance(node, DatasetGroup) and any(
+        isinstance(node.metadata.get(key), dict) for key in ("mdevent", "raw_dgs")
+    )
+
+
+def viewer_dataset_is_selectable(dataset: DatasetEntry) -> bool:
+    """Select independent results and declared lazy results, without file I/O.
+
+    Acquisition-only event entries require their collection histogram. Empty
+    placeholders have no view to select. Ordinary data and declared source,
+    project-artifact or derived outputs remain selectable even when unloaded,
+    excluded from fitting, or temporarily unavailable on disk.
+    """
+
+    if dataset.kind in {"raw_dgs_nexus", "mdevent"}:
+        return False
+    metadata = dataset.metadata
+    return dataset.data is not None or any(
+        bool(metadata.get(key)) for key in (
+            "source_file", "project_artifact_path", "analysis_artifact_path", "derived_recipe",
+        )
+    )
+
+
 def plan_viewer_items(
     group: DataGroup,
     *,
@@ -60,9 +92,11 @@ def plan_viewer_items(
         if use_composite and data_group_composite_enabled(scope):
             add(_composite_dataset_name(scope), None, scope, data_group_composite_binnings(scope))
             return
-        if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
+        if event_collection_requires_binning(node):
             return
         for dataset in node.datasets:
+            if not viewer_dataset_is_selectable(dataset):
+                continue
             add(dataset.name, dataset, None, dataset_binnings(dataset))
         for child in node.subgroups:
             visit(child)

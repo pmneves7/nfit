@@ -19,6 +19,117 @@ def _group_with_named_binnings():
     return DataGroup("Workspace", datasets=[first, second])
 
 
+@pytest.mark.parametrize("metadata_key,source_format,kind", [
+    ("raw_dgs", "raw-direct-geometry-nexus", "raw_dgs_nexus"),
+    ("raw_dgs", "corelli-correlation-nexus", "raw_dgs_nexus"),
+    ("mdevent", "mantid-mdevent", "mdevent"),
+])
+@pytest.mark.parametrize("use_composite", [False, True])
+def test_unbinned_event_inputs_are_hidden_in_eager_and_deferred_viewers(
+    monkeypatch, metadata_key, source_format, kind, use_composite,
+):
+    sources = DatasetGroup("Background sources", datasets=[
+        DatasetEntry(f"run {run}", None, kind=kind) for run in range(32)
+    ], metadata={metadata_key: {"format": source_format}, "composite": {"enabled": False}})
+    ordinary = DatasetEntry("Imported histogram", _tiny_mdhisto_data(1.0), kind="mdhisto")
+    root = DataGroup("Workspace", datasets=[ordinary], subgroups=[sources])
+    prepared = []
+
+    def prepare(dataset, **_kwargs):
+        assert dataset.kind == "mdhisto"
+        prepared.append(dataset.name)
+        return dataset.data
+
+    monkeypatch.setattr(project_gui, "dataset_for_slice_viewer", prepare)
+    monkeypatch.setattr(project_gui, "current_model_channels", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(project_gui, "current_model_channel", lambda *_args, **_kwargs: None)
+    eager, names = project_gui.slice_viewer_datasets(root, use_composite=use_composite)
+    deferred, deferred_names = project_gui.slice_viewer_datasets(
+        root, use_composite=use_composite, preload=False,
+    )
+    assert names == deferred_names == [ordinary.name]
+    assert len(eager) == 1
+    assert deferred.cached_indices == ()
+    assert prepared == [ordinary.name]
+    assert project_gui._effective_dataset_entry_count(root, root, use_composite=use_composite) == 1
+    assert project_gui._viewer_progress_work_counts(root, root, use_composite=use_composite) == (1, 0, 1)
+    assert len(sources.datasets) == 32
+    assert all(dataset.data is None for dataset in sources.datasets)
+
+
+@pytest.mark.parametrize("metadata_key", ["raw_dgs", "mdevent"])
+def test_binned_event_collections_keep_their_histogram_and_named_binnings(metadata_key):
+    node = DatasetGroup("Sample", datasets=[DatasetEntry("run", None)],
+                        metadata={metadata_key: {}, "composite": {"enabled": True}})
+    root = DataGroup("Workspace", subgroups=[node])
+    scope = project_gui._composite_scope(root, node)
+    binning_id = project_data.add_data_group_composite_binning(scope, name="Overview")
+    project_data.data_group_composite_config_by_id(scope, binning_id)["enabled"] = True
+    items = project_viewer_loading.plan_viewer_items(
+        root, use_composite=True, dataset_binnings=lambda _dataset: [],
+    )
+    assert [item.name for item in items] == ["Sample Composite", "Sample Composite · Overview"]
+    assert all(item.dataset is None for item in items)
+    assert project_gui._effective_dataset_entry_count(root, root, use_composite=True) == 1
+    assert project_gui._viewer_progress_work_counts(root, root, use_composite=True) == (1, 1, 2)
+
+
+def test_viewer_policy_preserves_independent_results_and_lazy_sources(monkeypatch):
+    from nfit.dataset import PointListData
+
+    curve = PointListData({"T": [2.0, 3.0], "chi": [1.0, 2.0]},
+                          coordinate_names=["T"], channels=[{"label": "chi", "value": "chi", "error": None}])
+    visible = [
+        DatasetEntry("Excluded histogram", _tiny_mdhisto_data(1.0), kind="mdhisto", enabled=False, fit_weight=0),
+        DatasetEntry("Susceptibility", curve, data_type="magnetization"),
+        DatasetEntry("Unloaded import", None, metadata={"source_file": "/missing/scan.npz"}),
+        DatasetEntry("Analysis output", None, kind="analysis", metadata={"analysis_artifact_path": "assets/output.npz"}),
+        DatasetEntry("Live result", None, metadata={"derived_recipe": {"analysis_id": "operation"}}),
+    ]
+    hidden = [
+        DatasetEntry("Placeholder", None),
+        DatasetEntry("Raw acquisition", None, kind="raw_dgs_nexus", metadata={"source_file": "/missing/raw.h5"}),
+        DatasetEntry("MDE acquisition", None, kind="mdevent", metadata={"source_file": "/missing/events.nxs"}),
+    ]
+    root = DataGroup("Workspace", datasets=[*visible, *hidden])
+    monkeypatch.setattr(project_gui, "dataset_for_slice_viewer", lambda *_args, **_kwargs: _tiny_mdhisto_data(1.0))
+    monkeypatch.setattr(project_gui, "current_model_channels", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(project_gui, "current_model_channel", lambda *_args, **_kwargs: None)
+    eager, names = project_gui.slice_viewer_datasets(root, use_composite=False)
+    deferred, deferred_names = project_gui.slice_viewer_datasets(root, use_composite=False, preload=False)
+    assert names == deferred_names == [dataset.name for dataset in visible]
+    assert len(eager) == len(visible)
+    assert deferred.cached_indices == ()
+    assert project_gui._effective_dataset_entry_count(root, root, use_composite=False) == len(visible)
+    assert project_gui._viewer_progress_work_counts(root, root, use_composite=False) == (len(visible), 0, len(visible))
+
+
+def test_viewer_catalog_uses_collection_ownership_not_fit_participation(monkeypatch):
+    member = DatasetEntry("Independent source", _tiny_mdhisto_data(1.0), kind="mdhisto", enabled=False)
+    child = DatasetGroup("Child", datasets=[member], enabled=False)
+    parent = DatasetGroup("Collection", subgroups=[child], enabled=False,
+                          metadata={"composite": {"enabled": True}})
+    root = DataGroup("Workspace", subgroups=[parent])
+    monkeypatch.setattr(project_gui, "current_model_channels", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(project_gui, "current_model_channel", lambda *_args, **_kwargs: None)
+    calls = []
+
+    def composite(scope, **_kwargs):
+        calls.append(scope.node.name)
+        return DatasetEntry("Collection Composite", _tiny_mdhisto_data(1.0), metadata={"composite": True})
+
+    monkeypatch.setattr(project_gui, "composite_dataset_entry", composite)
+    monkeypatch.setattr(project_viewer_loading, "composite_dataset_entry", composite)
+    monkeypatch.setattr(project_gui, "dataset_for_slice_viewer", lambda dataset, **_kwargs: dataset.data)
+    eager, names = project_gui.slice_viewer_datasets(root)
+    deferred, deferred_names = project_gui.slice_viewer_datasets(root, preload=False)
+    assert names == deferred_names == ["Collection Composite"]
+    assert len(eager) == 1
+    assert calls == ["Collection"]
+    assert deferred.cached_indices == ()
+    assert project_viewer_loading.plan_viewer_items(root, use_composite=False, dataset_binnings=lambda _ds: [])[0].dataset is member
+
+
 def test_deferred_catalog_and_descriptors_do_not_prepare_arrays(monkeypatch):
     group = _group_with_named_binnings()
     prepared = []

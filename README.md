@@ -50,6 +50,7 @@ A few of its main capabilities are:
   with editable standalone composite workflows and statistical provenance reports,
   including recorded CORELLI covariance and normalization limitations;
 - import, combine, mask, rebin, and visualize multidimensional neutron data,
+  with event collections shown as histograms rather than individual source runs,
   with confirmed project-wide clearing of computed data and model caches,
   with parent-owned hierarchical binning, explicit background recipe context,
   and shared source-group symmetry controls in the background editor,

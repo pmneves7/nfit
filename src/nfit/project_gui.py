@@ -2055,11 +2055,11 @@ def _effective_dataset_entries(
             completed=True,
         )
         return
-    if isinstance(node, DatasetGroup) and isinstance(
-        node.metadata.get("mdevent"), dict
-    ):
+    if _project_viewer_loading.event_collection_requires_binning(node):
         return
     for dataset in node.datasets:
+        if not _project_viewer_loading.viewer_dataset_is_selectable(dataset):
+            continue
         _report_effective_dataset_batch(
             progress_callback,
             batch_progress,
@@ -2106,9 +2106,13 @@ def _effective_dataset_entry_count(
     scope = _composite_scope(group, node)
     if use_composite and data_group_composite_enabled(scope):
         return 1
-    if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
+    if _project_viewer_loading.event_collection_requires_binning(node):
         return 0
-    return len(node.datasets) + sum(
+    selectable_count = sum(
+        _project_viewer_loading.viewer_dataset_is_selectable(dataset)
+        for dataset in node.datasets
+    )
+    return selectable_count + sum(
         _effective_dataset_entry_count(
             group,
             subgroup,
@@ -2142,12 +2146,16 @@ def _viewer_progress_work_counts(
             for item in binnings[1:]
         )
         return 1, named, 1 + named
-    if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
+    if _project_viewer_loading.event_collection_requires_binning(node):
         return 0, 0, 0
 
-    materializations = len(node.datasets)
+    selectable = [
+        dataset for dataset in node.datasets
+        if _project_viewer_loading.viewer_dataset_is_selectable(dataset)
+    ]
+    materializations = len(selectable)
     viewer_entries = 0
-    for dataset in node.datasets:
+    for dataset in selectable:
         binnings = (
             dataset_rebin_binnings(dataset)
             if isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict)
@@ -20945,7 +20953,7 @@ def _has_slice_viewer_candidates(group: DataGroup) -> bool:
         if ready:
             return True
     for dataset in group.iter_datasets():
-        if dataset.kind == "raw_dgs_nexus":
+        if not _project_viewer_loading.viewer_dataset_is_selectable(dataset):
             continue
         if isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
             return True

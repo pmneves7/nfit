@@ -68,6 +68,24 @@ axes, ranges, visualization mode, styling, and other controls are independent
 in each window. Project changes refresh every open viewer without merging their
 view settings. **Open new viewer**, beside the visualization selector, creates
 an independent viewer initialized from the current dataset and view settings.
+
+The dataset dropdown lists scientific results and their declared lazy sources,
+not every file or placeholder stored in the project:
+
+- An enabled collection histogram represents its descendants. Use **Binning**
+  to switch its enabled named grids.
+- Raw-event and MDEvent acquisition inputs need a collection histogram and are
+  omitted individually. A background source with its own binning disabled does
+  not list its runs; configure its collection binning to view it independently.
+- Ordinary histograms, point datasets and analysis outputs remain selectable,
+  including unloaded sources and datasets excluded from fitting. Missing files
+  remain visible so their loading errors can be diagnosed.
+- Empty placeholders without data, a source or a derived recipe are omitted.
+
+Catalog construction reads metadata only. Source runs and hidden placeholders
+remain available in the explorer for inspection and reduction settings. The
+same selection policy applies to preloaded and lazy viewers and to scripting
+through `slice_viewer_datasets`.
 **Store plot**, beside it, saves the current view to the workspace's **Plots**
 branch and reports the stored recipe name in the viewer.
 Closing one viewer does not affect the others.
