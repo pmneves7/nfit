@@ -77,6 +77,9 @@ not every file or placeholder stored in the project:
 - Raw-event and MDEvent acquisition inputs need a collection histogram and are
   omitted individually. A background source with its own binning disabled does
   not list its runs; configure its collection binning to view it independently.
+  Independently prepared results in a source collection remain selectable when
+  that collection's histogram is disabled; the acquisition's original importer
+  and the folder's instrument settings do not hide a prepared result.
 - Ordinary histograms, point datasets and analysis outputs remain selectable,
   including unloaded sources and datasets excluded from fitting. Missing files
   remain visible so their loading errors can be diagnosed.

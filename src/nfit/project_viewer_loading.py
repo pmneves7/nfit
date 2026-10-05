@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .pipeline import DataGroup, DatasetEntry, DatasetGroup
+from .pipeline import DataGroup, DatasetEntry
 from .project_composites import (
     _composite_dataset_name,
     _composite_scope,
@@ -38,19 +38,6 @@ class ProjectViewerItem:
         return f"{self.source_name} · {self.binning['name']}"
 
 
-def event_collection_requires_binning(node: DataGroup | DatasetGroup) -> bool:
-    """Identify source collections whose individual runs are not viewer payloads.
-
-    Both reduced MDE events and native raw-event inputs are viewed through a
-    collection histogram. This check uses metadata only, including for native
-    elastic event collections carried by the raw-event import configuration.
-    """
-
-    return isinstance(node, DatasetGroup) and any(
-        isinstance(node.metadata.get(key), dict) for key in ("mdevent", "raw_dgs")
-    )
-
-
 def viewer_dataset_is_selectable(dataset: DatasetEntry) -> bool:
     """Select independent results and declared lazy results, without file I/O.
 
@@ -60,12 +47,14 @@ def viewer_dataset_is_selectable(dataset: DatasetEntry) -> bool:
     excluded from fitting, or temporarily unavailable on disk.
     """
 
+    metadata = dataset.metadata
+    if dataset.data is not None or metadata.get("derived_recipe"):
+        return True
     if dataset.kind in {"raw_dgs_nexus", "mdevent"}:
         return False
-    metadata = dataset.metadata
-    return dataset.data is not None or any(
+    return any(
         bool(metadata.get(key)) for key in (
-            "source_file", "project_artifact_path", "analysis_artifact_path", "derived_recipe",
+            "source_file", "project_artifact_path", "analysis_artifact_path",
         )
     )
 
@@ -91,8 +80,6 @@ def plan_viewer_items(
         scope = _composite_scope(group, node)
         if use_composite and data_group_composite_enabled(scope):
             add(_composite_dataset_name(scope), None, scope, data_group_composite_binnings(scope))
-            return
-        if event_collection_requires_binning(node):
             return
         for dataset in node.datasets:
             if not viewer_dataset_is_selectable(dataset):

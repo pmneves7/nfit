@@ -130,6 +130,29 @@ def test_viewer_catalog_uses_collection_ownership_not_fit_participation(monkeypa
     assert project_viewer_loading.plan_viewer_items(root, use_composite=False, dataset_binnings=lambda _ds: [])[0].dataset is member
 
 
+@pytest.mark.parametrize("metadata_key,kind", [("raw_dgs", "raw_dgs_nexus"), ("mdevent", "mdevent")])
+def test_prepared_results_in_source_collections_follow_their_current_representation(
+    monkeypatch, metadata_key, kind,
+):
+    source = DatasetEntry("Acquisition", None, kind=kind, metadata={"source_file": "/missing/source.nxs"})
+    prepared = DatasetEntry("Prepared run", _tiny_mdhisto_data(1.0), kind=kind)
+    artifact = DatasetEntry("Saved result", None, metadata={"project_artifact_path": "assets/result.npz"})
+    child = DatasetGroup("Prepared outputs", datasets=[artifact])
+    native = DatasetGroup("Source collection", datasets=[source, prepared], subgroups=[child],
+                          metadata={metadata_key: {}, "composite": {"enabled": False}})
+    root = DataGroup("Workspace", subgroups=[native])
+    monkeypatch.setattr(project_gui, "current_model_channels", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(project_gui, "current_model_channel", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(project_gui, "dataset_for_slice_viewer", lambda *_args, **_kwargs: _tiny_mdhisto_data(1.0))
+    eager, names = project_gui.slice_viewer_datasets(root)
+    deferred, deferred_names = project_gui.slice_viewer_datasets(root, preload=False)
+    assert names == deferred_names == ["Prepared run", "Saved result"]
+    assert len(eager) == 2
+    assert deferred.cached_indices == ()
+    assert project_gui._effective_dataset_entry_count(root, root, use_composite=True) == 2
+    assert project_gui._viewer_progress_work_counts(root, root, use_composite=True) == (2, 0, 2)
+
+
 def test_deferred_catalog_and_descriptors_do_not_prepare_arrays(monkeypatch):
     group = _group_with_named_binnings()
     prepared = []

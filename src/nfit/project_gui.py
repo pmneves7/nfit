@@ -2055,8 +2055,6 @@ def _effective_dataset_entries(
             completed=True,
         )
         return
-    if _project_viewer_loading.event_collection_requires_binning(node):
-        return
     for dataset in node.datasets:
         if not _project_viewer_loading.viewer_dataset_is_selectable(dataset):
             continue
@@ -2106,8 +2104,6 @@ def _effective_dataset_entry_count(
     scope = _composite_scope(group, node)
     if use_composite and data_group_composite_enabled(scope):
         return 1
-    if _project_viewer_loading.event_collection_requires_binning(node):
-        return 0
     selectable_count = sum(
         _project_viewer_loading.viewer_dataset_is_selectable(dataset)
         for dataset in node.datasets
@@ -2146,9 +2142,6 @@ def _viewer_progress_work_counts(
             for item in binnings[1:]
         )
         return 1, named, 1 + named
-    if _project_viewer_loading.event_collection_requires_binning(node):
-        return 0, 0, 0
-
     selectable = [
         dataset for dataset in node.datasets
         if _project_viewer_loading.viewer_dataset_is_selectable(dataset)
