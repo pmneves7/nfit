@@ -18,6 +18,13 @@ from .cached_background_replay import (
     background_replay_payload,
     background_replay_source_recipe,
 )
+from .dgs_background_normalization import (
+    MAX_REPLAY_NORMALIZATION_BATCH_TASKS as MAX_REPLAY_NORMALIZATION_BATCH_TASKS,
+)
+from .dgs_background_normalization import (
+    NORMALIZATION_PROGRESS_UNITS_PER_ANGLE,
+    ReplayExposureBatch,
+)
 from .dgs_background_sources import (
     open_event_stream,
     raw_source,
@@ -41,10 +48,6 @@ except ImportError:
 # Large angle/symmetry collections amortize parallel dispatch across more events;
 # the independent scratch-byte bound still governs small memory allowances.
 MAX_REPLAY_TRANSFORM_TASKS = 4_000_000
-_NORMALIZATION_PROGRESS_UNITS_PER_ANGLE = 1_000
-# Keep compiled trajectory calls short enough for responsive progress/cancellation
-# while retaining one persistent output accumulator across compatible angles.
-MAX_REPLAY_NORMALIZATION_BATCH_TASKS = 250_000
 
 
 def project_measured_background_mdevent(
@@ -135,7 +138,7 @@ def project_measured_background_mdevent(
         background, sources, (run.metadata["incident_energy"] for run in sources)
     )[0]
     prepared = []
-    setup_total = len(runs) * _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
+    setup_total = len(runs) * NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
     for angle_index, (run, fraction) in enumerate(zip(runs, exposure, strict=True)):
 
         def report_setup(event, *, angle_index=angle_index):
@@ -145,7 +148,7 @@ def project_measured_background_mdevent(
             local_iteration = min(max(int(event.get("iteration", 0)), 0), local_total)
             global_progress = (
                 angle_index + local_iteration / local_total
-            ) * _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
+            ) * NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
             progress_callback({
                 **event,
                 "stage": "mdevent_background_normalization_setup",
@@ -222,11 +225,13 @@ def _replay_runs(
     config = background.metadata["raw_dgs" if raw_source(background) else "mdevent"]
     frame = "QLab" if raw_source(background) else config["dimensions"][0]["frame"]
     normalization_angles = len(prepared)
-    normalization_total = (
-        len(sources)
-        * normalization_angles
-        * _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
-    )
+    exposure_batch = ReplayExposureBatch(max_batch_bytes)
+
+    def integrate_exposure():
+        exposure_batch.integrate(denominator, mdevent._trajectory_normalization_from_payloads,
+            edges, shape, sources=len(sources), angles=normalization_angles,
+            progress_callback=progress_callback)
+
     for run_index, source in enumerate(sources):
         from .reduction_recipes import effective_reduction_config
 
@@ -243,10 +248,7 @@ def _replay_runs(
             raise ValueError("background proton charge must be finite and positive")
         ids, theta, phi, solid = source_detectors[geometry]
         transforms, fractions, accepted_ids, excluded_bins = [], [], [], []
-        normalization_groups = {}
-        for angle_index, (sample_detectors, payloads, fraction, excluded) in enumerate(
-            prepared
-        ):
+        for sample_detectors, payloads, fraction, excluded in prepared:
             replay_payloads = []
             replay_detectors = []
             for inverse, sample_ei, sample_bounds, _, index in payloads:
@@ -275,90 +277,9 @@ def _replay_runs(
                 fractions.append(fraction)
                 accepted_ids.append(ids[valid_solid > 0])
                 excluded_bins.append(excluded)
-            # A trajectory accumulator can consume every angle sharing an
-            # output mask. Grouping here avoids allocating and reducing a full
-            # private output grid once per angle, which dominates large replays.
-            mask_key = None if excluded is None else np.asarray(excluded, dtype=bool).tobytes()
-            group = normalization_groups.setdefault(
-                mask_key, {"excluded": excluded, "angles": [], "detectors": [], "payloads": []}
-            )
-            geometry_indices = []
-            for detector in replay_detectors:
-                geometry_index = next(
-                    (
-                        index
-                        for index, existing in enumerate(group["detectors"])
-                        if all(
-                            first.shape == second.shape
-                            and np.array_equal(first, second)
-                            for first, second in zip(existing, detector, strict=True)
-                        )
-                    ),
-                    None,
-                )
-                if geometry_index is None:
-                    geometry_index = len(group["detectors"])
-                    group["detectors"].append(detector)
-                geometry_indices.append(geometry_index)
-            group["payloads"].extend(
-                (*payload[:4], geometry_indices[payload[4]]) for payload in replay_payloads
-            )
-            group["angles"].append(angle_index)
-
-        completed_angles = 0
-        for group in normalization_groups.values():
-            group_angle_count = len(group["angles"])
-
-            def report_normalization(
-                event, *, completed_angles=completed_angles,
-                group_angle_count=group_angle_count, run_index=run_index,
-            ):
-                if progress_callback is None:
-                    return
-                local_total = max(int(event.get("total", 0)), 1)
-                local_iteration = min(max(int(event.get("iteration", 0)), 0), local_total)
-                local_fraction = local_iteration / local_total
-                angle_progress = completed_angles + local_fraction * group_angle_count
-                global_progress = (
-                    run_index * normalization_angles + angle_progress
-                ) * _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE
-                display_angle = min(
-                    normalization_angles,
-                    max(1, int(np.ceil(angle_progress))),
-                )
-                progress_callback({
-                    **event,
-                    "stage": "mdevent_background_normalization",
-                    "iteration": int(round(global_progress)),
-                    "total": normalization_total,
-                    "background_run": run_index + 1,
-                    "background_runs_total": len(sources),
-                    "sample_angle": display_angle,
-                    "sample_angles_total": normalization_angles,
-                    "message": (
-                        f"normalizing background run {run_index + 1}/{len(sources)}; "
-                        f"sample angle {display_angle}/{normalization_angles}: "
-                        f"{event.get('message', 'integrating detector trajectories')}"
-                    ),
-                })
-
-            norm = mdevent._trajectory_normalization_from_payloads(
-                group["detectors"],
-                group["payloads"],
-                edges,
-                shape,
-                progress_callback=report_normalization,
-                max_batch_tasks=MAX_REPLAY_NORMALIZATION_BATCH_TASKS,
-            ).ravel()
-            excluded = group["excluded"]
-            if excluded is None:
-                denominator += norm
-            else:
-                # Single-worker accumulators may expose a read-only result.
-                # Apply the output mask to the destination instead of mutating it.
-                included = ~excluded
-                denominator[included] += norm[included]
-            completed_angles += group_angle_count
+            exposure_batch.add(replay_detectors, replay_payloads, excluded)
+        if exposure_batch.full:
+            integrate_exposure()
         transform_count = len(transforms)
         accelerated = _REPLAY_NUMBA is not None
         backend = "numba" if accelerated else "numpy"
@@ -460,6 +381,7 @@ def _replay_runs(
                 transforms=transforms, weights=weights, detector_ids=ids,
                 accepted_ids=accepted_ids, excluded_bins=excluded_bins,
             ))
+    integrate_exposure()
     with np.errstate(divide="ignore", invalid="ignore"):
         signal = numerator / denominator
         errors = np.sqrt(variance) / denominator

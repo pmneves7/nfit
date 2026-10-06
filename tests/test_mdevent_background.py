@@ -126,9 +126,8 @@ def test_replay_batches_angle_normalization_and_reports_cumulative_progress(
     assert setup[-1]["iteration"] == setup[-1]["total"]
     assert "sample angle 3/3" in setup[-1]["message"]
 
-    # All unmasked sample angles share one persistent trajectory accumulator.
-    assert len(calls) == len(background.datasets)
-    assert all(detectors == 1 and payloads == 3 for detectors, payloads in calls)
+    # All compatible runs and angles share one persistent trajectory accumulator.
+    assert calls == [(1, 3 * len(background.datasets))]
     normalization = [
         event
         for event in progress
@@ -143,8 +142,9 @@ def test_replay_batches_angle_normalization_and_reports_cumulative_progress(
     assert normalization[-1]["sample_angle"] == 3
     assert normalization[-1]["sample_angles_total"] == 3
     source_total = len(background.datasets)
-    assert f"background run {source_total}/{source_total}" in normalization[-1]["message"]
-    assert "sample angle 3/3" in normalization[-1]["message"]
+    assert normalization[-1]["background_run"] == source_total
+    assert normalization[-1]["pooled_background_exposure"]
+    assert f"for {source_total} background runs" in normalization[-1]["message"]
 
 
 def test_replay_does_not_mutate_read_only_normalization_when_masked(

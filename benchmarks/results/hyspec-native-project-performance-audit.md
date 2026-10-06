@@ -9,6 +9,10 @@ inspected locally on October 6, 2026. ORNL measurements resumed on node21 after 
 [matched background trial](hyspec-background-batching-node21.md) confirmed and
 fixed source-cache ownership and measured a larger-batch improvement. The active
 GUI job was not interrupted and neither original scientific project was changed.
+The subsequent [11-file background trial](hyspec-background-pooling-node21.md)
+also pools matching trajectory exposures across source files, reducing its
+background stage by 29.2% with every-cell numerical parity. Event replay still
+processes each original source, preserving its uncertainty recipe.
 
 The screenshot reports 27 configured work items, 5 completed after 88 minutes.
 These are binnings counted by the batch workflow, despite the label saying
@@ -36,7 +40,7 @@ temperatures, directional backgrounds and derived data.
 | Sample event projection and accumulation | Fused compiled Numba, serial ordered updates | Scatter cost and grid locality; shared-bin parallel writes are unsafe |
 | Sample trajectory exposure | Compiled parallel integration with checked task pooling | Integration, dense-array initialization/merge and worker limits |
 | Background setup and detector matching | Serial preparation with acceptance/geometry deduplication | Repeated cache header/detector-array reads, transform and mask preparation |
-| Background trajectory exposure | Parallel integration, pooled tasks by detector geometry/output mask | Reuse only when geometry, grid, windows, weights and acceptance agree |
+| Background trajectory exposure | Parallel integration, pooled tasks across angles and source files after exact detector geometry/output-mask checks | Different grids still require integration; positive exposure weights can be summed for otherwise equal tasks |
 | Background event reconstruction and detector recovery | Native reduced-event adapter; vectorized rays plus nearest-detector lookup | Coupling of input chunk size to replay scratch; many tiny reads/queries |
 | Background mapping and same-event collision handling | Compiled parallel mapping and per-event hashes | Batch size, thread/barrier overhead and scratch allocation |
 | Background histogram updates | Compiled serial ordered scatter | Its fraction of replay time, not the CPU use of mapping alone |

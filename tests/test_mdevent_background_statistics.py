@@ -13,6 +13,7 @@ from nfit import (
     set_dgs_trajectory_energy_policy,
 )
 from nfit.dgs_reduction_policy import ENERGY_TO_K
+from nfit.pipeline import MaskSpec
 from tests.test_mdevent import _write_mdevent
 
 
@@ -60,6 +61,59 @@ def _target(sample, bins):
         sample, lower=[-2., -2., -2., -.5], upper=[.5, 2., 2., .5],
         num_bins=[bins, 1, 1, 1],
     )
+
+
+@pytest.mark.parametrize("precision", ["mantid", "high_precision"])
+@pytest.mark.parametrize("energy_policy", ["first_run", "per_run"])
+@pytest.mark.parametrize("normalizer", ["numpy", "numba"])
+def test_cross_source_exposure_pooling_matches_separate_replay(
+    tmp_path, backend, precision, energy_policy, normalizer, monkeypatch,
+):
+    if normalizer == "numpy":
+        monkeypatch.setattr(replay.mdevent, "_MDEVENT_NUMBA", None)
+    elif replay.mdevent._MDEVENT_NUMBA is None:
+        pytest.skip("Numba normalization is unavailable")
+    h5py = pytest.importorskip("h5py")
+    sample, source = _directional_fixture(tmp_path)
+    path = source.datasets[0].metadata["source_file"]
+    with h5py.File(path, "r+") as handle:
+        workspace = handle["MDEventWorkspace"]
+        row = workspace["event_data/event_data"][()]
+        second = row.copy()
+        second[:, 2] = 1
+        del workspace["event_data/event_data"]
+        workspace["event_data"].create_dataset("event_data", data=np.concatenate((row, second)))
+        workspace["experiment1/logs/Ei/value"][...] = [10.005]
+        # Within the accepted instrument alignment tolerance, but not identical
+        # normalization geometry. Its exposure must remain a separate task.
+        workspace["experiment1/instrument/physical_detectors/polar_angle"][...] = [30.001]
+    source = mdevent_dataset_group(path)
+    source.datasets[0].fit_weight = .7
+    source.datasets[1].fit_weight = 1.3
+    source.datasets[0].scale_factor = -.5
+    source.datasets[1].scale_factor = 2.
+    sample.datasets[0].masks = [
+        MaskSpec("one angle", "energy_q_range", {"energy": [.1, .5]})
+    ]
+    set_dgs_trajectory_energy_policy(source, energy_policy)
+    set_dgs_reduction_policies(sample, event_precision_policy=precision)
+    target = bin_mdevent_group(sample, lower=[-2., -2., -2., -.5],
+                              upper=[.5, 2., 2., .5], num_bins=[3, 2, 1, 4])
+    separate = replay.project_measured_background_mdevent(
+        sample, source, target, max_batch_bytes=1,
+    )
+    pooled = replay.project_measured_background_mdevent(
+        sample, source, target, max_batch_bytes=192*1024**2,
+    )
+    np.testing.assert_array_equal(pooled.mask, separate.mask)
+    np.testing.assert_array_equal(pooled.num_events, separate.num_events)
+    for name in ("signal", "errors"):
+        np.testing.assert_allclose(getattr(pooled, name), getattr(separate, name),
+                                   rtol=1e-12, atol=0., equal_nan=True)
+    np.testing.assert_allclose(pooled.metadata["normalization_denominator"],
+                               separate.metadata["normalization_denominator"],
+                               rtol=1e-12, atol=0.)
+    assert pooled.metadata["cached_background_replay"] == separate.metadata["cached_background_replay"]
 
 
 def test_unequal_angle_exposure_and_background_calibration_match_analytic_reference(

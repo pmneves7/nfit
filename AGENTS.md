@@ -93,6 +93,8 @@ different Python.
   explicitly re-exported by the MDE importer for compatibility.
 - `src/nfit/dgs_background_sources.py`: native raw and MDE source streams for
   directional background replay and cached-profile covariance.
+- `src/nfit/dgs_background_normalization.py`: bounded background exposure
+  batching with complete detector-geometry and mask identity checks.
 - `src/nfit/cached_background_replay.py` and `background_profile_queries.py`:
   bounded measured-background recipes, aligned composite propagation, and
   original-grid profile selection and covariance replay.

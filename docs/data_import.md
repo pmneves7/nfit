@@ -1438,14 +1438,29 @@ proton charge determining their exposure; each retains its measured detector
 geometry. Cached-field covariance queries can reconstruct these raw sources
 without a Mantid installation or intermediate MDE file.
 
-Detector-trajectory normalization batches angles with identical output-mask
-acceptance into shared accumulators, avoiding a separate full-grid allocation
-and reduction for every angle. Its progress reports cumulative work and angle
-counts rather than restarting at each angle. This normalization uses the same
-compiled, CPU-limited trajectory integration as sample binning. Event replay
+Several sample datasets can reuse the same reduced backgrounds when their
+background links reference the same source dataset group. Importing a second
+copy of those files creates separate dataset entries and separate reduction
+caches. A different grid, symmetry, sample-angle distribution, or acceptance
+mask generally requires new background replay, while compatible raw reductions
+are reused. Counts, variance and exposure are pooled before normalization;
+separately normalized background intensities are not averaged.
+
+Detector-trajectory normalization batches angles and source files with identical
+output-mask acceptance into shared accumulators. Complete detector IDs,
+directions, normalization values and array types must match before geometry is
+shared; incident energy, affine transform and effective energy domain must
+also match before positive exposures are pooled. Differences in instrument
+geometry or reduction settings that alter these payloads prevent pooling. Recipe storage
+is bounded, and collections exceeding the allowance are integrated in batches.
+This avoids repeated trajectory integrations for compatible background files
+and full-grid allocations for individual angles. Progress reports cumulative
+pooled exposure work. Normalization uses the same compiled, CPU-limited
+trajectory integration as sample binning. Event replay
 still processes every selected angle: its work scales with background event
 count times angle count, so it is not guaranteed to finish as quickly as the
-sample reduction.
+sample reduction. Each original event source and its uncertainty recipe are
+retained, including covariance between copies of the same background event.
 
 Direct HKLE binning requires QSample coordinates. A QLab background must use
 powder reduction or measured-event replay; it is not treated as if it were

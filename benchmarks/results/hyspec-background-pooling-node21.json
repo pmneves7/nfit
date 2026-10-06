@@ -1,0 +1,320 @@
+{
+  "scope": "Sequential matched native HYSPEC trial on analysis-node21: 90 evenly spaced low-temperature bank-70 sample runs, all 11 corresponding dummy files, eight symmetry operations, fixed saved in-plane grid; one pass per variant. Stage times exclude initial imports/metadata load and diagnostic HDF writes. Filesystem caches and shared-node activity uncontrolled.",
+  "baseline_commit": "ac6bc26",
+  "baseline": {
+    "host": "analysis-node21.sns.gov",
+    "selected_source": "existing desktop runtime with explicitly staged source: /gpfs/neutronsfs/instruments/HYS/IPTS-36860/shared/nfit/benchmarks/native-background-20261006/code/pooling/baseline/src",
+    "sample_runs": 90,
+    "dummy_runs": 11,
+    "workers": 16,
+    "repeats": [
+      {
+        "seconds": 140.29364424699816,
+        "components": {},
+        "completed_reductions_by_signature": {},
+        "source_cache_owned": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    ],
+    "source_unchanged": true,
+    "sample_load_reduce_cache_bin_seconds": 21.64617455700136,
+    "shape": [
+      161,
+      221,
+      12,
+      49
+    ],
+    "raw_cache_publication": {
+      "1f5d9221275b4cf8975485f39f3d60cb": true,
+      "53de433331f6463097afec1ccab98584": true,
+      "7cb2dc30863c446999bde99af048938e": true,
+      "e6b5b0c785a14fcaa8704afe08bd36f4": true,
+      "b87192a155d441b8af07ea5e1bc04622": true,
+      "5120901849fe4815bafb8dc3421d00cc": true,
+      "2308217a5e4545868a6cbb12efa8b187": true,
+      "db69af6c37e3400ebfb8ac55839def0f": true,
+      "2b691372378648a4a1e47fb1856a7bdd": true,
+      "3c7df68398654869aa9a4b06b4c87054": true,
+      "1047c671aa1f45108f8d02acb61d86a6": true
+    },
+    "save_seconds": 9.60041842300052,
+    "peak_process_memory_mib": 5080.921875,
+    "module_sha256": {
+      "project_composites": "4a4dd4f102c3338dc2746388f91825bdd491b9bf9269bb4cad51a61fafd7267f",
+      "event_masks": "79a32b84a4fd8a7e9d51d3436a808072b9e98a6991b272564fb3b85fccc0bbed",
+      "mdevent_background": "422b2b6a0de3c703d12fe67a92ef568dfde2de62c79dd59e8c16ec414494c14d",
+      "dgs_background_sources": "87ba8126ed9343fd23adb6099f55b034f20bd99c086868d5ea016566d33b3ccd"
+    }
+  },
+  "candidate": {
+    "host": "analysis-node21.sns.gov",
+    "selected_source": "existing desktop runtime with explicitly staged source: /gpfs/neutronsfs/instruments/HYS/IPTS-36860/shared/nfit/benchmarks/native-background-20261006/code/pooling/candidate/src",
+    "sample_runs": 90,
+    "dummy_runs": 11,
+    "workers": 16,
+    "repeats": [
+      {
+        "seconds": 99.33905926399893,
+        "components": {},
+        "completed_reductions_by_signature": {},
+        "source_cache_owned": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      }
+    ],
+    "source_unchanged": true,
+    "sample_load_reduce_cache_bin_seconds": 21.10708313199939,
+    "shape": [
+      161,
+      221,
+      12,
+      49
+    ],
+    "raw_cache_publication": {
+      "1f5d9221275b4cf8975485f39f3d60cb": true,
+      "53de433331f6463097afec1ccab98584": true,
+      "7cb2dc30863c446999bde99af048938e": true,
+      "e6b5b0c785a14fcaa8704afe08bd36f4": true,
+      "b87192a155d441b8af07ea5e1bc04622": true,
+      "5120901849fe4815bafb8dc3421d00cc": true,
+      "2308217a5e4545868a6cbb12efa8b187": true,
+      "db69af6c37e3400ebfb8ac55839def0f": true,
+      "2b691372378648a4a1e47fb1856a7bdd": true,
+      "3c7df68398654869aa9a4b06b4c87054": true,
+      "1047c671aa1f45108f8d02acb61d86a6": true
+    },
+    "save_seconds": 9.049656323000818,
+    "peak_process_memory_mib": 4718.6484375,
+    "module_sha256": {
+      "project_composites": "4a4dd4f102c3338dc2746388f91825bdd491b9bf9269bb4cad51a61fafd7267f",
+      "event_masks": "79a32b84a4fd8a7e9d51d3436a808072b9e98a6991b272564fb3b85fccc0bbed",
+      "mdevent_background": "9d7a29b49e3fa5fc2857178894772c709542b39aba5b4c836b2e35925ee9923d",
+      "dgs_background_sources": "87ba8126ed9343fd23adb6099f55b034f20bd99c086868d5ea016566d33b3ccd"
+    }
+  },
+  "numerical_gate": {
+    "channels": {
+      "N": {
+        "cells": 20921628,
+        "different_cells": 5038511,
+        "maximum_absolute_difference": 1.2732925824820995e-11,
+        "maximum_relative_difference": 2.3447292979794814e-15,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "edge0": {
+        "cells": 162,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "edge1": {
+        "cells": 222,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "edge2": {
+        "cells": 13,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "edge3": {
+        "cells": 50,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "errors": {
+        "cells": 20921628,
+        "different_cells": 4757609,
+        "maximum_absolute_difference": 1.4210854715202004e-14,
+        "maximum_relative_difference": 2.3349378008022708e-15,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "mask": {
+        "cells": 20921628,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "num_events": {
+        "cells": 20921628,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "signal": {
+        "cells": 20921628,
+        "different_cells": 3250808,
+        "maximum_absolute_difference": 1.3322676295501878e-15,
+        "maximum_relative_difference": 2.3331321817045846e-15,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      }
+    },
+    "literal_parity": false,
+    "numerical_parity": true,
+    "relative_tolerance": 1e-12
+  },
+  "configuration": {
+    "project": "/SNS/HYS/IPTS-36860/shared/nfit/HYSPEC_all_raw.nfit",
+    "output": "/SNS/HYS/IPTS-36860/shared/nfit/benchmarks/native-background-20261006/pooling-candidate",
+    "sample": "Ei15meV_1p5K_240Hz_s2_70",
+    "dummy_runs": 11,
+    "workers": 16,
+    "repeats": 1,
+    "component_profile": false,
+    "binning": {
+      "_binning_id": "f6fb896fe9ee4dbeb2c24e662693d1cf",
+      "auto_rebin": false,
+      "axes": [
+        {
+          "auto_lower": false,
+          "auto_lower_value": -4.0,
+          "auto_upper": false,
+          "auto_upper_value": 4.0,
+          "fractional": true,
+          "lower": -4.0,
+          "mode": "step",
+          "name": "[H,H,0]",
+          "num_bins": 160,
+          "step_size": 0.05,
+          "upper": 4.0,
+          "variable": "HHL_H",
+          "vector": [
+            1.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          "auto_step_size": false
+        },
+        {
+          "auto_lower": false,
+          "auto_lower_value": -5.5,
+          "auto_upper": false,
+          "auto_upper_value": 5.5,
+          "fractional": true,
+          "lower": -5.5,
+          "mode": "step",
+          "name": "[0,0,L]",
+          "num_bins": 220,
+          "step_size": 0.05,
+          "upper": 5.5,
+          "variable": "HHL_L",
+          "vector": [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          "auto_step_size": false
+        },
+        {
+          "auto_lower": false,
+          "auto_lower_value": -0.5,
+          "auto_step_size": false,
+          "auto_upper": false,
+          "auto_upper_value": 0.62,
+          "fractional": true,
+          "lower": -0.5,
+          "mode": "step",
+          "name": "[H,-H,0]",
+          "num_bins": 12,
+          "step_size": 0.1,
+          "upper": 0.62,
+          "variable": "HHL_T",
+          "vector": [
+            1.0,
+            -1.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "auto_lower": false,
+          "auto_lower_value": -12.0,
+          "auto_upper": false,
+          "auto_upper_value": 12.0,
+          "fractional": true,
+          "lower": -12.0,
+          "mode": "step",
+          "name": "DeltaE",
+          "num_bins": 48,
+          "step_size": 0.5,
+          "upper": 12.0,
+          "variable": "E",
+          "vector": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "auto_step_size": false
+        }
+      ],
+      "coordinate_mode": "hkle",
+      "enabled": true,
+      "max_batch_mb": 192,
+      "mean_weighting": "uniform",
+      "minimum_coverage": 0.0,
+      "minimum_samples": 0.0,
+      "normalize": true,
+      "resolution_mode": "step",
+      "stale": false,
+      "symmetry": {
+        "expression": "rotate(order=2, axis=[1,-1,0]); mirror(plane=(0,0,1)); mirror(plane=(1,-1,0))",
+        "lattice_parameters": {
+          "a": 8.227,
+          "alpha": 90.0,
+          "b": 8.227,
+          "beta": 90.0,
+          "c": 8.227,
+          "gamma": 90.0
+        },
+        "mode": "generators"
+      },
+      "workers": 16
+    },
+    "replay_task_limit": 4000000,
+    "sample_runs": 90
+  },
+  "candidate_note": "The benchmark snapshot pools geometry with shape/dtype/SHA candidate keys and full value equality. Final source additionally checks shape and dtype after a hash match, tested with forced hash collisions. This guard does not change the benchmark inputs or arithmetic.",
+  "final_service_sha256": "c6a70ed5205c4a0e05b0bbfe591dad94840e13c5d9cfa804817043498ee711f8"
+}

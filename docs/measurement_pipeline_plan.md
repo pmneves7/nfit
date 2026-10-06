@@ -779,6 +779,19 @@ remaining-cost profile are complete. Ordered event parallelism was tested but
 its small workflow gain does not justify adoption. Code and documentation are
 synchronized locally and on ORNL; scientific default changes remain in 6A2.
 
+**Background follow-up (2026-10-06): implemented; awaiting Paul's review.**
+Original background entries retain reduced-event caches across binnings and
+sample datasets referencing the same background group. A matched native trial
+with 90 sample runs and all 11 dummy files pools exactly matching trajectory
+exposures across files: background preparation/replay improves 140.29 → 99.34 s
+(29.2%). Every cell passes the numerical gate; support, counts, masks and edges
+are literal, with signal/exposure/uncertainty differences below 2.35e-15 relative.
+Different grids still require event replay; separately imported copies still
+have separate reduction caches. Full-project profiling and cross-entry cache
+sharing remain separate questions. Evidence is in
+`benchmarks/results/hyspec-background-pooling-node21.md` and the earlier cache
+ownership/batching report `hyspec-background-batching-node21.md`.
+
 - [x] Fuse event projection/accumulation and reuse exact-text mask parsing.
 - [x] Reuse successfully inspected scalar metadata and exact geometry arithmetic
   with complete source, policy, mask and resolved-geometry checks.
