@@ -102,32 +102,22 @@ def open_event_stream(group, source, *, rows):
         return
     from scipy.spatial import cKDTree
 
-    from . import raw_dgs as raw
-    from .raw_dgs_cache import cache_event_chunks, iter_cached_event_chunks
+    from .dgs_reduction_policy import ENERGY_TO_K2
 
-    with prepared_raw_source(group, source) as (config, info, norm, archive, geometry, setup, signature):
+    with reduced_event_stream(group, source, rows=rows) as (config, info, norm, chunks):
         ei = float(config.get("incident_energy_override") or info.incident_energy)
         directions = norm["direction"]
         tree = cKDTree(directions)
         # Detector identities cannot be inferred from a ray shared by two pixels.
         if len(directions) > 1 and np.any(tree.query(directions, k=2)[0][:, 1] < 1e-12):
             raise ValueError("Directional raw replay requires distinct detector rays")
-        if archive is not None:
-            chunks = iter_cached_event_chunks(archive, max(1, rows)*48)
-        else:
-            chunks = raw._iter_reduced_event_chunks(info, config, geometry, ei,
-                raw._energy_transfer_bounds(config, ei), max(1, rows)*96, hyspec_preprocessing=setup)
-            if config.get("cache_reduced_events", True):
-                header = {"run_info": {**asdict(info), "path": str(info.path), "ub_matrix": info.ub_matrix.tolist()},
-                          "hyspec_preprocessing": setup}
-                chunks = cache_event_chunks(source, signature, header, norm, chunks)
 
         def blocks():
-            ki = np.sqrt(ei/raw.ENERGY_TO_K2)
+            ki = np.sqrt(ei/ENERGY_TO_K2)
             for events, _raw_count in chunks:
                 if not len(events):
                     continue
-                kf = np.sqrt((ei-events[:, 3])/raw.ENERGY_TO_K2)
+                kf = np.sqrt((ei-events[:, 3])/ENERGY_TO_K2)
                 direction = np.column_stack((-events[:, 0], -events[:, 1], ki-events[:, 2]))/kf[:, None]
                 distance, indices = tree.query(direction)
                 if np.any(distance > 1e-8):
@@ -139,6 +129,26 @@ def open_event_stream(group, source, *, rows):
                 yield block
         yield np.eye(3), (info.event_count, 9), np.dtype(float), blocks()
 
+
+
+@contextmanager
+def reduced_event_stream(group, source, *, rows):
+    """Yield native configuration, run metadata, calibration and cached chunks."""
+    from . import raw_dgs as raw
+    from .raw_dgs_cache import cache_event_chunks, iter_cached_event_chunks
+
+    with prepared_raw_source(group, source) as (config, info, norm, archive, geometry, setup, signature):
+        ei = float(config.get("incident_energy_override") or info.incident_energy)
+        if archive is not None:
+            chunks = iter_cached_event_chunks(archive, max(1, rows)*48)
+        else:
+            chunks = raw._iter_reduced_event_chunks(info, config, geometry, ei,
+                raw._energy_transfer_bounds(config, ei), max(1, rows)*96, hyspec_preprocessing=setup)
+            if config.get("cache_reduced_events", True):
+                header = {"run_info": {**asdict(info), "path": str(info.path), "ub_matrix": info.ub_matrix.tolist()},
+                          "hyspec_preprocessing": setup}
+                chunks = cache_event_chunks(source, signature, header, norm, chunks)
+        yield config, info, norm, chunks
 
 def replay_group(source):
     """Restore a native event reader from a persisted covariance recipe."""

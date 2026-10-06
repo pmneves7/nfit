@@ -79,6 +79,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "corelli.py",
     PACKAGE_ROOT / "corelli_constants.py",
     PACKAGE_ROOT / "raw_dgs_cache.py",
+    PACKAGE_ROOT / "raw_dgs_bounds.py",
     PACKAGE_ROOT / "raw_dgs_monitors.py",
     PACKAGE_ROOT / "raw_dgs_geometry_precision.py",
     PACKAGE_ROOT / "raw_dgs_geometry.py",
@@ -116,6 +117,13 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "kpath.py",
     PACKAGE_ROOT / "analysis" / "runner.py",
 )
+
+
+def test_native_bounds_public_api_preserves_service_identity():
+    import nfit
+    from nfit.raw_dgs_bounds import raw_dgs_coordinate_bounds
+
+    assert nfit.raw_dgs_coordinate_bounds is raw_dgs_coordinate_bounds
 
 
 @pytest.mark.parametrize("name", ["measurement_contracts", "measurement_statistics", "measurement_profiles", "measurement_aggregation", "measurement_waterfalls", "measurement_likelihoods"])

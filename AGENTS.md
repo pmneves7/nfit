@@ -113,7 +113,8 @@ different Python.
 - `src/nfit/corelli.py`, `_corelli_numba.py`, and `corelli_constants.py`: CORELLI
   reconstruction, its compiled kernels, and their shared numerical conventions.
 - `src/nfit/project_derived_grid.py`: shared output-grid planning for live
-  derived dataset arithmetic.
+  derived dataset arithmetic. `raw_dgs_bounds.py` streams native event extents
+  through the reduced-event cache for automatic derived grids.
 - `src/nfit/project_rebin_panels.py`: shared Qt controls for dataset and
   composite rebin settings, metadata dimensions, and bin summaries.
 - `src/nfit/project_binning_policy.py`: read-only rebin ownership and background

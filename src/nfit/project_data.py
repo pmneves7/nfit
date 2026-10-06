@@ -885,7 +885,12 @@ def _derived_shared_grid_config(
         powder = str(config.get("coordinate_mode", "hkle")) == "powder"
         basis = None if powder else _validate_mdhisto_rebin_basis(axes, 4)
         symmetry = _rebin_symmetry_matrices(config, group.lattice_parameters)
-        return mdevent_coordinate_bounds(
+        from .raw_dgs_bounds import raw_dgs_coordinate_bounds
+
+        bounds_reader = (raw_dgs_coordinate_bounds
+            if node.metadata.get("raw_dgs", {}).get("format") == "raw-direct-geometry-nexus"
+            else mdevent_coordinate_bounds)
+        return bounds_reader(
             node,
             datasets=datasets,
             basis=basis,

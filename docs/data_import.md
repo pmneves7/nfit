@@ -584,6 +584,11 @@ $v$; recomputing $v$ from $w^2$ would change the reference variance. Compatible
 compressed event caches remain readable; saved histogram rebins retain their
 lossless NPZ compression.
 
+Live derived arithmetic can resolve automatic bounds from native DGS sources
+through `raw_dgs_coordinate_bounds`. It scans reduced events in bounded chunks,
+reuses or creates the same per-run caches as binning, and resolves one shared
+output grid across its inputs. It does not load a raw run as a point array.
+
 The cache signature includes the raw, vanadium, and mask file paths, sizes, and
 nanosecond modification/change times, together with incident-energy/time-zero
 overrides, reduction energy bounds, pulse filtering, efficiency settings, and

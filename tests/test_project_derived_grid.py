@@ -45,7 +45,8 @@ def test_explicit_grid_does_not_resolve_or_load_sources():
     assert result is not config
 
 
-def test_hierarchical_event_components_are_scanned_without_dataset_loading():
+@pytest.mark.parametrize("family", ["mdevent", "raw_dgs"])
+def test_hierarchical_event_components_are_scanned_without_dataset_loading(family):
     config = _auto_config()
     cold = object()
     warm = object()
@@ -54,7 +55,7 @@ def test_hierarchical_event_components_are_scanned_without_dataset_loading():
     class EventNode:
         def __init__(self, name):
             self.name = name
-            self.metadata = {"mdevent": {}}
+            self.metadata = {family: {"format": "raw-direct-geometry-nexus"} if family == "raw_dgs" else {}}
 
     cold_node = EventNode("cold-node")
     warm_node = EventNode("warm-node")

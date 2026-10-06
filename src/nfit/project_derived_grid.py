@@ -150,8 +150,10 @@ def plan_shared_derived_grid(
             node = component.get("node")
             if node is None or not datasets:
                 raise ValueError("derived composite source has no selected datasets")
-            if isinstance(getattr(node, "metadata", None), Mapping) and isinstance(
-                node.metadata.get("mdevent"), Mapping
+            metadata = getattr(node, "metadata", {})
+            if isinstance(metadata, Mapping) and (
+                isinstance(metadata.get("mdevent"), Mapping)
+                or metadata.get("raw_dgs", {}).get("format") == "raw-direct-geometry-nexus"
             ):
                 component_bounds.append(list(event_bounds(node, datasets, axes)))
             else:
