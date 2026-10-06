@@ -307,6 +307,17 @@ exposure. Background-subtracted data are not independent Poisson counts.
 Smoothing is a **data-viewer operation** and never part of a MACS reduction or
 saved histogram recipe.
 
+nfit retains each scan point's measured sample angle, kidney angle and energies
+until histogram assignment. DAVE/mslice can first combine nearby scan points
+using its file-combination tolerances, summing counts and averaging these
+coordinates with monitor weights before calculating momentum. These operations
+need not give the same histogram: points on opposite sides of an edge can move
+into one bin after averaging. nfit pools counts and exposure within the requested
+physical bins without this preliminary coordinate averaging. A DAVE comparison
+must therefore distinguish its file-combination settings from its final
+histogram weighting. Tiny floating-point coordinate differences can also move
+an observation lying almost exactly on a bin edge.
+
 Previously reduced MACS source arrays and histogram caches are invalidated by
 the new adapter version. Existing explicit importer choices remain editable;
 reload sources to use updated raw files. Reference comparison settings do not

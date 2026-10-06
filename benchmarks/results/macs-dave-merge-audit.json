@@ -1,0 +1,233 @@
+{
+  "manual_validation": "MACS DAVE pre-projection file combination, 2026-10-06",
+  "dave_version": "2.6 Beta; IDL 9.2.0",
+  "source_archive_url": "https://www.ncnr.nist.gov/dave/downloads/dave_dev_src_2026-09-16.zip",
+  "source_sha256": {
+    "dm_filetools.pro": "6a860abf8637a65ba39b5030c4acef14000f8ea73e98a95bd9289ef0241b4197",
+    "dm_load_macs.pro": "c69e42b4865f25306b2c3c66d9501eb466fab9b9565d49361d21bc57036e9f66",
+    "dm_proj_spec_samp.pro": "41033cb65085c5ed1e351ec85e31ed4987b7fdddc5a15df5272145498d093fd7",
+    "dm_volumegrid_bin.pro": "5d6d646be41c0120b4595c92e71109baabd678a1fe8c56b064ec49c6cfcf84a3"
+  },
+  "references_sha256": {
+    "test_dave.txt": "5da96151c35551a5ec1d7d6e2277040877c248ebf3f10e3f827564551149a51b",
+    "test_dave_248.txt": "8321834a180abc7958cfc4178656547042df79472ec4db48b1c6c23c313bd181",
+    "new_test_dave.txt": "5da96151c35551a5ec1d7d6e2277040877c248ebf3f10e3f827564551149a51b"
+  },
+  "original_and_reloaded_export_identical": true,
+  "raw_files_sha256": {
+    "Ef3p7_et_-0.1_260.nxs.ng0": "12e42074b5f518072e079991144d11315c210897e956696665e1b2860cac9732",
+    "Ef3p7_et_-0.2_250.nxs.ng0": "d27bd1aaec7ff91db18585d78c2ceaa2292bd571a8ef3b6b9c5909725deea7dc",
+    "Ef3p7_et_0.1_261.nxs.ng0": "4e9fd71725955f864f061ed5dc4a167f55b2a6aa66af26e296234a61ee2de618",
+    "Ef3p7_et_0.1_266.nxs.ng0": "47dfc3a57015f77a04912a4dba3f1dcaef8e2d53ba01b978060fe7e74cd31df3",
+    "Ef3p7_et_0.2_248.nxs.ng0": "a34786d4195f4ca0995d9b4f9a67933f766a41188752412f8088c37dadaeffc2",
+    "Ef3p7_et_0.2_249.nxs.ng0": "f592eaceaffbdab955da8016035af084d5799c2fae91397e06e02f856775a7b2",
+    "Ef3p7_et_0.3_267.nxs.ng0": "f1e2aefe01ced234cef7c24d00eca4fb6207a848f0d751eafd7e7f4fab626b57",
+    "Ef3p7_et_0.5_268.nxs.ng0": "2a356d3087dbb2d289f175f6722f52476771519fe09c33d3b09134aac46309c8",
+    "Ef3p7_et_0.6_247.nxs.ng0": "3fae4e14164c059ea5b7c1ec4a784c13e33462c1c4c0c4156c61e7ecb24d0950",
+    "Ef3p7_et_0.8_243.nxs.ng0": "e8fc17ba89c73d165fcc8337e9f51552f5db8b3abd1abc66b43e073c2f31a65c",
+    "Ef3p7_et_0_373.nxs.ng0": "683b580a5421d784470eb6ef7384d1639049bce5d0bb1bbb74882aa03957d1bf",
+    "Ef3p7_et_1.1_271.nxs.ng0": "c64cbf9d5395e6d09bb4bb76d265a484d5e47f1b1851965be50c67a64093845d",
+    "Ef3p7_et_1.2_244.nxs.ng0": "d21bdb45b3dda8ee4beb1b7f3cf4f1d6fab0fdcf8202fbc108f14bdfe49ab485",
+    "Ef3p7_et_1.3_273.nxs.ng0": "12aed25f56957c56930ece7add72eea7eb3c915179e6f898ad8586e083b97a08",
+    "Ef3p7_et_1.4_245.nxs.ng0": "2a77c1e5799ce95de813f4e5764481eebc9d69c83f18cdd0348637be2fe50ae0",
+    "Ef3p7_et_1_246.nxs.ng0": "c93cbb6d29c05df457c9f3a2d3593293ac5b5b75a076e2292c504251b89e5978"
+  },
+  "settings": {
+    "run_order": [
+      260,
+      250,
+      261,
+      266,
+      248,
+      249,
+      267,
+      268,
+      247,
+      243,
+      373,
+      271,
+      244,
+      273,
+      245,
+      246
+    ],
+    "lattice_angstrom": [
+      8.24,
+      8.24,
+      8.24
+    ],
+    "orientation": [
+      [
+        1,
+        1,
+        0
+      ],
+      [
+        0,
+        0,
+        1
+      ]
+    ],
+    "a3_offset_deg": 66.5,
+    "axes": [
+      "(H+K)/2",
+      "L",
+      "energy_transfer"
+    ],
+    "steps_rlu_rlu_meV": [
+      0.05,
+      0.05,
+      0.1
+    ],
+    "monitor_target": 1000000.0,
+    "smoothing": 0,
+    "ki_kf": false,
+    "monitor_response": "constant",
+    "lambda2": "DAVE empirical, all reference observations",
+    "combination_energy_tolerance_meV": 0.01,
+    "combination_a3_tolerance_deg": 0.01,
+    "combination_kidney_tolerance_deg": 0.1
+  },
+  "before_combination": {
+    "points": 290240,
+    "signal": {
+      "bins": 59990,
+      "median_relative": 7.702993243263734e-09,
+      "p99_abs_relative": 4.254609205811555e-07,
+      "max_abs_relative": 0.49997332411912265,
+      "outliers_1e_minus_4": 179
+    },
+    "uncertainty": {
+      "bins": 59990,
+      "median_relative": -5.3294332280628964e-09,
+      "p99_abs_relative": 4.3746502890629204e-07,
+      "max_abs_relative": 0.4999730509724438,
+      "outliers_1e_minus_4": 180
+    },
+    "occupied": 68008,
+    "reference_occupied": 68007
+  },
+  "after_combination": {
+    "input_scan_points": 14512,
+    "combined_scan_points": 13490,
+    "multi_point_groups": 934,
+    "group_sizes": {
+      "1": 12556,
+      "2": 846,
+      "3": 88
+    },
+    "occupied": 68006,
+    "reference_occupied": 68007,
+    "missing_ref": 1,
+    "signal": {
+      "bins": 59990,
+      "bad_1e_minus_4": 2,
+      "p99": 4.005453836897212e-07,
+      "max": 0.4999732993971455
+    },
+    "uncertainty": {
+      "bins": 59990,
+      "bad_1e_minus_4": 2,
+      "p99": 4.2227595791199947e-07,
+      "max": 0.49997304428222633
+    },
+    "exposure": {
+      "bins": 68007,
+      "bad_1e_minus_4": 4,
+      "p99": 4.106075841558976e-07,
+      "max": 1.0000038208652202
+    },
+    "axes_max": [
+      5.094167536690009e-07,
+      1.9251198726921714e-05,
+      5.003035448147841e-07
+    ]
+  },
+  "single248": {
+    "occupied": 4748,
+    "positive_reference_bins": 4643,
+    "bad_signal_bins": 2,
+    "boundary_observation": {
+      "scan_index_zero_based": 369,
+      "detector_one_based": 12,
+      "raw_counts": 3072,
+      "distance_to_edge_rlu": 2.56299973e-07
+    },
+    "after_boundary_membership_replay_max_abs_relative": {
+      "signal": 6.320155131467331e-07,
+      "standard_uncertainty": 5.22122266310987e-07,
+      "exposure": 4.4579776226072454e-07
+    }
+  },
+  "full_boundary_probes": [
+    {
+      "run": 266,
+      "scan_index_zero_based": 601,
+      "detector_one_based": 20,
+      "raw_counts": 1785.0,
+      "corrected_monitor": 28728.056640625,
+      "distance_to_y_edge_rlu": 3.814697322468419e-07,
+      "bin_before": [
+        59,
+        93,
+        3
+      ],
+      "diagnostic_bin_after": [
+        59,
+        94,
+        3
+      ]
+    },
+    {
+      "run": 245,
+      "scan_index_zero_based": 731,
+      "detector_one_based": 19,
+      "raw_counts": 0.0,
+      "corrected_monitor": 36208.7421875,
+      "distance_to_y_edge_rlu": 3.814697322468419e-07,
+      "bin_before": [
+        52,
+        25,
+        16
+      ],
+      "diagnostic_bin_after": [
+        52,
+        26,
+        16
+      ]
+    }
+  ],
+  "after_diagnostic_boundary_membership_replay": {
+    "signal": {
+      "positive_reference_bins": 59991,
+      "p99_abs_relative": 3.995604997975022e-07,
+      "max_abs_relative": 5.979729231775366e-07,
+      "bins_above_1e_minus_4": 0,
+      "zero_channel_mismatches": 0
+    },
+    "standard_uncertainty": {
+      "positive_reference_bins": 59991,
+      "p99_abs_relative": 4.170014039628356e-07,
+      "max_abs_relative": 6.168130042283337e-07,
+      "bins_above_1e_minus_4": 0,
+      "zero_channel_mismatches": 0
+    },
+    "exposure": {
+      "positive_reference_bins": 68007,
+      "p99_abs_relative": 4.106075841558976e-07,
+      "max_abs_relative": 5.321351644882455e-07,
+      "bins_above_1e_minus_4": 0,
+      "zero_channel_mismatches": 0
+    }
+  },
+  "replayed_occupied": 68007,
+  "native_single248_vs_independent_float32": {
+    "coordinate_max_abs_rlu_rlu_meV": [
+      4.21698328e-07,
+      5.93776579e-07,
+      1.00702046e-06
+    ],
+    "exposure_max_abs_relative": 1.0231533220661504e-07
+  },
+  "interpretation": "The pre-projection grouping accounts for the non-rounding discrepancies. Explicit boundary membership replay is a diagnostic accounting check, not a production edge-rule change or bit-for-bit IDL arithmetic certificate. Native nfit retains separately measured coordinates."
+}
