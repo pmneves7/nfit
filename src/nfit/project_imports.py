@@ -310,9 +310,19 @@ def import_dataset_paths(
         ):
             parent = into if into is not None else group
             for stream in spec.streams:
+                target_group = _stream_target_group(
+                    parent, spec.name, stream.name, stream.label, stream_groups,
+                    reuse=stream_group_mode == "reuse",
+                )
                 stream_options = (
                     copy.deepcopy(options) if isinstance(options, dict) else {}
                 )
+                if spec.name == "macs_nexus" and "macs" in target_group.metadata:
+                    from .macs_reduction import MACS_DEFAULTS
+
+                    inherited = {key: target_group.metadata["macs"].get(key, default)
+                                 for key, default in MACS_DEFAULTS.items()}
+                    stream_options = {**inherited, **stream_options}
                 stream_options["stream"] = stream.name
                 entry = dataset_entry_from_path(
                     source,
@@ -324,14 +334,11 @@ def import_dataset_paths(
                 entry.name = _unique_dataset_name(
                     f"{entry.name} [{stream.label}]", group.dataset_names
                 )
-                target_group = _stream_target_group(
-                    parent,
-                    spec.name,
-                    stream.name,
-                    stream.label,
-                    stream_groups,
-                    reuse=stream_group_mode == "reuse",
-                )
+                if spec.name == "macs_nexus" and "macs" in target_group.metadata:
+                    entry.metadata["reduction_overrides"] = {
+                        key: value for key, value in stream_options.items()
+                        if key != "stream" and value != target_group.metadata["macs"].get(key)
+                    }
                 group.add_dataset(entry, into=target_group)
                 entries.append(entry)
                 _adopt_imported_crystal(group, entry, target_group)
@@ -355,6 +362,10 @@ def import_dataset_paths(
                 SPECTRAL_CHANNEL_CONFIG_KEY,
                 default_spectral_channel_config(),
             )
+    from .macs_reduction import adopt_macs_reduction
+
+    for node in group.iter_subgroups():
+        adopt_macs_reduction(node)
     inherit_data_workspace(group, group)
     return entries
 
@@ -664,6 +675,21 @@ def _load_registered_importer_dataset(
     dataset.metadata["source_point_count"] = _loaded_data_point_count(data)
     dataset.metadata["importer"] = importer_name
     dataset.metadata["import_status"] = "loaded"
+    if importer_name == "macs_nexus":
+        dataset.metadata.update({key: copy.deepcopy(data.metadata[key]) for key in (
+            "instrument", "detector_stream", "import_options", "macs_reduction_version",
+            "incident_energy_source", "fixed_final_energy_source", "a3_offset_deg",
+            "monitor_response", "ki_kf_corrected", "incident_filter_states", "incident_energy",
+            "fixed_final_energy_meV",
+        ) if key in data.metadata})
+        imported_spectral = data.metadata.get("dataset_parameters", {}).get(SPECTRAL_CHANNEL_CONFIG_KEY)
+        current_spectral = dataset.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY)
+        if isinstance(current_spectral, dict) and isinstance(imported_spectral, dict):
+            # Reconstruction owns the kinematic state and measured final energy;
+            # preserve user choices for units, normalization and channel display.
+            current_spectral.update({key: imported_spectral[key] for key in (
+                "kf_ki_state", "final_energy_meV",
+            )})
     imported_parameters = data.metadata.get("dataset_parameters")
     if isinstance(imported_parameters, dict) and not bool(
         dataset.metadata.get("import_parameters_applied", False)
@@ -1092,6 +1118,11 @@ def _ensure_dataset_data_loaded(
 ) -> Any:
     """Return canonical loaded data, using one path for all lazy consumers."""
 
+    if dataset.metadata.get("importer") == "macs_nexus" and isinstance(dataset.data, PointData4D) and dataset.data_matches_source:
+        from .macs_reduction import MACS_REDUCTION_VERSION
+
+        if dataset.data.metadata.get("macs_reduction_version") != MACS_REDUCTION_VERSION:
+            dataset.unload_data()
     if dataset.data is not None:
         return dataset.data
     return _load_dataset_source(

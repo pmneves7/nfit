@@ -975,7 +975,7 @@ def _dataset_axes_group_box(
     mean_label = QtWidgets.QLabel("Measurement target")
     mean_combo = QtWidgets.QComboBox()
     mean_combo.setObjectName("dataset_rebin_mean_weighting")
-    measurement_average_choices(mean_combo)
+    measurement_average_choices(mean_combo, counting=dataset.metadata.get("importer") == "macs_nexus")
     mean_label.setToolTip(mean_combo.toolTip())
     mean_index = mean_combo.findData(_rebin_mean_weighting(config))
     mean_combo.setCurrentIndex(max(mean_index, 0))

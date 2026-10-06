@@ -1213,3 +1213,51 @@ to $\mathbb J_{ii}^{zz}=-2K$ in this Hamiltonian convention.
 Model-specific form-factor and exchange symbols are defined in
 [Spin-fluctuation models](spin_fluctuation_models.md) and
 [Heisenberg RPA](heisenberg_rpa.md).
+
+
+## CW monitor normalization
+
+For a continuous-wave (CW) instrument such as MACS, let $n_j$ be the detector
+count in observation $j$, $M_j$ its incident-monitor count, and $T$ the chosen
+monitor target, all in counts. Incident and final neutron wavevectors $k_i$
+and $k_f$ have units Å$^{-1}$. Let $c_j$ be a dimensionless multiplicative
+correction for unequal detector sensitivity; without calibration $c_j=1$.
+
+For a thin monitor with response proportional to inverse neutron velocity
+(1/v), monitor counts per unit incident flux scale as $k_{\mathrm{ref}}/k_i$.
+Here $k_{\mathrm{ref}}$ is the chosen reference wavevector, default 1 Å$^{-1}$,
+and fixes an arbitrary intensity unit. Correcting this monitor response and
+removing the neutron scattering phase-space factor $k_f/k_i$ gives the
+combined dimensionless intensity multiplier
+
+$$
+a_j=c_j\frac{k_{\mathrm{ref}}}{k_i}\frac{k_i}{k_f}
+   =c_j\frac{k_{\mathrm{ref}}}{k_f}.
+$$
+
+This derivation explains the MACS-specific $1/k_f$ convention described in the
+[DAVE/mslice manual](https://www.ncnr.nist.gov/dave/documentation/dcs_mslice.pdf).
+It assumes the monitor behaves as 1/v; a monitor already normalized to incident
+flux must use constant response instead. These corrections do not supply an
+absolute cross-section calibration or an instrument-resolution correction.
+
+The calibrated exposure is $d_j=M_j/(T a_j)$, dimensionless in the chosen
+intensity convention. If a validated higher-order monitor correction is used,
+$M_j$ denotes its corrected monitor estimate. A common response $I$ has the
+conditional model $n_j\sim\operatorname{Poisson}(d_j I)$. Known exposure then
+gives the maximum-likelihood estimate and observed diagonal variance
+
+$$
+\hat I=\frac{\sum_j n_j}{\sum_j d_j},\qquad
+\widehat{\operatorname{Var}}(\hat I)=\frac{\sum_j n_j}{(\sum_j d_j)^2}.
+$$
+
+A zero count still contributes exposure. This observed variance is distinct
+from a confidence interval for an unknown rate. Monitor/calibration uncertainty
+and within-bin variation of the physical response are separate assumptions.
+With fractional coefficient $\alpha_{jb}$ for observation $j$ in bin $b$, retain
+$C_b=\sum_j\alpha_{jb}n_j$, $V_b=\sum_j\alpha_{jb}^2 n_j$ and
+$D_b=\sum_j\alpha_{jb}d_j$. Report $C_b/D_b$ and $\sqrt{V_b}/D_b$ as a local
+weighted estimator, without claiming independent integer Poisson bins or
+retaining neighboring-bin covariance. DIFF's $E_f=E_i$ convention remains an
+elastic coordinate approximation for unanalysed scattering.

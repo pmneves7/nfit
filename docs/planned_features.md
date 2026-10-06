@@ -36,7 +36,7 @@ tracks the staged implementation and review checkpoints for these changes.
 
 - Extend the native reduction settings schema to the remaining measurement
   adapters and present [measurement contracts](measurement_statistics.md) around
-  physical targets. Native DGS/CORELLI/MDEvent source recipes, shared/run edits,
+  physical targets. Native DGS/CORELLI/MDEvent/MACS source recipes, shared/run edits,
   resolved calibration values and lazy caches are already available. Unmarked
   saved statistical workflows retain compatibility provenance. Controls should
   explain common-response means versus coordinate averages and their assumptions.
@@ -48,11 +48,17 @@ tracks the staged implementation and review checkpoints for these changes.
   discrete assignment. A fractional DGS/MDE method needs a defined estimator,
   consistent exposure assignment, and covariance validation before a GUI choice
   can be offered.
-- Preserve native MACS count/exposure statistics and an explicit target through
-  histograms and final profiles. The current point importer retains its effective
-  denominator, but legacy point histograms discard it and later precision profiles
-  can estimate a different target. Review the zero-count error floor separately
-  from adding source-statistic propagation.
+- Add continuous-rotation MACS event reduction for the
+  [NIST MACS sample rotator](https://www.nist.gov/programs-projects/chrns-non-equilibrium-structure-materials-initiative/chrns-macs-sample-rotator).
+  Associate detector events with timestamped measured sample angles and
+  monitor/live-time intervals; account for pauses, angle wraparound and scan
+  reversal. Integrate exposure over the same accepted acquisition intervals,
+  rather than assigning all events a run-average angle. Preserve separate
+  SPEC/DIFF semantics and the CW counting contract. Validate with representative
+  VIPER event files and angle logs before extending the current stepped importer.
+- Add experiment-specific MACS vanadium detector calibration when reference
+  measurements become available. Specify correction-factor units, masks and
+  calibration uncertainty; keep equal sensitivity as the uncalibrated default.
 - Extend native HYSPEC raw reduction beyond Shiver's ungrouped data-to-MDE
   workflow when required: time-independent background, polarization/transmission
   corrections and detector grouping need explicit settings and reference tests.

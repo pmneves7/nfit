@@ -17,6 +17,7 @@ import numpy as np
 
 from .dataset import PointData4D
 from .fitting import reciprocal_basis_from_lattice_parameters
+from .macs_reduction import MACS_DEFAULTS, MACS_REDUCTION_FORMAT, MACS_REDUCTION_VERSION
 
 MACS_E_KSQ_MEV_ANGSTROM2 = 2.0721246
 MACS_E_LAMBDA_SQ_MEV_ANGSTROM2 = 81.8042
@@ -252,10 +253,12 @@ def _dave_final_energy(
     recorded: np.ndarray,
     aligned: np.ndarray | None,
     analyzer_two_theta: np.ndarray | None,
+    *,
+    policy: str = "aligned_mean",
 ) -> tuple[np.ndarray, str]:
     """Recover SPEC final energy from analyzer geometry as DAVE does."""
 
-    if analyzer_two_theta is None or aligned is None:
+    if policy == "recorded" or analyzer_two_theta is None or aligned is None:
         return recorded, "recorded final-energy log"
     spacing_value = _dataset(entry, "DAS_logs/ef/dSpacing", required=False)
     if spacing_value is None:
@@ -270,6 +273,8 @@ def _dave_final_energy(
         out=np.full(recorded.shape, np.nan, dtype=float),
         where=selected_count > 0,
     )
+    if policy == "common":
+        mean_two_theta = _common_analyzer_two_theta(entry, recorded.size)
     theta = np.deg2rad(0.5 * mean_two_theta)
     denominator = np.square(2.0 * spacing * np.sin(theta))
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -279,8 +284,26 @@ def _dave_final_energy(
         return recorded, "recorded final-energy log"
     return (
         np.where(valid, recovered, recorded),
-        "analyzer angles and d-spacing (DAVE convention)",
+        f"analyzer angles and d-spacing ({policy})",
     )
+
+
+def _incident_energy(entry, recorded, policy):
+    if policy == "recorded":
+        return recorded, "recorded incident-energy log"
+    angle = _dataset(entry, "DAS_logs/monoTwoTheta/softPosition", "DAS_logs/monoTwoTheta/primaryNode", required=False)
+    factor = 0.5
+    if angle is None:
+        angle = _dataset(entry, "DAS_logs/monoTheta/softPosition", "DAS_logs/monoTheta/primaryNode", required=False)
+        factor = 1.0
+    spacing = _dataset(entry, "DAS_logs/ei/dSpacing", required=False)
+    if angle is None or spacing is None:
+        return recorded, "recorded incident-energy log (missing monochromator geometry)"
+    theta = np.deg2rad(factor * _scan_vector(angle, recorded.size, name="monochromator angle"))
+    d = _scan_vector(spacing, recorded.size, name="monochromator d-spacing")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        recovered = MACS_E_LAMBDA_SQ_MEV_ANGSTROM2 / np.square(2.0 * d * np.sin(theta))
+    return np.where(np.isfinite(recovered) & (recovered > 0), recovered, recorded), "monochromator angle and d-spacing"
 
 
 def _parse_channels(values: Any) -> list[int]:
@@ -393,25 +416,22 @@ def import_macs_nexus(
     """Import one detector stream from a NIST NCNR MACS NeXus file.
 
     ``options['stream']`` is ``"spec"`` (default) or ``"diff"``. Intensities
-    and Poisson errors are normalized to ``monitor_target`` counts.  ``DIFF``
+    and observed Poisson errors are normalized to ``monitor_target`` counts,
+    with selectable monitor response and neutron kinematic corrections. Raw
+    counts and corrected exposure remain available for pooled histogramming.
+    ``DIFF``
     uses DAVE's elastic-coordinate approximation (``Ef = Ei``, ``DeltaE = 0``)
     because that detector does not analyze the outgoing neutron energy.
     """
 
     source = Path(path)
-    settings: dict[str, Any] = {
-        "stream": "spec",
-        "monitor_target": 1_000_000.0,
-        "a3_offset_deg": None,
-        "apply_detector_efficiency": True,
-        "mask_misaligned_analyzers": True,
-        "analyzer_alignment_tolerance_deg": 1.0,
-        "detect_dead_analyzers": True,
-        "dead_channel_min_nonzero_fraction": 0.2,
-        "masked_analyzer_channels": [],
-    }
+    from .reduction_recipes import validated_reduction_settings
+
+    settings: dict[str, Any] = {"stream": "spec", **MACS_DEFAULTS}
     if isinstance(options, dict):
-        settings.update(options)
+        settings.update(validated_reduction_settings(MACS_REDUCTION_FORMAT,
+            {key: value for key, value in options.items() if key != "stream"}))
+        settings["stream"] = options.get("stream", "spec")
     stream = str(settings["stream"]).strip().lower()
     if stream not in {"spec", "diff"}:
         raise ValueError("MACS stream must be 'spec' or 'diff'")
@@ -447,6 +467,10 @@ def import_macs_nexus(
             count,
             name="incident energy",
         )
+        ei, ei_source = _incident_energy(entry, ei, settings["incident_energy_policy"])
+        if settings["incident_energy_override"] is not None:
+            ei = np.full(count, settings["incident_energy_override"], dtype=float)
+            ei_source = "explicit incident-energy override"
         ef_measured = _scan_vector(
             _dataset(entry, "DAS_logs/ef/energy", "DAS_logs/finalEnergy/energy"),
             count,
@@ -472,6 +496,8 @@ def import_macs_nexus(
         )
         lattice, u, v = _lattice_orientation(entry)
         ub = _oriented_ub(lattice, u, v)
+        if settings["ub_matrix"] is not None:
+            ub = np.asarray(settings["ub_matrix"], dtype=float)
 
         file_a3_offset = _dataset(entry, "DAS_logs/sampleState/a3Zero", required=False)
         if settings["a3_offset_deg"] in (None, ""):
@@ -497,17 +523,6 @@ def import_macs_nexus(
                 raise ValueError(
                     f"MACS {stream.upper()} efficiency must contain 20 positive finite values"
                 )
-
-        valid_monitor = np.isfinite(monitor) & (monitor > 0.0)
-        scale = np.full(count, np.nan, dtype=float)
-        scale[valid_monitor] = target / monitor[valid_monitor]
-        intensity = counts * efficiency[None, :] * scale[:, None]
-        sigma = np.sqrt(np.maximum(counts, 1.0)) * efficiency[None, :] * scale[:, None]
-        normalization_denominator = np.full(counts.shape, np.nan, dtype=float)
-        normalization_denominator[valid_monitor] = (
-            monitor[valid_monitor, None]
-            / (target * efficiency[None, :])
-        )
 
         if stream == "spec":
             point_mask, analyzer_reasons, analyzer_two_theta, aligned_analyzers = (
@@ -536,7 +551,6 @@ def import_macs_nexus(
             analyzer_two_theta = None
             aligned_analyzers = None
         point_mask &= np.isfinite(counts) & (counts >= 0.0)
-        point_mask &= valid_monitor[:, None]
 
         if stream == "spec":
             ef, ef_source = _dave_final_energy(
@@ -544,13 +558,31 @@ def import_macs_nexus(
                 ef_measured,
                 aligned_analyzers,
                 analyzer_two_theta,
+                policy=settings["final_energy_policy"],
             )
+            if settings["final_energy_override"] is not None:
+                ef = np.full(count, settings["final_energy_override"], dtype=float)
+                ef_source = "explicit final-energy override"
         else:
             ef = ei
             ef_source = "incident energy (elastic DIFF approximation)"
         energy = ei - ef if stream == "spec" else np.zeros(count, dtype=float)
         ki = np.sqrt(ei / MACS_E_KSQ_MEV_ANGSTROM2)
         kf = np.sqrt(ef / MACS_E_KSQ_MEV_ANGSTROM2)
+        from .macs_normalization import (
+            corrected_monitor,
+            incident_filter_states,
+            monitor_kinematic_factor,
+        )
+
+        filters = incident_filter_states(entry, count, settings["incident_filter"])
+        monitor = corrected_monitor(monitor, ei, filters, settings["higher_order_monitor_correction"])
+        valid_monitor = np.isfinite(monitor) & (monitor > 0.0)
+        correction = efficiency[None, :] * monitor_kinematic_factor(ki, kf, settings)[:, None]
+        normalization_denominator = monitor[:, None] / (target * correction)
+        intensity = counts / normalization_denominator
+        sigma = np.sqrt(np.maximum(counts, 0.0)) / normalization_denominator
+        point_mask &= valid_monitor[:, None] & np.isfinite(correction) & (correction > 0)
         two_theta = np.deg2rad(
             kidney[:, None] + MACS_KIDNEY_ZERO_DEG + MACS_DETECTOR_OFFSETS_DEG[None, :]
         )
@@ -587,7 +619,7 @@ def import_macs_nexus(
                 {
                     "source_unit": "arbitrary",
                     "normalization_basis": "unknown",
-                    "kf_ki_state": "included",
+                    "kf_ki_state": "removed" if settings["ki_kf_normalization"] else "included",
                     "final_energy_meV": float(np.nanmedian(ef)),
                 }
             )
@@ -614,15 +646,36 @@ def import_macs_nexus(
             "a3_offset_source": a3_offset_source,
             "monitor_target": target,
             "detector_efficiency_applied": bool(settings["apply_detector_efficiency"]),
+            "macs_reduction_version": MACS_REDUCTION_VERSION,
+            "incident_energy_source": ei_source,
+            "incident_energy": float(np.nanmedian(ei)),
+            "monitor_response": settings["monitor_response"],
+            "ki_kf_corrected": settings["ki_kf_normalization"],
+            "higher_order_monitor_correction": settings["higher_order_monitor_correction"],
+            "incident_filter_states": {"inserted": int(np.count_nonzero(filters == 1)),
+                                       "removed": int(np.count_nonzero(filters == 0)),
+                                       "unknown": int(np.count_nonzero(~np.isfinite(filters)))},
             "normalization_denominator_semantics": (
-                "live monitor divided by monitor target and multiplicative "
-                "detector-efficiency correction"
+                "effective monitor divided by target and known detector/monitor/kinematic intensity factors"
             ),
             "masked_analyzer_channels": selected,
             "analyzer_mask_reasons": analyzer_reasons,
             "import_options": dict(settings),
             "dataset_parameters": parameters,
         }
+        from .histogram_statistics import EVENT_STATISTICS_METADATA
+        from .measurement_contracts import MeasurementContract
+        from .measurement_likelihoods import PoissonCountModel
+
+        metadata.update(
+            measurement_contract=MeasurementContract(kind="counting", estimator="exposure_pool",
+                quantity="scattering intensity", value_units=metadata["signal_unit"],
+                exposure_units="effective monitor / intensity correction", normalizer="known").to_dict(),
+            event_statistics=dict(EVENT_STATISTICS_METADATA),
+            poisson_count_model=PoissonCountModel(constant_weight=1.0,
+                provenance="MACS unweighted detector counts; monitor and calibration treated as known exposure").to_dict(),
+            zero_count_variance="observed Poisson variance; interval/fit policy is separate",
+        )
         if stream == "spec":
             metadata.update(
                 {
@@ -656,4 +709,8 @@ def import_macs_nexus(
         temperature=temp_points,
         metadata=metadata,
         normalization_denominator=normalization_denominator.ravel(),
+        measurement_payload={"event_signal_numerator": counts.ravel(),
+                             "event_variance_numerator": counts.ravel(),
+                             "normalization_denominator": normalization_denominator.ravel(),
+                             "num_events": counts.ravel()},
     )

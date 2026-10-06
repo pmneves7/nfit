@@ -360,10 +360,15 @@ def _format_bytes(value: int) -> str:
     return f"{size:.1f} TiB"
 
 
-def measurement_average_choices(combo: Any, *, pooled_events: bool = False, weighting: str = "uniform") -> None:
+def measurement_average_choices(combo: Any, *, pooled_events: bool = False, weighting: str = "uniform", counting: bool = False) -> None:
     """Describe legacy averaging choices by their measurement target without changing defaults."""
     from PySide6 import QtCore
 
+    if counting:
+        combo.addItem("Count rate (pooled counts / calibrated exposure)", "uniform")
+        combo.setEnabled(False)
+        combo.setToolTip("Counting measurements retain raw counts and known exposure. Bins and cuts pool these additive statistics; observed count errors do not set inverse-variance weights.")
+        return
     if pooled_events:
         combo.addItem("Event response: pooled numerator / exposure", weighting)
         combo.setEnabled(False)

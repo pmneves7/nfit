@@ -26,12 +26,20 @@ def dataset_content_signature(dataset: Any) -> tuple[Any, ...]:
         getattr(dataset, "data", None) is None
         or bool(getattr(dataset, "data_matches_source", False))
     ):
+        reduction = ()
+        if metadata.get("importer") == "macs_nexus":
+            import json
+
+            from .macs_reduction import MACS_REDUCTION_VERSION
+
+            reduction = ("macs", MACS_REDUCTION_VERSION,
+                         json.dumps(metadata.get("import_options", {}), sort_keys=True, default=str))
         path = Path(str(source)).expanduser()
         try:
             stat = path.stat()
-            return "source", str(path), int(stat.st_size), int(stat.st_mtime_ns)
+            return "source", str(path), int(stat.st_size), int(stat.st_mtime_ns), *reduction
         except OSError:
-            return "source-missing", str(path)
+            return "source-missing", str(path), *reduction
     return "memory", *tuple(dataset.data_cache_token)
 
 

@@ -12,8 +12,10 @@ projects are not assigned an acquisition model from their instrument name.
 Unmarked legacy data retain their saved behavior and record that provenance.
 
 The explorer's **Measurement target** control selects the two legacy normalized
-point estimators. Native DGS/MDE groups display their fixed pooled event response
-instead. General `MeasurementContract` editing, model-specific final-bin
+point estimators. Native DGS/MDE groups display their fixed pooled event response; MACS
+stepped scans display pooled detector counts / calibrated exposure. Native MACS
+counts retain their counting contract through fractional/discrete histograms and
+final profiles. General `MeasurementContract` editing, model-specific final-bin
 intervals, and count likelihood selection currently use the scripting APIs on
 this page; **Statistics and provenance** is a read-only report. Source-aware
 count smoothing is also a scripting operation, separate from display blur.

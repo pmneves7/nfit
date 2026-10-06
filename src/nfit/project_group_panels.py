@@ -468,7 +468,8 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         and raw_dgs.get("format") == "corelli-correlation-nexus"
     )
     native_events = reduction_family(group) is not None
-    discrete_dgs_events = native_events and not is_corelli
+    macs_counting = reduction_family(group) == "macs-step-nexus"
+    discrete_dgs_events = native_events and not is_corelli and not macs_counting
     show_momentum_matrix = (
         config.get("coordinate_mode") != "powder"
         and len(axes) == 4
@@ -662,7 +663,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     mean_label = QtWidgets.QLabel("Measurement target")
     mean_combo = QtWidgets.QComboBox()
     mean_combo.setObjectName("group_composite_mean_weighting")
-    measurement_average_choices(mean_combo, pooled_events=native_events, weighting=_rebin_mean_weighting(config))
+    measurement_average_choices(mean_combo, pooled_events=native_events, weighting=_rebin_mean_weighting(config), counting=macs_counting)
     mean_label.setToolTip(mean_combo.toolTip())
     mean_combo.setCurrentIndex(max(mean_combo.findData(_rebin_mean_weighting(config)), 0))
     mean_combo.currentIndexChanged.connect(

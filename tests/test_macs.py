@@ -104,7 +104,7 @@ def test_macs_spec_and_diff_are_distinct_point_streams(tmp_path):
     spec = import_with(
         "macs_nexus",
         source,
-        {"stream": "spec", "a3_offset_deg": 66.5},
+        {"stream": "spec", "a3_offset_deg": 66.5, "detect_dead_analyzers": True},
     )
     diff = import_macs_nexus(source, {"stream": "diff", "a3_offset_deg": 66.5})
 
@@ -116,9 +116,10 @@ def test_macs_spec_and_diff_are_distinct_point_streams(tmp_path):
     assert diff.metadata["detector_stream"] == "DIFF"
     assert "elastic projection" in diff.metadata["coordinate_approximation"]
     assert spec.metadata["monitor_target"] == 1.0e6
-    np.testing.assert_allclose(spec.intensity[:18], 45.0)
-    np.testing.assert_allclose(spec.sigma[:18], 15.0)
-    np.testing.assert_allclose(spec.normalization_denominator, 0.2)
+    factor = np.sqrt(2.0721246 / 3.7)
+    np.testing.assert_allclose(spec.intensity[:18], 45.0 * factor)
+    np.testing.assert_allclose(spec.sigma[:18], 15.0 * factor)
+    np.testing.assert_allclose(spec.normalization_denominator, 0.2 / factor)
     np.testing.assert_allclose(
         spec.intensity[:18] * spec.normalization_denominator[:18], 9.0
     )
@@ -129,7 +130,7 @@ def test_macs_spec_and_diff_are_distinct_point_streams(tmp_path):
     assert spec.metadata["masked_analyzer_channels"] == [19, 20]
     assert not np.any(spec.mask.reshape(24, 20)[:, 18:])
     assert np.all(diff.mask)
-    assert np.all(diff.intensity == 500.0)
+    np.testing.assert_allclose(diff.intensity, 500.0 * np.sqrt(2.0721246 / 4.9))
 
 
 def test_macs_normalization_denominator_tracks_monitor_and_efficiency(tmp_path):
@@ -139,7 +140,8 @@ def test_macs_normalization_denominator_tracks_monitor_and_efficiency(tmp_path):
         logs["counter/liveMonitor"][0] = 1.0e5
         logs["specDetector/detectorEfficiency"][0] = 2.0
 
-    data = import_macs_nexus(source, {"stream": "spec"})
+    data = import_macs_nexus(source, {"stream": "spec", "monitor_response": "constant",
+                                      "ki_kf_normalization": False, "apply_detector_efficiency": True})
     intensity = data.intensity.reshape(-1, 20)
     sigma = data.sigma.reshape(-1, 20)
     denominator = data.normalization_denominator.reshape(-1, 20)
@@ -165,11 +167,12 @@ def test_macs_spec_recovers_final_energy_from_aligned_analyzers(tmp_path):
     np.testing.assert_allclose(data.E, 4.9 - expected_ef)
     assert data.metadata["fixed_final_energy_meV"] == pytest.approx(expected_ef)
     assert data.metadata["recorded_fixed_final_energy_meV"] == pytest.approx(3.5)
-    assert "DAVE convention" in data.metadata["fixed_final_energy_source"]
+    assert "aligned_mean" in data.metadata["fixed_final_energy_source"]
     assert data.metadata["dataset_parameters"]["spectral_channels"][
         "final_energy_meV"
     ] == pytest.approx(expected_ef)
-    assert data.metadata["masked_analyzer_channels"] == [19, 20]
+    # Geometry masks remain automatic; sparse occupancy is an opt-in heuristic.
+    assert data.metadata["masked_analyzer_channels"] == [20]
 
     unmasked = import_macs_nexus(
         source,
@@ -366,7 +369,7 @@ REAL_MACS_2MEV_FILE = REAL_MACS_FILE.with_name("Ef5p0_et_2_311.nxs.ng0")
 
 @pytest.mark.skipif(not REAL_MACS_FILE.exists(), reason="local MACS validation file is absent")
 def test_local_macs_file_masks_bad_spec_channel_and_matches_recorded_ptai_hkl():
-    data = import_macs_nexus(REAL_MACS_FILE, {"stream": "spec"})
+    data = import_macs_nexus(REAL_MACS_FILE, {"stream": "spec", "detect_dead_analyzers": True})
 
     assert data.metadata["masked_analyzer_channels"] == [19]
     assert not np.any(data.mask.reshape(-1, 20)[:, 18])

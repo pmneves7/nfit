@@ -110,6 +110,9 @@ different Python.
 - `src/nfit/reduction_recipes.py`, `reduction_runtime.py`, and
   `reduction_recipe_gui.py`: source/reduction schemas, execution provenance,
   targeted edits, public replay, and focused Qt controls.
+- `src/nfit/macs.py`, `macs_reduction.py`, and `macs_normalization.py`: MACS
+  stepped detector streams, public reduction settings, and CW monitor conventions.
+  `point_counting.py` retains counting statistics in the shared point rebinner.
 - `src/nfit/corelli.py`, `_corelli_numba.py`, and `corelli_constants.py`: CORELLI
   reconstruction, its compiled kernels, and their shared numerical conventions.
 - `src/nfit/project_derived_grid.py`: shared output-grid planning for live

@@ -52,8 +52,8 @@ def build_source_selection_panel(
     form = QtWidgets.QFormLayout()
     fields = (
         ("Directory", "path", "Directory containing numbered files. Source data remain in their original location."),
-        ("File prefix", "prefix", "Text before each run number, for example SEQ_."),
-        ("File suffix", "suffix", "Text after each run number, for example .nxs.h5 or .001."),
+        ("File prefix", "prefix", "Text before each run number, for example SEQ_. Wildcards are allowed: Ef*_et*_ selects MACS names with varying energy. Each run must match exactly one file."),
+        ("File suffix", "suffix", "Text after each run number, for example .nxs.h5, .nxs.ng0 or .001. Wildcards are allowed; ambiguous matches are rejected."),
         ("Run expression", "numors", RUN_EXPRESSION_HELP),
     )
     edits = {}

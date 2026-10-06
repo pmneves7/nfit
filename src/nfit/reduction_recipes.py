@@ -37,6 +37,7 @@ _FORMATS = {
     "raw-direct-geometry-nexus": "raw_dgs",
     "corelli-correlation-nexus": "raw_dgs",
     "mantid-mdevent": "mdevent",
+    "macs-step-nexus": "macs",
 }
 
 
@@ -86,11 +87,16 @@ def _format_config(group_or_format):
         if group_or_format not in _FORMATS:
             raise ValueError(f"unsupported reduction format {group_or_format!r}")
         return group_or_format, None, _FORMATS[group_or_format]
-    for key in ("raw_dgs", "mdevent"):
+    for key in ("raw_dgs", "mdevent", "macs"):
         config = group_or_format.metadata.get(key)
         if isinstance(config, dict) and config.get("format") in _FORMATS:
             return config["format"], config, key
-    raise ValueError("reduction recipes require a native raw DGS, CORELLI or MDEvent group")
+    from .macs_reduction import macs_group_config
+
+    config = macs_group_config(group_or_format)
+    if config is not None:
+        return config["format"], config, "macs"
+    raise ValueError("reduction recipes require a native raw DGS, CORELLI, MDEvent or MACS group")
 
 
 def reduction_family(group) -> str | None:
@@ -110,6 +116,10 @@ def reduction_settings_schema(group_or_format) -> tuple[ReductionSetting, ...]:
     cannot change the stored events and is retained only in import provenance.
     """
     format_name, _, _ = _format_config(group_or_format)
+    if format_name == "macs-step-nexus":
+        from .macs_reduction import macs_settings_schema
+
+        return macs_settings_schema()
     corelli = format_name == "corelli-correlation-nexus"
     mde = format_name == "mantid-mdevent"
     result = [
@@ -217,6 +227,10 @@ def _validate_value(setting, value):
         if array.shape != (3, 3) or not np.all(np.isfinite(array)) or np.linalg.matrix_rank(array) != 3:
             raise ValueError(f"{setting.key} must be a finite invertible 3 by 3 matrix")
         return array.tolist()
+    if setting.kind == "channels":
+        from .macs import _parse_channels
+
+        return [index + 1 for index in _parse_channels(value)]
     if isinstance(value, (bool, np.bool_)):
         raise ValueError(f"{setting.key} must be a finite number")
     try:
@@ -229,7 +243,8 @@ def _validate_value(setting, value):
         raise ValueError(f"{setting.key} must be at least {setting.minimum}")
     if setting.maximum is not None and number > setting.maximum:
         raise ValueError(f"{setting.key} must be at most {setting.maximum}")
-    if setting.key in {"incident_energy_override", "wavelength_min_angstrom", "wavelength_max_angstrom"} and number <= 0:
+    if setting.key in {"incident_energy_override", "final_energy_override", "monitor_target",
+                       "monitor_reference_k_inv_angstrom", "wavelength_min_angstrom", "wavelength_max_angstrom"} and number <= 0:
         raise ValueError(f"{setting.key} must be positive or automatic where supported")
     if setting.key == "energy_max_fraction" and number >= 1:
         raise ValueError("energy_max_fraction must be below one (positive final neutron energy)")
@@ -293,9 +308,14 @@ def _group_dataset(group, dataset):
 
 def get_reduction_overrides(group, dataset) -> dict[str, Any]:
     """Read a run's explicit overrides; no sources or caches are loaded."""
-    _format_config(group)
+    format_name, config, _ = _format_config(group)
     dataset = _group_dataset(group, dataset)
-    return copy.deepcopy(dataset.metadata.get(REDUCTION_OVERRIDES_KEY, {}))
+    legacy = {}
+    if format_name == "macs-step-nexus" and "macs" not in group.metadata:
+        schema = {field.key for field in reduction_settings_schema(group)}
+        legacy = {key: value for key, value in dataset.metadata.get("import_options", {}).items()
+                  if key in schema and value != config.get(key)}
+    return copy.deepcopy({**legacy, **dataset.metadata.get(REDUCTION_OVERRIDES_KEY, {})})
 
 
 def effective_reduction_config(group, dataset=None) -> dict[str, Any]:
@@ -319,6 +339,15 @@ def resolved_reduction_values(group, dataset) -> dict[str, Any]:
     resolved = dataset.metadata.get("resolved_reduction", {})
     automatic_values = resolved.get("automatic_values", {})
     values = {}
+    if config["format"] == "macs-step-nexus":
+        for key, source, units in (("incident_energy_override", "incident_energy", "meV"),
+                                   ("final_energy_override", "fixed_final_energy_meV", "meV"),
+                                   ("a3_offset_deg", "a3_offset_deg", "deg")):
+            requested = config.get(key)
+            values[key] = {"automatic": requested is None,
+                           "value": dataset.metadata.get(source) if requested is None else requested,
+                           "units": units, "stale": bool(resolved.get("stale"))}
+        return values
     for key, metadata_key in (("incident_energy_override", "incident_energy"), ("t0_override", "t0"),
                               ("hyspec_tank_offset_override", "hyspec_tank_offset")):
         if (metadata_key in dataset.metadata or key in config
@@ -482,7 +511,7 @@ def set_reduction_settings(group, updates, *, dataset_ids=None, inherit=False) -
     laboratory-event caches survive coordinate, histogram and storage edits;
     only effective reduction/calibration changes discard the affected run cache.
     """
-    _, config, _ = _format_config(group)
+    format_name, config, _ = _format_config(group)
     before_shared = copy.deepcopy(config)
     if inherit and dataset_ids is None:
         raise ValueError("inherit applies only to selected per-run overrides")
@@ -517,6 +546,11 @@ def set_reduction_settings(group, updates, *, dataset_ids=None, inherit=False) -
         validated_reduction_settings(group, {}, base=new)
         keys = tuple(key for key, item in schema.items() if _plain(_setting_value(old, item)) != _plain(_setting_value(new, item)))
         prepared.append((dataset, overrides, keys))
+    if format_name == "macs-step-nexus":
+        from .macs_reduction import adopt_macs_reduction
+
+        adopt_macs_reduction(group)
+        config = group.metadata["macs"]
     if dataset_ids is None:
         config.update(normalized)
     else:
@@ -527,7 +561,11 @@ def set_reduction_settings(group, updates, *, dataset_ids=None, inherit=False) -
                 dataset.metadata.pop(REDUCTION_OVERRIDES_KEY, None)
     changed = [dataset for dataset, _, keys in prepared if any(schema[key].scope != "storage" for key in keys)]
     for dataset, _, keys in prepared:
-        if any(schema[key].affects_reduced_events for key in keys):
+        if format_name == "macs-step-nexus" and keys:
+            from .macs_reduction import invalidate_macs_source
+
+            invalidate_macs_source(dataset, effective_reduction_config(group, dataset))
+        elif any(schema[key].affects_reduced_events for key in keys):
             from .raw_dgs_cache import clear_reduced_event_cache
 
             clear_reduced_event_cache(dataset)
@@ -641,6 +679,18 @@ def replay_reduction_recipe(recipe, *, progress_callback=None):
         from .raw_dgs import raw_dgs_dataset_group
 
         group = raw_dgs_dataset_group(paths, **common)
+    elif format_name == "macs-step-nexus":
+        from .macs_reduction import MACS_DEFAULTS
+        from .pipeline import DatasetGroup
+        from .project_imports import dataset_entry_from_path
+
+        group = DatasetGroup(payload.get("group_name", "MACS"), metadata={"macs": copy.deepcopy(config)})
+        for descriptor in descriptors:
+            settings = {key: config.get(key, default) for key, default in MACS_DEFAULTS.items()}
+            settings.update(payload.get("per_run_overrides", {}).get(descriptor["id"], {}))
+            settings["stream"] = config["stream"]
+            group.datasets.append(dataset_entry_from_path(descriptor["metadata"]["source_file"],
+                data_type=descriptor.get("data_type"), importer_name="macs_nexus", importer_options=settings))
     elif format_name == "corelli-correlation-nexus":
         from .corelli import corelli_dataset_group
 
@@ -774,7 +824,11 @@ def apply_reduction_recipe(group, recipe) -> ReductionEdit:
         dataset = final_by_id[candidate.id]
         if any(schema[key].scope != "storage" for key in keys):
             changed.append(dataset)
-        if any(schema[key].affects_reduced_events for key in keys):
+        if payload["format"] == "macs-step-nexus" and keys:
+            from .macs_reduction import invalidate_macs_source
+
+            invalidate_macs_source(dataset, effective_reduction_config(group, dataset))
+        elif any(schema[key].affects_reduced_events for key in keys):
             from .raw_dgs_cache import clear_reduced_event_cache
 
             clear_reduced_event_cache(dataset)

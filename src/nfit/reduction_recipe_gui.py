@@ -50,13 +50,16 @@ def _field_editor(field, value, *, object_name, on_changed, browse=None, resolve
         )
     else:
         editor = QtWidgets.QLineEdit(
-            json.dumps(value) if field.kind == "matrix" else str(value or "")
+            (json.dumps(value) if value is not None else "") if field.kind == "matrix"
+            else (value if isinstance(value, str) else ",".join(map(str, value))) if field.kind == "channels" else str(value or "")
         )
 
         def changed():
             text = editor.text().strip()
             parsed: Any = text or None
-            if field.kind == "matrix":
+            if field.kind == "channels":
+                parsed = text or []
+            if field.kind == "matrix" and text:
                 try:
                     parsed = ast.literal_eval(text)
                 except (SyntaxError, ValueError):
@@ -73,7 +76,7 @@ def _field_editor(field, value, *, object_name, on_changed, browse=None, resolve
     layout = QtWidgets.QHBoxLayout(container)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.addWidget(editor)
-    if field.automatic and field.kind != "path":
+    if field.automatic and field.kind == "float":
         automatic = QtWidgets.QCheckBox("Automatic")
         automatic.setObjectName(f"{object_name}_automatic")
         automatic.setToolTip(
@@ -119,9 +122,10 @@ def build_reduction_recipe_panel(
     )
 
     config = effective_reduction_config(group)
-    prefix = "mdevent" if "mdevent" in group.metadata else "raw_dgs"
+    macs = config.get("format") == "macs-step-nexus"
+    prefix = "macs" if macs else "mdevent" if "mdevent" in group.metadata else "raw_dgs"
     corelli = config.get("format") == "corelli-correlation-nexus"
-    title = "CORELLI finite-energy reconstruction" if corelli else (
+    title = "MACS shared reduction" if macs else "CORELLI finite-energy reconstruction" if corelli else (
         "MDEvent shared setup" if prefix == "mdevent" else "Raw TOF shared setup"
     )
     histogram_only = scopes is not None and set(scopes) == {"histogram"}
@@ -331,7 +335,7 @@ def build_reduction_recipe_panel(
         reduction_recipe_script(group)
     ))
     buttons.addWidget(export)
-    if not corelli:
+    if not corelli and not macs:
         policies = QtWidgets.QPushButton("Copy policy script")
         policies.setObjectName(f"{prefix}_copy_policy_script")
         policies.setToolTip("Copy the numerical DGS policies for an already imported group.")

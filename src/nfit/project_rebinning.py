@@ -2082,7 +2082,10 @@ def _rebin_point_data(
     *,
     progress_callback: Any | None = None,
 ) -> MDHistoData:
-    if data.metadata.get("measurement_contract") is not None:
+    from .point_counting import is_counting_measurement
+
+    counting = is_counting_measurement(data.metadata)
+    if data.metadata.get("measurement_contract") is not None and not counting:
         return _rebin_declared_point_data(data, config, progress_callback=progress_callback)
     source = data.valid(require_positive_sigma=False)
     if source.size == 0:
@@ -2105,6 +2108,7 @@ def _rebin_point_data(
             "weighted_by_normalization_denominator": normalization_weighted,
         },
         progress_callback=progress_callback,
+        retained_counts=(source.measurement_payload or {}).get("num_events") if counting else None,
     )
 
 
@@ -2187,6 +2191,7 @@ def _point_data_histogram(
     visual_normalization: int | None = None,
     metadata_updates: Mapping[str, Any] | None = None,
     progress_callback: Any | None = None,
+    retained_counts: np.ndarray | None = None,
 ) -> MDHistoData:
     """Bin physical HKLE plus optional metadata coordinates into a histogram."""
 
@@ -2211,6 +2216,10 @@ def _point_data_histogram(
     basis[:4, :4] = physical_basis
     projected_coordinates = physical_coordinates @ np.linalg.inv(basis)
     metadata = copy.deepcopy(dict(source_metadata or {}))
+    from .point_counting import counting_point_channels, is_counting_measurement
+
+    counting = is_counting_measurement(metadata)
+    weighting = "uniform" if counting else _rebin_mean_weighting(config)
     symmetry = _rebin_symmetry_matrices(config, metadata.get("lattice_parameters"))
     data_bounds = (
         _symmetry_projected_coordinate_bounds(physical_coordinates, symmetry, basis)
@@ -2238,7 +2247,7 @@ def _point_data_histogram(
         fractional=bool(config.get("fractional", False)),
         fractional_axes=_rebin_fractional_axes(config, axes_config),
         normalize=True,
-        mean_weighting=_rebin_mean_weighting(config),
+        mean_weighting=weighting,
         minimum_samples=_rebin_minimum_samples(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         max_parallel_bytes=_rebin_max_parallel_bytes(),
@@ -2288,7 +2297,7 @@ def _point_data_histogram(
         "fractional_axes": _rebin_fractional_axes(config, axes_config),
         "axis_modes": [_rebin_axis_mode(config, axis) for axis in axes_config],
         "normalize": True,
-        "mean_weighting": _rebin_mean_weighting(config),
+        "mean_weighting": weighting,
         "minimum_coverage": _rebin_minimum_coverage(config),
         "minimum_samples": _rebin_minimum_samples(config),
         "max_batch_mb": _rebin_max_batch_mb(config),
@@ -2313,7 +2322,7 @@ def _point_data_histogram(
     if (
         data_weights is not None
         and metadata.get("weighted_by_normalization_denominator", False)
-        and _rebin_mean_weighting(config) == "uniform"
+        and weighting == "uniform"
         and result._normalization is not None
     ):
         normalization_output = np.asarray(result._normalization, dtype=float)
@@ -2324,6 +2333,14 @@ def _point_data_histogram(
             unit="arbitrary normalization units",
         )
         metadata["normalization_denominator"] = normalization_output
+    events = np.asarray(result.n_samples, dtype=float)
+    if counting:
+        if data_weights is None:
+            raise ValueError("Counting point histograms require explicit known exposure weights")
+        channels, events = counting_point_channels(result, physical_coordinates, retained_counts,
+                                                   symmetry, kwargs, metadata)
+        auxiliary_channels.update(channels)
+        metadata["rebin"]["measurement_estimator"] = "exposure_pool"
     if progress_callback is not None:
         progress_callback(
             {
@@ -2384,7 +2401,7 @@ def _point_data_histogram(
         signal=np.asarray(result.binned_data, dtype=float),
         errors=np.asarray(result.binned_data_errs, dtype=float),
         mask=np.asarray(mask, dtype=bool),
-        num_events=np.asarray(result.n_samples, dtype=float),
+        num_events=events,
         coordinate_system=coordinate_system,
         visual_normalization=visual_normalization,
         metadata=metadata,

@@ -13,6 +13,7 @@ import re
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -381,13 +382,22 @@ def resolve_source_selection(selection, *, inspect_metadata=False, metadata_read
         raise TypeError("selection must be a SourceSelection or saved selector mapping")
     parsed = parse_run_expression(selection.expression, max_appearances=max_appearances)
     directory = Path(selection.directory).expanduser().resolve()
+    wildcard = any(character in selection.prefix + selection.suffix for character in "*?[")
+    inventory = tuple(path for path in directory.iterdir() if path.is_file()) if wildcard and directory.is_dir() else ()
+    paths_by_run = {}
     appearances = []
     for item in parsed:
         if item.run_number is None:
             appearances.append(item)
             continue
         number = str(item.run_number).zfill(selection.padding)
-        path = str((directory / f"{selection.prefix}{number}{selection.suffix}").resolve())
+        if number not in paths_by_run:
+            name = f"{selection.prefix}{number}{selection.suffix}"
+            matches = [path for path in inventory if fnmatchcase(path.name, name)] if wildcard else []
+            if len(matches) > 1:
+                raise ValueError(f"ambiguous source pattern for run {item.run_number}: " + ", ".join(sorted(path.name for path in matches)))
+            paths_by_run[number] = str((matches[0] if matches else directory / name).resolve())
+        path = paths_by_run[number]
         appearances.append(SourceAppearance(item.run_number, item.depth, item.stack, path, path))
     appearances = tuple(appearances)
     identities = Counter(item.source_identity for item in appearances if item.source_identity is not None)

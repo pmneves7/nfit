@@ -8,6 +8,14 @@ optionally reads available instrument, incident-energy, time-zero and temperatur
 headers without loading event arrays. Large previews display the first 1,000
 rows and report totals for the entire selection.
 
+Prefix and suffix accept filename wildcards: `*` matches any text, `?` matches
+one character, and `[abc]` matches a character from that set. For example,
+prefix `Ef*_et*_`, suffix `.nxs.ng0`, and expression `260:268,373` select MACS
+files with different energy labels into one group. Number padding still applies
+to the run number between the two patterns. Each run must match exactly one
+file; an ambiguous match is reported before import. Missing matches remain
+visible in the preview and follow the selected missing-file policy.
+
 **Import datasets** creates one ordinary nfit dataset group containing the unique
 selected sources. Repeating a number does not add an independent measurement or
 change its weight. Enable **Preserve expression groups as subfolders** to retain
@@ -16,7 +24,7 @@ grouping system. **Add files** remains available for irregular filenames.
 
 The saved group records the naming pattern, original expression, resolved paths,
 source appearances, missing-file policy, and physical source identities. Native
-DGS, CORELLI and MDEvent groups retain their normal
+DGS, CORELLI, MDEvent and MACS groups retain their normal
 [reduction recipes](reduction_recipes.md), with one logical run per acquisition
 or MDEvent experiment. File contents remain lazy external references.
 

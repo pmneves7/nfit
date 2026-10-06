@@ -285,7 +285,10 @@ def _import_source_selection(
                         entry.metadata = copy.deepcopy(original.metadata)
                         entry.metadata["_selection_previous_coefficient"] = original.metadata.get(SOURCE_SELECTION_LINEAGE_KEY, {}).get("coaddition_coefficient", 1)
                         target = child
-                        if old_owner.metadata.get("source_stream"):
+                        if old_owner.metadata.get("source_stream") and not (
+                            child.metadata.get("source_stream") == old_owner.metadata["source_stream"]
+                            and child.metadata.get("importer") == old_owner.metadata.get("importer")
+                        ):
                             target = next((stream for stream in child.subgroups
                                            if stream.metadata.get("source_stream") == old_owner.metadata["source_stream"]
                                            and stream.metadata.get("importer") == old_owner.metadata.get("importer")), None)
@@ -297,10 +300,22 @@ def _import_source_selection(
                                 child.subgroups.append(target)
                         target.datasets.append(entry)
                 new_paths = [path for path in paths if path not in (reuse_sources or {})]
-                import_dataset_paths(scratch, new_paths, into=child, data_type=data_type,
-                                     importer_name=importer_name, importer_options=importer_options,
-                                     stream_group_mode="reuse", progress_callback=progress_callback,
-                                     dataset_file_loader=_load_nfit_dataset_file)
+                from .macs_reduction import MACS_DEFAULTS, macs_group_config
+
+                macs_config = macs_group_config(child)
+                if macs_config is not None:
+                    from .project_imports import dataset_entry_from_path
+
+                    for path in new_paths:
+                        options = {key: macs_config.get(key, default) for key, default in MACS_DEFAULTS.items()}
+                        options["stream"] = macs_config["stream"]
+                        child.datasets.append(dataset_entry_from_path(path, data_type=data_type,
+                            importer_name="macs_nexus", importer_options=options))
+                else:
+                    import_dataset_paths(scratch, new_paths, into=child, data_type=data_type,
+                                         importer_name=importer_name, importer_options=importer_options,
+                                         stream_group_mode="reuse", progress_callback=progress_callback,
+                                         dataset_file_loader=_load_nfit_dataset_file)
         if slot is not None:
             child.metadata["source_selection_group"] = slot.to_dict()
             child.metadata["source_selection_group"]["skipped_appearance_indices"] = [
@@ -346,6 +361,11 @@ def _import_source_selection(
         import_settings={"data_type": data_type, "importer_name": importer_name,
                          "importer_options": copy.deepcopy(importer_options)},
     )
+    from .reduction_recipes import ensure_reduction_recipe
+
+    for owner in (collection, *collection.iter_subgroups()):
+        if "macs" in owner.metadata:
+            ensure_reduction_recipe(owner, source_selection=collection.metadata["source_selection"])
     collection.enabled = bool(collection.datasets) or any(child.enabled for child in collection.subgroups)
     from .data_workspace import inherit_data_workspace
 
@@ -533,11 +553,11 @@ def update_source_selection(
         candidate = copy.copy(group)
         candidate.metadata = copy.deepcopy(group.metadata)
         candidate.datasets, candidate.subgroups = [], []
-        for key in ("raw_dgs", "mdevent", "corelli"):
+        for key in ("raw_dgs", "mdevent", "corelli", "macs"):
             if isinstance(candidate.metadata.get(key), dict):
                 candidate.metadata[key]["source_files"] = []
                 candidate.metadata[key]["event_count"] = 0
-        if any(key in candidate.metadata for key in ("raw_dgs", "mdevent", "corelli")):
+        if any(key in candidate.metadata for key in ("raw_dgs", "mdevent", "corelli", "macs")):
             from .reduction_recipes import ensure_reduction_recipe
 
             ensure_reduction_recipe(candidate, source_selection=selection_plan.to_dict())
@@ -566,7 +586,7 @@ def update_source_selection(
         if isinstance(candidate.metadata.get("reduction_recipe"), dict):
             candidate.metadata["reduction_recipe"]["source_selection"]["selected_group"] = copy.deepcopy(record)
     for owner in (candidate, *candidate.iter_subgroups()):
-        for key in ("raw_dgs", "mdevent", "corelli"):
+        for key in ("raw_dgs", "mdevent", "corelli", "macs"):
             if key in owner.metadata and not owner.datasets:
                 owner.metadata[key]["source_files"] = []
                 owner.metadata[key]["event_count"] = 0
@@ -611,7 +631,7 @@ def update_source_selection(
 
     retain_folders(candidate)
     metadata = copy.deepcopy(group.metadata)
-    for key in ("raw_dgs", "mdevent", "corelli", "reduction_recipe", "source_selection", "source_selection_calibration", "source_selection_group"):
+    for key in ("raw_dgs", "mdevent", "corelli", "macs", "reduction_recipe", "source_selection", "source_selection_calibration", "source_selection_group"):
         metadata.pop(key, None)
         if key in candidate.metadata:
             metadata[key] = candidate.metadata[key]

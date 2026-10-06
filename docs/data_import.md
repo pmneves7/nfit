@@ -216,13 +216,12 @@ normalization, projection, and binning choices remain auditable.
 
 ## NIST NCNR MACS NeXus data
 
-The MACS importer recognizes the instrument from NeXus content rather than the
-filename suffix. Selecting one or many MACS files creates two sibling dataset
+The MACS stepped-scan importer recognizes the instrument from NeXus content
+rather than the filename suffix. Selecting one or many MACS files creates two sibling dataset
 collections:
 
 - **MACS SPEC** contains the fixed-final-energy, energy-analyzed detector
-  stream as HKLE points. Energy transfer is $\Delta E=E_i-E_f$ in meV. As in
-  DAVE, $E_f$ is reconstructed from the mean aligned analyzer angle and the
+  stream as HKLE points. Energy transfer is $\Delta E=E_i-E_f$ in meV. By default, $E_f$ is reconstructed from the mean aligned analyzer angle and the
   analyzer crystal spacing as
   $E_f=81.8042/[2d_A\sin(A_5)]^2$, where $d_A$ is the analyzer-plane spacing in
   Å and $A_5$ is the analyzer Bragg angle in degrees. This avoids stale common
@@ -248,40 +247,89 @@ offset is an explicit import setting because a correction used during analysis
 may not be stored in the acquisition file. For the supplied LiV2O4 example,
 enter `66.5` degrees to reproduce the shown MSlice orientation.
 
-Counts and Poisson one-sigma uncertainties are multiplied by the stored
-per-stream detector-efficiency corrections and normalized to the chosen monitor
-target; the default is $10^6$ monitor counts. A zero-count point receives the
-uncertainty corresponding to one count so it cannot acquire infinite fit
-weight. Each point also retains the effective normalization denominator
-$D=M/(T c)$, where $M$ is its live monitor count, $T$ is the selected monitor
-target, and $c$ is the multiplicative detector-efficiency correction. The
-central nfit rebinner always includes $D$ in the data weight. Uniform averaging
-therefore uses $D$, while inverse-variance averaging uses $D/\sigma^2$.
+### MACS sources, reduction and counting statistics
 
-Native MACS points currently have no explicit measurement contract or retained
-count-numerator/variance payload. Their legacy point histograms also do not retain
-$D$. A later precision-weighted profile can consequently estimate a different
-target from the original exposure-pooled intensity. Direct source-point pooling
-and an explicitly declared count model are distinct from this legacy profile
-path; do not assume they are interchangeable. Monitor and detector-efficiency
-uncertainty are not represented. These adapter limitations apply to SPEC and DIFF.
+Use the collection's **Sources** tab for a directory, filename prefix/suffix
+and run expression. MACS filenames with varying energies can use prefix
+`Ef*_et*_` and suffix `.nxs.ng0`; each selected run must match exactly one file.
+Ambiguous patterns are rejected. SPEC and DIFF remain ordinary dataset groups.
+Editing a stream group's sources adds only that stream, preserves retained run
+identities and settings, and does not create another grouping layer.
+
+The **Reduction** tab exposes the complete MACS importer configuration after
+import: monitor target/response/reference wavevector, ki/kf correction,
+optional higher-order monitor model and incident-filter state, incident/final
+energy policies and overrides, A3 offset, UB, recorded detector corrections,
+analyzer alignment and occupancy thresholds, and explicit channel masks.
+Shared settings can be overridden per run. Edits unload affected source arrays
+and mark dependent binnings stale; the next preparation reduces those sources
+again. Coordinate changes also reconstruct these small stepped point arrays.
+The public `set_reduction_settings` API and **Copy reduction recipe script**
+reproduce the same choices without Qt, DAVE or Mantid.
+
+Default detector sensitivity is equal across channels. Recorded
+`detectorEfficiency` factors are opt-in multiplicative corrections, intended
+only for validated calibration. Detector masks remain independent of this
+choice. An experiment-specific vanadium calibration is not inferred from
+unperformed measurements.
+
+MACS defaults apply ki/kf **and** the incident monitor's 1/v response correction.
+The reference wavevector is 1 Å$^{-1}$, an arbitrary intensity scale. The two
+factors combine to reference wavevector divided by final wavevector; applying
+ki/kf alone to a 1/v monitor introduces an unwanted incident-energy dependence.
+Choose **Constant response** only when it describes the monitor normalization
+being supplied. See [CW monitor normalization](physics_conventions.md#cw-monitor-normalization).
+The historical DAVE lambda/2 monitor model is optional and off by default: it is
+an empirical calibration, not a measurement of this experiment. When enabled,
+it applies only to known unfiltered points in its 2–20 meV calibration range.
+Unknown filter logs require an explicit per-run override. Inserted incident
+filters suppress this correction; a post-sample filter does not determine the
+incident-monitor response.
+
+Both streams retain an explicit counting contract with original counts,
+observed count variance and calibrated exposure. Each bin estimates a common
+response by **pooled counts / calibrated exposure**, including exposed zero-count
+observations. Bins and later cuts preserve this target; observed errors are not
+used to construct inverse-variance weights. Known detector and kinematic
+corrections enter the exposure. Fractional assignments propagate squared
+assignment weights into variance, retain counts/exposure channels, and represent
+only diagonal uncertainty. Symmetry copies use the existing independent-copy
+diagonal convention; neighboring-bin and shared symmetry covariance are not
+retained. Such reconstructed bins are not declared independent integer Poisson
+observations.
+
+A zero count contributes zero *observed* Poisson variance, not a one-count
+floor. This is not a statement that the unknown rate is certainly zero.
+Confidence intervals and fitting objectives are separate statistical choices;
+see [counts and measured zeros](measurement_statistics.md#counts-and-measured-zeros).
+Monitor and calibration uncertainties are currently treated as negligible known
+exposure. Background-subtracted data are not independent Poisson counts.
+Smoothing is a **data-viewer operation** and never part of a MACS reduction or
+saved histogram recipe.
+
+Previously reduced MACS source arrays and histogram caches are invalidated by
+the new adapter version. Existing explicit importer choices remain editable;
+reload sources to use updated raw files. Reference comparison settings do not
+silently replace a saved project's settings.
 
 ### MACS detector masks
 
 File masks remain part of the immutable imported point mask. SPEC additionally
-uses three analyzer checks:
+uses the following analyzer checks:
 
 1. the NeXus `specDetector/roiMask`;
 2. DAVE's per-scan analyzer-angle comparison, with a default one-degree
    tolerance for analyzer-two-theta files; and
-3. an unresponsive-channel test based on nonzero-count occupancy across at
-   least 20 scan points.
+3. an optional unresponsive-channel test based on nonzero-count occupancy across
+   at least 20 scan points. This heuristic is off by default: low scattering
+   occupancy alone cannot establish that a detector is dead.
 
 Every rejected analyzer is retained in the arrays but marked ineligible, and
 its 1-based channel number, reason, and measured occupancy are stored in
 metadata. Additional 1-based SPEC channels can be entered manually. These
 analyzer masks do not propagate to DIFF: its independent NeXus ROI mask is used.
-In `Ef3p7_et_1.2_244.nxs.ng0`, SPEC channel 19 is identified as unresponsive
+With the health heuristic enabled, SPEC channel 19 in
+`Ef3p7_et_1.2_244.nxs.ng0` is identified as unresponsive
 because only 6.9% of its scan points are nonzero; the corresponding DIFF channel
 remains valid.
 
@@ -317,7 +365,16 @@ entries = import_dataset_paths(
 
 The import options, selected stream, geometry constants, normalization, and
 mask provenance are stored with every entry and reproduced by dataset workflow
-scripts.
+scripts. A portable replay can be exported after any edit:
+
+```python
+from nfit import set_reduction_settings, reduction_recipe_script
+
+spec = workspace.subgroups[0]
+set_reduction_settings(spec, {"ki_kf_normalization": True,
+                              "apply_detector_efficiency": False})
+script = reduction_recipe_script(spec)
+```
 
 ## Compatible direct-geometry spectrometer data
 

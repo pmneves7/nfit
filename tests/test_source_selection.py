@@ -15,6 +15,31 @@ from nfit.source_selection import (
 )
 
 
+def test_filename_wildcards_resolve_variable_macs_prefix_and_reject_ambiguity(tmp_path):
+    first = tmp_path / "Ef3p7_et_1.1_271.nxs.ng0"
+    second = tmp_path / "Ef3p7_et_1.2_244.nxs.ng0"
+    first.touch()
+    second.touch()
+    selection = SourceSelection(tmp_path, "Ef*_et*_", ".nxs.ng0", "271,244")
+    plan = resolve_source_selection(selection)
+    assert plan.resolved_files == (str(first), str(second)) and not plan.missing
+    (tmp_path / "Ef5p0_et_1.1_271.nxs.ng0").touch()
+    with pytest.raises(ValueError, match="ambiguous source pattern for run 271"):
+        resolve_source_selection(selection)
+
+
+def test_suffix_wildcards_preserve_order_padding_repeats_and_missing_sources(tmp_path):
+    first = tmp_path / "SEQ_001_a.nxs"
+    second = tmp_path / "SEQ_002_b.nxs.h5"
+    first.touch()
+    second.touch()
+    plan = resolve_source_selection(SourceSelection(tmp_path, "SEQ_", "_*.nxs*", "2,1,2,3", padding=3))
+    assert [item.path for item in plan.appearances[:3]] == [str(second), str(first), str(second)]
+    assert plan.resolved_files == (str(second), str(first))
+    assert plan.duplicates == (str(second),)
+    assert plan.missing == (str(tmp_path / "SEQ_003_*.nxs*"),)
+
+
 def _triples(expression, **kwargs):
     return [(item.run_number, item.depth, item.stack) for item in parse_run_expression(expression, **kwargs)]
 

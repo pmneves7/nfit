@@ -2924,6 +2924,9 @@ def _composite_point_data(
     signal_parts: list[np.ndarray] = []
     error_parts: list[np.ndarray] = []
     weight_parts: list[np.ndarray] = []
+    count_parts: list[np.ndarray] = []
+    counting_flags: list[bool] = []
+    poisson_primitives = True
     first_data: PointData4D | None = None
     normalization_weighted = False
     source_datasets = datasets if datasets is not None else _composite_candidates(group)
@@ -2954,11 +2957,27 @@ def _composite_point_data(
             )
         if not isinstance(data, PointData4D):
             continue
+        from .point_counting import is_counting_measurement
+
+        counting = is_counting_measurement(data.metadata)
+        counting_flags.append(counting)
         if first_data is None:
             first_data = data
         source = data.valid(require_positive_sigma=False)
         if source.size == 0:
             continue
+        if counting:
+            payload = source.measurement_payload or {}
+            if "num_events" not in payload:
+                raise ValueError("Counting composites require retained raw neutron counts")
+            if not all(counting_flags):
+                raise ValueError("Counting and ordinary point measurements require separate dataset groups")
+            if first_data.metadata["measurement_contract"] != data.metadata["measurement_contract"]:
+                raise ValueError("Counting composites require matching quantities, units and exposure conventions")
+            if dataset.scale_factor < 0:
+                raise ValueError("Subtract counting datasets through a background link or derived dataset, rather than a negative pooling scale")
+            count_parts.append(np.asarray(payload["num_events"], dtype=float))
+            poisson_primitives &= dataset.scale_factor == 1 and dataset.fit_weight == 1
         coordinates = np.column_stack(source.coordinates())
         if metadata_dimensions:
             valid = data.valid_mask(require_positive_sigma=False)
@@ -2980,13 +2999,18 @@ def _composite_point_data(
         weight_parts.append(weights)
     if first_data is None or not signal_parts:
         raise ValueError("no valid data points remain before compositing")
+    if any(counting_flags) and not all(counting_flags):
+        raise ValueError("Counting and ordinary point measurements require separate dataset groups")
+    source_metadata = dict(first_data.metadata)
+    if not poisson_primitives:
+        source_metadata.pop("poisson_count_model", None)
     return _point_data_histogram(
         np.concatenate(coords_parts, axis=0),
         np.concatenate(signal_parts),
         np.concatenate(error_parts),
         config,
         data_weights=np.concatenate(weight_parts),
-        source_metadata=first_data.metadata,
+        source_metadata=source_metadata,
         coordinate_system=first_data.metadata.get("coordinate_system"),
         visual_normalization=first_data.metadata.get("visual_normalization"),
         metadata_updates={
@@ -3006,6 +3030,7 @@ def _composite_point_data(
             ),
         },
         progress_callback=progress_callback,
+        retained_counts=np.concatenate(count_parts) if count_parts else None,
     )
 
 

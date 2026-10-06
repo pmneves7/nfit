@@ -98,9 +98,14 @@ def prompt_macs_nexus_options(
 
     from PySide6 import QtGui, QtWidgets
 
+    from .macs_reduction import MACS_DEFAULTS, MACS_REDUCTION_FORMAT, macs_settings_schema
+    from .reduction_recipe_gui import _field_editor
+    from .reduction_recipes import validated_reduction_settings
+
     dialog = QtWidgets.QDialog(parent)
     dialog.setWindowTitle("Import NIST NCNR MACS NeXus")
-    dialog.setMinimumWidth(620)
+    dialog.setMinimumWidth(700)
+    dialog.resize(760, 720)
     outer = QtWidgets.QVBoxLayout(dialog)
     explanation = QtWidgets.QLabel(
         "Each file will be imported as separate SPEC (energy analyzed) and "
@@ -144,10 +149,10 @@ def prompt_macs_nexus_options(
 
     efficiency = QtWidgets.QCheckBox("Apply detector efficiency factors")
     efficiency.setObjectName("macs_apply_efficiency")
-    efficiency.setChecked(True)
+    efficiency.setChecked(MACS_DEFAULTS["apply_detector_efficiency"])
     efficiency.setToolTip(
         "Multiply each stream by the 20 per-channel correction factors stored "
-        "in its NeXus detectorEfficiency field."
+        "in its NeXus detectorEfficiency field. Leave off to assume equal sensitivity; enable only for a validated calibration."
     )
     form.addRow("Efficiency", efficiency)
 
@@ -173,7 +178,7 @@ def prompt_macs_nexus_options(
 
     dead = QtWidgets.QCheckBox("Detect unresponsive SPEC analyzer channels")
     dead.setObjectName("macs_detect_dead")
-    dead.setChecked(True)
+    dead.setChecked(MACS_DEFAULTS["detect_dead_analyzers"])
     dead.setToolTip(
         "Mask a SPEC channel when its nonzero-count occupancy is a robust low "
         "outlier across at least 20 scan points. The decision and occupancy are "
@@ -189,7 +194,24 @@ def prompt_macs_nexus_options(
         "These do not mask the corresponding DIFF detectors."
     )
     form.addRow("Additional SPEC masks", manual)
-    outer.addLayout(form)
+    scientific_options = copy.deepcopy(MACS_DEFAULTS)
+    existing = {"a3_offset_deg", "monitor_target", "apply_detector_efficiency",
+                "mask_misaligned_analyzers", "analyzer_alignment_tolerance_deg",
+                "detect_dead_analyzers", "masked_analyzer_channels"}
+    for field in macs_settings_schema():
+        if field.key in existing:
+            continue
+        label = QtWidgets.QLabel(f"{field.label} ({field.units})" if field.units else field.label)
+        label.setToolTip(field.tooltip)
+        editor = _field_editor(field, scientific_options[field.key], object_name=f"macs_{field.key}",
+            on_changed=lambda value, key=field.key: scientific_options.__setitem__(key, value))
+        form.addRow(label, editor)
+    content = QtWidgets.QWidget()
+    content.setLayout(form)
+    scroll = QtWidgets.QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setWidget(content)
+    outer.addWidget(scroll)
 
     buttons = QtWidgets.QDialogButtonBox(
         QtWidgets.QDialogButtonBox.StandardButton.Ok
@@ -202,6 +224,7 @@ def prompt_macs_nexus_options(
         return False
     offset_text = a3_offset.text().strip()
     shared = {
+        **scientific_options,
         "a3_offset_deg": float(offset_text) if offset_text else None,
         "monitor_target": float(monitor_target.value()),
         "apply_detector_efficiency": bool(efficiency.isChecked()),
@@ -210,6 +233,7 @@ def prompt_macs_nexus_options(
         "detect_dead_analyzers": bool(dead.isChecked()),
         "masked_analyzer_channels": manual.text().strip(),
     }
+    shared = validated_reduction_settings(MACS_REDUCTION_FORMAT, shared)
     options = {str(Path(path)): copy.deepcopy(shared) for path in paths}
     return options, str(group_mode.currentData())
 

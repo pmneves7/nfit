@@ -40,6 +40,8 @@ in the system's default file manager.
 
 A few of its main capabilities are:
 
+- editable MACS Sources/Reduction recipes with equal-sensitivity defaults and
+  calibrated count/exposure pooling through histograms and cuts;
 - compiled fractional N-dimensional point binning on uniform and nonuniform grids,
   with consistent exposure weights and diagonal uncertainty propagation;
 - compiled DGS HKLE event projection and accumulation in Mantid-compatible and double precision modes;

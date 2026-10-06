@@ -49,6 +49,9 @@ def test_raw_geometry_service_is_authoritative_and_has_no_reducer_dependencies()
 
 
 GUI_INDEPENDENT_MODULES = (
+    PACKAGE_ROOT / "macs_reduction.py",
+    PACKAGE_ROOT / "macs_normalization.py",
+    PACKAGE_ROOT / "point_counting.py",
     PACKAGE_ROOT / "measurement_contracts.py",
     PACKAGE_ROOT / "measurement_statistics.py",
     PACKAGE_ROOT / "measurement_profiles.py",
