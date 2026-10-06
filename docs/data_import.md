@@ -1273,10 +1273,6 @@ child grid settings does not invalidate the parent output.
 
 ## Masks
 
-Group [dataset conditions](dataset_conditions.md) exclude entire runs using an
-elastic-window intensity or a numeric metadata statistic, with a per-run plot
-and adjustable thresholds. Their selection applies before histogramming.
-
 File masks and nfit masks remain separate but are combined for fitting. All GUI
 mask parameters describe the region to exclude:
 
