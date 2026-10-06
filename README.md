@@ -50,6 +50,8 @@ A few of its main capabilities are:
 - set installation-wide figure font size and axes linewidth defaults in Preferences;
 - select numbered runs with directory/naming patterns, bounded run expressions,
   metadata previews, editable group membership, and optional ordinary dataset subfolders;
+- exclude whole runs using plotted elastic-intensity or metadata conditions,
+  with cached scalar previews and editable thresholds;
 - separate Sources, Reduction, Binning and combination, and Plots and cuts,
   with editable standalone composite workflows and statistical provenance reports,
   including recorded CORELLI covariance and normalization limitations;

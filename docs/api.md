@@ -60,6 +60,13 @@ uncertainty rules.
 
 ## Reduced data, import adapters, and viewing
 
+`dataset_criterion_mask` attaches a whole-run exclusion condition to a group.
+`dataset_criterion_preview` calculates cached per-run diagnostic values;
+`filter_dataset_criteria` selects original entries without changing Enabled
+flags. `prepare_dataset_criteria` refreshes active diagnostics for scripting.
+See [Dataset conditions](dataset_conditions.md) for elastic normalization,
+metadata statistics, comparison semantics, and cache invalidation.
+
 nfit importers translate source axes, units, masks, intensities, uncertainties,
 and metadata into common containers. Supported paths include Mantid MDHisto,
 file-backed MDEvent and raw direct-geometry events, NIST NCNR MACS SPEC/DIFF

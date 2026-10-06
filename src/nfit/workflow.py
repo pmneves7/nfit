@@ -1067,6 +1067,7 @@ from nfit import (
     dataset_for_slice_viewer,
     default_analysis_parameters,
     perform_group_fit,
+    prepare_dataset_criteria,
     run_analysis_operation,
 )
 
@@ -1250,6 +1251,7 @@ def build_groups(datasets):
             item["name"]: ModelComponentSpec(**copy.deepcopy(item))
             for item in spec["models"]
         }}
+        prepare_dataset_criteria(group)
         groups[fit_id] = group
     return groups
 

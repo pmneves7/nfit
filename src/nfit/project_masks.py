@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from .dataset import PointData4D
+from .dataset_criteria import DATASET_CRITERION_TYPE
 from .mdhisto import MDHistoData
 from .pipeline import DatasetEntry, MaskSpec
 from .project_coordinates import (
@@ -43,7 +44,7 @@ def _nfit_mask_for_point_data(
 ) -> np.ndarray:
     combined = np.zeros(data.size, dtype=bool)
     for mask in [*(extra_masks or []), *dataset.masks]:
-        if not mask.enabled:
+        if not mask.enabled or mask.type == DATASET_CRITERION_TYPE:
             continue
         mask_values = _evaluate_point_data_mask(data, mask)
         if mask.invert:
@@ -196,7 +197,7 @@ def _mdhisto_with_nfit_masks(
     if not isinstance(data, MDHistoData):
         raise TypeError("dataset does not contain MDHistoData")
     masks = tuple([*(extra_masks or []), *dataset.masks])
-    if not any(mask.enabled for mask in masks):
+    if not any(mask.enabled and mask.type != DATASET_CRITERION_TYPE for mask in masks):
         return _mdhisto_with_file_mask_only(data)
     file_mask = np.asarray(data.mask, dtype=bool)
     nfit_mask = _nfit_mask_for_mdhisto(dataset, data, extra_masks=extra_masks)
@@ -250,7 +251,7 @@ def _nfit_mask_for_mdhisto(
     combined = np.zeros(data.shape, dtype=bool)
     # Ancestor group masks apply first, then the dataset's own masks.
     for mask in [*(extra_masks or []), *dataset.masks]:
-        if not mask.enabled:
+        if not mask.enabled or mask.type == DATASET_CRITERION_TYPE:
             continue
         mask_values = _evaluate_mdhisto_mask(data, mask)
         if mask.invert:

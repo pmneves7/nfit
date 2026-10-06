@@ -80,6 +80,9 @@ different Python.
 - `src/nfit/project_dataset_io.py`, `project_point_lists.py`, `project_masks.py`,
   and `project_coordinates.py`: dataset archives, point-list preparation,
   masks, and coordinate projection services.
+- `src/nfit/dataset_criteria.py` and `dataset_criterion_values.py`: whole-run
+  selection rules and bounded scalar diagnostics. `dataset_criterion_gui.py`
+  presents their preview; `docs/dataset_conditions.md` documents the workflow.
 - `src/nfit/project_rebinning.py`: numerical grid configuration, symmetry-aware
   rebinning, and histogram construction.
 - `src/nfit/raw_dgs.py`, `raw_dgs_geometry.py`, `raw_dgs_geometry_precision.py`,

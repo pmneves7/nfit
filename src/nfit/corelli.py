@@ -589,6 +589,9 @@ def bin_corelli_group(
         np.zeros(shape[physical_dimensions:], dtype=float) if metadata_specs else None
     )
     selected = list(group.datasets if datasets is None else datasets)
+    from .dataset_criteria import filter_dataset_criteria
+
+    selected = filter_dataset_criteria(group, selected, compute=True, progress_callback=progress_callback)
     total_events = sum(int(dataset.metadata.get("event_count", 0)) for dataset in selected)
     processed = 0
     retained_charge = 0.0

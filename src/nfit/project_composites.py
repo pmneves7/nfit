@@ -775,11 +775,13 @@ def _composite_candidates(
         for subgroup in current.subgroups:
             yield from considered_datasets(subgroup)
 
-    return [
+    from .dataset_criteria import filter_dataset_criteria
+
+    return filter_dataset_criteria(_composite_root(group), [
         dataset
         for dataset in considered_datasets(node, selected_root=True)
         if dataset.enabled and (include_backgrounds or dataset.id not in background_ids)
-    ]
+    ], require_current=False)
 
 
 def _hierarchical_composite_scopes(
@@ -1099,6 +1101,11 @@ def composite_dataset_data(
     """
     if node is not None:
         group = _composite_scope(group, node)
+    from .dataset_criteria import prepare_dataset_criteria
+
+    selection_node = group.node if isinstance(group, _CompositeScope) else group
+    prepare_dataset_criteria(_composite_root(group), datasets=list(selection_node.iter_datasets()),
+                              progress_callback=progress_callback)
     config = config_override if config_override is not None else data_group_composite_config(group)
     composite_builder = _backend_value(
         "_composite_dataset_data", _composite_dataset_data
@@ -2159,6 +2166,10 @@ def _cached_composite_dataset_data(
             apply_spectral=apply_spectral_channels,
         )
 
+    if force_rebin:
+        from .dataset_criteria import prepare_dataset_criteria
+
+        prepare_dataset_criteria(_composite_root(group), progress_callback=progress_callback)
     signature = _composite_cache_signature(
         group, config_override=config_override, binning_id=binning_id
     )

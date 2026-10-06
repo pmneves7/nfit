@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 
 import numpy as np
 
+from .dataset_criteria import DATASET_CRITERION_TYPE
 from .histogram_statistics import (
     EVENT_SIGNAL_NUMERATOR,
     EVENT_STATISTICS_KEY,
@@ -51,7 +52,8 @@ def reduce_masked_event_runs(
     for run in runs:
         shared = (inherited_masks if inherited_masks_by_id is None
                   else inherited_masks_by_id.get(run.id, inherited_masks))
-        masks = [mask for mask in [*shared, *run.masks] if mask.enabled]
+        masks = [mask for mask in [*shared, *run.masks]
+                 if mask.enabled and mask.type != DATASET_CRITERION_TYPE]
         signature = json.dumps(
             [(mask.type, mask.parameters, mask.invert, mask.additive) for mask in masks],
             sort_keys=True,

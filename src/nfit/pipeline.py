@@ -395,9 +395,13 @@ class DataGroup:
     def select(self, names: Iterable[str] | None = None) -> list[DatasetEntry]:
         """Return enabled datasets in requested order, or all enabled datasets when omitted."""
 
+        from .dataset_criteria import filter_dataset_criteria
+
         if names is None:
-            return [dataset for dataset in self.iter_datasets() if dataset.enabled]
-        return [dataset for dataset in (self.get_dataset(name) for name in names) if dataset.enabled]
+            selected = [dataset for dataset in self.iter_datasets() if dataset.enabled]
+        else:
+            selected = [dataset for dataset in (self.get_dataset(name) for name in names) if dataset.enabled]
+        return filter_dataset_criteria(self, selected)
 
     def data_sequence(self, names: Iterable[str] | None = None) -> list[Any]:
         """Return raw data objects for viewer and plotting helpers."""

@@ -465,6 +465,10 @@ def bin_mdevent_group(
     )
     # Choose the common Ei before partitioning runs by user masks. A partition
     # is only an accumulation detail, not a new first experiment.
+    from .dataset_criteria import filter_dataset_criteria
+
+    selected_runs = filter_dataset_criteria(group, selected_runs, compute=True,
+                                             progress_callback=progress_callback)
     if _trajectory_reference_energy is None:
         energies = effective_trajectory_energies(
             group, selected_runs, (run.metadata["incident_energy"] for run in selected_runs)
@@ -472,7 +476,8 @@ def bin_mdevent_group(
         _trajectory_reference_energy = energies[0] if energies else None
     masks = list(group.masks if inherited_masks is None else inherited_masks)
     if include_source_masks and any(
-        mask.enabled for mask in [*masks, *(mask for run in selected_runs for mask in run.masks)]
+        mask.enabled and mask.type != "dataset_criterion"
+        for mask in [*masks, *(mask for run in selected_runs for mask in run.masks)]
     ):
         # Materialize iterator arguments once for reuse across mask partitions.
         lo, hi, bins = tuple(lower), tuple(upper), tuple(num_bins)
@@ -857,6 +862,10 @@ def bin_mdevent_powder_group(
             else (group.datasets[index] for index in run_indices)
         )
     )
+    from .dataset_criteria import filter_dataset_criteria
+
+    selected_runs = filter_dataset_criteria(group, selected_runs, compute=True,
+                                             progress_callback=progress_callback)
     if _trajectory_reference_energy is None:
         energies = effective_trajectory_energies(
             group, selected_runs, (run.metadata["incident_energy"] for run in selected_runs)
@@ -864,7 +873,8 @@ def bin_mdevent_powder_group(
         _trajectory_reference_energy = energies[0] if energies else None
     masks = list(group.masks if inherited_masks is None else inherited_masks)
     if include_source_masks and any(
-        mask.enabled for mask in [*masks, *(mask for run in selected_runs for mask in run.masks)]
+        mask.enabled and mask.type != "dataset_criterion"
+        for mask in [*masks, *(mask for run in selected_runs for mask in run.masks)]
     ):
         lo, hi, bins = tuple(lower), tuple(upper), tuple(num_bins)
         steps = None if step_size is None else tuple(step_size)

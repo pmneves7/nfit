@@ -112,6 +112,12 @@ from .crystal import (
     validate_crystal,
 )
 from .dataset import PointData4D, PointListData, from_arrays
+from .dataset_criteria import (
+    dataset_criterion_mask,
+    dataset_criterion_preview,
+    filter_dataset_criteria,
+    prepare_dataset_criteria,
+)
 from .dgs_normalization import set_dgs_trajectory_energy_policy
 from .dgs_reduction_settings import dgs_reduction_policy_script, set_dgs_reduction_policies
 from .electronic_backends import (
@@ -778,6 +784,8 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "dataset_criterion_mask", "dataset_criterion_preview",
+    "filter_dataset_criteria", "prepare_dataset_criteria",
     "CachedBackgroundSliceSelection",
     "background_profile_slice_selection",
     "replay_cached_background_box_profiles",

@@ -221,6 +221,9 @@ def replay_composite_recipe(recipe: dict[str, Any], *, progress_callback=None) -
                 if bg.enabled and bg.source_entry is None and bg.source_group is None:
                     raise ValueError(f"background {bg.name!r} refers to an absent replay source")
     root = roots[payload["target_workspace"]]
+    from .dataset_criteria import prepare_dataset_criteria
+
+    prepare_dataset_criteria(root, progress_callback=progress_callback)
     node_id = payload.get("target_node_id")
     node = nodes[node_id] if node_id is not None else None
     if node is not None and not any(item is node for item in root.iter_subgroups()):

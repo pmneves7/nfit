@@ -489,6 +489,10 @@ def bin_raw_dgs_group(
         )
     policies = resolved_dgs_reduction_policies(config)
     selected = list(group.datasets if datasets is None else datasets)
+    from .dataset_criteria import filter_dataset_criteria
+
+    selected = filter_dataset_criteria(group, selected, compute=True,
+                                       progress_callback=progress_callback)
     for run in selected:
         if not np.isfinite(run.scale_factor) or not np.isfinite(run.fit_weight) or run.fit_weight < 0:
             raise ValueError("raw-DGS scales must be finite and fit weights finite and nonnegative")

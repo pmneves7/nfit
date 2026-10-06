@@ -1,0 +1,18 @@
+{
+  "group": "Ei15meV_1p8K_240Hz_s2_34",
+  "runs": 12,
+  "excluded": 1,
+  "fresh_seconds": 1.5490723429975333,
+  "reuse_seconds": 0.0032754219937487505,
+  "numerical_subset_parity": true,
+  "relative_tolerance": 1e-12,
+  "save_reopen": true,
+  "original_unchanged": true,
+  "host": "analysis-node21.sns.gov",
+  "version": "0.120.0",
+  "energy_window_meV": [
+    -0.5,
+    0.5
+  ],
+  "note": "12-run read-only native HYSPEC trial; the explicit-subset comparison covers signal, uncertainty, counts and mask. Timing excludes application startup and project loading."
+}

@@ -40,6 +40,7 @@ from .application_preferences import application_settings, preload_viewer_data
 from .cache_utils import lru_store as _lru_store
 from .data_workspace import bind_data_workspace, project_data_workspace, temporary_data_directory
 from .dataset import PointData4D, PointListData
+from .dataset_criteria import DATASET_CRITERION_DEFINITION, DATASET_CRITERION_TYPE
 from .file_dialogs import (
     get_open_file_name,
     get_open_file_names,
@@ -819,6 +820,8 @@ MASK_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
 }
 
+MASK_TYPE_DEFINITIONS[DATASET_CRITERION_TYPE] = DATASET_CRITERION_DEFINITION
+
 
 def _new_gui_project() -> NfitProject:
     """Return the clean initial project shown by the GUI."""
@@ -960,6 +963,8 @@ def create_mask(dataset: DatasetEntry, name: str | None = None, *, type: str = "
 
     if type not in MASK_TYPE_DEFINITIONS:
         raise ValueError(f"unknown mask type {type!r}")
+    if type == DATASET_CRITERION_TYPE:
+        raise ValueError("Dataset condition masks belong to dataset groups")
     mask = MaskSpec(
         name=next_mask_name(dataset.masks) if name is None else name,
         type=type,
@@ -1117,6 +1122,10 @@ def _dataset_is_effectively_enabled(
     """Return whether a dataset and every containing dataset group are enabled."""
 
     if not dataset.enabled:
+        return False
+    from .dataset_criteria import filter_dataset_criteria
+
+    if not filter_dataset_criteria(data_group, [dataset], require_current=False):
         return False
     node = _dataset_parent_node(data_group, dataset)
     while isinstance(node, DatasetGroup):
@@ -1430,10 +1439,13 @@ def copy_dataset_to_group(dataset: DatasetEntry, group: DataGroup) -> DatasetEnt
     return copied
 
 
-def available_mask_types() -> list[str]:
-    """Return registered mask type names."""
+def available_mask_types(*, scope: str = "dataset") -> list[str]:
+    """Return mask types for an individual dataset or a dataset group."""
 
-    return list(MASK_TYPE_DEFINITIONS)
+    if scope not in {"dataset", "group"}:
+        raise ValueError("mask scope must be dataset or group")
+    return [name for name in MASK_TYPE_DEFINITIONS
+            if scope == "group" or name != DATASET_CRITERION_TYPE]
 
 
 def default_mask_parameters(type: str) -> dict[str, Any]:
@@ -3037,6 +3049,11 @@ def fit_dataset_inputs(
         raise ValueError(
             "dataset input purpose must be 'all', 'fit', 'visualization', or 'overlay'"
         )
+
+    if force_rebin or purpose == "fit":
+        from .dataset_criteria import prepare_dataset_criteria
+
+        prepare_dataset_criteria(group, progress_callback=progress_callback)
 
     inputs: list[FitDatasetInput] = []
     bundles: dict[str, FitDataBundle] = {}
@@ -17682,7 +17699,8 @@ class NfitProjectExplorer:
         current = self.mask_type_combo.currentData()
         self.mask_type_combo.blockSignals(True)
         self.mask_type_combo.clear()
-        for type_name in available_mask_types():
+        scope = "group" if self._objects_for_item(self._current_item())[4] == "group_mask" else "dataset"
+        for type_name in available_mask_types(scope=scope):
             self.mask_type_combo.addItem(MASK_TYPE_DEFINITIONS[type_name]["label"], type_name)
         if current is not None:
             index = self.mask_type_combo.findData(current)
@@ -17726,6 +17744,28 @@ class NfitProjectExplorer:
 
         ensure_coordinate_range_mask_axes(mask, dataset)
         self._clear_mask_parameter_editor()
+        if mask.type == DATASET_CRITERION_TYPE:
+            from .dataset_criterion_gui import dataset_criterion_panel
+
+            root, _entry, _mask, _model, _role = self._objects_for_item(self._current_item())
+            owner = self._dataset_group_for_item(self._current_item())
+            if root is None or owner is None:
+                return
+
+            def changed():
+                self._mark_mask_datasets_stale(list(owner.iter_datasets()))
+                self._record_data_group_state_change(root)
+                self._mark_dirty()
+
+            def start_task(**kwargs):
+                return self._start_background_task(title="Dataset condition values",
+                    failure_title="Cannot calculate dataset condition", success_message="Dataset preview ready.",
+                    **kwargs)
+
+            panel = dataset_criterion_panel(owner, mask, changed=changed, start_task=start_task,
+                                            parent=self.window)
+            self.mask_parameter_layout.addWidget(panel, 0, 0, 1, 2)
+            return
         invert_check = QtWidgets.QCheckBox("Invert")
         invert_check.setChecked(bool(mask.invert))
         invert_check.setToolTip(
