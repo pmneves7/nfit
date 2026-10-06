@@ -19,10 +19,13 @@ from typing import Any
 MAX_SOURCE_APPEARANCES = 100_000
 MAX_SOURCE_NUMBER_PADDING = 64
 RUN_EXPRESSION_HELP = """Run expressions (inclusive ranges):
+Use commas between separate ranges: 10:15,20:25.
+By default, all selected files join one dataset group. The grouping rules below
+apply when preserving expression groups as ordinary dataset subfolders.
   10,12,15       separate expression groups
   10:15          one group per run; 10:::19 uses stride three
   10:3:19        equivalent legacy start:stride:end spelling
-  10+12          sum those runs in one group
+  10+12          combine those runs in one expression group
   10>15          sum the range in one group; 10>>>19 uses stride three
   10'12          advance the second grouping index
   10;15          range through the second grouping index (;;; is stride three)
@@ -32,16 +35,16 @@ RUN_EXPRESSION_HELP = """Run expressions (inclusive ranges):
   10/n;s1;s2;r/  one second-index group per source
 Block parameters: n = sources per block, s1 = files skipped within a block,
 s2 = files skipped between blocks, r = repeat count. Defaults are n;0;0;1.
+The first and second grouping indices label expression groups, not data axes.
   10|3|          repeat the same source in three depth groups
   10!3!          repeat the same source in three second-index groups
   0 or 0|5|      reserve one or five empty groups
   x              clear the source selection
 Repeated sources retain one physical source identity; repetition is not a new
-independent measurement. Separate colon ranges with commas rather than chaining
-them, because start:stride:end takes precedence. Expansion is limited to 100,000
+independent measurement. Ranges may descend; a stride can omit an endpoint it
+does not reach. Separate colon ranges with commas rather than chaining them,
+because start:stride:end takes precedence. Expansion is limited to 100,000
 source appearances. Preview missing files and grouped sources before import.
-Import is flat by default. Optional expression groups become ordinary nfit
-DatasetGroup subfolders; they do not create another project container type.
 """
 
 

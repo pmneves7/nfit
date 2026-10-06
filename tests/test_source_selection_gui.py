@@ -35,6 +35,26 @@ def test_selector_fields_tooltips_and_explicit_file_alternative(source_panel):
     assert files == [True] and imported == []
 
 
+def test_run_expression_hover_contains_complete_brand_neutral_syntax(source_panel):
+    from PySide6 import QtWidgets
+
+    from nfit.source_selection import RUN_EXPRESSION_HELP
+
+    panel, *_ = source_panel
+    expression = panel.findChild(QtWidgets.QLineEdit, "dataset_importing_numors")
+    assert expression.toolTip() == RUN_EXPRESSION_HELP
+    for example in (
+        "10,12,15", "10:15", "10:::19", "10:3:19", "10+12", "10>15", "10>>>19",
+        "10'12", "10;15", ";;;", "10(n;s1;s2;r)", "10[n;s1;s2;r]",
+        "10{n;s1;s2;r}", "10/n;s1;s2;r/", "10|3|", "10!3!", "0|5|",
+    ):
+        assert example in expression.toolTip()
+    for widget in panel.findChildren(QtWidgets.QWidget):
+        assert "grasp" not in widget.toolTip().lower()
+        if isinstance(widget, (QtWidgets.QLabel, QtWidgets.QAbstractButton)):
+            assert "grasp" not in widget.text().lower()
+
+
 def test_preview_preserves_appearances_missing_and_repeated_identities(source_panel):
     from PySide6 import QtWidgets
 

@@ -54,7 +54,7 @@ def build_source_selection_panel(
         ("Directory", "path", "Directory containing numbered files. Source data remain in their original location."),
         ("File prefix", "prefix", "Text before each run number, for example SEQ_."),
         ("File suffix", "suffix", "Text after each run number, for example .nxs.h5 or .001."),
-        ("Run expression", "numors", "Run numbers, inclusive ranges, strides, sums, and repeated or blocked groups. Preview shows the resulting expression groups before import."),
+        ("Run expression", "numors", RUN_EXPRESSION_HELP),
     )
     edits = {}
     for caption, key, tooltip in fields:
@@ -76,7 +76,7 @@ def build_source_selection_panel(
     layout.addLayout(form)
     syntax = QtWidgets.QLabel(
         "Examples: 392985:393469,393500:393631; 10:2:20; 10>20; 10+12. "
-        "Repeated and blocked GRASP expressions are also accepted."
+        "Hover over the run expression for the complete syntax, including repeated and blocked groups."
     )
     syntax.setWordWrap(True)
     syntax.setToolTip("The saved expression is expanded by the same parser used by the public scripting API.")

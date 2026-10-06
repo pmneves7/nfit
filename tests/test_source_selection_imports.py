@@ -39,6 +39,32 @@ def test_flat_default_preserves_unique_sources_and_repeat_provenance(tmp_path):
     validate_source_selection_combination(group.datasets)
 
 
+def test_flat_range_separators_change_provenance_without_changing_membership(tmp_path):
+    from nfit.project_composites import _composite_cache_signature, data_group_composite_config
+    from nfit.source_selection_imports import update_source_selection
+
+    for number in (1, 2, 4, 5):
+        _write_raw_dgs(tmp_path / f"SEQ_{number}.nxs.h5")
+    root = DataGroup("sample")
+    group = import_source_selection(
+        root, SourceSelection(tmp_path, "SEQ_", ".nxs.h5", "1:2+4:5"),
+    )
+    previous = [(d.id, d.fit_weight, d.metadata['source_file']) for d in group.datasets]
+    config = data_group_composite_config(group)
+    config['stale'] = False
+    signature = _composite_cache_signature(group)
+    edit = update_source_selection(
+        group, SourceSelection(tmp_path, "SEQ_", ".nxs.h5", "1:2,4:5"), parent=root,
+    )
+    assert edit.settings_changed and not edit.membership_changed
+    assert not edit.added_dataset_ids and not edit.removed_dataset_ids
+    assert [(d.id, d.fit_weight, d.metadata['source_file']) for d in group.datasets] == previous
+    assert config['stale'] is False
+    assert _composite_cache_signature(group) == signature
+    assert group.metadata['source_selection']['expression'] == "1:2,4:5"
+    assert group.metadata['reduction_recipe']['source_selection']['expression'] == "1:2,4:5"
+
+
 def test_preserved_groups_pool_runs_and_keep_empty_and_alias_groups(tmp_path):
     selection = _raw_selection(tmp_path, "1+2,0,1|2|")
     group = import_source_selection(DataGroup("sample"), selection, preserve_groups=True)

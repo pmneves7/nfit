@@ -25,6 +25,13 @@ or MDEvent experiment. File contents remain lazy external references.
 Ranges include their endpoints; a stride can omit an endpoint it does not reach.
 The parser limits expansion to 100,000 appearances and rejects invalid or
 oversized expressions before importing anything.
+Hover over **Run expression** for the complete syntax, also available through
+**Expression syntax**. Separate disjoint ranges with commas, for example
+`505101:505489,505494:505553,506638:506910`. The `+` operator combines adjacent
+terms into the same expression group when preserving subfolders. It is not
+needed to select several ranges into one flat dataset group. Changing `+` to
+`,` leaves the unique selected files unchanged for a flat import, but changes
+the expression-group boundaries.
 
 | Expression | Meaning when preserving expression groups |
 | --- | --- |
