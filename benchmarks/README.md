@@ -83,6 +83,18 @@ The [serial-stage audit](results/dgs-serial-stage-audit.md) maps the raw and
 cached-event execution paths, explains their parallelism constraints, and
 records the read-only node23 process observations from the active GUI workflow.
 
+`profile_dgs_project.py` profiles the complete saved native project workflow,
+including directional backgrounds, automatic bounds and persistence. It uses
+the public load/save API, saves a separate project in a new directory, and
+records producer-only generator timings, HDF5 reads and compiled phase timings.
+Use `--execute` explicitly; `--fresh-reduction` discards caches only in the
+isolated copy. Keep output in the source IPTS and run without competing rebuilds.
+For the desktop runtime, set `NFIT_DGS_PROJECT_PROFILE_ARGS` to its JSON argument
+list. Inclusive component timings overlap and cannot be added; profiling is
+separate from headline speed comparisons. See the
+[full native HYSPEC audit](results/hyspec-native-project-performance-audit.md)
+for the stage inventory, current evidence and pending real-project measurements.
+
 ### Isolated raw-pipeline trials
 
 `trial_dgs_raw_pipeline.py` patches only its benchmark process. It tests bounded

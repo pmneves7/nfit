@@ -1,0 +1,133 @@
+{
+  "scope": "Synthetic warmed mapping/collision/scatter only; no I/O, geometry, detector-ID recovery, trajectory work or saving; not ORNL hardware",
+  "events": 12000,
+  "transforms": 2888,
+  "results": [
+    {
+      "workers": 1,
+      "rows": 346,
+      "median_seconds": 0.5592898749746382,
+      "times": [
+        0.5592898749746382,
+        0.5639698340091854,
+        0.5566555840196088
+      ],
+      "literal_parity": true,
+      "scratch_bytes": 55960656
+    },
+    {
+      "workers": 1,
+      "rows": 692,
+      "median_seconds": 0.5339969999622554,
+      "times": [
+        0.5383975000586361,
+        0.5292550000594929,
+        0.5339969999622554
+      ],
+      "literal_parity": true,
+      "scratch_bytes": 111921312
+    },
+    {
+      "workers": 1,
+      "rows": 1000,
+      "median_seconds": 0.517818541964516,
+      "times": [
+        0.5318407919257879,
+        0.517818541964516,
+        0.5161809580167755
+      ],
+      "literal_parity": true,
+      "scratch_bytes": 161736000
+    },
+    {
+      "workers": 4,
+      "rows": 346,
+      "median_seconds": 0.18412162503227592,
+      "times": [
+        0.18087670905515552,
+        0.18540249997749925,
+        0.18412162503227592
+      ],
+      "literal_parity": true,
+      "scratch_bytes": 55960656
+    },
+    {
+      "workers": 4,
+      "rows": 692,
+      "median_seconds": 0.14982391707599163,
+      "times": [
+        0.15184508403763175,
+        0.14549008291214705,
+        0.14982391707599163
+      ],
+      "literal_parity": true,
+      "scratch_bytes": 111921312
+    },
+    {
+      "workers": 4,
+      "rows": 1000,
+      "median_seconds": 0.1444231669884175,
+      "times": [
+        0.14364329201634973,
+        0.14568887499626726,
+        0.1444231669884175
+      ],
+      "literal_parity": true,
+      "scratch_bytes": 161736000
+    },
+    {
+      "workers": 8,
+      "rows": 346,
+      "median_seconds": 0.1357151250122115,
+      "times": [
+        0.1357151250122115,
+        0.13585337507538497,
+        0.12804016703739762
+      ],
+      "literal_parity": true,
+      "scratch_bytes": 55960656
+    },
+    {
+      "workers": 8,
+      "rows": 692,
+      "median_seconds": 0.08734795905184001,
+      "times": [
+        0.08519925002474338,
+        0.08756437501870096,
+        0.08734795905184001
+      ],
+      "literal_parity": true,
+      "scratch_bytes": 111921312
+    },
+    {
+      "workers": 8,
+      "rows": 1000,
+      "median_seconds": 0.08288124995306134,
+      "times": [
+        0.08288124995306134,
+        0.08209479099605232,
+        0.08294216706417501
+      ],
+      "literal_parity": true,
+      "scratch_bytes": 161736000
+    }
+  ],
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "processor": "arm",
+  "python": "3.14.7",
+  "numpy": "2.5.3",
+  "numba": "0.67.0",
+  "seed": 20261006,
+  "shape": [
+    48,
+    48,
+    12,
+    32
+  ],
+  "repeats": 3,
+  "ordering": "workers 1,4,8; rows 346,692,1000; three repeats per configuration",
+  "module_sha256": {
+    "src/nfit/_mdevent_background_numba.py": "a41c2f99e050df1def564dbca787a241cd066198013e126f8268a13adeb6b1d2",
+    "benchmarks/benchmark_measured_background_replay.py": "ec31b0ba018217b2114eed37d2c0d95e0148484f793e1566561d12c01137a967"
+  }
+}
