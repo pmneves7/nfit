@@ -6,6 +6,9 @@ Use Shift-click for a range and Ctrl-click (Command-click on macOS) for separate
 rows. The table lists source data, histogram stages and prepared views, reduced
 events, evaluated models and overlays, and numerical fit/analysis results.
 Inspecting or sorting rows never decodes an unloaded cube.
+Each refresh walks a live payload once and indexes its storage owners to find
+shared arrays and reclaimable memory. It does not repeatedly compare every
+resource's numerical contents with every other resource.
 
 ## Memory and disk columns
 
@@ -95,7 +98,10 @@ policy, not an OS-enforced memory limit for third-party code.
 
 Loading, decoding and saving use a guarded worker with progress and cooperative
 cancellation. Cancelled atomic saves leave the previous project intact. Archive
-failures are reported without clearing unsaved changes. Cached
+progress labels update at most once per second to keep fast saves readable;
+cancellation still checks every reported archive chunk. Explicit progress
+callbacks receive every checkpoint, while display-only event bursts are coalesced.
+Archive failures are reported without clearing unsaved changes. Cached
 histograms use standard compressed NPZ members within the project and unchanged
 members are copied without recompression. Slice-only storage and slider caches
 are not required: viewing continues to use full resident cubes.

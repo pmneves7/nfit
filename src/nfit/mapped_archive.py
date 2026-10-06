@@ -151,6 +151,19 @@ def array_storage_owners(value: Any) -> tuple[np.ndarray, ...]:
     return tuple(owners.values())
 
 
+def array_storage_allocations(value: Any) -> dict[tuple[str, int], int]:
+    """Return nonempty storage identities and sizes without retaining owners.
+
+    Identities are valid while the inspected payloads remain alive. Use this
+    metadata within one inventory scan, not as a persistent content signature.
+    Array views share their heap owner or mapping identity, just as in
+    :func:`array_storage_nbytes`.
+    """
+    allocations: dict[tuple[str, int], int] = {}
+    _storage_nbytes(value, seen=set(), seen_storage=set(), allocations=allocations)
+    return {token: size for token, size in allocations.items() if size > 0}
+
+
 def _array_members(archive: ZipFile) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for info in archive.infolist():
@@ -397,6 +410,7 @@ def _load_array(source: BinaryIO) -> np.ndarray:
 def _storage_nbytes(
     value: Any, *, seen: set[int], seen_storage: set[tuple[str, int]],
     owners: dict[tuple[str, int], np.ndarray] | None = None,
+    allocations: dict[tuple[str, int], int] | None = None,
 ) -> tuple[int, int]:
     if value is None or isinstance(value, (str, bytes, bytearray)):
         return 0, 0
@@ -414,6 +428,8 @@ def _storage_nbytes(
             seen_storage.add(token)
             if owners is not None:
                 owners[token] = owner
+            if allocations is not None:
+                allocations[token] = int(owner.nbytes)
             return 0, int(owner.nbytes)
         owner = _array_owner(value, mapped=False)
         token = ("heap", id(owner))
@@ -422,12 +438,18 @@ def _storage_nbytes(
         seen_storage.add(token)
         if owners is not None:
             owners[token] = owner
+        if allocations is not None:
+            allocations[token] = int(owner.nbytes)
         return int(owner.nbytes), 0
     if hasattr(value, "__cuda_array_interface__") and hasattr(value, "nbytes"):
         # GPU allocations are not file mappings. Preserve the existing cache
         # accounting without importing an optional accelerator package.
+        if allocations is not None:
+            allocations[("device", identity)] = int(value.nbytes)
         return int(value.nbytes), 0
     if isinstance(value, memoryview):
+        if allocations is not None:
+            allocations[("buffer", identity)] = int(value.nbytes)
         return int(value.nbytes), 0
     children: Any = ()
     if isinstance(value, Mapping):
@@ -450,7 +472,7 @@ def _storage_nbytes(
     heap = mapped = 0
     for child in children:
         child_heap, child_mapped = _storage_nbytes(
-            child, seen=seen, seen_storage=seen_storage, owners=owners
+            child, seen=seen, seen_storage=seen_storage, owners=owners, allocations=allocations
         )
         heap += child_heap
         mapped += child_mapped

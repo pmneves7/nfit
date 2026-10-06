@@ -12,7 +12,7 @@ from typing import Any
 from zipfile import BadZipFile, ZipFile
 
 from .data_workspace import temporary_storage_usage
-from .mapped_archive import array_storage_nbytes
+from .mapped_archive import array_storage_allocations
 from .performance import load_resource_limits
 from .project_archive import ArchiveMember
 from .raw_dgs_cache import clear_reduced_event_cache
@@ -75,12 +75,50 @@ def _node_identity(key):
     return key
 
 
-def _bytes(value):
-    return array_storage_nbytes(value).total
+class _StorageInventory:
+    """Walk each live payload once and index its shared allocations by owner."""
 
+    def __init__(self):
+        self.payloads = {}
+        self.sizes = {}
+        self.resources = {}
+        self.viewers = {}
+        self.resource_owners = {}
+        self.viewer_owners = {}
 
-def _shares(first, second):
-    return _bytes((first, second)) < _bytes(first) + _bytes(second)
+    def allocations(self, payload):
+        identity = id(payload)
+        if identity not in self.payloads:
+            # Retain payloads only until this scan finishes so ids cannot be reused.
+            values = array_storage_allocations(payload)
+            self.payloads[identity] = (payload, values)
+            for token, size in values.items():
+                self.sizes.setdefault(token, size)
+        return self.payloads[identity][1]
+
+    def size(self, payload):
+        return sum(self.allocations(payload).values())
+
+    def add(self, key, payload, *, viewer=False):
+        values = self.allocations(payload)
+        targets, owners = ((self.viewers, self.viewer_owners) if viewer else
+                           (self.resources, self.resource_owners))
+        targets[key] = values
+        for token in values:
+            owners.setdefault(token, set()).add(key)
+
+    def related(self, key, *, viewers=False):
+        owners = self.viewer_owners if viewers else self.resource_owners
+        return set().union(*(owners.get(token, ()) for token in self.resources[key]))
+
+    def reclaimable(self, key, removed_viewers):
+        # Closing a sharing viewer can also release its private transformed arrays.
+        tokens = set(self.resources[key])
+        for index in removed_viewers:
+            tokens.update(self.viewers[index])
+        return sum(self.sizes[token] for token in tokens
+                   if self.resource_owners.get(token, set()) <= {key}
+                   and self.viewer_owners.get(token, set()) <= removed_viewers)
 
 
 def excluded_project_cache(project, member):
@@ -154,6 +192,8 @@ class ProjectResources:
         from .project_caches import MODEL_OVERLAY_CACHE
         from .resource_budget import snapshot_memory
 
+        storage = _StorageInventory()
+        _bytes = storage.size
         bindings = {}
         members = self._members()
         recipes = tuple(self.recipes())
@@ -327,35 +367,37 @@ class ProjectResources:
                     payload, unload=unload)
 
         viewers = tuple(self.viewer_payloads())
+        for key, binding in bindings.items():
+            storage.add(key, binding.payload)
         for index, (label, payload) in enumerate(viewers):
-            if any(_shares(payload, b.payload) for b in bindings.values() if b.payload is not None):
+            storage.add(index, payload, viewer=True)
+            if any(storage.resource_owners.get(token) for token in storage.viewers[index]):
                 continue
             key = f"viewer:{index}:{id(payload)}"
             bindings[key] = _Binding(ResourceRow(key, label, "Viewer data", "In RAM",
                 ram_bytes=_bytes(payload), users=(label,), can_unload=True,
                 reason="Removing this data closes its viewer; saved plot settings are retained."), payload,
                 unload=lambda: None)
-        values = [b.payload for b in bindings.values() if b.payload is not None]
-        payload_bindings = [b for b in bindings.values() if b.payload is not None]
+            storage.add(key, payload)
         compressed = sum(max(0, b.row.ram_bytes - _bytes(b.payload)) for b in bindings.values()
                          if b.row.kind in ("Histogram", "Prepared view"))
-        used_arrays = _bytes((values, [p for _, p in viewers]))
+        used_arrays = sum(storage.sizes.values())
         used = used_arrays + compressed
         rows = []
+        order = {key: index for index, key in enumerate(bindings)}
         busy = self.busy()
         for binding in bindings.values():
             row = binding.row
-            users = tuple(label for label, p in viewers if _shares(binding.payload, p)) if binding.payload is not None else row.users
+            sharing_viewers = storage.related(row.key, viewers=True)
+            users = tuple(viewers[index][0] for index in sorted(sharing_viewers)) if binding.payload is not None else row.users
             freed = 0
             if row.can_unload:
-                others = [b.payload for b in payload_bindings if b is not binding]
                 # Viewers sharing this row will be closed before its owner releases it.
-                remaining_viewers = [p for _, p in viewers if binding.payload is None or not _shares(binding.payload, p)]
-                freed = max(0, used_arrays - _bytes((others, remaining_viewers)))
+                freed = storage.reclaimable(row.key, sharing_viewers)
                 if row.kind in ("Histogram", "Prepared view"):
                     freed += max(0, row.ram_bytes - _bytes(binding.payload))
-            children = () if binding.payload is None else tuple(b.row.name for b in payload_bindings
-                if b is not binding and _shares(binding.payload, b.payload))
+            related = storage.related(row.key) - {row.key}
+            children = tuple(bindings[key].row.name for key in sorted(related, key=order.__getitem__))
             rows.append(replace(row, reclaimable_bytes=freed, users=users, children=children,
                 can_unload=row.can_unload and not busy, can_load=row.can_load and not busy,
                 can_delete=row.can_delete and not busy,

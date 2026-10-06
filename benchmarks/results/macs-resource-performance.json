@@ -1,0 +1,279 @@
+{
+  "platform": "macOS-27.0-arm64-arm-64bit-Mach-O",
+  "python": "3.14.7",
+  "limits": {
+    "cpu_limit": 0,
+    "ram_limit_mb": 0
+  },
+  "project_sha256": "9274ccb758c422a2449444247e1acae2e21f1c609d0148d8cead4671eb5cc0e4",
+  "os_cache": "warm; no cache flush",
+  "timing": "unprofiled perf_counter",
+  "baseline_commit": "6045a21",
+  "saved_inventory_before": {
+    "seconds": [
+      0.2673311249818653,
+      0.26071483292616904,
+      0.2636961250100285,
+      0.2645219579571858,
+      0.2588277499889955
+    ],
+    "median_seconds": 0.2636961250100285
+  },
+  "saved_inventory_after": {
+    "seconds": [
+      0.009918875060975552,
+      0.009449082892388105,
+      0.009500250103883445,
+      0.009460417088121176,
+      0.00976654200349003
+    ],
+    "median_seconds": 0.009500250103883445
+  },
+  "saved_rows": 164,
+  "saved_bytes": 53491620,
+  "project_load": {
+    "seconds": [
+      1.380632666987367,
+      1.3757985000265762,
+      1.3318800830747932
+    ],
+    "median_seconds": 1.3757985000265762
+  },
+  "project_save_existing_caches": {
+    "seconds": [
+      0.4242521249689162,
+      0.43281954096164554,
+      0.41886312502902
+    ],
+    "median_seconds": 0.4242521249689162
+  },
+  "reduction_including_file_io": {
+    "seconds": [
+      4.280666416045278,
+      4.215621000039391,
+      4.417197208036669
+    ],
+    "median_seconds": 4.280666416045278
+  },
+  "stream_entries": 144,
+  "physical_files": 78,
+  "detector_observations": 2493640,
+  "loaded_inventory_before": {
+    "seconds": [
+      5.984683666960336,
+      5.904007541947067,
+      5.848342249984853
+    ],
+    "median_seconds": 5.904007541947067
+  },
+  "loaded_inventory_after": {
+    "seconds": [
+      0.018469958915375173,
+      0.01819154096301645,
+      0.01936737506184727
+    ],
+    "median_seconds": 0.018469958915375173
+  },
+  "group_binnings": [
+    {
+      "name": "MACS SPEC 3p7meV 2K",
+      "runs": 19,
+      "shape": [
+        80,
+        114,
+        1,
+        17
+      ],
+      "seconds": [
+        0.12034570798277855,
+        0.11828395794145763,
+        0.1177366659976542
+      ],
+      "median_seconds": 0.11828395794145763
+    },
+    {
+      "name": "MACS DIFF",
+      "runs": 8,
+      "shape": [
+        32,
+        32,
+        32,
+        1
+      ],
+      "seconds": [
+        0.019063540967181325,
+        0.01941291696857661,
+        0.01881179097108543
+      ],
+      "median_seconds": 0.019063540967181325
+    },
+    {
+      "name": "MACS SPEC 5meV 2K",
+      "runs": 28,
+      "shape": [
+        81,
+        118,
+        1,
+        27
+      ],
+      "seconds": [
+        0.162889042054303,
+        0.1644425829872489,
+        0.16228595795109868
+      ],
+      "median_seconds": 0.162889042054303
+    },
+    {
+      "name": "MACS DIFF",
+      "runs": 29,
+      "shape": [
+        32,
+        32,
+        32,
+        1
+      ],
+      "seconds": [
+        0.042436417075805366,
+        0.04256054200232029,
+        0.042819624999538064
+      ],
+      "median_seconds": 0.04256054200232029
+    },
+    {
+      "name": "T_dep_1p3meV",
+      "runs": 11,
+      "shape": [
+        53,
+        73,
+        1,
+        1,
+        11
+      ],
+      "seconds": [
+        0.11065604200121015,
+        0.11120320798363537,
+        0.1099725830135867
+      ],
+      "median_seconds": 0.11065604200121015
+    },
+    {
+      "name": "MACS DIFF",
+      "runs": 11,
+      "shape": [
+        32,
+        32,
+        32,
+        1
+      ],
+      "seconds": [
+        0.023151833098381758,
+        0.028785333037376404,
+        0.025780291995033622
+      ],
+      "median_seconds": 0.025780291995033622
+    },
+    {
+      "name": "T_dep_0p5meV",
+      "runs": 11,
+      "shape": [
+        49,
+        71,
+        1,
+        1,
+        11
+      ],
+      "seconds": [
+        0.11625020892824978,
+        0.11829708307050169,
+        0.11404949997086078
+      ],
+      "median_seconds": 0.11625020892824978
+    },
+    {
+      "name": "MACS DIFF",
+      "runs": 11,
+      "shape": [
+        32,
+        32,
+        32,
+        1
+      ],
+      "seconds": [
+        0.02434699994046241,
+        0.024716207990422845,
+        0.02364366699475795
+      ],
+      "median_seconds": 0.02434699994046241
+    },
+    {
+      "name": "MACS SPEC",
+      "runs": 8,
+      "shape": [
+        65,
+        82,
+        1,
+        1,
+        8
+      ],
+      "seconds": [
+        0.073060458060354,
+        0.07903387502301484,
+        0.07711745798587799
+      ],
+      "median_seconds": 0.07711745798587799
+    },
+    {
+      "name": "MACS DIFF",
+      "runs": 8,
+      "shape": [
+        32,
+        32,
+        32,
+        1
+      ],
+      "seconds": [
+        0.02218654192984104,
+        0.022166209062561393,
+        0.021510666934773326
+      ],
+      "median_seconds": 0.022166209062561393
+    }
+  ],
+  "loaded_with_ten_viewer_payloads_before": {
+    "seconds": [
+      10.250536040985025,
+      9.987884292029776,
+      10.03869516600389
+    ],
+    "median_seconds": 10.03869516600389
+  },
+  "loaded_with_ten_viewer_payloads_after": {
+    "seconds": [
+      0.020578333060257137,
+      0.019750208011828363,
+      0.02013408299535513
+    ],
+    "median_seconds": 0.02013408299535513
+  },
+  "resource_window_before": {
+    "seconds": [
+      10.148559416993521,
+      10.052101333043538,
+      10.092614167020656
+    ],
+    "median_seconds": 10.092614167020656
+  },
+  "resource_window_after": {
+    "seconds": [
+      0.030305417021736503,
+      0.029532874934375286,
+      0.031129917013458908
+    ],
+    "median_seconds": 0.030305417021736503
+  },
+  "loaded_with_viewers_rows": 174,
+  "loaded_with_viewers_bytes": 281817846,
+  "measurement_date": "2026-10-06",
+  "scope": "Read-only MACS project; reduction and fresh default group binnings on isolated in-memory entries; save round trips to a diagnostic copy. Ten representative histogram payloads supplied to the resource service as viewers.",
+  "validation": "Before/after row keys, RAM bytes, reclaimable bytes, users, and deduplicated totals match. No numerical reduction or histogram algorithms changed."
+}

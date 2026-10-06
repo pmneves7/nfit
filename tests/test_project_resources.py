@@ -214,6 +214,55 @@ def test_inventory_deduplicates_shared_storage_and_reports_users(resources):
     assert all(row.users == ("Viewer A", "Viewer B") for row in histograms)
 
 
+def test_inventory_walks_each_payload_once_without_pairwise_accounting(resources, monkeypatch):
+    from nfit import project_resources
+
+    calls = []
+    original = project_resources.array_storage_allocations
+    def allocations(payload):
+        calls.append(id(payload))
+        return original(payload)
+    monkeypatch.setattr(project_resources, "array_storage_allocations", allocations)
+    datasets = [DatasetEntry(f"Run {index}", histogram(index)) for index in range(120)]
+    resources.group.datasets = datasets
+    resources.viewer_payloads.append(("Viewer", datasets[0].data))
+    snapshot = resources.manager.snapshot()
+    assert len(snapshot.rows) == 120
+    assert len(calls) <= 124  # payloads, empty fit/model stores, and None
+    assert len(calls) == len(set(calls))
+    assert snapshot.used_bytes == array_storage_nbytes([d.data for d in datasets]).total
+    assert snapshot.rows[0].users == ("Viewer",)
+    assert all(not row.children for row in snapshot.rows)
+
+
+def test_reclaimable_bytes_include_private_viewer_arrays_but_not_other_resource_owners(resources):
+    shared, private = np.arange(6.), np.arange(3.)
+    payload = {"shared": shared}
+    model = ModelComponentSpec("Mode")
+    model._nfit_electronic_model_cache = payload
+    resources.group.models[model.name] = model
+    resources.viewer_payloads.append(("Viewer", {"shared": shared[:2], "private": private}))
+    row = row_of(resources.manager.snapshot(), kind="Evaluated model")
+    assert row.reclaimable_bytes == shared.nbytes + private.nbytes
+    second = ModelComponentSpec("Other")
+    second._nfit_electronic_model_cache = {"shared": shared[4:]}
+    resources.group.models[second.name] = second
+    rows = [row for row in resources.manager.snapshot().rows if row.kind == "Evaluated model"]
+    assert all(row.reclaimable_bytes == private.nbytes for row in rows)
+    assert rows[0].children == ("Other",)
+
+
+def test_empty_array_alias_does_not_make_an_unrelated_viewer_a_user(resources):
+    empty = np.empty(0)
+    model = ModelComponentSpec("Mode")
+    model._nfit_electronic_model_cache = {"empty": empty, "signal": np.arange(3.)}
+    resources.group.models[model.name] = model
+    resources.viewer_payloads.append(("Empty viewer", {"empty": empty}))
+    snapshot = resources.manager.snapshot()
+    assert row_of(snapshot, kind="Evaluated model").users == ()
+    assert row_of(snapshot, kind="Viewer data").ram_bytes == 0
+
+
 def test_compressed_histogram_bytes_are_in_total_and_reclaimable_memory(resources):
     artifact = CompressedBinning.from_data(histogram(), max_bytes=10_000)
     assert artifact is not None

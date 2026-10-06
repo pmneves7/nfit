@@ -1,12 +1,16 @@
 """Run one guarded scientific I/O job without blocking Qt painting or cancellation."""
 
 from threading import Event
+from time import monotonic
 
 from PySide6 import QtCore, QtWidgets
 from shiboken6 import isValid
 
 from .operation_control import operation_progress
 from .qt_operation_guard import GuiOperationGuard
+
+_PROGRESS_INTERVAL_SECONDS = 0.1
+_LABEL_INTERVAL_SECONDS = 1.0
 
 
 class ResourceJobCancelled(Exception):
@@ -38,10 +42,21 @@ def run_resource_job(parent, title, task, *, on_progress=None):
 
         @QtCore.Slot()
         def run(self):
+            self.latest_event = self.last_emitted_event = None
+            last_report = -float("inf")
+
             def report(event):
+                nonlocal last_report
                 if cancel.is_set():
                     raise ResourceJobCancelled("Operation cancelled.")
-                self.progress.emit(event)
+                self.latest_event = dict(event)
+                now = monotonic()
+                # Explicit callbacks may acknowledge cancellation/publication
+                # checkpoints. Preserve every event in that scripting contract.
+                if on_progress is not None or now - last_report >= _PROGRESS_INTERVAL_SECONDS:
+                    self.last_emitted_event = self.latest_event
+                    self.progress.emit(self.latest_event)
+                    last_report = now
             try:
                 with operation_progress(report):
                     result = task(report)
@@ -50,12 +65,17 @@ def run_resource_job(parent, title, task, *, on_progress=None):
                 self.completed.emit((False, exc))
 
     class Receiver(QtCore.QObject):
+        last_label = monotonic()
+
         @QtCore.Slot(dict)
         def progress(self, event):
             if not isValid(dialog):
                 cancel.set()
                 return
-            dialog.setLabelText(str(event.get("message", title)))
+            now = monotonic()
+            if now - self.last_label >= _LABEL_INTERVAL_SECONDS:
+                dialog.setLabelText(str(event.get("message", title)))
+                self.last_label = now
             if on_progress is not None:
                 try:
                     on_progress(event)
@@ -64,6 +84,8 @@ def run_resource_job(parent, title, task, *, on_progress=None):
 
         @QtCore.Slot(object)
         def finish(self, result):
+            if worker.latest_event is not worker.last_emitted_event:
+                self.progress(worker.latest_event)
             outcome.append(result)
             thread.quit()
 

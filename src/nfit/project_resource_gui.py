@@ -1,6 +1,6 @@
 """Connect the explorer's resources to focused lifecycle services and Qt views."""
 
-from .mapped_archive import array_storage_nbytes
+from .mapped_archive import array_storage_allocations
 from .project_resources import CACHE_EXCLUSIONS_KEY, ProjectResources, project_binning_member
 from .qt_operation_guard import close_operation_window
 
@@ -15,10 +15,13 @@ def _viewer_payloads(explorer):
 
 
 def _release_viewers(explorer, selected):
+    selected_storage = set().union(*(array_storage_allocations(value) for value in selected))
+    inspected = {}
     def shares(payload):
-        return any(array_storage_nbytes((payload, value)).total <
-                   array_storage_nbytes(payload).total + array_storage_nbytes(value).total
-                   for value in selected)
+        identity = id(payload)
+        if identity not in inspected:
+            inspected[identity] = (payload, array_storage_allocations(payload))
+        return not selected_storage.isdisjoint(inspected[identity][1])
     for viewers in tuple(explorer._slice_viewers.values()):
         for viewer in tuple(viewers):
             if not hasattr(viewer, "loaded_resource_items"):
@@ -113,7 +116,8 @@ def open_resource_manager(explorer):
             apply_limits=apply_limits, set_temporary_directory=set_directory)
         manager._nfit_project = explorer.project
         explorer._resource_manager_window = manager
-    manager.refresh()
+    else:
+        manager.refresh()
     manager.show()
     manager.raise_()
     manager.activateWindow()

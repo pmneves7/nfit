@@ -17,6 +17,7 @@ from nfit.analysis.artifacts import (
 from nfit.mapped_archive import (
     MappedArchiveError,
     MappedWorkspaceError,
+    array_storage_allocations,
     array_storage_nbytes,
     is_mapped_array,
     read_mapped_array_archive,
@@ -117,6 +118,22 @@ def test_storage_accounting_preserves_cache_payload_special_cases():
 
     assert storage.mapped == 0
     assert storage.heap == 32 + view.nbytes + bundle.retained.nbytes
+
+    payload = (FakeCudaArray(), view, bundle, bundle)
+    assert sum(array_storage_allocations(payload).values()) == array_storage_nbytes(payload).total
+
+
+def test_storage_allocation_identities_follow_shared_heap_and_mapping_owners(tmp_path):
+    heap = np.arange(20.)
+    path = tmp_path / "storage.npy"
+    np.save(path, heap)
+    mapped = np.load(path, mmap_mode="r")
+    first = array_storage_allocations((heap[:3], mapped[:4]))
+    second = array_storage_allocations((heap[8:], mapped[10:]))
+    assert first == second
+    assert sum(first.values()) == heap.nbytes + mapped.nbytes
+    assert {kind for kind, _ in first} == {"heap", "mapped"}
+    assert array_storage_allocations(np.empty(0)) == {}
 
 
 def test_disk_space_is_checked_before_any_member_is_inflated(tmp_path, monkeypatch):

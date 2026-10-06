@@ -107,6 +107,70 @@ def test_resource_job_runs_on_worker_and_processes_gui_timer(app):
     parent.close()
 
 
+def test_resource_job_keeps_fast_save_labels_stable_and_preserves_explicit_events(app, monkeypatch):
+    from nfit import qt_resource_jobs
+
+    labels, events = [], []
+    original = QtWidgets.QProgressDialog.setLabelText
+    monkeypatch.setattr(qt_resource_jobs, "monotonic", lambda: 1.)
+    def set_label(dialog, text):
+        labels.append(text)
+        original(dialog, text)
+    monkeypatch.setattr(QtWidgets.QProgressDialog, "setLabelText", set_label)
+    parent = QtWidgets.QWidget()
+    def task(report):
+        for index in range(2000):
+            report({"message": f"Saving array {index}"})
+        return "saved"
+    assert run_resource_job(parent, "Saving project", task,
+                            on_progress=lambda event: events.append(event["message"])) == "saved"
+    assert len(events) == 2000
+    assert labels == []
+    parent.close()
+
+
+def test_resource_job_coalesces_display_only_event_bursts(app, monkeypatch):
+    from nfit import qt_resource_jobs
+
+    delivered = []
+    gui_thread = threading.get_ident()
+    gui_time = [0.]
+    def now():
+        if threading.get_ident() == gui_thread:
+            gui_time[0] += 1.
+            return gui_time[0]
+        return 1.
+    monkeypatch.setattr(qt_resource_jobs, "monotonic", now)
+    class ObservedDialog(QtWidgets.QProgressDialog):
+        def setLabelText(self, text):
+            delivered.append(text)
+            super().setLabelText(text)
+    monkeypatch.setattr(QtWidgets, "QProgressDialog", ObservedDialog)
+    # Freeze the worker clock during the burst; advance the GUI clock so each
+    # delivered event can be observed through its progress label.
+    def task(report):
+        for index in range(2000):
+            report({"message": f"Saving array {index}"})
+        return "saved"
+    parent = QtWidgets.QWidget()
+    assert run_resource_job(parent, "Saving project", task) == "saved"
+    assert delivered == ["Saving array 0", "Saving array 1999"]
+    parent.close()
+
+
+def test_opening_resource_manager_takes_one_initial_inventory(explorer, monkeypatch):
+    from nfit.project_resource_gui import open_resource_manager, project_resources
+
+    service = project_resources(explorer.explorer)
+    original = service.snapshot
+    calls = []
+    monkeypatch.setattr(service, "snapshot", lambda: (calls.append(True), original())[1])
+    first = open_resource_manager(explorer.explorer)
+    assert len(calls) == 1
+    assert open_resource_manager(explorer.explorer) is first
+    assert len(calls) == 2
+
+
 @pytest.mark.parametrize("emit_progress", [False, True])
 def test_resource_job_survives_transient_parent_deletion(app, monkeypatch, emit_progress):
     from shiboken6 import isValid
