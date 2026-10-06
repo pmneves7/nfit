@@ -1,0 +1,292 @@
+{
+  "scope": "Matched 361-run HYSPEC sample, one dummy run, eight operations, fixed saved in-plane grid; timings exclude imports/metadata load and diagnostic HDF writes. Sequential baseline then candidate on the same node; filesystem caches uncontrolled.",
+  "baseline": {
+    "host": "analysis-node21.sns.gov",
+    "selected_source": "existing desktop runtime with explicitly staged source: /gpfs/neutronsfs/instruments/HYS/IPTS-36860/shared/nfit/benchmarks/native-background-20261006/baseline/src",
+    "sample_runs": 361,
+    "dummy_runs": 1,
+    "workers": 16,
+    "repeats": [
+      {
+        "seconds": 69.6093479049996,
+        "components": {},
+        "completed_reductions_by_signature": {},
+        "source_cache_owned": [
+          false
+        ]
+      },
+      {
+        "seconds": 63.26702795900201,
+        "components": {},
+        "completed_reductions_by_signature": {},
+        "source_cache_owned": [
+          false
+        ]
+      }
+    ],
+    "source_unchanged": true,
+    "sample_load_reduce_cache_bin_seconds": 72.00505993800107,
+    "shape": [
+      161,
+      221,
+      12,
+      49
+    ],
+    "raw_cache_publication": {
+      "1f5d9221275b4cf8975485f39f3d60cb": false
+    },
+    "save_seconds": 14.048563296000793,
+    "peak_process_memory_mib": 5776.15625,
+    "module_sha256": {
+      "project_composites": "c840b3113196d977fa55564e223ffc7e4a63fc2e45b88b9b8b6f64a8d7da52e0",
+      "event_masks": "513d27448f9c414d05e484b04f8b1f92afd2637c5b980d8e177a0764a5b0769f",
+      "mdevent_background": "83f0d25e75bb0b93932998d58b030a992b11c8af79c04f5d411559830e749961",
+      "dgs_background_sources": "87ba8126ed9343fd23adb6099f55b034f20bd99c086868d5ea016566d33b3ccd"
+    }
+  },
+  "candidate": {
+    "host": "analysis-node21.sns.gov",
+    "selected_source": "existing desktop runtime with explicitly staged source: /gpfs/neutronsfs/instruments/HYS/IPTS-36860/shared/nfit/benchmarks/native-background-20261006/candidate/src",
+    "sample_runs": 361,
+    "dummy_runs": 1,
+    "workers": 16,
+    "repeats": [
+      {
+        "seconds": 57.40073105099873,
+        "components": {},
+        "completed_reductions_by_signature": {},
+        "source_cache_owned": [
+          true
+        ]
+      },
+      {
+        "seconds": 44.15317853799934,
+        "components": {},
+        "completed_reductions_by_signature": {},
+        "source_cache_owned": [
+          true
+        ]
+      }
+    ],
+    "source_unchanged": true,
+    "sample_load_reduce_cache_bin_seconds": 71.2362693670002,
+    "shape": [
+      161,
+      221,
+      12,
+      49
+    ],
+    "raw_cache_publication": {
+      "1f5d9221275b4cf8975485f39f3d60cb": true
+    },
+    "save_seconds": 14.440169189998414,
+    "peak_process_memory_mib": 7323.09375,
+    "module_sha256": {
+      "project_composites": "9b2bf073bcda9156a25992ef09ec6db413a14a2595862a1dc36f7e389f9da64c",
+      "event_masks": "d07172b18c9586ba9fd8d80df317c6f47de100a4e1d9f15fa8a6d8061bbe9765",
+      "mdevent_background": "0f598b6a1c3ba615d9e93b42d89a0627c61961fbaa395b8e97e7e4f68b70d88f",
+      "dgs_background_sources": "87ba8126ed9343fd23adb6099f55b034f20bd99c086868d5ea016566d33b3ccd"
+    }
+  },
+  "numerical_gate": {
+    "channels": {
+      "N": {
+        "cells": 20921628,
+        "different_cells": 4932419,
+        "maximum_absolute_difference": 1.1368683772161603e-12,
+        "maximum_relative_difference": 1.9444747972116135e-15,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "edge0": {
+        "cells": 162,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "edge1": {
+        "cells": 222,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "edge2": {
+        "cells": 13,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "edge3": {
+        "cells": 50,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "errors": {
+        "cells": 20921628,
+        "different_cells": 4656222,
+        "maximum_absolute_difference": 2.842170943040401e-14,
+        "maximum_relative_difference": 1.9204835886921196e-15,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "mask": {
+        "cells": 20921628,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "num_events": {
+        "cells": 20921628,
+        "different_cells": 0,
+        "maximum_absolute_difference": 0.0,
+        "maximum_relative_difference": 0.0,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      },
+      "signal": {
+        "cells": 20921628,
+        "different_cells": 2314967,
+        "maximum_absolute_difference": 1.9984014443252818e-15,
+        "maximum_relative_difference": 1.938619977664847e-15,
+        "outside_tolerance": 0,
+        "support_differences": 0
+      }
+    },
+    "literal_parity": false,
+    "numerical_parity": true,
+    "relative_tolerance": 1e-12
+  },
+  "configuration": {
+    "project": "/SNS/HYS/IPTS-36860/shared/nfit/HYSPEC_all_raw.nfit",
+    "output": "/SNS/HYS/IPTS-36860/shared/nfit/benchmarks/native-background-20261006/candidate-final",
+    "sample": "Ei15meV_1p5K_240Hz_s2_70",
+    "dummy_runs": 1,
+    "workers": 16,
+    "repeats": 2,
+    "component_profile": false,
+    "binning": {
+      "_binning_id": "f6fb896fe9ee4dbeb2c24e662693d1cf",
+      "auto_rebin": false,
+      "axes": [
+        {
+          "auto_lower": false,
+          "auto_lower_value": -4.0,
+          "auto_upper": false,
+          "auto_upper_value": 4.0,
+          "fractional": true,
+          "lower": -4.0,
+          "mode": "step",
+          "name": "[H,H,0]",
+          "num_bins": 160,
+          "step_size": 0.05,
+          "upper": 4.0,
+          "variable": "HHL_H",
+          "vector": [
+            1.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          "auto_step_size": false
+        },
+        {
+          "auto_lower": false,
+          "auto_lower_value": -5.5,
+          "auto_upper": false,
+          "auto_upper_value": 5.5,
+          "fractional": true,
+          "lower": -5.5,
+          "mode": "step",
+          "name": "[0,0,L]",
+          "num_bins": 220,
+          "step_size": 0.05,
+          "upper": 5.5,
+          "variable": "HHL_L",
+          "vector": [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          "auto_step_size": false
+        },
+        {
+          "auto_lower": false,
+          "auto_lower_value": -0.5,
+          "auto_step_size": false,
+          "auto_upper": false,
+          "auto_upper_value": 0.62,
+          "fractional": true,
+          "lower": -0.5,
+          "mode": "step",
+          "name": "[H,-H,0]",
+          "num_bins": 12,
+          "step_size": 0.1,
+          "upper": 0.62,
+          "variable": "HHL_T",
+          "vector": [
+            1.0,
+            -1.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "auto_lower": false,
+          "auto_lower_value": -12.0,
+          "auto_upper": false,
+          "auto_upper_value": 12.0,
+          "fractional": true,
+          "lower": -12.0,
+          "mode": "step",
+          "name": "DeltaE",
+          "num_bins": 48,
+          "step_size": 0.5,
+          "upper": 12.0,
+          "variable": "E",
+          "vector": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "auto_step_size": false
+        }
+      ],
+      "coordinate_mode": "hkle",
+      "enabled": true,
+      "max_batch_mb": 192,
+      "mean_weighting": "uniform",
+      "minimum_coverage": 0.0,
+      "minimum_samples": 0.0,
+      "normalize": true,
+      "resolution_mode": "step",
+      "stale": false,
+      "symmetry": {
+        "expression": "rotate(order=2, axis=[1,-1,0]); mirror(plane=(0,0,1)); mirror(plane=(1,-1,0))",
+        "lattice_parameters": {
+          "a": 8.227,
+          "alpha": 90.0,
+          "b": 8.227,
+          "beta": 90.0,
+          "c": 8.227,
+          "gamma": 90.0
+        },
+        "mode": "generators"
+      },
+      "workers": 16
+    },
+    "replay_task_limit": 4000000
+  }
+}

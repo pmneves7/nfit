@@ -143,6 +143,16 @@ integration against independent Decimal references and monitor fitting against
 controlled known-mean pulses. Its [numerical results](results/dgs-numerical-alternatives.md)
 separate arithmetic improvements from unverified physical calibration accuracy.
 
+`trial_dgs_background_workflow.py` measures a native sample histogram, repeated
+measured-background preparation and a separate project save. Its JSON config
+selects the saved sample group, dummy count, fixed grid and resource limits.
+It accepts the same source-snapshot override as the native workflow harnesses;
+`component_profile` and `replay_task_limit` are diagnostic controls. A config
+containing `comparison` instead of a workflow calls the bounded whole-grid
+comparison with `reference`, `actual`, `output` and optional `allow_rounding`.
+Counts, masks, edges and exposure support remain exact even in rounding mode.
+See [the real node21 results](results/hyspec-background-batching-node21.md).
+
 ## Lindhard acceleration
 
 The three Lindhard scripts compare existing exact CPU backends, shifted-q

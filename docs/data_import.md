@@ -1372,8 +1372,11 @@ before preparing trajectories or partitioning masks. Selecting **Each run Ei**
 or a per-run override retains that explicit convention. These normalization
 choices do not reconstruct stored MDE source events again. Native raw sources
 use their configured pulse filtering, HYSPEC preprocessing, detector calibration,
-and event corrections. Their reduced-event caches are reused across sample
-binnings. Dummy rotations are pooled in laboratory coordinates, with accepted
+and event corrections. Their reduced-event caches stay attached to the original
+sample and background runs, including when ancestor collections supply different
+output masks. Subsequent sample binnings and measured-background replay reuse
+compatible reductions, including after saving and reopening the project. Dummy
+rotations are pooled in laboratory coordinates, with accepted
 proton charge determining their exposure; each retains its measured detector
 geometry. Cached-field covariance queries can reconstruct these raw sources
 without a Mantid installation or intermediate MDE file.

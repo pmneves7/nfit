@@ -99,3 +99,47 @@ def test_native_measured_replay_option_is_visible_in_gui(groups, monkeypatch):
     projection.setCurrentIndex(projection.findData("measured_events"))
     assert link.projection == "measured_events"
     explorer.window.close()
+
+
+def test_composite_replay_publishes_and_reuses_original_run_caches(groups, tmp_path, monkeypatch):
+    from nfit import BackgroundSpec, DataGroup, NfitProject, load_project, raw_dgs, save_project
+    from nfit.project_composites import _composite_background_data, _composite_scope
+    from nfit.raw_dgs_cache import ArchiveMember
+
+    sample, dummy = groups
+    link = BackgroundSpec("Dummy", source_group_id=dummy.id, source_group=dummy,
+                          projection="measured_events")
+    sample.backgrounds.append(link)
+    root = DataGroup("Runs", subgroups=[sample, dummy])
+    project = NfitProject([root])
+    path = tmp_path / "project.nfit"
+    save_project(project, path)
+    template = target(sample)
+    sample_caches = [run._raw_dgs_reduction_cache for run in sample.datasets]
+    produced = []
+    producer = raw_dgs._iter_reduced_event_chunks
+
+    def record(*args, **kwargs):
+        produced.append(args[0].path)
+        yield from producer(*args, **kwargs)
+
+    monkeypatch.setattr(raw_dgs, "_iter_reduced_event_chunks", record)
+    scope = _composite_scope(root, sample)
+    first = _composite_background_data(scope, link, template, config=None, progress_callback=None)
+    assert len(produced) == 1  # Only the previously unreduced dummy.
+    assert dummy.datasets[0]._raw_dgs_reduction_cache is not None
+    assert [run._raw_dgs_reduction_cache for run in sample.datasets] == sample_caches
+    second = _composite_background_data(scope, link, template, config=None, progress_callback=None)
+    assert len(produced) == 1
+    np.testing.assert_array_equal(second.signal, first.signal)
+    np.testing.assert_array_equal(second.errors, first.errors)
+    save_project(project, path)
+    restored = load_project(path)
+    root = restored.data_groups[0]
+    sample, dummy = root.subgroups
+    assert isinstance(dummy.datasets[0]._raw_dgs_reduction_cache.content, ArchiveMember)
+    third = _composite_background_data(_composite_scope(root, sample), sample.backgrounds[0],
+                                      template, config=None, progress_callback=None)
+    assert len(produced) == 1
+    np.testing.assert_array_equal(third.signal, first.signal)
+    np.testing.assert_array_equal(third.errors, first.errors)

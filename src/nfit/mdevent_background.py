@@ -7,7 +7,7 @@ copies are correlated observations, not additional counting statistics.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -38,7 +38,9 @@ except ImportError:
     _REPLAY_NUMBA = None
 
 # Bound work as well as memory, so cancellation is checked between short calls.
-MAX_REPLAY_TRANSFORM_TASKS = 1_000_000
+# Large angle/symmetry collections amortize parallel dispatch across more events;
+# the independent scratch-byte bound still governs small memory allowances.
+MAX_REPLAY_TRANSFORM_TASKS = 4_000_000
 _NORMALIZATION_PROGRESS_UNITS_PER_ANGLE = 1_000
 # Keep compiled trajectory calls short enough for responsive progress/cancellation
 # while retaining one persistent output accumulator across compatible angles.
@@ -54,6 +56,8 @@ def project_measured_background_mdevent(
     background_datasets: Iterable[DatasetEntry] | None = None,
     inherited_masks: Iterable[MaskSpec] | None = None,
     background_inherited_masks: Iterable[MaskSpec] | None = None,
+    inherited_masks_by_id: Mapping[str, Sequence[MaskSpec]] | None = None,
+    background_inherited_masks_by_id: Mapping[str, Sequence[MaskSpec]] | None = None,
     max_batch_bytes: int = 64 * 1024 * 1024,
     progress_callback=None,
 ) -> MDHistoData:
@@ -65,6 +69,8 @@ def project_measured_background_mdevent(
     counts and uncertainties; its fit weights also weight the normalization.
     No spherical averaging or interpolation is performed. The target's axes,
     basis, symmetry and detector-trajectory integration are reused.
+    Per-run inherited-mask mappings override the shared inherited list for
+    those entries without copying the source or dropping its reduction cache.
 
     Masks apply at reconstructed output-bin centers, like native MDEvent
     reduction. Repeated copies of each background event are combined before
@@ -161,7 +167,9 @@ def project_measured_background_mdevent(
             progress_callback=report_setup,
             reference_energy=sample_reference,
         )
-        masks = [mask for mask in [*sample_masks, *run.masks] if mask.enabled]
+        shared_masks = (sample_masks if inherited_masks_by_id is None
+                        else inherited_masks_by_id.get(run.id, sample_masks))
+        masks = [mask for mask in [*shared_masks, *run.masks] if mask.enabled]
         excluded = None
         if masks:
             masked = _mdhisto_with_nfit_masks(
@@ -182,6 +190,7 @@ def project_measured_background_mdevent(
             progress_callback=progress_callback,
         ),
         zero_count_upper=mdevent.FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
+        inherited_masks_by_id=background_inherited_masks_by_id,
     )
 
 

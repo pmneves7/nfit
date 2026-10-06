@@ -5,9 +5,10 @@
 This audit covers the complete `HYSPEC_all_raw.nfit` workflow: raw sources,
 automatic grid bounds, sample histograms, directional dummy replay, hierarchical
 combinations, cached binnings and project persistence. The implementation was
-inspected locally on October 6, 2026. Current ORNL component measurements remain
-pending because SSH authentication is unavailable. The active GUI job was not
-interrupted and neither original scientific project was changed.
+inspected locally on October 6, 2026. ORNL measurements resumed on node21 after data mounts became available. The
+[matched background trial](hyspec-background-batching-node21.md) confirmed and
+fixed source-cache ownership and measured a larger-batch improvement. The active
+GUI job was not interrupted and neither original scientific project was changed.
 
 The screenshot reports 27 configured work items, 5 completed after 88 minutes.
 These are binnings counted by the batch workflow, despite the label saying

@@ -452,3 +452,34 @@ def test_replay_rejects_mismatched_instrument_and_supports_cancellation(tmp_path
 
     with pytest.raises(RuntimeError, match="cancelled"):
         project_measured_background_mdevent(sample, source, target, progress_callback=cancel)
+
+
+def test_per_run_inherited_masks_match_explicit_recipes_without_copying_sources(tmp_path):
+    path = tmp_path / "events.nxs"
+    _write_mdevent(path)
+    sample = mdevent_dataset_group(path)
+    background = mdevent_dataset_group(path)
+    sample.datasets = [sample.datasets[0], sample.datasets[0].copy()]
+    background.datasets = [background.datasets[0], background.datasets[0].copy()]
+    exclude_low = MaskSpec("low", "energy_q_range", {"energy": [-1., 0.]})
+    restore_low = MaskSpec("restore", "energy_q_range", {"energy": [-1., 0.]}, additive=True)
+    exclude_high = MaskSpec("high", "energy_q_range", {"energy": [0., 1.]})
+    disabled = MaskSpec("disabled", "energy_q_range", {"energy": [-1., 1.]}, enabled=False)
+    sample.datasets[0].masks = [restore_low]
+    sample_masks = {sample.datasets[0].id: [exclude_low, disabled], sample.datasets[1].id: [exclude_high]}
+    background_masks = {background.datasets[0].id: [exclude_low]}
+    # The missing second entry uses the shared inherited list; order matters
+    # because its local additive mask restores bins excluded by that list.
+    background.datasets[1].masks = [restore_low]
+    template = bin_mdevent_group(sample, lower=[-1]*4, upper=[1]*4, num_bins=[1, 1, 1, 2])
+    expected = project_measured_background_mdevent(sample, background, template,
+        datasets=[replace(run, masks=[*sample_masks[run.id], *run.masks]) for run in sample.datasets],
+        background_datasets=[replace(run, masks=[*background_masks.get(run.id, [exclude_low]), *run.masks])
+                             for run in background.datasets],
+        inherited_masks=[], background_inherited_masks=[])
+    actual = project_measured_background_mdevent(sample, background, template,
+        inherited_masks_by_id=sample_masks, background_inherited_masks=[exclude_low],
+        background_inherited_masks_by_id=background_masks)
+    _assert_replay_results_equal(actual, expected)
+    assert sample.datasets[0].masks == [restore_low]
+    assert background.datasets[1].masks == [restore_low]

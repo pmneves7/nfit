@@ -1866,20 +1866,23 @@ def _composite_background_data(group, background, data, *, config, progress_call
                 "measured-event replay requires sample and referenced background dataset groups"
             )
 
-        def with_inherited_masks(scope):
-            return [
-                replace(run, masks=[*effective_dataset_masks(_composite_root(scope), run), *run.masks])
-                for run in _composite_candidates(scope)
-            ]
+        sample_runs = _composite_candidates(group)
+        background_scope = _background_group_scope(group, background)
+        background_runs = _composite_candidates(background_scope)
+
+        def inherited_mask_map(scope, runs):
+            return {run.id: effective_dataset_masks(_composite_root(scope), run) for run in runs}
 
         projected = project_measured_background_mdevent(
             node,
             source_group,
             data,
-            datasets=with_inherited_masks(group),
-            background_datasets=with_inherited_masks(_background_group_scope(group, background)),
+            datasets=sample_runs,
+            background_datasets=background_runs,
             inherited_masks=[],
             background_inherited_masks=[],
+            inherited_masks_by_id=inherited_mask_map(group, sample_runs),
+            background_inherited_masks_by_id=inherited_mask_map(background_scope, background_runs),
             max_batch_bytes=_rebin_max_batch_bytes(
                 data_group_composite_config(group) if config is None else config
             ),

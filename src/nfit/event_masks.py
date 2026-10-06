@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -27,12 +27,15 @@ def reduce_masked_event_runs(
     *,
     minimum_samples: float = 0.0,
     zero_count_upper: float,
+    inherited_masks_by_id: Mapping[str, Sequence[MaskSpec]] | None = None,
 ) -> MDHistoData:
     """Reduce runs sharing a mask once, then combine their valid exposure.
 
     Masks act on output-bin centers. Partitioning only by distinct ordered
     mask recipes keeps the usual shared-mask case at one native reduction.
     A run excluded from a bin contributes neither counts nor normalization.
+    Per-run inherited masks preserve the original source entries and their
+    lazy caches when sources belong to different ancestor collections.
     """
     def finish(data: MDHistoData) -> MDHistoData:
         metadata = dict(data.metadata)
@@ -46,7 +49,9 @@ def reduce_masked_event_runs(
 
     partitions: dict[str, tuple[list[DatasetEntry], list[MaskSpec]]] = {}
     for run in runs:
-        masks = [mask for mask in [*inherited_masks, *run.masks] if mask.enabled]
+        shared = (inherited_masks if inherited_masks_by_id is None
+                  else inherited_masks_by_id.get(run.id, inherited_masks))
+        masks = [mask for mask in [*shared, *run.masks] if mask.enabled]
         signature = json.dumps(
             [(mask.type, mask.parameters, mask.invert, mask.additive) for mask in masks],
             sort_keys=True,
