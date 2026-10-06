@@ -27,6 +27,27 @@ native initial reduction/binning/saving and 34.388 seconds for a later bin/save.
 It does not predict the time for this full project's multiple grids, banks,
 temperatures, directional backgrounds and derived data.
 
+### Automatic-bounds passes
+
+A read-only metadata trace of the native project's stale-binning inputs found
+four distinct leaf bounds requests for each automatic live temperature
+subtraction grid:
+
+| Source collection | Selected runs |
+| --- | ---: |
+| Low temperature, 34° bank | 722 |
+| Low temperature, 70° bank | 361 |
+| 50 K, 34° bank | 361 |
+| 50 K, 70° bank | 361 |
+
+Their union supplies the shared subtraction grid. `Default` has no symmetry;
+`Default copy` uses eight operations in the same HHL basis; `HHH_symm` uses a
+different basis. These are distinct bounds requests. The progress message now
+names each source collection and its run count. A regression test confirms that
+an identical request does not reopen event streams, while a changed UB obtains
+new extents from the existing reduced-event cache. The trace read metadata only;
+it did not time these scans or profile the user's running GUI job.
+
 ## Execution inventory
 
 | Stage | Current acceleration | What to measure next |

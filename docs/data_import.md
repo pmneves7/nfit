@@ -656,6 +656,11 @@ Live derived arithmetic can resolve automatic bounds from native DGS sources
 through `raw_dgs_coordinate_bounds`. It scans reduced events in bounded chunks,
 reuses or creates the same per-run caches as binning, and resolves one shared
 output grid across its inputs. It does not load a raw run as a point array.
+Each selected leaf collection is scanned separately, so an arithmetic result
+combining temperatures or detector-bank settings can have several bounds passes.
+Progress identifies the source collection and its run count. Identical bounds
+requests reuse a bounded in-memory cache; changes to sources, reduction inputs,
+UB, output basis or symmetry require different extents.
 
 The cache signature includes the raw, vanadium, and mask file paths, sizes, and
 nanosecond modification/change times, together with incident-energy/time-zero
@@ -1267,6 +1272,10 @@ results are combined; its private grid is not evaluated first. Editing dormant
 child grid settings does not invalidate the parent output.
 
 ## Masks
+
+Group [dataset conditions](dataset_conditions.md) exclude entire runs using an
+elastic-window intensity or a numeric metadata statistic, with a per-run plot
+and adjustable thresholds. Their selection applies before histogramming.
 
 File masks and nfit masks remain separate but are combined for fitting. All GUI
 mask parameters describe the region to exclude:

@@ -47,6 +47,46 @@ def test_bounds_use_cached_events_and_retain_rotation_and_ub(group, monkeypatch)
     np.testing.assert_allclose(powder[0], [np.linalg.norm(events[0, :3])] * 2)
 
 
+def test_bounds_progress_identifies_collection_and_repeated_request_does_not_scan(
+    group, monkeypatch,
+):
+    from contextlib import contextmanager
+
+    from nfit import raw_dgs_bounds
+
+    group.name = "Low temperature, 34 degree bank"
+    progress, streams = [], []
+    original_stream = raw_dgs_bounds.reduced_event_stream
+
+    @contextmanager
+    def record_stream(node, dataset, **kwargs):
+        streams.append(dataset.id)
+        with original_stream(node, dataset, **kwargs) as payload:
+            yield payload
+
+    monkeypatch.setattr(raw_dgs_bounds, "reduced_event_stream", record_stream)
+    expected = raw_dgs_coordinate_bounds(group, progress_callback=progress.append)
+    assert progress
+    assert all(event["source_collection_name"] == group.name for event in progress)
+    assert all(event["source_collection_id"] == group.id for event in progress)
+    assert all(event["source_run_count"] == 1 for event in progress)
+    assert all(f"{group.name} · 1 run" in event["message"] for event in progress)
+    assert progress[-1]["iteration"] == progress[-1]["total"]
+    progress.clear()
+    assert raw_dgs_coordinate_bounds(group, progress_callback=progress.append) == expected
+    assert streams == [group.datasets[0].id]
+    assert not progress
+    # A different output projection needs new extents, but still reuses the
+    # reduced events. Give its progress a distinct collection label.
+    group.name = "50 K, 70 degree bank"
+    set_reduction_settings(group, {"ub_matrix": (2 * np.eye(3)).tolist()})
+    changed = raw_dgs_coordinate_bounds(group, progress_callback=progress.append)
+    assert streams == [group.datasets[0].id] * 2
+    assert progress[-1]["source_collection_name"] == group.name
+    assert progress[-1]["source_collection_name"] in progress[-1]["message"]
+    np.testing.assert_allclose(np.asarray(changed)[:3], np.asarray(expected)[:3] / 2)
+
+
 def test_native_derived_grid_avoids_loading_point_arrays(group, monkeypatch):
     from nfit import project_data
     from nfit.project_composites import data_group_composite_config

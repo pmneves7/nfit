@@ -62,6 +62,11 @@ def raw_dgs_coordinate_bounds(
     rows = max(1, min(1_000_000, int(max_batch_bytes) // 192))
     total = sum(int(d.metadata["event_count"]) for d in selected)
     completed = 0
+    collection_name = str(group.name)
+    message = (
+        "Finding native DGS event coordinate bounds\n"
+        f"{collection_name} · {len(selected):,} run{'s' if len(selected) != 1 else ''}"
+    )
     for dataset in selected:
         with reduced_event_stream(group, dataset, rows=rows) as (config, info, _norm, chunks):
             gonio = _goniometer(info.omega, info.phi, info.chi)
@@ -88,7 +93,10 @@ def raw_dgs_coordinate_bounds(
                             stage="raw_dgs_coordinate_bounds",
                             iteration=completed,
                             total=total,
-                            message="Finding native DGS event coordinate bounds",
+                            message=message,
+                            source_collection_id=group.id,
+                            source_collection_name=collection_name,
+                            source_run_count=len(selected),
                         )
                     )
     if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)):
