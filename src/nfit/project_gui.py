@@ -5800,12 +5800,12 @@ def _project_binning_artifacts(
                 if excluded_project_cache(project, member):
                     continue
                 backing = (
-                    _VIEWER_VIEW_CACHE.project_backing(key, signature)
-                    if hasattr(_VIEWER_VIEW_CACHE, "project_backing")
+                    _VIEWER_VIEW_CACHE.archive_backing(key, signature)
+                    if hasattr(_VIEWER_VIEW_CACHE, "archive_backing")
                     else None
                 )
                 if backing is not None:
-                    artifacts[member] = ArchiveMember(*backing)
+                    artifacts[member] = ArchiveMember(*backing) if backing[1] is not None else backing[0]
                 else:
                     data = _peek_cached_dataset_view(
                         dataset,
@@ -5870,12 +5870,12 @@ def _project_binning_artifacts(
                 if _COMPOSITE_DATA_CACHE.has_signature(base_key, base_signature):
                     key, signature, stage = base_key, base_signature, "unsubtracted"
                 backing = (
-                    _COMPOSITE_DATA_CACHE.project_backing(key, signature)
-                    if hasattr(_COMPOSITE_DATA_CACHE, "project_backing")
+                    _COMPOSITE_DATA_CACHE.archive_backing(key, signature)
+                    if hasattr(_COMPOSITE_DATA_CACHE, "archive_backing")
                     else None
                 )
                 if backing is not None:
-                    artifacts[member] = ArchiveMember(*backing)
+                    artifacts[member] = ArchiveMember(*backing) if backing[1] is not None else backing[0]
                 else:
                     data = (_COMPOSITE_DATA_CACHE.get(key)[1] if stage == "unsubtracted" else
                         _peek_cached_composite_dataset_data(

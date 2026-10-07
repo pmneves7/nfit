@@ -1,0 +1,60 @@
+{
+  "host": "analysis-node22.sns.gov",
+  "workers": 16,
+  "shape": [
+    161,
+    221,
+    12,
+    49
+  ],
+  "expanded_array_bytes": 690413724,
+  "lossless": true,
+  "rows": [
+    {
+      "stage": "first_histogram_write",
+      "label": "baseline",
+      "repeat": 0,
+      "seconds": 0.9690736540069338,
+      "cpu_seconds": 6.5897155839999995,
+      "bytes": 143070573
+    },
+    {
+      "stage": "first_histogram_write",
+      "label": "baseline",
+      "repeat": 1,
+      "seconds": 0.82097511900065,
+      "cpu_seconds": 6.515487197999999,
+      "bytes": 143070573
+    },
+    {
+      "stage": "first_histogram_write",
+      "label": "candidate",
+      "repeat": 0,
+      "seconds": 0.6750905450026039,
+      "cpu_seconds": 4.527015475999999,
+      "bytes": 149445014
+    },
+    {
+      "stage": "first_histogram_write",
+      "label": "candidate",
+      "repeat": 1,
+      "seconds": 0.6921677670034114,
+      "cpu_seconds": 4.407710163000001,
+      "bytes": 149445014
+    },
+    {
+      "stage": "save_existing_spill",
+      "label": "baseline",
+      "seconds": 1.8287170209951,
+      "cpu_seconds": 7.997574953999997,
+      "bytes": 143070936
+    },
+    {
+      "stage": "save_existing_spill",
+      "label": "candidate",
+      "seconds": 0.11064151499886066,
+      "cpu_seconds": 0.08696266100000116,
+      "bytes": 143070936
+    }
+  ]
+}

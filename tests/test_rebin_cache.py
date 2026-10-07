@@ -353,3 +353,35 @@ def test_replacement_cannot_race_with_inflight_restore(monkeypatch):
     signature, result = cache.get("key")
     assert signature == "new"
     np.testing.assert_allclose(result.signal, 9.0)
+
+
+def test_archive_backing_reuses_session_file_without_restore_and_checks_identity(tmp_path, monkeypatch):
+    cache = RebinCache()
+    path = tmp_path / "spill.npz"
+    cache.before_discard = lambda _key, artifact: (artifact.write_npz(path), path)[1]
+    cache["key"] = ("signature", _tiny_mdhisto_data(2.0))
+    cache._compress_resident("key", max_bytes=10_000)
+    cache._discard_compressed("key")
+    monkeypatch.setattr(_DiskBinning, "restore", lambda *_args: (_ for _ in ()).throw(AssertionError("decoded")))
+    assert cache.archive_backing("key", "signature") == (path, None)
+    assert cache.archive_backing("key", "stale signature") is None
+    assert path.exists()  # Borrowing a path does not transfer ownership.
+    replacement = tmp_path / "replacement.npz"
+    replacement.write_bytes(path.read_bytes())
+    replacement.replace(path)
+    assert cache.archive_backing("key", "signature") is None
+    assert not cache.has_signature("key", "signature")
+    cache.clear()
+
+
+def test_missing_spill_keeps_compressed_payload_before_discard(tmp_path):
+    cache = RebinCache()
+    cache["key"] = ("signature", _tiny_mdhisto_data(2.0))
+    cache._compress_resident("key", max_bytes=10_000)
+    cache.before_discard = lambda *_args: tmp_path / "missing.npz"
+    import pytest
+    with pytest.raises(FileNotFoundError):
+        cache._discard_compressed("key")
+    assert cache.has_signature("key", "signature")
+    assert "key" in cache._compressed
+    cache.clear()

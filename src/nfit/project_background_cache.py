@@ -28,15 +28,15 @@ def background_binning_artifacts(project, directory, format_version):
                     member = binning_artifact_member(cache_id)
                     if excluded_project_cache(project, member):
                         continue
-                    backing = cache.project_backing(key, signature)
-                    if backing is not None and excluded_project_cache(project, backing[1]):
+                    backing = cache.archive_backing(key, signature)
+                    if backing is not None and backing[1] is not None and excluded_project_cache(project, backing[1]):
                         continue
                     if signature in shared_members:
                         member = shared_members[signature]
                         if excluded_project_cache(project, member):
                             continue
                     elif backing is not None:
-                        artifacts[member] = ArchiveMember(*backing)
+                        artifacts[member] = ArchiveMember(*backing) if backing[1] is not None else backing[0]
                     else:
                         path = directory / f'{cache_id}.npz'
                         write_dataset_artifact(cache.get(key)[1], path)

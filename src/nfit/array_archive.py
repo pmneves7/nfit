@@ -21,8 +21,9 @@ from .performance import operation_worker_count
 from .resource_budget import check_memory, reserve_memory
 
 _CHUNK_BYTES = 4 * 1024**2
-_PARALLEL_MIN_BYTES = 32 * 1024**2
+_PARALLEL_MIN_BYTES = 8 * 1024**2
 _NUMPY_WRITE_BUFFER_BYTES = 16 * 1024**2
+_COMPRESSION_LEVEL = 1
 
 
 class _CancellableMemberWriter:
@@ -45,7 +46,7 @@ class _CancellableMemberWriter:
 
 
 def _deflate_block(data: bytes) -> bytes:
-    compressor = zlib.compressobj(wbits=-15)
+    compressor = zlib.compressobj(level=_COMPRESSION_LEVEL, wbits=-15)
     # FULL_FLUSH ends a byte-aligned block without setting the final-block bit.
     # Independent blocks can therefore be concatenated and decoded normally.
     return compressor.compress(data) + compressor.flush(zlib.Z_FULL_FLUSH)
@@ -108,7 +109,8 @@ def array_archive_writer(destination: BinaryIO, *, max_member_bytes: int, compre
             if workers > 1 else None
         )
         archive = stack.enter_context(
-            ZipFile(destination, "w", compression=ZIP_DEFLATED if compressed else ZIP_STORED, allowZip64=True)
+            ZipFile(destination, "w", compression=ZIP_DEFLATED if compressed else ZIP_STORED,
+                    compresslevel=_COMPRESSION_LEVEL if compressed else None, allowZip64=True)
         )
 
         def write(name, value):

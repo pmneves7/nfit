@@ -29,6 +29,11 @@ from .resource_budget import reserve_memory
 _CHUNK_BYTES = 8 * 1024**2
 
 
+def _file_identity(path: Path) -> tuple[int, int, int, int]:
+    stat = path.stat()
+    return int(stat.st_dev), int(stat.st_ino), int(stat.st_size), int(stat.st_mtime_ns)
+
+
 @dataclass(frozen=True)
 class _DiskBinning:
     signature: str
@@ -41,21 +46,17 @@ class _DiskBinning:
     def available(self) -> bool:
         if not self.path.exists():
             return False
-        if self.project_member is None or self.project_identity is None:
+        if self.project_identity is None:
             return True
         try:
-            stat = self.path.stat()
+            return _file_identity(self.path) == self.project_identity
         except OSError:
             return False
-        return (
-            int(stat.st_dev),
-            int(stat.st_ino),
-            int(stat.st_size),
-            int(stat.st_mtime_ns),
-        ) == self.project_identity
 
     def restore(self) -> MDHistoData | PointListData:
         if self.project_member is None:
+            if not self.available():
+                raise OSError("the cache archive changed since it was registered")
             return read_dataset_artifact(self.path, memory_map=False)
         if not self.available():
             raise OSError("the project archive changed since this cache was registered")
@@ -555,19 +556,13 @@ class RebinCache(OrderedDict):
     ) -> None:
 
         path = Path(project_path)
-        stat = path.stat()
         backing = _DiskBinning(
             signature=str(signature),
             path=path,
             project_member=str(member),
             prepare_data=prepare_data,
             owned=False,
-            project_identity=(
-                int(stat.st_dev),
-                int(stat.st_ino),
-                int(stat.st_size),
-                int(stat.st_mtime_ns),
-            ),
+            project_identity=_file_identity(path),
         )
         self._project_backings[key] = backing
         if lazy:
@@ -605,6 +600,25 @@ class RebinCache(OrderedDict):
                     self._drop_disk(key)
             return None
         return backing.path, backing.project_member
+
+    def archive_backing(
+        self, key: Any, signature: str
+    ) -> tuple[Path, str | None] | None:
+        """Return an unchanged project member or session NPZ without decoding.
+
+        A ``None`` member identifies a standalone session file. The caller
+        copies it before adopting the newly saved project backing; this does
+        not transfer ownership or remove the only copy during a failed save.
+        """
+
+        with self._decode_lock:
+            project = self.project_backing(key, signature)
+            if project is not None:
+                return project
+            disk = self._disk.get(key)
+            if disk is not None and disk.signature == signature and disk.available():
+                return disk.path, disk.project_member
+            return None
 
     def clear_disk_cache(self) -> None:
         """Forget disk-backed entries and remove only nfit-owned session files."""
@@ -667,6 +681,7 @@ class RebinCache(OrderedDict):
             destination = None
             if self.before_discard is not None:
                 destination = self.before_discard(self._labels.get(key, key), artifact)
+            identity = None if destination is None else _file_identity(Path(destination))
             self._compressed.pop(key)
             self._compressed_bytes -= artifact.nbytes
             self._compressed_ticks.pop(key, None)
@@ -684,6 +699,7 @@ class RebinCache(OrderedDict):
                 self._disk[key] = _DiskBinning(
                     signature=signature,
                     path=Path(destination),
+                    project_identity=identity,
                 )
 
     def popitem(self, last=True):

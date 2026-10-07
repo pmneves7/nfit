@@ -4575,3 +4575,90 @@ def test_failed_fit_from_current_state_keeps_current_state_selected(monkeypatch)
     assert group.fits[2] is current
     assert explorer._active_fit_entry(group) is current
     assert explorer.tree.currentItem().text(0) == "Current state"
+
+
+@pytest.mark.parametrize("owner", ["dataset", "composite", "composite_base", "background"])
+def test_first_save_reuses_session_histogram_without_decode_or_recompression(tmp_path, monkeypatch, owner):
+    from nfit import project_background_cache, project_composites, rebin_cache
+    from nfit.analysis.artifacts import read_dataset_artifact
+    from nfit.pipeline import BackgroundSpec
+
+    data = _tiny_mdhisto_data(4.0)
+    source = tmp_path / "source.nxs"
+    source.write_bytes(b"source placeholder")
+    dataset = DatasetEntry("sample", data, kind="mdhisto", metadata={"source_file": str(source)})
+    dataset.replace_data(data, source_backed=True)
+    group = DataGroup("workspace", datasets=[dataset])
+    project = NfitProject([group], settings={"cache_binnings": True})
+    if owner == "dataset":
+        config = project_gui.dataset_rebin_config(dataset)
+        config.update(enabled=True, minimum_coverage=0.)
+        cached = dataset_for_slice_viewer(dataset)
+        key = dataset.id
+        cache = project_gui._VIEWER_VIEW_CACHE
+    else:
+        config = project_gui.data_group_composite_config(group)
+        config.update(enabled=True, minimum_coverage=0.)
+        if owner == "background":
+            # An ordinary measured histogram background uses the same persistence path.
+            background_source = DatasetEntry("dummy", data, kind="mdhisto")
+            background = BackgroundSpec("dummy", source_entry=background_source)
+            group.backgrounds.append(background)
+        cached = data
+        cache = project_composites._COMPOSITE_DATA_CACHE
+        key = (project_composites._composite_background_cache_key(group, background, config)
+               if owner == "background" else project_composites._composite_cache_key(group))
+        signature = (project_composites._composite_background_signature(group, background, config)
+                     if owner == "background" else project_composites._composite_cache_signature(group))
+        if owner == "composite_base":
+            key = project_composites._composite_base_cache_key(group)
+            signature = project_composites._composite_cache_signature(group, include_backgrounds=False)
+        cache[key] = (signature, data)
+    signature, payload = cache.get(key)
+    spill = tmp_path / f"{owner}-spill.npz"
+    cache.before_discard = lambda _key, artifact: (artifact.write_npz(spill), spill)[1]
+    try:
+        cache._compress_resident(key, max_bytes=10_000_000)
+        cache._discard_compressed(key)
+        expected = spill.read_bytes()
+        monkeypatch.setattr(rebin_cache._DiskBinning, "restore", lambda *_args: pytest.fail("decoded session cache"))
+        monkeypatch.setattr(project_gui, "write_dataset_artifact", lambda *_a, **_k: pytest.fail("recompressed histogram"))
+        monkeypatch.setattr(project_background_cache, "write_dataset_artifact", lambda *_a, **_k: pytest.fail("recompressed background"))
+        # Other resident caches need ordinary writing; isolate the selected cache artifact path.
+        directory = tmp_path / "artifacts"
+        directory.mkdir()
+        if owner == "background":
+            artifacts, entries = project_background_cache.background_binning_artifacts(project, directory, project_gui.PROJECT_BINNING_CACHE_FORMAT_VERSION)
+        else:
+            artifacts, entries = project_gui._project_binning_artifacts(project, directory)
+        member = next(entry["member"] for entry in entries if entry["signature"] == signature)
+        assert artifacts[member] == spill
+        assert spill.read_bytes() == expected
+        from nfit.project_archive import write_project_manifest
+        target = tmp_path / "first-save.nfit"
+        write_project_manifest(target, project_gui._project_manifest_for_save(project, target), binning_artifacts=artifacts)
+        import zipfile
+        with zipfile.ZipFile(target) as archive:
+            assert archive.read(member) == expected
+        restored = read_dataset_artifact(spill)
+        np.testing.assert_array_equal(restored.signal, payload.signal)
+        assert cached is not None
+        if owner == "dataset":
+            # Exercise publication and adoption through the actual public save API.
+            from nfit.operation_control import operation_progress
+            failed = tmp_path / "cancelled-save.nfit"
+            def cancel(event):
+                if event["message"] == "Copying project cache data…":
+                    raise RuntimeError("cancel save")
+            with operation_progress(cancel), pytest.raises(RuntimeError, match="cancel save"):
+                save_project(project, failed)
+            assert spill.exists()
+            assert not failed.exists()
+            assert cache.archive_backing(key, signature) == (spill, None)
+            save_project(project, target)
+            assert not spill.exists()
+            assert cache.project_backing(key, signature)[0] == target
+            save_project(project, target)  # The adopted project member is also reusable.
+    finally:
+        cache.before_discard = None
+        cache.clear()

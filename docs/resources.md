@@ -102,8 +102,15 @@ progress labels update at most once per second to keep fast saves readable;
 cancellation still checks every reported archive chunk. Explicit progress
 callbacks receive every checkpoint, while display-only event bursts are coalesced.
 Archive failures are reported without clearing unsaved changes. Cached
-histograms use standard compressed NPZ members within the project and unchanged
-members are copied without recompression. Slice-only storage and slider caches
+histograms use standard compressed NPZ members within the project. Saving reuses
+unchanged project members and session NPZ spill files without decoding or
+recompressing their arrays. A successful save adopts the project copy before
+removing an owned session spill; cancellation keeps that spill available.
+New array archives use lossless DEFLATE level 1 to favor save speed over the
+smallest file size. Arrays of at least 8 MiB can compress in parallel, within
+the configured CPU and RAM limits; small arrays avoid worker-pool overhead.
+Reduced-event cache arrays remain uncompressed and stream from disk.
+Slice-only storage and slider caches
 are not required: viewing continues to use full resident cubes.
 
 ## Scripting
