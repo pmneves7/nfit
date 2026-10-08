@@ -178,7 +178,12 @@ def project_measured_background_mdevent(
             masked = _mdhisto_with_nfit_masks(
                 DatasetEntry("Replay acceptance", None, masks=masks), data=target
             )
-            excluded = np.asarray(masked.metadata["nfit_mask"]).ravel()
+            # Whole-run conditions need no coordinate mask. The mask service
+            # omits this channel in that case instead of allocating a full
+            # output-volume array; None already means unrestricted replay.
+            nfit_mask = masked.metadata.get("nfit_mask")
+            if nfit_mask is not None:
+                excluded = np.asarray(nfit_mask, dtype=bool).ravel()
         prepared.append((detectors, payloads, float(fraction), excluded))
     return reduce_masked_event_runs(
         sources,

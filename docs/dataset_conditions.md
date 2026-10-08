@@ -43,6 +43,11 @@ condition is part of saved projects and exported composite workflows. Original
 runs remain available for inspection; excluded runs are omitted from independent
 fit blocks.
 
+Conditions also apply when constructing measured-background replay: excluded
+sample runs supply no replay angles or exposure, and excluded background runs
+supply no background counts or exposure. Coordinate masks can be used alongside
+conditions; a condition alone does not mask histogram bins.
+
 ## Elastic normalization and cached values
 
 For the elastic diagnostic, nfit uses

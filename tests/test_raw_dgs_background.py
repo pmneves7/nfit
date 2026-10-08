@@ -46,6 +46,59 @@ def test_native_replay_matches_single_primitive_despite_angle_copies(groups):
     assert profile.data.errors.item() == pytest.approx(direct.errors.item())
 
 
+@pytest.mark.parametrize("coordinate_mask", [False, True])
+@pytest.mark.parametrize("compiled", [False, True])
+def test_composite_replay_with_inherited_dataset_condition(
+    groups, coordinate_mask, compiled, monkeypatch,
+):
+    from nfit import (
+        BackgroundSpec,
+        DataGroup,
+        dataset_criterion_mask,
+        dataset_criterion_preview,
+        filter_dataset_criteria,
+        mdevent_background,
+    )
+    from nfit.pipeline import MaskSpec
+    from nfit.project_composites import _apply_composite_backgrounds, _composite_scope
+
+    sample, dummy = groups
+    if compiled and mdevent_background._REPLAY_NUMBA is None:
+        pytest.skip("Numba is unavailable")
+    if not compiled:
+        monkeypatch.setattr(mdevent_background, "_REPLAY_NUMBA", None)
+    for run, value in zip([*sample.datasets, *dummy.datasets], [0., 1., 0.], strict=True):
+        run.metadata["selection_value"] = value
+    sample.backgrounds.append(BackgroundSpec(
+        "Dummy", source_group=dummy, source_group_id=dummy.id, projection="measured_events",
+    ))
+    root = DataGroup("Parent selection", subgroups=[sample, dummy])
+    condition = dataset_criterion_mask(
+        root, channel="metadata", source="metadata/selection_value", right_value=0.5,
+    )
+    if coordinate_mask:
+        root.masks.append(MaskSpec("Positive energy", "energy_q_range", {"energy": [0., 19.]}))
+    dataset_criterion_preview(root, condition)
+    grid = dict(lower=[-10., -10., -10., -19.], upper=[10., 10., 10., 19.],
+                num_bins=[1, 1, 1, 2])
+    selected = filter_dataset_criteria(root, sample.datasets)
+    assert selected == [sample.datasets[0]]
+    template = bin_raw_dgs_group(sample, datasets=selected, **grid)
+    actual = _apply_composite_backgrounds(_composite_scope(root, sample), template)
+
+    # A whole-run condition must give the same subtraction and uncertainty as
+    # explicitly disabling that run, including when coordinate masks coexist.
+    assert all(run.enabled for run in [*sample.datasets, *dummy.datasets])
+    condition.enabled = False
+    sample.datasets[1].enabled = False
+    expected = _apply_composite_backgrounds(_composite_scope(root, sample), template)
+    for name in ("signal", "errors", "num_events"):
+        np.testing.assert_allclose(getattr(actual, name), getattr(expected, name), equal_nan=True)
+    np.testing.assert_array_equal(actual.mask, expected.mask)
+    np.testing.assert_array_equal(actual.metadata["normalization_denominator"],
+                                  expected.metadata["normalization_denominator"])
+
+
 def test_raw_replay_keeps_source_detector_ids_and_lab_coordinates(groups):
     _sample, dummy = groups
     with open_event_stream(dummy, dummy.datasets[0], rows=1) as (gonio, _shape, _dtype, blocks):
