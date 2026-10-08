@@ -47,6 +47,12 @@ dataset selection, lattice metadata, and window size. Paste is enabled when the
 system clipboard contains nfit viewer settings. Volume-specific controls are
 not included in this transfer.
 
+The same buttons work between independent project windows opened from the
+**Window** menu. Only presentation settings travel through the clipboard;
+no histogram arrays need to be copied. To retain a configured view with its
+source references, use **Store plot**, then copy the saved plot in the project
+explorer, or copy its complete workspace.
+
 Python callers can capture the same portable settings using
 `nfit.viewer_settings.copy_viewer_settings(viewer.current_plot_settings(), axis_names)`
 and apply `compatible_viewer_settings(payload, destination_axis_names)` through

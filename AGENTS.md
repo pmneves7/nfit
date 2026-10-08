@@ -150,6 +150,11 @@ different Python.
   `qt_resource_jobs.py`: resource controls and guarded background archive work.
 - `src/nfit/project_clipboard.py`: GUI-independent project clipboard validation,
   copying, and reference remapping.
+- `src/nfit/project_transfer.py`, `project_transfer_cache.py`, and
+  `qt_project_clipboard.py`: independent selection archives, signature-checked
+  lazy cache transfer, and system clipboard presentation.
+- `src/nfit/project_windows.py` and `qt_project_windows.py`: independent project
+  processes and Window-menu presentation.
 - `src/nfit/project_background_panels.py`: background link and shared source-symmetry controls.
 - `src/nfit/project_import_dialogs.py`, `fit_diagnostics_gui.py`, and
   `analysis_window_builder.py`: focused Qt presentation helpers.

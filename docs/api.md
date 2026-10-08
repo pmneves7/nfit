@@ -271,6 +271,14 @@ projects, workspaces, datasets, dataset groups, masks, models, rebinned dataset
 views, and fit timelines. The GUI is documented in
 [GUI workflows](gui_workflows.md).
 
+`export_project_items(project, role, items, path, source_group=...)` writes a
+lossless selected-object archive including available scientific caches, without
+reduction or binning. `import_project_items(project, path, target_role=...,
+data_group=..., dataset_node=...)` adopts lazy, independent backing and remaps
+references through the same service used by cross-window paste. See
+[Independent project windows](project_explorer.md#independent-project-windows)
+for supported selections, dependencies and storage lifetime.
+
 Named project binnings are also scriptable. Use
 `dataset_rebin_binnings(dataset)` or
 `data_group_composite_binnings(collection)` to inspect the ordered list; the

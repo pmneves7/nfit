@@ -84,6 +84,7 @@ def main(argv: list[str] | None = None, *, startup_splash=None) -> int:
     parser.add_argument("--smoke-test", action="store_true", help="Verify bundled runtime components without opening a project.")
     parser.add_argument("--smoke-output", type=Path)
     parser.add_argument("--run-script", type=Path, help="Run an exported Python script using the bundled nfit runtime.")
+    parser.add_argument("--project", type=Path, help="Open a saved project in this independent application process.")
     parser.add_argument("--benchmark-worker", nargs=4, metavar=("SNAPSHOT", "OUTPUT", "MIB", "WORKERS"), help=argparse.SUPPRESS)
     parser.add_argument(
         "--install-portable-update",
@@ -121,4 +122,4 @@ def main(argv: list[str] | None = None, *, startup_splash=None) -> int:
 
     if startup_splash is not None:
         startup_splash.show_status("Building the nfit project explorer…")
-    return launch()
+    return launch() if args.project is None else launch(project_path=args.project)

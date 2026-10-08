@@ -57,6 +57,49 @@ Copying a complete workspace also copies and reconnects its existing outputs.
 Copies of an Initial or Current fit state become saved history entries, so
 later changes to the editable current state do not overwrite the pasted state.
 
+## Independent project windows
+
+The **Window** menu, between File and Help, offers **New project window** and
+**Open project in new window…**. Each window runs in its own process with
+independent edits, jobs, undo/history state and memory caches. Closing one window
+does not close another. Performance preferences apply to each process, so several
+active jobs share the machine's available resources. Save different projects to
+different files; these windows do not coordinate simultaneous edits to one file.
+
+Copy a tree selection in one window, then select a compatible destination and
+paste in another. Configuration-only selections use the system clipboard.
+Scientific selections use a lossless transfer archive in the project's temporary
+workspace; an unsaved project without an existing data location asks where to
+store it. Copying does not reduce sources or compute missing binnings. It writes
+unsaved arrays and streams existing compressed cache artifacts without decoding
+them. A large first copy may therefore take time proportional to its stored data.
+
+Paste adopts independent archive ownership and leaves its data, reduced events
+and histograms lazy. Pasted data remain usable after the source window closes or
+its clipboard is replaced. Saving embeds owned arrays and reduced events into the
+destination `.nfit` file; enable **File → Cache binnings** to retain its histograms
+too. Original measurement and calibration files remain external references.
+Current binnings transfer only when their source contents, masks, lattice and
+numerical settings still match. Changed destination settings cause recomputation.
+
+Copying a dataset collection also includes its linked measured-background source
+collections/runs and retains inherited masks. A complete workspace is the simplest
+way to transfer models, fits, analyses and plots with all their references.
+Separately copied recipes can refer to counterparts already pasted into that
+workspace. If the same source was pasted several times, the most recent copy is
+used for such references. Dependencies absent from the destination are rejected.
+
+Data viewers also have **Copy settings** and **Paste settings** buttons. Use
+these to apply compatible slice ranges, zoom, color scaling, smoothing and
+styling to a viewer in another project without copying its data. Axis names
+determine which settings apply. Saved plot copies retain their full display
+recipe and reconnect to copied sources. See [Data viewer](data_viewer.md).
+
+**Window → Save copy/paste script…** saves the current copied selection as a
+`.selection.nfit` archive alongside an editable Python script. Edit the destination
+path and workspace in that script before running it. Keep the selection archive
+with the script; the temporary clipboard archive is no longer needed.
+
 ## Delete and tree state
 
 Deleting a collection removes its contents. Deleting the contents of a structural
@@ -110,3 +153,18 @@ copied_dataset = result.items[0]
 the destination and raises `ValueError` for incompatible operations. Use
 `edit_project_file` when applying these changes to an existing `.nfit` archive so
 the project state is reconciled and saved through the normal scripting workflow.
+
+For transfer between processes or durable batch replay, use the public archive APIs:
+
+```python
+from nfit import export_project_items, import_project_items, save_project
+
+export_project_items(source_project, "group", [source_workspace], "selection.nfit")
+import_project_items(destination_project, "selection.nfit")
+save_project(destination_project, "destination.nfit")
+```
+
+For selected runs, export with `role="dataset"` and `source_group=source_workspace`;
+import with `target_role="datasets"`, `data_group=destination_workspace`, and
+optionally `dataset_node=destination_collection`. The same validation, fresh IDs,
+lazy ownership and cache-signature checks apply in scripts and the GUI.

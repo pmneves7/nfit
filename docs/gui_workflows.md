@@ -102,6 +102,10 @@ nfit
 ```
 
 For local development, `python -m nfit.project_gui` is equivalent.
+Use **Window → New project window** or **Open project in new window…** to
+keep multiple projects open in independent processes. Tree Copy/Paste works
+between those windows; see [Independent project windows](project_explorer.md#independent-project-windows).
+`nfit --project /path/to/project.nfit` opens a saved project directly.
 
 The Project Explorer initially requests a 1560 by 1000 pixel workspace. On a
 smaller display, nfit reduces each dimension to fit within the available

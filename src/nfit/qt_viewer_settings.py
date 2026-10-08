@@ -85,10 +85,12 @@ def add_settings_buttons(viewer, layout) -> None:
     paste_button.setObjectName("data_viewer_paste_settings")
     copy_button.setToolTip(
         "Copy axes, limits, hidden-axis ranges, colors, smoothing, box cuts, "
-        "and figure styling for another data viewer."
+        "and figure styling for another data viewer, including one in another "
+        "project window."
     )
     paste_button.setToolTip(
-        "Apply copied settings supported by this viewer, matching axes by name. "
+        "Apply viewer settings copied from this or another project window, "
+        "matching axes by name. "
         "Keep this viewer's dataset, binning, and lattice metadata."
     )
 

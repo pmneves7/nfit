@@ -29,7 +29,8 @@ def restore_point_data_archive(archive, metadata):
     fields = {name: archive[name] for name in ("H", "K", "L", "E", "intensity", "sigma", "mask")}
     for name in ("temperature", "magnetic_field", "normalization_denominator"):
         if name in archive:
-            fields[name] = archive[name]
+            value = archive[name]
+            fields[name] = np.asarray(value).item() if name == "temperature" and np.ndim(value) == 0 else value
     payload = None
     if "measurement_payload_names" in archive:
         names = json.loads(str(np.asarray(archive["measurement_payload_names"]).item()))

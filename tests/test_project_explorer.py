@@ -16,6 +16,21 @@ from tests.project_gui_test_support import (
 )
 
 
+@pytest.fixture(autouse=True)
+def copied_scientific_data_storage(monkeypatch, tmp_path):
+    """Supply the new storage choice for source-less clipboard payloads."""
+    from nfit import file_dialogs
+
+    original = file_dialogs.get_existing_directory
+
+    def choose(parent, caption, *args, **kwargs):
+        if caption == "Storage for copied scientific data":
+            return str(tmp_path)
+        return original(parent, caption, *args, **kwargs)
+
+    monkeypatch.setattr(file_dialogs, "get_existing_directory", choose)
+
+
 def test_standard_shortcut_text_accepts_platforms_without_a_binding():
     class KeySequenceWithoutBindings:
         class SequenceFormat:
@@ -211,7 +226,7 @@ def test_project_explorer_help_opens_local_documentation(monkeypatch, tmp_path, 
     explorer = NfitProjectExplorer(NfitProject([]))
     toolbar = explorer.window.findChild(QtWidgets.QToolBar)
     buttons = [toolbar.widgetForAction(action) for action in toolbar.actions()]
-    assert [button.text() for button in buttons[:2]] == ["File", "Help"]
+    assert [button.text() for button in buttons[:3]] == ["File", "Window", "Help"]
     help_button = toolbar.findChild(QtWidgets.QToolButton, "help_button")
     assert help_button.toolTip()
     help_button.click()

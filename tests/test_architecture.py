@@ -112,6 +112,9 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "composite_scaling.py",
     PACKAGE_ROOT / "project_cache_compat.py",
     PACKAGE_ROOT / "project_clipboard.py",
+    PACKAGE_ROOT / "project_transfer.py",
+    PACKAGE_ROOT / "project_transfer_cache.py",
+    PACKAGE_ROOT / "project_windows.py",
     PACKAGE_ROOT / "project_data.py",
     PACKAGE_ROOT / "project_derived_grid.py",
     PACKAGE_ROOT / "project_history.py",
@@ -239,8 +242,9 @@ def test_project_services_do_not_import_project_gui(path: Path) -> None:
     assert _imports_project_gui(path) == []
 
 
-def test_project_clipboard_service_does_not_import_qt() -> None:
-    tree = ast.parse((PACKAGE_ROOT / "project_clipboard.py").read_text(encoding="utf-8"))
+@pytest.mark.parametrize("name", ["project_clipboard", "project_transfer", "project_transfer_cache", "project_windows"])
+def test_project_clipboard_service_does_not_import_qt(name) -> None:
+    tree = ast.parse((PACKAGE_ROOT / f"{name}.py").read_text(encoding="utf-8"))
     modules = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

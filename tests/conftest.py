@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolated_offscreen_clipboard():
+    """Independent tests must not inherit another explorer's system clipboard."""
+    def clear():
+        widgets = sys.modules.get("PySide6.QtWidgets")
+        app = widgets.QApplication.instance() if widgets is not None else None
+        if app is not None and app.platformName() == "offscreen":
+            app.clipboard().clear()
+
+    clear()
+    yield
+    clear()
 
 
 @pytest.fixture(scope="session")

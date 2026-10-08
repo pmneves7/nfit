@@ -196,6 +196,10 @@ def _build_window_shell(
     file_button.setMenu(menu)
     toolbar.addWidget(file_button)
 
+    from .qt_project_windows import add_window_menu
+
+    add_window_menu(self, toolbar)
+
     help_button = QtWidgets.QToolButton()
     help_button.setObjectName("help_button")
     help_button.setText("Help")

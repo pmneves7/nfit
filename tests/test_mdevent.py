@@ -1221,7 +1221,9 @@ def test_mdevent_memory_estimate_scales_with_output_grid_and_preflight_blocks(mo
     assert estimate_mdevent_peak_memory([20, 20, 20, 50]) < estimate_mdevent_peak_memory([200, 200, 200, 50])
     monkeypatch.setattr("nfit.mdevent._available_memory_bytes", lambda: 2 * 1024**3)
 
-    with pytest.raises(MemoryError, match="estimated to peak"):
+    # Either admission layer can reject this grid first; the process-wide
+    # budget includes RAM retained by earlier tests in a full-suite run.
+    with pytest.raises(MemoryError, match="estimated to peak|requires .* additional RAM"):
         bin_mdevent_group(
             group, lower=[-1] * 4, upper=[1] * 4,
             num_bins=[200, 200, 200, 50],

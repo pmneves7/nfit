@@ -203,6 +203,8 @@ class DatasetEntry:
         copied = replace(self, id=uuid4().hex, **changes)
         if hasattr(self, "_project_path_resolution"):
             copied._project_path_resolution = self._project_path_resolution
+        if hasattr(self, "_project_artifact_source") and "data" not in changes:
+            copied._project_artifact_source = self._project_artifact_source
         if "data" in changes:
             copied._data_matches_source = False
             copied._source_data_identity = None

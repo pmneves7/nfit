@@ -40,6 +40,8 @@ in the system's default file manager.
 
 A few of its main capabilities are:
 
+- open independent project windows through the Window menu and copy workspaces,
+  collections, recipes, viewer settings and lazy scientific caches between them;
 - editable MACS Sources/Reduction recipes with equal-sensitivity defaults and
   calibrated count/exposure pooling through histograms and cuts;
 - compiled fractional N-dimensional point binning on uniform and nonuniform grids,

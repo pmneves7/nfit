@@ -186,8 +186,8 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
         assert file_button.menu() is explorer.file_menu
         assert [
             toolbar.widgetForAction(action).text()
-            for action in toolbar.actions()[:2]
-        ] == ["File", "Help"]
+            for action in toolbar.actions()[:3]
+        ] == ["File", "Window", "Help"]
 
         monitor = toolbar.widgetForAction(toolbar.actions()[-2])
         assert monitor.objectName() == "resource_monitor"

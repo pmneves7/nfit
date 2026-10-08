@@ -812,9 +812,13 @@ def _artifact_source_load(
     artifact_path = dataset.metadata.get(
         "project_artifact_path"
     ) or dataset.metadata.get("analysis_artifact_path")
-    if not project_path or not artifact_path:
+    transferred = getattr(dataset, "_project_artifact_source", None)
+    if (not project_path or not artifact_path) and transferred is None:
         return _SOURCE_NOT_HANDLED
-    loaded = read_project_dataset_artifact(project_path, artifact_path)
+    loaded = read_project_dataset_artifact(
+        transferred.path if transferred is not None else project_path,
+        transferred.member if transferred is not None else artifact_path,
+    )
     loaded = dataset.replace_data(loaded, source_backed=True)
     dataset.metadata["import_status"] = "loaded"
     dataset.metadata.pop("import_error", None)

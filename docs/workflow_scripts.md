@@ -10,6 +10,13 @@ export does not rerun every historical branch.
 
 ## Dataset workflows
 
+For copying existing project state, **Window → Save copy/paste script…** exports
+an editable script with a lossless `.selection.nfit` archive. The script uses
+`import_project_items` and `save_project`, retaining available caches without
+rerunning scientific processing. `nfit.project_transfer.project_selection_script`
+generates the same replay from a saved selection path. See
+[Independent project windows](project_explorer.md#independent-project-windows).
+
 Right-click a dataset and choose **Copy workflow script** or **Save workflow
 script...**. The generated script currently supports an ordinary source-backed
 dataset and its:

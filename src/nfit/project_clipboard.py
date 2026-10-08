@@ -154,6 +154,7 @@ def _clone_dataset(source: DatasetEntry) -> DatasetEntry:
     """Clone configuration with a fresh ID while sharing immutable numerical data."""
 
     result = source.copy()
+    result._data_revision = source.data_revision
     result.metadata = copy.deepcopy(source.metadata)
     result.parameters = copy.deepcopy(source.parameters)
     result.masks = copy.deepcopy(source.masks)
@@ -642,6 +643,11 @@ def paste_payload(
         return PasteResult(tuple([*datasets, *groups, *masks, *backgrounds]), True)
     if payload.kind == "dataset_group":
         _, groups, _, _ = clone_dataset_tree((), payload.items)
+        owners = [owner for subgroup in groups
+                  for owner in [subgroup, *subgroup.iter_subgroups(), *subgroup.iter_datasets()]]
+        if not _background_references_are_valid(owners, data_group):
+            raise ValueError("The destination does not contain every background source.")
+        _link_backgrounds(owners, data_group)
         _uniquify_tree_names(data_group, (), groups)
         node.subgroups.extend(groups)
         return PasteResult(tuple(groups), True)

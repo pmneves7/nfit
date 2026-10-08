@@ -94,6 +94,63 @@ def test_clipboard_buttons_transfer_real_controls_and_keep_destination_data(view
     assert not target.paste_settings_button.isEnabled()
 
 
+def test_viewer_settings_from_independent_process_apply_to_destination(viewers):
+    """Exercise actual Qt capture across a process/clipboard JSON boundary."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    from PySide6 import QtCore, QtWidgets
+
+    script = textwrap.dedent('''
+        import sys
+        import numpy as np
+        from PySide6 import QtWidgets
+        from nfit.mdhisto import MDHistoAxis, MDHistoData
+        from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+        axes = tuple(MDHistoAxis(n, np.arange(4.), "", "unknown")
+                     for n in ("x", "y", "scan"))
+        signal = np.ones((3, 3, 3))
+        data = MDHistoData(axes, signal, signal, np.zeros_like(signal, dtype=bool), signal)
+        viewer = QtMDHistoSliceViewer(data, x_dim=0, y_dim=1)
+        viewer.apply_plot_settings({
+            "xlim": (.2, 2.4), "ylim": (.3, 2.5),
+            "selections": {2: (1., 2.)}, "integrate_checks": {2: True},
+            "cmap": "magma", "color_scale": "asinh", "smoothing_x": .7,
+            "font_size": 19., "show_major_gridlines": True,
+        })
+        viewer.copy_settings_button.click()
+        clipboard = QtWidgets.QApplication.clipboard()
+        sys.stdout.write(bytes(clipboard.mimeData().data(
+            "application/x-nfit-viewer-settings+json")).decode("utf-8"))
+        clipboard.clear()
+        viewer.window.close()
+    ''')
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                            check=True, text=True, timeout=60,
+                            env={**os.environ, "QT_QPA_PLATFORM": "offscreen"})
+    payload = json.loads(result.stdout)
+    assert payload["axis_names"] == ["x", "y", "scan"]
+    target = viewers[1]
+    data = target.data
+    mime = QtCore.QMimeData()
+    mime.setData("application/x-nfit-viewer-settings+json", result.stdout.encode("utf-8"))
+    QtWidgets.QApplication.clipboard().setMimeData(mime)
+    assert target.paste_settings_button.isEnabled()
+    target.paste_settings_button.click()
+    assert target.data is data
+    assert target.model.selections[0] == (1., 2.)
+    assert target.model.integrate_checks[0]
+    assert target.model.cmap == "magma"
+    assert target.model.color_scale == "asinh"
+    assert target.smoothing_x == .7
+    assert target.font_size == 19.
+    assert target.show_major_gridlines
+    np.testing.assert_allclose(target.ax_image.get_xlim(), (.2, 2.4))
+    np.testing.assert_allclose(target.ax_image.get_ylim(), (.3, 2.5))
+
+
 def test_portable_settings_service_is_gui_independent():
     import ast
     import inspect

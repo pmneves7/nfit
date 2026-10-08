@@ -6,13 +6,15 @@ from .project_archive import ArchiveMember, binning_artifact_member, project_art
 from .project_resources import excluded_project_cache
 
 
-def background_binning_artifacts(project, directory, format_version):
+def background_binning_artifacts(project, directory, format_version, *, scope_ids=None):
     """Save current owned backgrounds without preparing or loading unchanged cubes."""
     artifacts, entries = {}, []
     shared_members = {}
     for group_index, root in enumerate(project.data_groups):
         for scope in [root, *(comp._composite_scope(root, node) for node in root.iter_subgroups())]:
             node_id = scope.node.id if isinstance(scope, comp._CompositeScope) else None
+            if scope_ids is not None and (group_index, node_id) not in scope_ids:
+                continue
             for binning in comp.data_group_composite_binnings(scope):
                 config = binning['config']
                 if not config.get('enabled'):

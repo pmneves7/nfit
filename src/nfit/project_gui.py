@@ -5771,6 +5771,9 @@ def prepare_project_binning_cache(
 def _project_binning_artifacts(
     project: NfitProject,
     directory: Path,
+    *,
+    dataset_ids=None,
+    scope_ids=None,
 ) -> tuple[dict[str, ArchiveContent], list[dict[str, Any]]]:
     """Write current signature-matching rebin caches to temporary artifacts."""
 
@@ -5781,6 +5784,8 @@ def _project_binning_artifacts(
     entries: list[dict[str, Any]] = []
     for group_index, group in enumerate(project.data_groups):
         for dataset in group.iter_datasets():
+            if dataset_ids is not None and dataset.id not in dataset_ids:
+                continue
             if controlling_composite(group, dataset) is not None:
                 continue
             if not isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict):
@@ -5831,6 +5836,9 @@ def _project_binning_artifacts(
                 )
         for scope in _composite_scopes(group):
             node = scope.node if isinstance(scope, _CompositeScope) else scope
+            node_id = scope.node.id if isinstance(scope, _CompositeScope) else None
+            if scope_ids is not None and (group_index, node_id) not in scope_ids:
+                continue
             if controlling_composite(group, node) is not None:
                 continue
             if (
@@ -5902,7 +5910,7 @@ def _project_binning_artifacts(
     from .project_background_cache import background_binning_artifacts
 
     background_artifacts, background_entries = background_binning_artifacts(
-        project, directory, PROJECT_BINNING_CACHE_FORMAT_VERSION
+        project, directory, PROJECT_BINNING_CACHE_FORMAT_VERSION, scope_ids=scope_ids
     )
     artifacts.update(background_artifacts)
     entries.extend(background_entries)
@@ -6205,6 +6213,9 @@ def _save_project_archive(
     progress_callback: Any | None,
 ) -> None:
     target = Path(path)
+    from .project_transfer import adopt_saved_transfer_artifacts, project_transfer_artifacts
+
+    incoming = project_transfer_artifacts(project)
     if asset_source is None:
         asset_source = getattr(project, "_project_path", None)
     from .raw_dgs_cache import (
@@ -6231,6 +6242,7 @@ def _save_project_archive(
         )
         with temporary_data_directory(target, prefix="nfit-binning-cache-") as temporary:
             artifacts, entries = _project_binning_artifacts(project, Path(temporary))
+            artifacts.update(incoming)
             project.settings[PROJECT_BINNING_CACHE_ENTRIES_KEY] = entries
             reduced_artifacts = project_reduced_event_artifacts(project)
             try:
@@ -6255,7 +6267,7 @@ def _save_project_archive(
                 _project_manifest_for_save(project, target),
                 asset_source=asset_source,
                 preserve_existing=asset_source is not None,
-                binning_artifacts={},
+                binning_artifacts=incoming,
                 reduced_event_artifacts=reduced_artifacts,
             )
         except Exception:
@@ -6266,6 +6278,7 @@ def _save_project_archive(
     project._project_path = target
     bind_project_reduced_event_caches(project, target)
     _bind_project_analysis_sources(project, target, load_data=False)
+    adopt_saved_transfer_artifacts(project, target)
 
 
 def _bind_project_analysis_sources(
@@ -6332,6 +6345,63 @@ def load_project(path: str | Path, *, path_mappings=None) -> NfitProject:
     _bind_project_analysis_sources(project, project_path)
     _restore_project_binning_cache(project, project_path)
     return project
+
+
+def export_project_items(project, role, items, path, *, source_group=None):
+    """Export selected objects and current caches without reducing or rebinning."""
+    from .project_transfer import prepare_project_selection, write_project_selection
+
+    selection = prepare_project_selection(project, role, items, source_group=source_group)
+    return write_project_selection(selection, path, collect_binnings=_project_binning_artifacts)
+
+
+def _transfer_binning_binding(project, entry):
+    from .project_transfer_cache import TransferBinning
+
+    group = project.data_groups[int(entry["group_index"])]
+    binning_id = entry["binning_id"]
+    if entry["type"] == "dataset":
+        target = next(item for item in group.iter_datasets() if item.id == entry["dataset_id"])
+        config = dataset_rebin_config_by_id(target, binning_id)
+        key = target.id if config is _fit_dataset_rebin_config(target) else f"{target.id}:{binning_id}"
+        return TransferBinning(_VIEWER_VIEW_CACHE, key,
+                               _viewer_view_signature(target, effective_dataset_masks(group, target), config), config)
+    node = next((node for node in group.iter_subgroups() if node.id == entry.get("node_id")), None)
+    scope = _composite_scope(group, node) if node is not None else group
+    config = data_group_composite_config_by_id(scope, binning_id)
+    if entry["type"] == "composite_background":
+        from .project_composites import (
+            _composite_background_cache_key,
+            _composite_background_signature,
+        )
+
+        background = scope.backgrounds[int(entry["background_index"])]
+        return TransferBinning(_COMPOSITE_DATA_CACHE, _composite_background_cache_key(scope, background, config),
+                               _composite_background_signature(scope, background, config), config)
+    fit_id = None if config is _fit_data_group_composite_config(scope) else binning_id
+    base = entry.get("stage") == "unsubtracted"
+    return TransferBinning(_COMPOSITE_DATA_CACHE,
+                           _composite_base_cache_key(scope, fit_id) if base else _composite_cache_key(scope, fit_id),
+                           _composite_cache_signature(scope, config_override=config, binning_id=fit_id,
+                                                      include_backgrounds=not base), config)
+
+
+def _install_transfer_binnings(selection, destination, result, group):
+    from .project_transfer_cache import install_selection_binnings
+
+    return install_selection_binnings(selection, destination, result, group, resolve=_transfer_binning_binding)
+
+
+def import_project_items(project, path, *, target_role="project", data_group=None,
+                         dataset_node=None, dataset=None):
+    """Paste a saved selection with independent lazy numerical backing and IDs."""
+    from .project_transfer import adopt_project_selection, paste_project_selection
+
+    owner = getattr(project, "_project_path", None) or Path(path).absolute()
+    selection = adopt_project_selection(path, owner)
+    return paste_project_selection(selection, project, target_role=target_role, data_group=data_group,
+                                   dataset_node=dataset_node, dataset=dataset,
+                                   install_binnings=_install_transfer_binnings)
 
 
 @contextmanager
@@ -11286,18 +11356,17 @@ class NfitProjectExplorer:
         capability = _project_clipboard.copy_capability(role, objects)
         if capability.allowed:
             self._clipboard = _project_clipboard.make_payload(role, objects)
+            from .qt_project_clipboard import publish_project_clipboard
+
+            def has_binnings(project):
+                return any(_project_binning_is_current(kind, group, target, binning_id, config)
+                           for kind, _name, group, target, binning_id, config in _project_binning_targets(project))
+
+            publish_project_clipboard(self, role, objects, collect_binnings=_project_binning_artifacts,
+                                      has_binnings=has_binnings)
 
     def paste_into_selection(self) -> None:
-        if self._clipboard is None:
-            return
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
-        # Accept old payloads retained by extensions and older tests.
-        if not isinstance(self._clipboard, _project_clipboard.ProjectClipboardPayload):
-            clip_role, legacy = self._clipboard
-            legacy_role = "dataset" if clip_role == "datasets" else clip_role
-            legacy_items = legacy if isinstance(legacy, list) else [legacy]
-            self._clipboard = _project_clipboard.make_payload(legacy_role, legacy_items)
-        payload = self._clipboard
         target_node: Any = group
         if role in {"dataset_group", "group_masks", "group_mask", "group_backgrounds", "group_background"}:
             target_node = self._dataset_group_for_item(self._current_item())
@@ -11307,6 +11376,32 @@ class NfitProjectExplorer:
                 target_node = page[0] if page is not None else group
             elif entry is not None:
                 target_node = _dataset_parent_node(group, entry)
+        from .qt_project_clipboard import clipboard_descriptor, paste_project_clipboard
+
+        try:
+            descriptor = clipboard_descriptor()
+        except (KeyError, TypeError, ValueError) as error:
+            from PySide6 import QtWidgets
+
+            QtWidgets.QMessageBox.information(self.window, "Cannot paste here", str(error))
+            return
+        if descriptor is not None and (
+            self._clipboard is None
+            or json.dumps(descriptor).encode("utf-8") != getattr(self, "_project_clipboard_stamp", None)
+        ) and not isinstance(self._clipboard, tuple):
+            paste_project_clipboard(self, target_role=role, data_group=group, dataset_node=target_node, dataset=entry,
+                                    install_binnings=_install_transfer_binnings,
+                                    on_success=lambda result, payload: self._finish_clipboard_paste(result, payload, group, preserve_caches=True))
+            return
+        if self._clipboard is None:
+            return
+        # Accept old payloads retained by extensions and older tests.
+        if not isinstance(self._clipboard, _project_clipboard.ProjectClipboardPayload):
+            clip_role, legacy = self._clipboard
+            legacy_role = "dataset" if clip_role == "datasets" else clip_role
+            legacy_items = legacy if isinstance(legacy, list) else [legacy]
+            self._clipboard = _project_clipboard.make_payload(legacy_role, legacy_items)
+        payload = self._clipboard
         try:
             result = _project_clipboard.paste_payload(
                 payload,
@@ -11323,9 +11418,16 @@ class NfitProjectExplorer:
                 self.window, "Cannot paste here", str(exc)
             )
             return
+        self._finish_clipboard_paste(result, payload, group)
+
+    def _finish_clipboard_paste(self, result, payload, group, *, preserve_caches=False):
         if group is not None and payload.kind != "group":
             if result.changed_datasets:
-                self._mark_mask_datasets_stale(list(group.iter_datasets()))
+                # New copied IDs have no pre-existing destination cache. Mark
+                # only uncached configurations; transfer installation has
+                # already checked masks, sources and numerical settings.
+                if not preserve_caches:
+                    self._mark_mask_datasets_stale(list(group.iter_datasets()))
             self._record_data_group_state_change(group)
         self._mark_dirty()
         selected = result.items[-1] if result.items else None
@@ -17594,8 +17696,17 @@ class NfitProjectExplorer:
         return "fresh"
 
     def _can_paste_into_role(self, role: str, entry: DatasetEntry | None) -> bool:
-        if self._clipboard is None:
-            return False
+        from .qt_project_clipboard import clipboard_descriptor, clipboard_preview
+
+        external = clipboard_preview()
+        try:
+            descriptor = clipboard_descriptor()
+        except (TypeError, ValueError):
+            descriptor = None
+        if self._clipboard is None or (descriptor is not None and not isinstance(self._clipboard, tuple)
+                                      and json.dumps(descriptor).encode("utf-8") != getattr(self, "_project_clipboard_stamp", None)):
+            group = self._objects_for_item(self._current_item())[0]
+            return _project_clipboard.paste_capability(external, role, data_group=group).allowed
         payload = self._clipboard
         if not isinstance(payload, _project_clipboard.ProjectClipboardPayload):
             clip_role, legacy = payload
@@ -17659,6 +17770,9 @@ class NfitProjectExplorer:
     def _handle_window_close(self, event: Any) -> None:
         if self._allow_window_close or self._confirm_save_before_closing_project():
             self._close_all_slice_viewers()
+            from .qt_project_clipboard import release_project_clipboard
+
+            release_project_clipboard(self)
             event.accept()
             return
         event.ignore()
@@ -21719,7 +21833,10 @@ def _parse_parameter_text(text: str) -> Any:
             return stripped
 
 
-def main() -> int:
+def main(*, project_path: str | Path | None = None) -> int:
     """Launch the nfit project explorer."""
 
-    return NfitProjectExplorer().run()
+    explorer = NfitProjectExplorer()
+    if project_path is not None and not explorer.open_project_path(project_path):
+        return 1
+    return explorer.run()
