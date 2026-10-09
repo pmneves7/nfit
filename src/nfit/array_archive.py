@@ -88,22 +88,31 @@ def _compression_workers(largest: int) -> int:
 
 
 @contextmanager
-def array_archive_writer(destination: BinaryIO, *, max_member_bytes: int, compressed: bool = True):
+def array_archive_writer(
+    destination: BinaryIO, *, max_member_bytes: int, compressed: bool = True,
+    retain_reservation: bool = False,
+):
     """Yield a lossless array writer without retaining the preceding members.
 
     ``max_member_bytes`` bounds parallel compression work using the same CPU
     and RAM policy as histogram artifacts. Each member remains independently
     readable by NumPy; the caller supplies arrays as they become available.
+    Batch callers can retain one scratch reservation until the archive closes;
+    streaming callers release it between members and generator yields.
     """
 
     workers = _compression_workers(max_member_bytes) if compressed else 1
     with ExitStack() as stack:
         member_bytes = max(0, int(max_member_bytes)) + 1024
         scratch = min(member_bytes, _NUMPY_WRITE_BUFFER_BYTES) + workers * 4 * min(member_bytes, _CHUNK_BYTES)
-        # A streaming caller can yield between members. Keep no allocation
-        # reservation active across those yields: compression buffers exist
-        # only while one member is being written and flushed.
-        check_memory(scratch, operation="Compressing array archive")
+        if retain_reservation:
+            # All batch members share this bounded workspace. Repeatedly
+            # admitting it would walk every live cache's provenance per array.
+            stack.enter_context(reserve_memory(scratch, operation="Compressing array archive"))
+        else:
+            # Streaming callers can suspend between members: retain no lease
+            # across those yields, while checking capacity before opening ZIP.
+            check_memory(scratch, operation="Compressing array archive")
         executor = (
             stack.enter_context(ThreadPoolExecutor(max_workers=workers))
             if workers > 1 else None
@@ -139,6 +148,6 @@ def write_array_archive(destination: BinaryIO, payload: Mapping[str, Any]) -> No
     if any(array.dtype.hasobject for array in arrays.values()):
         raise ValueError("object arrays cannot be saved in an nfit array archive")
     largest = max((array.nbytes for array in arrays.values()), default=0)
-    with array_archive_writer(destination, max_member_bytes=largest) as write:
+    with array_archive_writer(destination, max_member_bytes=largest, retain_reservation=True) as write:
         for name, array in arrays.items():
             write(name, array)

@@ -232,6 +232,25 @@ def test_compression_reserves_scratch_before_writing_member(monkeypatch):
     assert output.getvalue() == b""
 
 
+@pytest.mark.parametrize("members", [1, 64])
+def test_batch_compression_admits_shared_workspace_once(monkeypatch, members):
+    from nfit import resource_budget
+
+    inspections = []
+    monkeypatch.setattr(resource_budget, "_managed_provider", lambda: inspections.append(1) or 0)
+    monkeypatch.setattr(resource_budget, "_rss_provider", lambda: 0)
+    monkeypatch.setattr(resource_budget, "_limit_provider", lambda: 1024**3)
+    monkeypatch.setattr(resource_budget, "_available_provider", lambda: 1024**3)
+    payload = {f"field_{index}": np.arange(32.) for index in range(members)}
+    output = io.BytesIO()
+    array_archive.write_array_archive(output, payload)
+    assert len(inspections) == 1
+    with np.load(io.BytesIO(output.getvalue()), allow_pickle=False) as archive:
+        for name, value in payload.items():
+            np.testing.assert_array_equal(archive[name], value)
+    assert resource_budget.snapshot_memory().reserved_bytes == 0
+
+
 def test_in_memory_artifact_reserves_retained_output_before_serializing(monkeypatch):
     from nfit import resource_budget
 

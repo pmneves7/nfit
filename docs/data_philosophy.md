@@ -37,6 +37,9 @@ instrument or file format.
   Histogram normalization grids are
   stored as arrays rather than expanded into JSON, so large cached binnings
   remain practical to save and reopen.
+  Batch array saves reserve their bounded compression workspace once for the
+  archive, avoiding repeated traversal of loaded cache metadata for each array.
+  Streaming event writers release the workspace reservation between chunks.
   [Resource Manager](resources.md) distinguishes runtime owners from saved
   backings. Explicit unloading preserves recipes and disk references; confirmed
   cache deletion removes selected saved members on the next atomic save.
