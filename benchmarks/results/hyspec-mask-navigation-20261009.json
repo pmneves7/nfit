@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-09",
+  "host": "analysis-node21.sns.gov",
+  "project": "HYSPEC_all_raw.nfit",
+  "preview_source": "HYSPEC_filt_high_count.nfit",
+  "source_commit": "b71d9bc",
+  "project_runs": 1875,
+  "preview_runs": 1105,
+  "method": "Separate offscreen Qt process; cProfile includes selection callbacks and processEvents. The saved high-count mask was attached in memory; project files were not saved.",
+  "before_seconds": {
+    "open_mask": 1.0716469890321605,
+    "return_to_masks_folder": 0.7280880669713952,
+    "reopen_mask": 0.8480980320018716
+  },
+  "after_seconds": {
+    "open_mask": 0.21203787199920043,
+    "return_to_masks_folder": 0.004112460010219365,
+    "reopen_mask": 0.16104738705325872
+  },
+  "baseline_reopen_validation": {
+    "run_signatures": 1083,
+    "lstat_calls": 7581,
+    "stat_calls": 1083,
+    "viewer_availability_seconds": 0.686
+  },
+  "after_navigation_uses_metadata_only": true,
+  "original_project_unchanged": true,
+  "loaded_leaf_payloads": 0,
+  "limits": "This measures mask/Masks-folder navigation. Project startup and opening collection binning panels still have separate cache-validation work; timings depend on filesystem load and plot rendering."
+}

@@ -175,7 +175,7 @@ from .project_imports import (
     _dataset_group_import_stream,
     _dataset_ub_for_editor,
     available_data_types,
-    data_type_container,
+    data_type_container,  # noqa: F401 - compatibility re-export
     data_type_label,
     default_importer_for_data_type,
     import_mdevent_dataset_group,  # noqa: F401 - compatibility re-export
@@ -21104,31 +21104,7 @@ def _make_refreshing_combo_class():
 
 
 def _has_slice_viewer_candidates(group: DataGroup) -> bool:
-    for scope in _composite_scopes(group):
-        if not data_group_composite_enabled(scope):
-            continue
-        ready, _message = data_group_composite_status(scope)
-        if ready:
-            return True
-    for dataset in group.iter_datasets():
-        if not _project_viewer_loading.viewer_dataset_is_selectable(dataset):
-            continue
-        if isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
-            return True
-        if isinstance(dataset.data, (MDHistoData, PointListData)):
-            return True
-        if isinstance(dataset.data, PointData4D) and dataset_rebin_enabled(dataset):
-            return True
-        if data_type_container(dataset.data_type) == "point_list":
-            return True
-        if dataset.metadata.get("derived_from_analysis") and dataset.metadata.get(
-            "analysis_artifact_path"
-        ):
-            return True
-        source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
-        if source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"}:
-            return True
-    return False
+    return _project_viewer_loading.has_viewer_candidates(group)
 
 
 def _dataset_can_rebin(dataset: DatasetEntry) -> bool:

@@ -19,6 +19,11 @@ Choose a channel and press **Calculate values**:
   average; nfit integrates the stepwise log over that interval. It does not
   substitute an arithmetic average when timestamps are missing.
 
+Opening or leaving this editor displays the saved scalar preview without
+reading source events or rechecking every run's reduction inputs. Source
+freshness is checked by **Calculate values** and scientific preparation
+(such as rebinning or fitting).
+
 The plot includes disabled runs for inspection. Its x axis uses run numbers when
 available and dataset order otherwise. The Matplotlib toolbar provides zoom,
 pan, axes configuration, and figure export. **Y scale** also offers logarithmic

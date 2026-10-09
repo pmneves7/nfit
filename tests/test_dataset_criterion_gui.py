@@ -91,3 +91,46 @@ def test_available_types_respect_group_only_scope():
     assert create_group_mask(DatasetGroup("runs"), type="dataset_criterion").type == "dataset_criterion"
     with pytest.raises(ValueError, match="dataset groups"):
         create_mask(DatasetEntry("run", None), type="dataset_criterion")
+
+
+def test_switching_mask_panels_reuses_preview_without_scientific_validation(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+
+    from nfit import (
+        DataGroup,
+        DatasetGroup,
+        NfitProject,
+        dataset_criteria,
+        dataset_criterion_mask,
+        dataset_criterion_preview,
+        raw_dgs_cache,
+    )
+    from nfit.project_gui import NfitProjectExplorer
+    from tests.test_dataset_criteria import metadata_group
+
+    child = DatasetGroup("runs", datasets=metadata_group().datasets,
+                         metadata={"composite": {"enabled": True}})
+    root = DataGroup("workspace", subgroups=[child])
+    mask = dataset_criterion_mask(child, channel="metadata", source="metadata/temperature",
+                                  right_value=1.5)
+    rows = dataset_criterion_preview(child, mask)
+    explorer = NfitProjectExplorer(NfitProject([root]))
+    explorer._refresh_tree(select_group=root, select_mask=mask)
+    app = QtWidgets.QApplication.instance()
+    app.processEvents()
+    mask_item = explorer.tree.currentItem()
+    assert explorer._objects_for_item(mask_item)[2] is mask
+    monkeypatch.setattr(dataset_criteria, "value_signature",
+                        lambda *_args: pytest.fail("validated source while switching panels"))
+    monkeypatch.setattr(raw_dgs_cache, "iter_cached_event_chunks",
+                        lambda *_args: pytest.fail("loaded reduced events while switching panels"))
+    for _ in range(2):
+        explorer.tree.setCurrentItem(mask_item.parent())
+        explorer.tree.setCurrentItem(mask_item)
+        app.processEvents()
+    assert mask.metadata["dataset_criterion_preview"] is rows
+    assert not explorer.has_unsaved_changes
+    assert all(run.data is None for run in child.datasets)
+    explorer.window.close()
+    app.processEvents()

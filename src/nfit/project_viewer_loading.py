@@ -59,6 +59,23 @@ def viewer_dataset_is_selectable(dataset: DatasetEntry) -> bool:
     )
 
 
+def has_viewer_candidates(group: DataGroup) -> bool:
+    """Test declared viewer availability without validating scientific inputs.
+
+    Navigation uses the catalog's collection-ownership and source policy.
+    Source freshness, conditions and numerical readiness are checked when a
+    result is prepared, rather than while enabling a navigation control.
+    """
+    def visit(node):
+        if data_group_composite_enabled(_composite_scope(group, node)):
+            return True
+        return any(viewer_dataset_is_selectable(dataset) for dataset in node.datasets) or any(
+            visit(child) for child in node.subgroups
+        )
+
+    return visit(group)
+
+
 def plan_viewer_items(
     group: DataGroup,
     *,

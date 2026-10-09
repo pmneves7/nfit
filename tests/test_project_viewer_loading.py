@@ -19,6 +19,32 @@ def _group_with_named_binnings():
     return DataGroup("Workspace", datasets=[first, second])
 
 
+def test_viewer_availability_does_not_validate_conditions_or_touch_sources(monkeypatch):
+    from nfit import dataset_criteria, dataset_criterion_mask, dataset_criterion_preview
+
+    node = DatasetGroup("Runs", datasets=[
+        DatasetEntry(str(i), None, kind="raw_dgs_nexus",
+                     metadata={"source_file": f"/unavailable/run{i}.nxs", "temperature": i})
+        for i in range(100)
+    ], metadata={"raw_dgs": {"format": "raw-direct-geometry-nexus"},
+                 "composite": {"enabled": True}})
+    root = DataGroup("Workspace", subgroups=[node])
+    mask = dataset_criterion_mask(node, channel="metadata", source="metadata/temperature",
+                                  right_value=50.)
+    dataset_criterion_preview(node, mask)
+    # A pending source change must not force validation merely to enable a
+    # navigation button. Scientific preparation still checks it on execution.
+    node.datasets[0].metadata["temperature"] = 101.
+    with monkeypatch.context() as guarded:
+        guarded.setattr(dataset_criteria, "value_signature",
+                        lambda *_args: pytest.fail("validated diagnostic while browsing"))
+        guarded.setattr(Path, "stat", lambda *_args, **_kwargs: pytest.fail("stat while browsing"))
+        assert project_gui._has_slice_viewer_candidates(root)
+    assert all(dataset.data is None for dataset in node.datasets)
+    with pytest.raises(ValueError, match="new or changed"):
+        root.select()
+
+
 @pytest.mark.parametrize("metadata_key,source_format,kind", [
     ("raw_dgs", "raw-direct-geometry-nexus", "raw_dgs_nexus"),
     ("raw_dgs", "corelli-correlation-nexus", "raw_dgs_nexus"),
@@ -55,6 +81,7 @@ def test_unbinned_event_inputs_are_hidden_in_eager_and_deferred_viewers(
     assert project_gui._viewer_progress_work_counts(root, root, use_composite=use_composite) == (1, 0, 1)
     assert len(sources.datasets) == 32
     assert all(dataset.data is None for dataset in sources.datasets)
+    assert not project_viewer_loading.has_viewer_candidates(DataGroup("Only events", subgroups=[sources]))
 
 
 @pytest.mark.parametrize("metadata_key", ["raw_dgs", "mdevent"])
@@ -102,6 +129,10 @@ def test_viewer_policy_preserves_independent_results_and_lazy_sources(monkeypatc
     assert deferred.cached_indices == ()
     assert project_gui._effective_dataset_entry_count(root, root, use_composite=False) == len(visible)
     assert project_gui._viewer_progress_work_counts(root, root, use_composite=False) == (len(visible), 0, len(visible))
+    for dataset in visible:
+        assert project_viewer_loading.has_viewer_candidates(DataGroup("Visible", datasets=[dataset]))
+    for dataset in hidden:
+        assert not project_viewer_loading.has_viewer_candidates(DataGroup("Hidden", datasets=[dataset]))
 
 
 def test_viewer_catalog_uses_collection_ownership_not_fit_participation(monkeypatch):
