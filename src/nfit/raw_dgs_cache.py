@@ -72,6 +72,17 @@ def reduction_signature(dataset, config):
         previous = []
     previous_files = previous[1:4] if len(previous) >= 4 else [None] * 3
     settings = {key: [key in config, config.get(key, default)] for key, default in _REDUCTION_DEFAULTS.items()}
+    provenance = dataset.metadata.get("resolved_reduction", {}).get("provenance", {})
+    instrument = str(provenance.get("instrument_name") or dataset.metadata.get("instrument_name") or "unknown").upper()
+    if instrument not in {"UNKNOWN", "HYSPEC", ""}:
+        # This setting cannot affect another instrument. Retain the cached
+        # representation (including its historical absence), so introducing
+        # the HYSPEC checkbox does not invalidate unchanged non-HYSPEC runs.
+        old_settings = previous[4] if len(previous) == 6 and isinstance(previous[4], dict) else {}
+        if "hyspec_default_mask" in old_settings:
+            settings["hyspec_default_mask"] = old_settings["hyspec_default_mask"]
+        else:
+            settings.pop("hyspec_default_mask", None)
     policies = resolved_dgs_reduction_policies(config)
     for key in ("monitor_variance_policy", "event_precision_policy"):
         settings[key] = policies[key]

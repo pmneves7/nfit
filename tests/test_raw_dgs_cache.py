@@ -208,6 +208,74 @@ def test_cache_is_per_run_and_detects_source_and_reduction_changes(tmp_path, mon
     assert result.num_events.sum() == 2
 
 
+@pytest.mark.parametrize("instrument", ["SEQUOIA", "ARCS", "CNCS"])
+@pytest.mark.parametrize("legacy_mask_field", [False, True])
+def test_hyspec_checkbox_retains_other_instruments_cached_reduction_identity(
+    tmp_path, instrument, legacy_mask_field,
+):
+    from nfit.pipeline import DatasetEntry
+    from nfit.raw_dgs_cache import reduction_signature
+
+    source = tmp_path / "run.nxs.h5"
+    source.write_bytes(b"source")
+    dataset = DatasetEntry("run", None, metadata={"source_file": str(source)})
+    old = json.loads(reduction_signature(dataset, {}))
+    if not legacy_mask_field:
+        old[4].pop("hyspec_default_mask")
+    previous = json.dumps(old, sort_keys=True)
+    dataset.metadata.update(
+        raw_dgs_reduction_cache={"signature": previous},
+        resolved_reduction={"provenance": {"instrument_name": instrument}},
+    )
+    assert reduction_signature(dataset, {}) == previous
+    assert reduction_signature(dataset, {"hyspec_default_mask": False}) == previous
+    assert reduction_signature(dataset, {"t0_override": 1.}) != previous
+    source.write_bytes(b"changed source")
+    assert reduction_signature(dataset, {}) != previous
+
+
+@pytest.mark.parametrize("instrument", ["HYSPEC", "unknown"])
+def test_legacy_mask_setting_remains_a_dependency_for_hyspec_or_unknown_sources(tmp_path, instrument):
+    from nfit.pipeline import DatasetEntry
+    from nfit.raw_dgs_cache import reduction_signature
+
+    source = tmp_path / "run.nxs.h5"
+    source.touch()
+    dataset = DatasetEntry("run", None, metadata={"source_file": str(source), "instrument_name": instrument})
+    current = reduction_signature(dataset, {})
+    previous = json.loads(current)
+    previous[4].pop("hyspec_default_mask")
+    dataset.metadata["raw_dgs_reduction_cache"] = {"signature": json.dumps(previous, sort_keys=True)}
+    assert reduction_signature(dataset, {}) != dataset.metadata["raw_dgs_reduction_cache"]["signature"]
+    assert reduction_signature(dataset, {"hyspec_default_mask": False}) != current
+
+
+def test_old_sequoia_reduction_and_histogram_identity_survive_mask_checkbox(tmp_path, monkeypatch):
+    from nfit import project_composites, raw_dgs_cache
+
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    _rewrite_instrument_xml(source, 'xmlns=', 'name="SEQUOIA" xmlns=')
+    group = raw_dgs_dataset_group([source])
+    with monkeypatch.context() as legacy:
+        legacy.setattr(raw_dgs_cache, "_REDUCTION_DEFAULTS", {
+            key: value for key, value in raw_dgs_cache._REDUCTION_DEFAULTS.items()
+            if key != "hyspec_default_mask"
+        })
+        expected = bin_raw_dgs_group(group, **OPTIONS)
+        old_signature = group.datasets[0]._raw_dgs_reduction_cache.signature
+        histogram_signature = project_composites._composite_cache_signature(group)
+    path = tmp_path / "legacy.nfit"
+    save_project(NfitProject([DataGroup("runs", subgroups=[group])]), path)
+    reopened = load_project(path).data_groups[0].subgroups[0]
+    assert project_composites._composite_cache_signature(reopened) == histogram_signature
+    assert raw_dgs_cache.reduction_signature(reopened.datasets[0], reopened.metadata["raw_dgs"]) == old_signature
+    monkeypatch.setattr(raw_dgs, "inspect_raw_dgs_run", lambda *args, **kwargs: pytest.fail("reduced unchanged run"))
+    actual = bin_raw_dgs_group(reopened, **OPTIONS)
+    assert actual.metadata["reduced_event_cache"] == {"hits": 1, "misses": 0}
+    assert_equal(actual, expected)
+
+
 def test_cache_mask_file_changes_invalidate_events_and_normalization(tmp_path):
     source = tmp_path / 'SEQ_42.nxs.h5'
     _write_raw_dgs(source)

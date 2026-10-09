@@ -426,7 +426,10 @@ matching Shiver’s default single-crystal mask. An additional detector mask
 file is applied alongside this selection. Disable the checkbox to retain the
 tips; supplied mask files continue to apply. The setting is saved in reduction
 recipes, supports per-run overrides, and invalidates affected reduced-event
-and binning caches when changed.
+and binning caches when changed. It does not invalidate other instruments'
+caches when saved reduction provenance identifies them as non-HYSPEC. Older
+SEQUOIA caches that predate this checkbox remain reusable; unknown instrument
+identities retain conservative invalidation.
 
 **HYSPEC raw TOF window** applies Shiver's flight-path window to recorded TOFs
 before time-zero subtraction. **HYSPEC Tank Y offset** defaults to the offset
