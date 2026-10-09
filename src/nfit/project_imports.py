@@ -30,7 +30,7 @@ from .mdhisto import (
     load_mantid_mdhisto_nxs,
 )
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup
-from .project_archive import project_artifact_exists
+from .project_archive import ArchiveMember, archive_member_identity, project_artifact_exists
 from .raw_dgs import is_raw_dgs_nexus_file, raw_dgs_dataset_group
 from .spectral_channels import (
     SPECTRAL_CHANNEL_CONFIG_KEY,
@@ -797,6 +797,29 @@ def _source_availability(
     return None, False
 
 
+def bind_project_artifact_identities(project, path):
+    """Retain canonical artifact identities from one metadata-only snapshot."""
+    from .project_store import open_project_zip
+
+    with open_project_zip(path) as archive:
+        for group in project.data_groups:
+            for dataset in group.iter_datasets():
+                if not (dataset.metadata.get("derived_from_analysis")
+                        or dataset.metadata.get("project_artifact_path")):
+                    continue
+                member = (dataset.metadata.get("project_artifact_path")
+                          or dataset.metadata.get("analysis_artifact_path")
+                          or dataset.metadata.get("source_file"))
+                if member:
+                    try:
+                        identity = archive_member_identity(archive, member)
+                    except KeyError:
+                        # A declared analysis output may not be produced yet.
+                        # No numerical payload has been bound to this reference.
+                        continue
+                    dataset._project_artifact_source = ArchiveMember(Path(path), str(member), identity=identity)
+
+
 def _artifact_source_load(
     dataset: DatasetEntry,
     _context: _SourceLoadContext,
@@ -815,9 +838,11 @@ def _artifact_source_load(
     transferred = getattr(dataset, "_project_artifact_source", None)
     if (not project_path or not artifact_path) and transferred is None:
         return _SOURCE_NOT_HANDLED
+    identity = transferred.identity if transferred is not None else None
     loaded = read_project_dataset_artifact(
         transferred.path if transferred is not None else project_path,
         transferred.member if transferred is not None else artifact_path,
+        **({"expected_identity": identity} if identity is not None else {}),
     )
     loaded = dataset.replace_data(loaded, source_backed=True)
     dataset.metadata["import_status"] = "loaded"

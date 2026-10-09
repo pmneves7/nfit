@@ -71,6 +71,8 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "measurement_smoothing.py",
     PACKAGE_ROOT / "composite_workflow.py",
     PACKAGE_ROOT / "point_data_archive.py",
+    PACKAGE_ROOT / "project_store.py",
+    PACKAGE_ROOT / "project_archive.py",
     PACKAGE_ROOT / "project_caches.py",
     PACKAGE_ROOT / "figure_export.py",
     PACKAGE_ROOT / "resource_usage.py",

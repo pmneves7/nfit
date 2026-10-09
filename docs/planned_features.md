@@ -3,6 +3,16 @@
 This page lists possible extensions, not compatibility promises or scheduled
 releases. Current behavior is documented in the workflow and API pages.
 
+## Project persistence
+
+- Validate the opt-in [incremental storage prototype](project_storage.md) on
+  native Windows and across analysis nodes before adopting it by default.
+  Add GUI conversion, compaction and recovered-generation presentation; these
+  operations currently use public Python APIs.
+- Improve first-save histogram encoding based on live worker profiling.
+  Incremental saves avoid rewriting unchanged artifacts, but newly computed
+  arrays still need their initial encoding.
+
 ## Scientific analysis
 
 - Expose polarized-neutron SF, NSF, and chiral channels. The tensor RPA kernel

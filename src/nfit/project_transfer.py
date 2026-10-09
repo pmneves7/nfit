@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import copy
 import os
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +21,7 @@ from .operation_control import report_operation
 from .pipeline import BackgroundSpec, DataGroup, DatasetEntry, DatasetGroup, MaskSpec
 from .project_archive import (
     ArchiveMember,
+    archive_member_identity,
     dataset_artifact_member,
     read_project_manifest,
     write_project_manifest,
@@ -34,6 +34,7 @@ from .project_clipboard import (
     paste_payload,
 )
 from .project_io import NfitProject, _project_from_manifest, _project_manifest_for_save
+from .project_store import StoreConflictError, open_project_zip, project_read_snapshot
 from .raw_dgs_cache import bind_project_reduced_event_caches, project_reduced_event_artifacts
 
 TRANSFER_SCHEMA = "nfit.project-selection"
@@ -263,10 +264,10 @@ def write_project_selection(selection, path, *, collect_binnings=None):
                 artifacts.setdefault(member, pending)
         for source in source_paths:
             if source.is_file():
-                with zipfile.ZipFile(source) as archive:
+                with open_project_zip(source) as archive:
                     for name in archive.namelist():
                         if name in requested_assets or any(name.startswith(f"assets/analyses/{identity}/") for identity in analysis_ids):
-                            artifacts.setdefault(name, ArchiveMember(source, name))
+                            artifacts.setdefault(name, ArchiveMember(source, name, identity=archive_member_identity(archive, name)))
         write_project_manifest(target, selection_manifest(selection, target), preserve_existing=False,
                                binning_artifacts=artifacts, reduced_event_artifacts=reduced)
     selection.path = target
@@ -277,6 +278,17 @@ def write_project_selection(selection, path, *, collect_binnings=None):
 def read_project_selection(path=None, *, manifest=None):
     """Decode selected configuration; scientific arrays and reduced events stay lazy."""
     path = Path(path).absolute() if path is not None else None
+    if path is None:
+        return _read_project_selection(path, manifest=manifest)
+    with project_read_snapshot(path) as snapshot:
+        result = _read_project_selection(path, manifest=manifest)
+        stat = path.stat()
+        if snapshot.nfit_file_identity != (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns):
+            raise StoreConflictError("Project selection changed while loading; reopen before copying")
+        return result
+
+
+def _read_project_selection(path, *, manifest):
     payload = read_project_manifest(path) if manifest is None else manifest
     description = payload.get("project_selection", {})
     if description.get("schema") != TRANSFER_SCHEMA or description.get("version") != TRANSFER_VERSION:
@@ -317,8 +329,8 @@ def save_project_selection(selection, path):
     target = Path(path).expanduser().absolute()
     artifacts = {}
     if selection.path is not None:
-        with zipfile.ZipFile(selection.path) as archive:
-            artifacts = {name: ArchiveMember(selection.path, name) for name in archive.namelist()
+        with open_project_zip(selection.path) as archive:
+            artifacts = {name: ArchiveMember(selection.path, name, identity=archive_member_identity(archive, name)) for name in archive.namelist()
                          if name.startswith("assets/") and not name.endswith("/")}
     write_project_manifest(target, selection_manifest(selection, target), preserve_existing=False,
                            binning_artifacts=artifacts)
@@ -435,11 +447,11 @@ def _adopt_analysis_assets(selection, destination, result):
     def renamed(value):
         return prefix + value.removeprefix("assets/analyses/") if isinstance(value, str) and value.startswith("assets/analyses/") else value
 
-    with zipfile.ZipFile(selection.path) as archive:
+    with open_project_zip(selection.path) as archive:
         assets = destination.__dict__.setdefault("_project_transfer_assets", {})
         for member in archive.namelist():
             if member.startswith("assets/analyses/"):
-                assets[renamed(member)] = ArchiveMember(selection.path, member)
+                assets[renamed(member)] = ArchiveMember(selection.path, member, identity=archive_member_identity(archive, member))
     for root in (item for item in result.items if isinstance(item, DataGroup)):
         for item in root.iter_datasets():
             for key in ("source_file", "analysis_artifact_path", "project_artifact_path"):

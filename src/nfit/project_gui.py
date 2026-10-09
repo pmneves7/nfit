@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import time
+import warnings
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -139,7 +140,6 @@ from .pipeline import (
 from .plot_recipes import new_plot_entry, plot_script, render_plot
 from .project_archive import (
     ArchiveContent,
-    ArchiveMember,
     binning_artifact_member,
     project_artifact_compressed_size,
     project_artifact_exists,
@@ -5804,13 +5804,9 @@ def _project_binning_artifacts(
                 member = binning_artifact_member(cache_id)
                 if excluded_project_cache(project, member):
                     continue
-                backing = (
-                    _VIEWER_VIEW_CACHE.archive_backing(key, signature)
-                    if hasattr(_VIEWER_VIEW_CACHE, "archive_backing")
-                    else None
-                )
-                if backing is not None:
-                    artifacts[member] = ArchiveMember(*backing) if backing[1] is not None else backing[0]
+                reference = _VIEWER_VIEW_CACHE.archive_reference(key, signature)
+                if reference is not None:
+                    artifacts[member] = reference
                 else:
                     data = _peek_cached_dataset_view(
                         dataset,
@@ -5877,13 +5873,9 @@ def _project_binning_artifacts(
                 stage = "final"
                 if _COMPOSITE_DATA_CACHE.has_signature(base_key, base_signature):
                     key, signature, stage = base_key, base_signature, "unsubtracted"
-                backing = (
-                    _COMPOSITE_DATA_CACHE.archive_backing(key, signature)
-                    if hasattr(_COMPOSITE_DATA_CACHE, "archive_backing")
-                    else None
-                )
-                if backing is not None:
-                    artifacts[member] = ArchiveMember(*backing) if backing[1] is not None else backing[0]
+                reference = _COMPOSITE_DATA_CACHE.archive_reference(key, signature)
+                if reference is not None:
+                    artifacts[member] = reference
                 else:
                     data = (_COMPOSITE_DATA_CACHE.get(key)[1] if stage == "unsubtracted" else
                         _peek_cached_composite_dataset_data(
@@ -6193,15 +6185,24 @@ def save_project(
     *,
     asset_source: str | Path | None = None,
     progress_callback: Any | None = None,
+    storage_mode: str | None = None,
 ) -> None:
-    """Persist project state and analysis artifacts in one nfit archive."""
+    """Persist project state and artifacts; opt in to incremental single-file saves.
+
+    ``storage_mode='incremental'`` requires a new destination for legacy projects.
+    Subsequent saves preserve the destination's format automatically.
+    """
 
     # Storage is selected only for this operation, never at application startup.
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    from .project_store import inspect_project_store
+
+    expected_revision = inspect_project_store(target).revision if target.exists() else None
     with project_data_workspace(project, target):
         _save_project_archive(
-            project, target, asset_source=asset_source, progress_callback=progress_callback
+            project, target, asset_source=asset_source, progress_callback=progress_callback,
+            storage_mode=storage_mode, expected_revision=expected_revision,
         )
 
 
@@ -6211,6 +6212,8 @@ def _save_project_archive(
     *,
     asset_source: str | Path | None,
     progress_callback: Any | None,
+    storage_mode: str | None = None,
+    expected_revision=None,
 ) -> None:
     target = Path(path)
     from .project_transfer import adopt_saved_transfer_artifacts, project_transfer_artifacts
@@ -6246,39 +6249,50 @@ def _save_project_archive(
             project.settings[PROJECT_BINNING_CACHE_ENTRIES_KEY] = entries
             reduced_artifacts = project_reduced_event_artifacts(project)
             try:
-                write_project_manifest(
+                written_revision = write_project_manifest(
                     target,
                     _project_manifest_for_save(project, target),
                     asset_source=asset_source,
                     preserve_existing=asset_source is not None,
                     binning_artifacts=artifacts,
                     reduced_event_artifacts=reduced_artifacts,
+                    storage_mode=storage_mode,
+                    expected_revision=expected_revision,
                 )
             except Exception:
                 restore_previous_entries()
                 raise
-        _adopt_saved_project_binning_backing(project, target, entries)
     else:
         project.settings.pop(PROJECT_BINNING_CACHE_ENTRIES_KEY, None)
         reduced_artifacts = project_reduced_event_artifacts(project)
         try:
-            write_project_manifest(
+            written_revision = write_project_manifest(
                 target,
                 _project_manifest_for_save(project, target),
                 asset_source=asset_source,
                 preserve_existing=asset_source is not None,
                 binning_artifacts=incoming,
                 reduced_event_artifacts=reduced_artifacts,
+                storage_mode=storage_mode,
+                expected_revision=expected_revision,
             )
         except Exception:
             restore_previous_entries()
             raise
-        _COMPOSITE_DATA_CACHE.clear_project_backing(target)
-        _VIEWER_VIEW_CACHE.clear_project_backing(target)
-    project._project_path = target
-    bind_project_reduced_event_caches(project, target)
-    _bind_project_analysis_sources(project, target, load_data=False)
-    adopt_saved_transfer_artifacts(project, target)
+    from .project_store import StoreConflictError, project_read_snapshot
+
+    with project_read_snapshot(target) as snapshot:
+        if written_revision is not None and snapshot.nfit_revision != written_revision:
+            raise StoreConflictError("The project was saved, but changed afterward; reopen before continuing")
+        if project_cache_binnings_enabled(project):
+            _adopt_saved_project_binning_backing(project, target, entries)
+        else:
+            _COMPOSITE_DATA_CACHE.clear_project_backing(target)
+            _VIEWER_VIEW_CACHE.clear_project_backing(target)
+        project._project_path = target
+        bind_project_reduced_event_caches(project, target)
+        _bind_project_analysis_sources(project, target, load_data=False)
+        adopt_saved_transfer_artifacts(project, target)
 
 
 def _bind_project_analysis_sources(
@@ -6287,6 +6301,9 @@ def _bind_project_analysis_sources(
     *,
     load_data: bool = True,
 ) -> None:
+    from .project_imports import bind_project_artifact_identities
+
+    bind_project_artifact_identities(project, project_path)
     prepare_data = getattr(getattr(project, "_path_resolution", None), "prepare_data", None)
     for group in project.data_groups:
         for dataset in group.iter_datasets():
@@ -6318,7 +6335,10 @@ def _bind_project_analysis_sources(
             ):
                 continue
             try:
-                data = read_project_dataset_artifact(project_path, str(artifact))
+                data = read_project_dataset_artifact(
+                    project_path, str(artifact),
+                    expected_identity=getattr(getattr(dataset, "_project_artifact_source", None), "identity", None),
+                )
                 if prepare_data is not None:
                     data = prepare_data(data)
             except (KeyError, OSError, TypeError, ValueError):
@@ -6334,16 +6354,26 @@ def load_project(path: str | Path, *, path_mappings=None) -> NfitProject:
     """Load a project saved by :func:`save_project`."""
 
     project_path = Path(path)
-    project = _project_from_manifest(read_project_manifest(project_path), project_path,
-                                     path_mappings=path_mappings)
-    project._project_path = project_path
+    from .data_workspace import set_project_temporary_directory
+    from .project_store import StoreConflictError, project_read_snapshot
     from .raw_dgs_cache import bind_project_reduced_event_caches
 
-    bind_project_reduced_event_caches(project, project_path)
-    from .data_workspace import set_project_temporary_directory
-    set_project_temporary_directory(project, project.settings.get("temporary_storage_directory"), validate=False)
-    _bind_project_analysis_sources(project, project_path)
-    _restore_project_binning_cache(project, project_path)
+    with project_read_snapshot(project_path) as snapshot:
+        project = _project_from_manifest(read_project_manifest(project_path), project_path,
+                                         path_mappings=path_mappings)
+        project._project_path = project_path
+        project._storage_recovered = snapshot.nfit_recovered
+        bind_project_reduced_event_caches(project, project_path)
+        set_project_temporary_directory(project, project.settings.get("temporary_storage_directory"), validate=False)
+        _bind_project_analysis_sources(project, project_path)
+        _restore_project_binning_cache(project, project_path)
+        stat = project_path.stat()
+        identity = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+        if identity != snapshot.nfit_file_identity:
+            raise StoreConflictError("Project changed while loading; reopen it")
+        if snapshot.nfit_recovered:
+            warnings.warn("An older project generation was recovered; Save As to a new file before editing",
+                          RuntimeWarning, stacklevel=2)
     return project
 
 

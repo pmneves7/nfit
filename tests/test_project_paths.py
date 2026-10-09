@@ -25,7 +25,9 @@ def _tree(tmp_path, name):
     project = experiment / "shared" / "nfit" / "sample.nfit"
     for path in (source, calibration, project):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"fixture")
+        # The project is a save destination, not a corrupt existing container.
+        if path != project:
+            path.write_bytes(b"fixture")
     return experiment, source, calibration, project
 
 

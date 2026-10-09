@@ -25,6 +25,7 @@ from .dgs_reduction_policy import (
 from .project_archive import (
     REDUCED_EVENT_ASSET_ROOT,
     ArchiveMember,
+    archive_member_identity,
     dataset_artifact_member,
     open_project_artifact,
 )
@@ -127,7 +128,8 @@ class _ReducedEventCache:
     @contextmanager
     def open(self):
         if isinstance(self.content, ArchiveMember):
-            with open_project_artifact(self.content.path, self.content.member) as stream:
+            with open_project_artifact(self.content.path, self.content.member,
+                                       expected_identity=self.content.identity) as stream:
                 with np.load(stream, allow_pickle=False) as archive:
                     yield archive
         else:
@@ -240,12 +242,17 @@ def project_reduced_event_artifacts(project):
 
 def bind_project_reduced_event_caches(project, path):
     """Attach lazy archive references after loading or saving a project."""
-    for group in project.data_groups:
-        bind_data_workspace(group, path)
-        for dataset in group.iter_datasets():
-            payload = dataset.metadata.get(_CACHE_KEY)
-            if isinstance(payload, dict) and payload.get("version") == RAW_DGS_REDUCTION_VERSION:
-                dataset._raw_dgs_reduction_cache = _ReducedEventCache(
-                    str(payload["signature"]),
-                    ArchiveMember(Path(path), str(payload["member"])),
-                )
+    from .project_store import open_project_zip
+
+    # One metadata snapshot for all runs; never reopen a large index per run.
+    with open_project_zip(path) as archive:
+        for group in project.data_groups:
+            bind_data_workspace(group, path)
+            for dataset in group.iter_datasets():
+                payload = dataset.metadata.get(_CACHE_KEY)
+                if isinstance(payload, dict) and payload.get("version") == RAW_DGS_REDUCTION_VERSION:
+                    member = str(payload["member"])
+                    dataset._raw_dgs_reduction_cache = _ReducedEventCache(
+                        str(payload["signature"]),
+                        ArchiveMember(Path(path), member, identity=archive_member_identity(archive, member)),
+                    )

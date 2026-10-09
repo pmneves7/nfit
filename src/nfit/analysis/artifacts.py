@@ -179,10 +179,11 @@ def read_project_dataset_artifact(
     artifact_path: str,
     *,
     memory_map: bool | None = False,
+    expected_identity=None,
 ) -> MDHistoData | PointData4D | PointListData:
     """Read an analysis dataset stored inside an nfit project."""
 
-    with open_project_artifact(project_path, artifact_path) as stream:
+    with open_project_artifact(project_path, artifact_path, expected_identity=expected_identity) as stream:
         return read_dataset_artifact(
             stream, memory_map=memory_map, temp_dir=Path(project_path).absolute().parent
         )

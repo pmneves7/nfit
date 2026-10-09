@@ -135,6 +135,9 @@ different Python.
   viewer catalogs and on-demand dataset preparation.
 - `src/nfit/qt_viewer_resources.py`: loaded viewer inventory and explicit
   release of viewer-owned numerical payloads.
+- `src/nfit/project_archive.py` and `project_store.py`: project artifacts, legacy
+  ZIP persistence and opt-in committed generations; `docs/project_storage.md`
+  documents storage, recovery and compaction.
 - `src/nfit/project_io.py`, `project_history.py`, and `project_models.py`: project
   serialization, fit-history snapshots, and model-state reconciliation.
 - `src/nfit/project_paths.py`: declared file references, portable project paths,

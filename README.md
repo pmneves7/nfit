@@ -40,6 +40,8 @@ in the system's default file manager.
 
 A few of its main capabilities are:
 
+- opt-in incremental single-file project saves that retain unchanged scientific
+  artifacts, with committed generations, recovery checks and explicit compaction;
 - open independent project windows through the Window menu and copy workspaces,
   collections, recipes, viewer settings and lazy scientific caches between them;
 - editable MACS Sources/Reduction recipes with equal-sensitivity defaults and

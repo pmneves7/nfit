@@ -11,6 +11,14 @@ dependencies. See [measurement statistics](measurement_statistics.md).
 nested groups and background context without Qt or a saved project. See
 [workflow scripts](workflow_scripts.md).
 
+## Project persistence
+
+`save_project(project, new_path, storage_mode="incremental")` opts a new
+destination into incremental single-file storage. `project_storage_info(path)`
+inspects its committed storage without decoding arrays; `compact_project(path)`
+explicitly reclaims replaced objects. See [Project storage](project_storage.md)
+for recovery, portability and prototype limits.
+
 ## Measurement contracts and reference estimates
 
 `MeasurementContract` records the measurement kind, estimator, quantity and units,

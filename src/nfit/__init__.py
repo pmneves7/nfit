@@ -536,6 +536,7 @@ from .powder import (
     is_powder_dataset,
     powder_convergence_scan,
 )
+from .project_archive import compact_project, project_storage_info
 from .project_caches import clear_project_caches
 from .project_data import (
     add_data_group_composite_binning,
@@ -1392,6 +1393,7 @@ __all__ = [
     "reduced_event_cache_info",
     "sample_problem_parameters",
     "save_project",
+    "compact_project", "project_storage_info",
     "export_project_items", "import_project_items",
     "set_background_collection",
     "materialize_composite_dataset",

@@ -9,12 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
-from zipfile import BadZipFile, ZipFile
+from zipfile import BadZipFile
 
 from .data_workspace import temporary_storage_usage
 from .mapped_archive import array_storage_allocations
 from .performance import load_resource_limits
 from .project_archive import ArchiveMember
+from .project_store import inspect_project_store, open_project_zip
 from .raw_dgs_cache import clear_reduced_event_cache
 
 CACHE_EXCLUSIONS_KEY = "resource_cache_exclusions"
@@ -178,10 +179,14 @@ class ProjectResources:
             return {}
         if identity != self._disk_index:
             try:
-                with ZipFile(path) as archive:
-                    self._disk_members = {info.filename: info.compress_size for info in archive.infolist()}
+                info = inspect_project_store(path)
+                revision = info.revision if info.format == "incremental" else identity
+                if revision != getattr(self, "_disk_revision", None):
+                    with open_project_zip(path) as archive:
+                        self._disk_members = {item.filename: item.compress_size for item in archive.infolist()}
+                    self._disk_revision = revision
                 self._disk_index = identity
-            except (OSError, BadZipFile):
+            except (OSError, ValueError, BadZipFile):
                 return {}
         return self._disk_members
 

@@ -1095,6 +1095,30 @@ Follow-up fixes for the first interactive review:
   loose reduced-event staging folders (27.45 GB); preserve saved project caches.
 - [ ] Review the updated ORNL application with Paul.
 
+#### 6B-S2 — Incremental project persistence prototype
+
+Paul authorized an isolated prototype and realistic save benchmark after the
+HYSPEC first save spent more than an hour encoding histograms. Existing science
+projects remain untouched during these tests.
+
+- [x] Retain unchanged compressed artifacts in a single file between saves.
+- [x] Test committed snapshots, interrupted writes, corruption, cancellation,
+  competing processes, portable copies and explicit compaction.
+- [x] Benchmark the saved HYSPEC project on ORNL, including copying and durable
+  publication; distinguish subsequent saves from first histogram encoding.
+- [ ] Finish tracing the live node23 encoding slowdown; SSH from the benchmark
+  node cannot inspect that GUI process directly.
+- [ ] Review results before default migration or new GUI storage controls.
+
+The opt-in append prototype retains existing NPZ payloads and passes local and
+same-node ORNL filesystem interruption/lock checks. Repeated metadata saves of
+the 60 GB HYSPEC project took 1.30–1.41 s versus 79.5–80.5 s for ZIP rewrites;
+initial copies took about 79–80 s. Tuned SQLite is a credible alternative and
+needs a chunk reader, reduced-event/histogram read benchmarks and coordinated
+compaction tests before a default format decision. Evidence and scope are in
+`benchmarks/results/project-storage-node21.md`. Windows and cross-node locking
+validation remain outstanding. The original science projects are unchanged.
+
 ### Deferred instrument work
 
 The initial survey covered continuous measurements, reduced CW tables and real

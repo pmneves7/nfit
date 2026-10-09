@@ -24,12 +24,18 @@ from .dataset import PointListData
 from .mapped_archive import array_storage_nbytes, array_storage_owners
 from .mdhisto import MDHistoData
 from .operation_control import report_operation
+from .project_archive import ArchiveMember
 from .resource_budget import reserve_memory
 
 _CHUNK_BYTES = 8 * 1024**2
 
 
 def _file_identity(path: Path) -> tuple[int, int, int, int]:
+    from .project_store import active_snapshot_identity
+
+    pinned = active_snapshot_identity(path)
+    if pinned is not None:
+        return pinned
     stat = path.stat()
     return int(stat.st_dev), int(stat.st_ino), int(stat.st_size), int(stat.st_mtime_ns)
 
@@ -42,6 +48,7 @@ class _DiskBinning:
     owned: bool = True
     project_identity: tuple[int, int, int, int] | None = None
     prepare_data: Callable[[Any], Any] | None = None
+    project_member_identity: tuple[Any, ...] | None = None
 
     def available(self) -> bool:
         if not self.path.exists():
@@ -49,8 +56,21 @@ class _DiskBinning:
         if self.project_identity is None:
             return True
         try:
-            return _file_identity(self.path) == self.project_identity
-        except OSError:
+            if _file_identity(self.path) == self.project_identity:
+                return True
+            if self.project_member is None or self.project_member_identity is None:
+                return False
+            from .project_archive import archive_member_identity
+            from .project_store import open_project_zip
+
+            with open_project_zip(self.path) as archive:
+                if archive_member_identity(archive, self.project_member) != self.project_member_identity:
+                    return False
+                # Only the bookkeeping changes. The retained numerical member
+                # must still have exactly the identity registered originally.
+                object.__setattr__(self, "project_identity", archive.nfit_file_identity)
+                return True
+        except (OSError, ValueError, KeyError, BadZipFile):
             return False
 
     def restore(self) -> MDHistoData | PointListData:
@@ -60,9 +80,18 @@ class _DiskBinning:
             return read_dataset_artifact(self.path, memory_map=False)
         if not self.available():
             raise OSError("the project archive changed since this cache was registered")
-        data = read_project_dataset_artifact(
-            self.path, self.project_member, memory_map=False
-        )
+        from .project_archive import archive_member_identity
+        from .project_store import project_read_snapshot
+
+        # Pin verification and decoding together: a writer may commit between
+        # available() and this read, including replacing this very member.
+        with project_read_snapshot(self.path) as archive:
+            if (self.project_member_identity is not None
+                    and archive_member_identity(archive, self.project_member) != self.project_member_identity):
+                raise OSError("the project artifact changed since this cache was registered")
+            data = read_project_dataset_artifact(
+                self.path, self.project_member, memory_map=False
+            )
         return self.prepare_data(data) if self.prepare_data is not None else data
 
 
@@ -556,13 +585,27 @@ class RebinCache(OrderedDict):
     ) -> None:
 
         path = Path(project_path)
+        from .project_archive import archive_member_identity
+        from .project_store import open_project_zip
+
+        identity = _file_identity(path)
+        member_identity = None
+        try:
+            with open_project_zip(path) as archive:
+                member_identity = archive_member_identity(archive, member)
+                identity = archive.nfit_file_identity
+        except (OSError, ValueError, KeyError, BadZipFile):
+            # Preserve lazy handling of missing/corrupt cache members. The
+            # decoder treats these as misses instead of blocking project load.
+            pass
         backing = _DiskBinning(
             signature=str(signature),
             path=path,
             project_member=str(member),
             prepare_data=prepare_data,
             owned=False,
-            project_identity=_file_identity(path),
+            project_identity=identity,
+            project_member_identity=member_identity,
         )
         self._project_backings[key] = backing
         if lazy:
@@ -618,6 +661,31 @@ class RebinCache(OrderedDict):
             disk = self._disk.get(key)
             if disk is not None and disk.signature == signature and disk.available():
                 return disk.path, disk.project_member
+            return None
+
+    def archive_reference(self, key: Any, signature: str) -> ArchiveMember | Path | None:
+        """Return saved backing with the member identity registered by this cache.
+
+        An external commit after the availability check must not replace the
+        identity associated with ``signature``. Consumers validate this retained
+        token when opening/copying the artifact. Standalone session files retain
+        their existing physical-file availability guard.
+        """
+        with self._decode_lock:
+            project = self._project_backings.get(key)
+            if project is not None and self.project_backing(key, signature) is not None:
+                if project.project_member_identity is not None:
+                    return ArchiveMember(project.path, project.project_member,
+                                         identity=project.project_member_identity)
+                return None
+            disk = self._disk.get(key)
+            if disk is None or disk.signature != signature or not disk.available():
+                return None
+            if disk.project_member is None:
+                return disk.path
+            if disk.project_member_identity is not None:
+                return ArchiveMember(disk.path, disk.project_member,
+                                     identity=disk.project_member_identity)
             return None
 
     def clear_disk_cache(self) -> None:
