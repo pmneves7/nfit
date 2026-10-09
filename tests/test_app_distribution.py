@@ -284,9 +284,10 @@ def test_portable_linux_release_selects_tar_archive():
     assert result.filename == "nfit-0.87.0-linux-x86_64.tar.gz"
 
 
-def test_portable_linux_update_atomically_replaces_bundle(tmp_path):
-    bundle = tmp_path / "nfit"
-    bundle.mkdir()
+@pytest.mark.parametrize("directory", ["nfit", "nfit-0.121.0", "nfit installation"])
+def test_portable_linux_update_atomically_replaces_bundle(tmp_path, directory):
+    bundle = tmp_path / directory
+    (bundle / "_internal").mkdir(parents=True)
     (bundle / "nfit").write_text("old executable")
     payload = tmp_path / "payload" / "nfit"
     (payload / "_internal").mkdir(parents=True)
@@ -305,6 +306,61 @@ def test_portable_linux_update_atomically_replaces_bundle(tmp_path):
     updates.cleanup_portable_linux_backups(bundle)
     assert not list(tmp_path.glob(".nfit-backup-*"))
     assert not list(tmp_path.glob(".nfit-install-*"))
+
+
+def test_portable_update_helper_has_independent_runtime_and_persistent_log(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def spawn(command, **kwargs):
+        calls.append((command, kwargs))
+        kwargs["stdout"].write("installer diagnostic\n")
+
+    monkeypatch.setattr(updates.subprocess, "Popen", spawn)
+    monkeypatch.setenv("PYINSTALLER_RESET_ENVIRONMENT", "0")
+    bundle = tmp_path / "nfit-0.121.0"
+    archive = tmp_path / "nfit-update.tar.gz"
+    updates.launch_portable_linux_update(archive, bundle)
+
+    command, options = calls[0]
+    assert command[1:4] == ["--install-portable-update", str(archive), str(bundle)]
+    assert options["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert options["stdin"] == updates.subprocess.DEVNULL
+    assert options["stderr"] == updates.subprocess.STDOUT
+    assert options["start_new_session"]
+    assert (tmp_path / "nfit-update.log").read_text() == "installer diagnostic\n"
+
+
+def test_invalid_portable_update_leaves_current_installation_intact(tmp_path):
+    bundle = tmp_path / "nfit-0.121.0"
+    (bundle / "_internal").mkdir(parents=True)
+    (bundle / "nfit").write_text("old executable")
+    archive = tmp_path / "nfit-update.tar.gz"
+    with tarfile.open(archive, "w:gz"):
+        pass
+    with pytest.raises(updates.UpdateError, match="invalid layout"):
+        updates.install_portable_linux_update(archive, bundle)
+    assert (bundle / "nfit").read_text() == "old executable"
+    assert not list(tmp_path.glob(".nfit-backup-*"))
+    assert not list(tmp_path.glob(".nfit-install-*"))
+
+
+def test_portable_update_restart_has_independent_runtime(tmp_path, monkeypatch):
+    calls = []
+    executable = tmp_path / "nfit-0.121.0" / "nfit"
+    monkeypatch.setattr(updates, "install_portable_linux_update", lambda *_: executable)
+    monkeypatch.setattr(updates.os, "kill", lambda *_: (_ for _ in ()).throw(ProcessLookupError()))
+    monkeypatch.setattr(updates.subprocess, "Popen", lambda command, **options: calls.append((command, options)))
+    monkeypatch.setenv("PYINSTALLER_RESET_ENVIRONMENT", "0")
+
+    updates.complete_portable_linux_update(tmp_path / "update.tar.gz", executable.parent, 123)
+
+    command, options = calls[0]
+    assert command == [str(executable)]
+    assert options["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert options["stdin"] == updates.subprocess.DEVNULL
+    assert options["start_new_session"]
 
 
 @pytest.mark.parametrize(

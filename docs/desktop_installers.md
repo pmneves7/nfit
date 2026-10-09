@@ -72,7 +72,11 @@ Conda environment or glibc replacement is needed. Launch it from a graphical
 desktop session, such as ThinLinc on the ORNL analysis cluster. An ordinary
 SSH terminal needs a working graphical display to open the GUI.
 The application's **File → Check for updates…** can update a writable
-user-local tarball installation.
+user-local tarball installation, including a renamed or versioned installation
+directory. Updates replace that directory in place, preserving existing launchers.
+The installer helper runs independently of the closing application and writes
+errors to `nfit-update.log` beside the installation directory. If an update does
+not reopen nfit, inspect that log before retrying.
 
 ### Temporary scientific storage
 

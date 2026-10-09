@@ -234,9 +234,9 @@ def install_portable_linux_update(archive: Path, bundle: Path) -> Path:
 
     archive = Path(archive).resolve()
     bundle = Path(bundle).resolve()
-    if not archive.name.endswith(".tar.gz") or bundle.name != "nfit":
+    if not archive.name.endswith(".tar.gz"):
         raise UpdateError("The portable Linux update paths are invalid.")
-    if not bundle.is_dir() or not (bundle / "nfit").is_file():
+    if not (bundle / "nfit").is_file() or not (bundle / "_internal").is_dir():
         raise UpdateError("The current portable nfit installation was not found.")
     staging = Path(tempfile.mkdtemp(prefix=".nfit-install-", dir=bundle.parent))
     backup = bundle.parent / f".nfit-backup-{uuid.uuid4().hex}"
@@ -265,17 +265,26 @@ def install_portable_linux_update(archive: Path, bundle: Path) -> Path:
 def launch_portable_linux_update(archive: Path, bundle: Path) -> None:
     """Start the frozen helper that waits for this process, updates, and relaunches."""
 
-    subprocess.Popen(
-        [
-            sys.executable,
-            "--install-portable-update",
-            str(Path(archive).resolve()),
-            str(Path(bundle).resolve()),
-            str(os.getpid()),
-        ],
-        close_fds=True,
-        start_new_session=True,
-    )
+    # This helper outlives the GUI. It must own a new frozen runtime rather than
+    # inherit PyInstaller's child-process state from the installation it replaces.
+    environment = os.environ.copy()
+    environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    with (Path(bundle).resolve().parent / "nfit-update.log").open("a") as log:
+        subprocess.Popen(
+            [
+                sys.executable,
+                "--install-portable-update",
+                str(Path(archive).resolve()),
+                str(Path(bundle).resolve()),
+                str(os.getpid()),
+            ],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+            start_new_session=True,
+        )
 
 
 def complete_portable_linux_update(
@@ -293,8 +302,12 @@ def complete_portable_linux_update(
     else:
         raise UpdateError("Timed out waiting for nfit to close before updating.")
     executable = install_portable_linux_update(archive, bundle)
+    environment = os.environ.copy()
+    environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     subprocess.Popen(
         [str(executable)],
+        env=environment,
+        stdin=subprocess.DEVNULL,
         close_fds=True,
         start_new_session=True,
         cwd=str(Path.home()),
