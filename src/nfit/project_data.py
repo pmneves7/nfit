@@ -1185,6 +1185,16 @@ def _viewer_data_before_scale(
     cache_id: str | None = None,
 ) -> MDHistoData | PointListData | None:
     config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
+    if (
+        getattr(dataset, "_viewer_composite_cache_owner", None) is not None
+        and not config.get("enabled")
+        and not dataset.masks
+        and not extra_masks
+    ):
+        # Live composite aliases already carry their owner's prepared grid and
+        # masks. A second manual-mask cache must not hide a freshly rescaled
+        # background result (or strip masks already applied by that owner).
+        return dataset.data
     view_cache, key = _viewer_preparation_cache(dataset, cache_id)
     signature = _viewer_view_signature(dataset, extra_masks, config)
     deferred_masks = _should_defer_dataset_masks(dataset, force_masks=force_masks)
