@@ -20,6 +20,7 @@ def raw_source(group):
 @contextmanager
 def prepared_raw_source(group, source):
     from . import raw_dgs as raw
+    from .dgs_reduction_policy import resolved_dgs_reduction_policies
     from .raw_dgs_cache import cached_reduction, reduction_signature
     from .reduction_recipes import effective_reduction_config
 
@@ -34,7 +35,7 @@ def prepared_raw_source(group, source):
             yield config, info, payload, archive, None, header.get("hyspec_preprocessing"), signature
     else:
         info = raw.inspect_raw_dgs_run(source.metadata["source_file"],
-            monitor_variance_policy=config["monitor_variance_policy"],
+            monitor_variance_policy=resolved_dgs_reduction_policies(config)["monitor_variance_policy"],
             bad_pulse_threshold=config.get("bad_pulse_threshold", 95.))
         setup = None
         if info.instrument_name.upper() == "HYSPEC":

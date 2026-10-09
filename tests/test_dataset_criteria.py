@@ -148,6 +148,32 @@ def test_elastic_fresh_cached_and_selection_remove_counts_and_exposure(groups):
     np.testing.assert_array_equal(selected.mask, explicit.mask)
 
 
+def test_elastic_legacy_recipe_uses_native_defaults_without_mutating_recipe(groups):
+    from nfit.dgs_reduction_policy import resolved_dgs_reduction_policies
+    from nfit.raw_dgs_cache import reduction_signature
+    from nfit.reduction_recipes import effective_reduction_config
+
+    sample, _dummy = groups
+    parameters = dict(channel="elastic", energy_min=-19., energy_max=19.)
+    expected = [criterion_value(sample, run, parameters) for run in sample.datasets]
+    policies = resolved_dgs_reduction_policies({})
+    for key in policies:
+        sample.metadata["raw_dgs"].pop(key, None)
+        for run in sample.datasets:
+            for storage in ("import_options", "reduction_overrides"):
+                run.metadata.get(storage, {}).pop(key, None)
+    saved_recipe = copy.deepcopy(sample.metadata)
+    for run, reference in zip(sample.datasets, expected, strict=True):
+        config = effective_reduction_config(sample, run)
+        assert "monitor_variance_policy" not in config
+        assert reduction_signature(run, config) == reduction_signature(run, {**config, **policies})
+        assert criterion_value(sample, run, parameters) == reference
+    target(sample)
+    for run, reference in zip(sample.datasets, expected, strict=True):
+        assert criterion_value(sample, run, parameters) == reference
+    assert sample.metadata == saved_recipe
+
+
 def test_save_reopen_selection_and_portable_composite_replay(tmp_path):
     from nfit import composite_dataset_data
     from nfit.composite_workflow import export_composite_recipe, replay_composite_recipe

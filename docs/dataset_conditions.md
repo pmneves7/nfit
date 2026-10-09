@@ -75,8 +75,10 @@ no momentum-region selection or division by energy-window width.
 The diagnostic respects each run's energy/time-zero settings, beam-pulse
 rejection, detector mask, vanadium normalization, detector-efficiency correction,
 and incident/final wavevector correction. It uses the same reconstructed and
-rounded events as native binning. The requested window must lie within every
-run's reduced energy domain. A run with no events in a covered window has value
+rounded events as native binning. Saved recipes that omit a numerical policy
+use the current importer default, just as native reduction does; calculating
+this diagnostic does not rewrite their settings. The requested window must lie
+within every run's reduced energy domain. A run with no events in a covered window has value
 zero; absent normalization raises an error. This diagnostic does not subtract a
 background or apply a UB matrix, symmetry, dataset scale, or fit weight.
 
