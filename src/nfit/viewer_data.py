@@ -17,6 +17,10 @@ class ViewerLoadCancelled(Exception):
     """A deferred viewer load stopped at the user's request."""
 
 
+class RebinCancellationRequested(ViewerLoadCancelled, RuntimeError):
+    """Raised cooperatively when the user cancels a rebin operation."""
+
+
 @dataclass(frozen=True)
 class ViewerDatasetDescriptor:
     """Lightweight catalog entry for a viewer dataset payload."""

@@ -5,6 +5,7 @@ from collections import OrderedDict
 import numpy as np
 
 from .dgs_background_sources import reduced_event_stream
+from .dgs_binning import _symmetry_matrices
 from .raw_dgs_cache import reduction_signature
 from .reduction_recipes import effective_reduction_config
 
@@ -29,7 +30,7 @@ def raw_dgs_coordinate_bounds(
     rounding. The small bounds cache includes source/calibration identity,
     effective reduction settings, UB, output basis and symmetry.
     """
-    from .raw_dgs import _goniometer, _symmetry_matrices
+    from .raw_dgs import _goniometer
 
     if group.metadata.get("raw_dgs", {}).get("format") != "raw-direct-geometry-nexus":
         raise ValueError("coordinate bounds require a native direct-geometry group")

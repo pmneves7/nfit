@@ -76,6 +76,19 @@ parameter reconciliation. The project explorer keeps compatibility wrappers
 for public APIs; widgets and plotting windows remain presentation modules
 rather than owners of scientific state.
 
+Shared direct-geometry grid planning and validation live in `dgs_binning`;
+Python detector-trajectory accumulation lives in `dgs_trajectory_accumulation`.
+Raw and reduced-event adapters use these services with the numerical policies
+defined in `dgs_reduction_policy`. Existing MDEvent helper imports remain
+available as compatibility exports.
+
+`project_viewer_loading` enumerates configured binnings for viewer and resource
+workflows without loading numerical payloads. The Resource Manager uses that
+service directly, and `viewer_data` owns the shared cancellation types.
+`project_cache_compat` owns saved-binning compatibility rules, including the
+explicitly supported derived-recipe and composite migrations. Serialization
+and GUI entry points retain compatibility exports of the same implementation.
+
 For example, the GUI's data-group workflow corresponds to ordinary package
 calls:
 

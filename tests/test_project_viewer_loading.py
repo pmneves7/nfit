@@ -19,6 +19,82 @@ def _group_with_named_binnings():
     return DataGroup("Workspace", datasets=[first, second])
 
 
+def test_project_binning_targets_preserve_order_and_live_configs_without_loading(monkeypatch):
+    group = _group_with_named_binnings()
+    project = project_gui.NfitProject([group])
+    configs = [project_data.dataset_rebin_config(dataset) for dataset in group.datasets]
+    for config in configs:
+        config["enabled"] = True
+    child = DatasetGroup("Collection")
+    group.subgroups.append(child)
+    scope = project_gui._composite_scope(group, child)
+    config = project_data.data_group_composite_config(scope)
+    config["enabled"] = True
+    monkeypatch.setattr(project_data, "dataset_for_slice_viewer",
+                        lambda *_args, **_kwargs: pytest.fail("loaded data while listing binnings"))
+    monkeypatch.setattr(project_data, "composite_dataset_entry",
+                        lambda *_args, **_kwargs: pytest.fail("loaded composite while listing binnings"))
+
+    targets = project_viewer_loading.project_binning_targets(
+        project, rebin_key=project_data.DATASET_REBIN_KEY,
+        dataset_binnings=project_data.dataset_rebin_binnings,
+    )
+
+    assert [item[1] for item in targets] == [
+        "first · Default", "first · Coarse", "second · Default", "second · Overview",
+        "Collection · Default",
+    ]
+    assert targets[0][2] is group and targets[0][3] is group.datasets[0]
+    assert targets[0][5] is configs[0] and targets[2][5] is configs[1]
+    assert targets[-1][3].root is group and targets[-1][3].node is child
+    assert targets[-1][5] is config
+    assert project_gui._project_binning_targets(project) == targets
+
+
+def test_project_binning_target_facade_preserves_live_helper_hooks(monkeypatch):
+    group = _group_with_named_binnings()
+    project = project_gui.NfitProject([group])
+    config = {"enabled": True}
+    calls = []
+
+    def binnings(dataset):
+        calls.append(dataset)
+        return [{"name": "Patched", "id": "test", "config": config}]
+
+    monkeypatch.setattr(project_gui, "dataset_rebin_binnings", binnings)
+    monkeypatch.setattr(project_gui, "_binning_view_name", lambda source, name: f"{source}/{name}")
+    targets = project_gui._project_binning_targets(project)
+    assert calls == group.datasets
+    assert [item[1] for item in targets] == ["first/Patched", "second/Patched"]
+    assert all(item[5] is config for item in targets)
+
+
+def test_resource_cancellation_exception_preserves_facade_identity():
+    from nfit.viewer_data import RebinCancellationRequested, ViewerLoadCancelled
+
+    assert project_gui.RebinCancellationRequested is RebinCancellationRequested
+    assert project_gui.ViewerLoadCancelled is ViewerLoadCancelled
+    assert issubclass(RebinCancellationRequested, ViewerLoadCancelled)
+    assert issubclass(RebinCancellationRequested, RuntimeError)
+
+
+def test_composite_scope_facade_preserves_live_factory_hook(monkeypatch):
+    child = DatasetGroup("Collection")
+    group = DataGroup("Workspace", subgroups=[child])
+    factory = project_gui._composite_scope
+    calls = []
+
+    def scope(root, node):
+        calls.append((root, node))
+        return factory(root, node)
+
+    monkeypatch.setattr(project_gui, "_composite_scope", scope)
+    scopes = list(project_gui._composite_scopes(group))
+    assert scopes[0] is group
+    assert scopes[1].root is group and scopes[1].node is child
+    assert calls == [(group, child)]
+
+
 def test_viewer_availability_does_not_validate_conditions_or_touch_sources(monkeypatch):
     from nfit import dataset_criteria, dataset_criterion_mask, dataset_criterion_preview
 

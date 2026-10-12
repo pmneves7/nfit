@@ -12,6 +12,8 @@ from dataclasses import asdict
 
 import numpy as np
 
+from .dgs_binning import _symmetry_matrices
+
 
 def raw_source(group):
     return group.metadata.get("raw_dgs", {}).get("format") == "raw-direct-geometry-nexus"
@@ -71,7 +73,7 @@ def trajectory_payloads(group, runs, inverse_basis, symmetry=None, *, reference_
             bounds = raw_dgs._energy_transfer_bounds(config, float(config.get("incident_energy_override") or info.incident_energy))
             payloads.extend((inverse_basis[:3, :3].T @ operation @ canonical, ei, np.asarray(bounds),
                              float(norm["charge"])*run.fit_weight, len(detectors)-1)
-                            for operation in raw_dgs._symmetry_matrices(symmetry))
+                            for operation in _symmetry_matrices(symmetry))
     return detectors, payloads
 
 

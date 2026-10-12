@@ -22,7 +22,10 @@ from .pipeline import (
     ModelComponentSpec,
 )
 from .plot_recipes import plot_entry_from_dict, plot_entry_to_dict
-from .project_cache_compat import composite_cache_signatures_match
+from .project_cache_compat import binning_signatures_match
+from .project_cache_compat import (
+    composite_cache_signatures_match as composite_cache_signatures_match,
+)
 from .project_history import (
     _applies_to_from_payload,
     _background_from_dict,
@@ -38,45 +41,7 @@ from .project_history import (
 from .project_models import reconcile_model_orbit_parameters
 
 FIT_CHANNEL_NAMES = ("fit", "residual")
-
-
-def _binning_signatures_match(saved: str | None, current: str) -> bool:
-    """Compare saved identities using explicitly supported compatibility rules.
-
-    Composite algorithm migrations are checked by the GUI-independent cache
-    compatibility service; numerical changes outside its safe subset remain
-    stale.
-
-    Older live derived binnings stored a process-local id(None) in the first
-    field. Accept that token only for a resolved, payload-free derived recipe
-    whose remaining signature (including sources, grid, masks and operation)
-    matches exactly. Ordinary in-memory data must retain strict identity checks.
-    """
-
-    if saved == current:
-        return True
-    if composite_cache_signatures_match(saved, current):
-        return True
-    if not isinstance(saved, str):
-        return False
-    try:
-        previous = json.loads(saved)
-        present = json.loads(current)
-    except (TypeError, ValueError):
-        return False
-    if not (
-        isinstance(previous, list) and isinstance(present, list)
-        and len(previous) == len(present) == 8
-        and isinstance(present[0], list) and len(present[0]) == 2
-        and present[0][0] == "derived_recipe"
-        and present[2] == "derived_recipe" and present[7] is not None
-        and isinstance(previous[0], list) and len(previous[0]) == 3
-        and previous[0][0] == "memory"
-        and type(previous[0][1]) is int and previous[0][1] >= 0
-        and type(previous[0][2]) is int and previous[0][2] > 0
-    ):
-        return False
-    return previous[1:] == present[1:]
+_binning_signatures_match = binning_signatures_match
 
 
 @dataclass

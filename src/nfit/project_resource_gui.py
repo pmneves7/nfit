@@ -39,15 +39,18 @@ def _release_viewers(explorer, selected):
 def _recipes(explorer):
     from . import project_composites as comp
     from . import project_data
-    from .project_gui import _project_binning_targets, effective_dataset_masks
+    from .project_viewer_loading import project_binning_targets
 
-    for kind, label, group, target, binning_id, config in _project_binning_targets(explorer.project):
+    targets = project_binning_targets(explorer.project,
+        rebin_key=project_data.DATASET_REBIN_KEY,
+        dataset_binnings=project_data.dataset_rebin_binnings)
+    for kind, label, group, target, binning_id, config in targets:
         member = project_binning_member(explorer.project, kind, group, target, binning_id)
         if kind == "dataset":
             fit = config is project_data.dataset_rebin_config(target)
             key = target.id if fit else f"{target.id}:{binning_id}"
             def load(t=target, g=group, c=config, bid=binning_id, fit=fit):
-                return project_data.dataset_for_slice_viewer(t, extra_masks=effective_dataset_masks(g, t),
+                return project_data.dataset_for_slice_viewer(t, extra_masks=project_data.effective_dataset_masks(g, t),
                     force_rebin=True, rebin_config=c, cache_id=None if fit else bid)
             yield project_data._VIEWER_VIEW_CACHE, key, label, member, load
         else:
@@ -198,7 +201,7 @@ def run_project_resource_job(explorer, title, task, *, on_progress=None):
         except Exception as exc:
             from .qt_resource_jobs import ResourceJobCancelled
             if isinstance(exc, ResourceJobCancelled):
-                from .project_gui import RebinCancellationRequested
+                from .viewer_data import RebinCancellationRequested
                 raise RebinCancellationRequested(str(exc)) from exc
             raise
     finally:

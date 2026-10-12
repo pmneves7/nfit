@@ -1,8 +1,9 @@
 # Performance notes
 
-nfit selects conservative CPU and memory strategies automatically. Most users
-only need to limit grid sizes and install an optional acceleration backend for
-large jobs.
+nfit selects conservative CPU and memory strategies automatically. Numba CPU
+acceleration is included in the standard installation; CuPy GPU acceleration
+requires a separate installation. Grid sizes and resource limits control how
+much work nfit admits.
 
 ## Rebinning and event reduction
 
@@ -475,7 +476,7 @@ The resolvent contractions support:
 | backend | use | installation |
 | --- | --- | --- |
 | `numpy` | default and small jobs | included |
-| `numba` | large CPU jobs | `pip install nfit[accel]` |
+| `numba` | large CPU jobs | included |
 | `cupy` | large GPU jobs | `pip install nfit[gpu]` with a matching CuPy wheel |
 
 `nfit.set_rpa_backend("auto")` is the default. It uses NumPy below roughly
@@ -483,6 +484,9 @@ The resolvent contractions support:
 Set `NFIT_RPA_BACKEND` or call `set_rpa_backend()` to override it.
 `nfit.available_rpa_backends()` reports what is available. An unavailable
 forced backend falls back to NumPy.
+
+The `nfit[accel]` installation extra remains available for compatibility with
+existing setup commands; it requires the same Numba version as the base package.
 
 The selection also governs the anisotropic (tensor) evaluator. Above the same
 threshold its unpolarized channel uses a fused Numba kernel that forms each

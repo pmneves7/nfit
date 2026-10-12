@@ -13,13 +13,92 @@ from typing import Any
 
 from .pipeline import DataGroup, DatasetEntry
 from .project_composites import (
+    GROUP_COMPOSITE_BINNINGS_KEY,
     _composite_dataset_name,
     _composite_scope,
+    _CompositeScope,
     composite_dataset_entry,
     data_group_composite_binnings,
     data_group_composite_enabled,
 )
 from .viewer_data import DeferredViewerDatasets, ViewerDatasetDescriptor
+
+
+def _composite_scopes(
+    group: DataGroup,
+    *,
+    scope_factory: Callable[[DataGroup, Any], Any] = _composite_scope,
+):
+    yield group
+    for subgroup in group.iter_subgroups():
+        yield scope_factory(group, subgroup)
+
+
+def _binning_view_name(source_name: str, binning_name: str) -> str:
+    return f"{source_name} · {binning_name}"
+
+
+def project_binning_targets(
+    project: Any,
+    *,
+    rebin_key: str,
+    dataset_binnings: Callable[[DatasetEntry], list[dict[str, Any]]],
+    composite_binnings: Callable[[Any], list[dict[str, Any]]] = data_group_composite_binnings,
+    composite_enabled: Callable[[Any], bool] = data_group_composite_enabled,
+    composite_scopes: Callable[[DataGroup], Any] = _composite_scopes,
+    binning_view_name: Callable[[str, str], str] = _binning_view_name,
+) -> list[tuple[str, str, DataGroup, Any, str, dict[str, Any]]]:
+    """Return enabled independent binnings and their live configuration references.
+
+    Registry callbacks retain the normal configuration sanitization without
+    importing the project-data facade or loading numerical payloads.
+    """
+
+    from .project_binning_policy import controlling_composite
+
+    targets = []
+    for group in project.data_groups:
+        for dataset in group.iter_datasets():
+            if controlling_composite(group, dataset) is not None:
+                continue
+            if not isinstance(dataset.parameters.get(rebin_key), dict):
+                continue
+            for binning in dataset_binnings(dataset):
+                if binning["config"].get("enabled"):
+                    targets.append(
+                        (
+                            "dataset",
+                            binning_view_name(dataset.name, binning["name"]),
+                            group,
+                            dataset,
+                            binning["id"],
+                            binning["config"],
+                        )
+                    )
+        for scope in composite_scopes(group):
+            node = scope.node if isinstance(scope, _CompositeScope) else scope
+            if controlling_composite(group, node) is not None:
+                continue
+            if (
+                not composite_enabled(scope)
+                and not isinstance(
+                    scope.metadata.get(GROUP_COMPOSITE_BINNINGS_KEY), dict
+                )
+            ):
+                continue
+            for binning in composite_binnings(scope):
+                if binning["config"].get("enabled"):
+                    targets.append(
+                        (
+                            "dataset group",
+                            binning_view_name(scope.name, binning["name"]),
+                            group,
+                            scope,
+                            binning["id"],
+                            binning["config"],
+                        )
+                    )
+    return targets
 
 
 @dataclass(frozen=True)

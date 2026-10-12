@@ -27,6 +27,11 @@ from typing import Any
 
 import numpy as np
 
+from .dgs_binning import (
+    _requested_edges,
+    _symmetry_matrices,
+    _validated_minimum_samples,
+)
 from .dgs_event_accumulation import accumulate_projected_dgs_events
 from .dgs_normalization import (
     DEFAULT_TRAJECTORY_ENERGY_POLICY,
@@ -36,12 +41,17 @@ from .dgs_reduction_policy import (
     DEFAULT_EVENT_PRECISION_POLICY,
     DEFAULT_MONITOR_VARIANCE_POLICY,
     DEFAULT_SYMMETRY_VARIANCE_POLICY,
+    ENERGY_TO_K2,
     dgs_histogram_edges,
     dgs_powder_coordinates,
     dgs_uses_mantid_trajectory_grid,
     prepare_dgs_event_projector,
     resolved_dgs_reduction_policies,
     validated_monitor_variance_policy,
+)
+from .dgs_trajectory_accumulation import (
+    _accumulate_detector_trajectory,
+    _accumulate_powder_detector_trajectory,
 )
 from .event_covariance import accumulate_copy_covariance
 from .histogram_statistics import (
@@ -51,16 +61,10 @@ from .histogram_statistics import (
 )
 from .mdevent import (
     _MDEVENT_NUMBA,
-    ENERGY_TO_K2,
     MDEVENT_TRAJECTORY_BATCH_TASKS,
-    _accumulate_detector_trajectory,
     _accumulate_discrete_event_coordinates,
-    _accumulate_powder_detector_trajectory,
     _dgs_grid_memory,
-    _requested_edges,
-    _symmetry_matrices,
     _trajectory_worker_count,
-    _validated_minimum_samples,
     load_detector_normalization,
 )
 from .mdhisto import MDHistoAxis, MDHistoData

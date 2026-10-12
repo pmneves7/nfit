@@ -235,6 +235,7 @@ from .project_rebin_panels import (
     rebin_symmetry_expression_width,  # noqa: F401 - extracted panel helper
 )
 from .project_rebinning import estimated_rebin_shape
+from .project_viewer_loading import _binning_view_name
 from .qt_branding import configure_application_icon
 from .qt_controls import (
     COMPACT_SCALAR_FIELD_WIDTH,
@@ -254,7 +255,11 @@ from .spectral_channels import (
     normalized_spectral_channel_config,
 )
 from .symmetry import symmetry_spec_from_config
-from .viewer_data import DeferredViewerDatasets, ViewerLoadCancelled
+from .viewer_data import (
+    DeferredViewerDatasets,
+    RebinCancellationRequested,
+    ViewerLoadCancelled,  # noqa: F401 - compatibility re-export
+)
 from .workflow import (
     WorkflowValidationError,
     analysis_workflow_script,
@@ -2318,9 +2323,9 @@ def _finish_named_binning_progress(
 
 
 def _composite_scopes(group: DataGroup):
-    yield group
-    for subgroup in group.iter_subgroups():
-        yield _composite_scope(group, subgroup)
+    return _project_viewer_loading._composite_scopes(
+        group, scope_factory=_composite_scope
+    )
 
 
 def slice_viewer_datasets(
@@ -2489,10 +2494,6 @@ def _finish_viewer_batch_progress(
         kind="stage",
         completed=True,
     )
-
-
-def _binning_view_name(source_name: str, binning_name: str) -> str:
-    return f"{source_name} · {binning_name}"
 
 
 def _entries_with_visualization_binnings(
@@ -5421,53 +5422,17 @@ def project_cache_binnings_enabled(project: NfitProject) -> bool:
 def _project_binning_targets(
     project: NfitProject,
 ) -> list[tuple[str, str, DataGroup, Any, str, dict[str, Any]]]:
-    """Return configured dataset and composite binnings in project order."""
+    """Return configured binnings using the explorer's live compatibility hooks."""
 
-    from .project_binning_policy import controlling_composite
-
-    targets = []
-    for group in project.data_groups:
-        for dataset in group.iter_datasets():
-            if controlling_composite(group, dataset) is not None:
-                continue
-            if not isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict):
-                continue
-            for binning in dataset_rebin_binnings(dataset):
-                if binning["config"].get("enabled"):
-                    targets.append(
-                        (
-                            "dataset",
-                            _binning_view_name(dataset.name, binning["name"]),
-                            group,
-                            dataset,
-                            binning["id"],
-                            binning["config"],
-                        )
-                    )
-        for scope in _composite_scopes(group):
-            node = scope.node if isinstance(scope, _CompositeScope) else scope
-            if controlling_composite(group, node) is not None:
-                continue
-            if (
-                not data_group_composite_enabled(scope)
-                and not isinstance(
-                    scope.metadata.get(GROUP_COMPOSITE_BINNINGS_KEY), dict
-                )
-            ):
-                continue
-            for binning in data_group_composite_binnings(scope):
-                if binning["config"].get("enabled"):
-                    targets.append(
-                        (
-                            "dataset group",
-                            _binning_view_name(scope.name, binning["name"]),
-                            group,
-                            scope,
-                            binning["id"],
-                            binning["config"],
-                        )
-                    )
-    return targets
+    return _project_viewer_loading.project_binning_targets(
+        project,
+        rebin_key=DATASET_REBIN_KEY,
+        dataset_binnings=dataset_rebin_binnings,
+        composite_binnings=data_group_composite_binnings,
+        composite_enabled=data_group_composite_enabled,
+        composite_scopes=_composite_scopes,
+        binning_view_name=_binning_view_name,
+    )
 
 
 def _project_binning_is_current(
@@ -6662,10 +6627,6 @@ def _capitalized_progress_text(text: str) -> str:
 
     value = str(text)
     return value[:1].upper() + value[1:]
-
-
-class RebinCancellationRequested(ViewerLoadCancelled, RuntimeError):
-    """Raised cooperatively when the user cancels a rebin operation."""
 
 
 class _RebinProgressDialog:

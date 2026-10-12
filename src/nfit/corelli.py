@@ -38,11 +38,13 @@ try:
 except Exception:  # Numba remains optional for portable source installations.
     _CORELLI_NUMBA = None
 
-from .mdevent import (
-    FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
+from .dgs_binning import (
     _requested_edges,
     _symmetry_matrices,
     _validated_minimum_samples,
+)
+from .mdevent import (
+    FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
     load_detector_normalization,
 )
 from .mdhisto import MDHistoAxis, MDHistoData

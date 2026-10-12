@@ -108,6 +108,8 @@ different Python.
   `dgs_reduction_policy_gui.py` presents those choices.
 - `src/nfit/dgs_event_accumulation.py` and `_dgs_event_numba.py`: shared ordered
   event projection/accumulation using the policy-owned affine transform.
+- `src/nfit/dgs_binning.py` and `dgs_trajectory_accumulation.py`: shared DGS
+  grid planning, validation, and Python detector-trajectory accumulation.
 - `src/nfit/dgs_trajectory_tasks.py`: exact-identity exposure task pooling after
   complete detector-geometry checks.
 - `src/nfit/dgs_symmetry_cache.py`: guarded reuse of additive raw-DGS statistics
@@ -132,7 +134,8 @@ different Python.
 - `src/nfit/project_summary.py`: bounded, reusable numerical counts for
   dataset summaries without retaining their array payloads.
 - `src/nfit/project_viewer_loading.py` and `viewer_data.py`: metadata-only
-  viewer catalogs and on-demand dataset preparation.
+  viewer and resource binning catalogs, on-demand dataset preparation, and
+  shared viewer/rebin cancellation types.
 - `src/nfit/qt_viewer_resources.py`: loaded viewer inventory and explicit
   release of viewer-owned numerical payloads.
 - `src/nfit/project_archive.py` and `project_store.py`: project artifacts, legacy
@@ -140,6 +143,8 @@ different Python.
   documents storage, recovery and compaction.
 - `src/nfit/project_io.py`, `project_history.py`, and `project_models.py`: project
   serialization, fit-history snapshots, and model-state reconciliation.
+- `src/nfit/project_cache_compat.py`: compatibility rules for saved dataset,
+  derived-recipe, and composite binning signatures.
 - `src/nfit/project_paths.py`: declared file references, portable project paths,
   relocation, and lazy metadata path resolution.
 - `src/nfit/mapped_archive.py`: bounded temporary-disk array loading and

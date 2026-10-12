@@ -326,7 +326,7 @@ Set `minimum_samples` to mask statistically sparse output bins without
 discarding their accumulated sample-count diagnostics. With discrete binning this
 is the number of accepted source points. With fractional binning it is the sum
 of the fractional spatial contributions. Explicit-edge grids currently use the
-NumPy implementation because the optional fused Numba kernel assumes constant
+NumPy implementation because the fused Numba kernel assumes constant
 bin widths.
 
 `rebin_nd_symmetry` accepts reciprocal-HKL operation matrices and streams each
@@ -353,8 +353,8 @@ while a larger target can reduce batching overhead but raises peak memory. The
 best value depends on the dataset size, output grid size, dimensionality, and
 available memory.
 
-`NDRebin` adaptively selects its CPU implementation. When optional Numba support
-is installed, jobs above a size threshold use a fused kernel that streams each
+`NDRebin` adaptively selects its CPU implementation. When the Numba backend
+is available, jobs above a size threshold use a fused kernel that streams each
 batch directly into the four output accumulators. This avoids both the full
 point-by-dimension bin-index array and the repeated output-grid-sized
 `bincount` temporaries used by the NumPy implementation, and is several times

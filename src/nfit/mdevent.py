@@ -17,6 +17,18 @@ import numpy as np
 from . import _parallel
 from .backgrounds import background_with_user_mask_zeros
 from .dataset import PointData4D
+from .dgs_binning import (
+    _requested_edges as _requested_edges,
+)
+from .dgs_binning import (
+    _symmetry_matrices as _symmetry_matrices,
+)
+from .dgs_binning import (
+    _validated_minimum_samples as _validated_minimum_samples,
+)
+from .dgs_binning import (
+    dgs_grid_memory,
+)
 from .dgs_event_accumulation import accumulate_projected_dgs_events
 from .dgs_normalization import (
     DEFAULT_TRAJECTORY_ENERGY_POLICY,
@@ -28,7 +40,6 @@ from .dgs_reduction_policy import (
     ENERGY_TO_K,
     dgs_histogram_edges,
     dgs_powder_coordinates,
-    dgs_trajectory_bin_indices,
     dgs_uses_mantid_trajectory_grid,
     prepare_dgs_event_projector,
     resolved_dgs_reduction_policies,
@@ -37,6 +48,15 @@ from .dgs_reduction_policy import (
 )
 from .dgs_reduction_policy import (
     ENERGY_TO_K2 as ENERGY_TO_K2,
+)
+from .dgs_reduction_policy import (
+    dgs_trajectory_bin_indices as dgs_trajectory_bin_indices,
+)
+from .dgs_trajectory_accumulation import (
+    _accumulate_detector_trajectory as _accumulate_detector_trajectory,
+)
+from .dgs_trajectory_accumulation import (
+    _accumulate_powder_detector_trajectory as _accumulate_powder_detector_trajectory,
 )
 from .event_bin_indices import flat_bin_indices as _flat_bin_indices
 from .event_covariance import accumulate_copy_covariance
@@ -83,29 +103,8 @@ _EVENT_BOUNDS_CACHE_MAX = 8
 
 
 def _dgs_grid_memory(arguments):
-    """Resolve requested counts without allocating output-sized edge arrays."""
-
-    values = arguments.arguments
-    for name in ("lower", "upper", "num_bins", "step_size"):
-        if values.get(name) is not None:
-            values[name] = tuple(values[name])
-    if values.get("bin_edges") is not None:
-        values["bin_edges"] = tuple(
-            None if edge is None else edge if isinstance(edge, np.ndarray) else tuple(edge)
-            for edge in values["bin_edges"]
-        )
-    counts = list(values["num_bins"])
-    steps = values.get("step_size")
-    explicit = values.get("bin_edges")
-    if steps is not None and len(steps) == len(counts):
-        for index, (lower, upper, step) in enumerate(zip(values["lower"], values["upper"], steps, strict=True)):
-            if np.isfinite([lower, upper, step]).all() and step > 0 and upper >= lower:
-                counts[index] = int(math.ceil((upper - lower) / step)) + 1
-    if explicit is not None and len(explicit) == len(counts):
-        counts = [len(edge) - 1 if edge is not None else count for edge, count in zip(explicit, counts, strict=True)]
-    if any(int(count) < 1 for count in counts):
-        return 0  # The numerical entry point supplies its ordinary validation.
-    return estimate_mdevent_peak_memory(counts, max_batch_bytes=values["max_batch_bytes"])
+    """Apply the live MDEvent memory estimate to shared requested-grid counts."""
+    return dgs_grid_memory(arguments, estimate_mdevent_peak_memory)
 
 
 @dataclass(frozen=True)
@@ -1194,54 +1193,6 @@ def project_powder_background_mdevent(
     )
 
 
-def _validated_minimum_samples(value: float) -> float:
-    result = float(value)
-    if not np.isfinite(result) or result < 0.0:
-        raise ValueError("minimum_samples must be finite and nonnegative")
-    return result
-
-
-def _requested_edges(lower, upper, num_bins, step_size=None, *, bin_edges=None):
-    from .rebin import _uniform_center_edges
-
-    if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)) or np.any(upper < lower):
-        raise ValueError("binning bounds must be finite and increasing")
-    if np.any(num_bins < 1):
-        raise ValueError("bin counts must be positive")
-    if step_size is None:
-        uniform_edges = [
-            _uniform_center_edges(lo, hi, count=count)
-            for lo, hi, count in zip(lower, upper, num_bins, strict=True)
-        ]
-    else:
-        steps = np.asarray(tuple(step_size), dtype=float)
-        if steps.shape != lower.shape or np.any(~np.isfinite(steps)) or np.any(steps <= 0.0):
-            raise ValueError("step sizes must be positive and match the requested dimensions")
-        uniform_edges = []
-        for lo, hi, step in zip(lower, upper, steps, strict=True):
-            uniform_edges.append(_uniform_center_edges(lo, hi, step=step))
-    if bin_edges is None:
-        return uniform_edges
-    explicit = list(bin_edges)
-    if len(explicit) != lower.size:
-        raise ValueError("bin_edges must contain one entry per requested dimension")
-    result = []
-    for fallback, values in zip(uniform_edges, explicit, strict=True):
-        if values is None:
-            result.append(fallback)
-            continue
-        axis_edges = np.asarray(tuple(values), dtype=float)
-        if (
-            axis_edges.ndim != 1
-            or axis_edges.size < 2
-            or np.any(~np.isfinite(axis_edges))
-            or np.any(np.diff(axis_edges) <= 0.0)
-        ):
-            raise ValueError("explicit bin edges must be finite and strictly increasing")
-        result.append(axis_edges)
-    return result
-
-
 def estimate_mdevent_peak_memory(num_bins, *, max_batch_bytes=192 * 1024 * 1024):
     """Estimate output/finalization and native normalization workspaces.
 
@@ -1918,17 +1869,6 @@ def _powder_trajectory_normalization(
     return result
 
 
-def _symmetry_matrices(operations) -> tuple[np.ndarray, ...]:
-    if operations is None:
-        return (np.eye(3),)
-    matrices = tuple(np.asarray(operation, dtype=float) for operation in operations)
-    if not matrices:
-        return (np.eye(3),)
-    if any(matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)) for matrix in matrices):
-        raise ValueError("symmetry operations must be finite 3x3 HKL matrices")
-    return matrices
-
-
 def _mdevent_axis_name(vector, index):
     if index == 3:
         return "DeltaE"
@@ -1953,35 +1893,6 @@ def _hkl_bounds(dimensions, ub):
     bounds = [(float(np.min(hkl[:, i])), float(np.max(hkl[:, i]))) for i in range(3)]
     bounds.append((float(dimensions[3]["lower"]), float(dimensions[3]["upper"])))
     return bounds
-
-
-def _accumulate_detector_trajectory(output, edges, inverse, direction, ei, energy_bounds, weight, mantid_precision=False):
-    ki = np.sqrt(max(ei, 0.0) * ENERGY_TO_K)
-    kf_values = np.sqrt(np.maximum(ei - np.asarray(energy_bounds, dtype=float), 0.0) * ENERGY_TO_K)
-    low_kf, high_kf = float(np.min(kf_values)), float(np.max(kf_values))
-    qin = inverse @ np.array([0.0, 0.0, ki])
-    qout = inverse @ direction
-    intersections = [low_kf, high_kf]
-    for dim in range(3):
-        if abs(qout[dim]) > 1e-14:
-            intersections.extend((qin[dim] - boundary) / qout[dim] for boundary in edges[dim])
-    intersections.extend(np.sqrt(np.maximum(ei - edges[3], 0.0) * ENERGY_TO_K))
-    points = np.unique(np.clip(np.asarray(intersections), low_kf, high_kf))
-    for first, second in zip(points[:-1], points[1:], strict=True):
-        delta = (second * second - first * first) / ENERGY_TO_K
-        if (mantid_precision and delta < 1e-10) or (not mantid_precision and second - first <= 1e-12):
-            continue
-        middle = 0.5 * (first + second)
-        hkl = qin - qout * middle
-        energy = ei - middle * middle / ENERGY_TO_K
-        if mantid_precision:
-            midpoint32 = np.float32(middle)
-            energy = np.float32(ei - float(midpoint32 * midpoint32) / ENERGY_TO_K)
-            flat = dgs_trajectory_bin_indices([[*hkl, energy]], edges, output.shape)[0]
-        else:
-            flat = _flat_bin_indices(np.asarray([[*hkl, energy]]), edges, output.shape)[0]
-        if flat >= 0:
-            output.ravel()[flat] += weight * delta
 
 
 def _powder_background_point(
@@ -2157,58 +2068,6 @@ def _accumulate_projected_powder_detector_trajectory(
         valid_denominator.ravel()[flat] += segment_weight
         signal_sum.ravel()[flat] += segment_weight * value
         sigma_sum.ravel()[flat] += segment_weight * sigma
-
-
-def _accumulate_powder_detector_trajectory(
-    output, edges, scattering_angle, incident_energy, energy_bounds, weight, mantid_precision=False
-):
-    """Integrate one detector trajectory through radial-Q/energy bins."""
-
-    ki = np.sqrt(max(incident_energy, 0.0) * ENERGY_TO_K)
-    kf_values = np.sqrt(
-        np.maximum(incident_energy - np.asarray(energy_bounds, dtype=float), 0.0)
-        * ENERGY_TO_K
-    )
-    low_kf, high_kf = float(np.min(kf_values)), float(np.max(kf_values))
-    cosine = float(np.cos(scattering_angle))
-    sine_squared = max(0.0, 1.0 - cosine * cosine)
-    intersections = [low_kf, high_kf]
-    # q^2 = ki^2 + kf^2 - 2 ki kf cos(theta).  Each radial
-    # boundary can cross a detector trajectory twice.
-    for q_boundary in edges[0]:
-        discriminant = q_boundary * q_boundary - ki * ki * sine_squared
-        if discriminant < 0.0:
-            continue
-        root = np.sqrt(discriminant)
-        intersections.extend((ki * cosine - root, ki * cosine + root))
-    intersections.extend(
-        np.sqrt(np.maximum(incident_energy - edges[1], 0.0) * ENERGY_TO_K)
-    )
-    points = np.unique(np.clip(np.asarray(intersections), low_kf, high_kf))
-    for first, second in zip(points[:-1], points[1:], strict=True):
-        delta = (second * second - first * first) / ENERGY_TO_K
-        if (mantid_precision and delta < 1e-10) or (not mantid_precision and second - first <= 1.0e-12):
-            continue
-        middle = 0.5 * (first + second)
-        q_modulus = np.sqrt(
-            max(
-                ki * ki + middle * middle - 2.0 * ki * middle * cosine,
-                0.0,
-            )
-        )
-        energy = incident_energy - middle * middle / ENERGY_TO_K
-        if mantid_precision:
-            midpoint32 = np.float32(middle)
-            energy = np.float32(incident_energy - float(midpoint32 * midpoint32) / ENERGY_TO_K)
-            flat = dgs_trajectory_bin_indices([[q_modulus, energy]], edges, output.shape)[0]
-        else:
-            flat = _flat_bin_indices(
-                np.asarray([[q_modulus, energy]]), edges, output.shape
-            )[0]
-        if flat >= 0:
-            output.ravel()[flat] += (
-                weight * delta
-            )
 
 
 def _accumulate_discrete_event_coordinates(
