@@ -201,6 +201,8 @@ class DatasetEntry:
         if self._raw_dgs_reduction_cache is not None and "metadata" not in changes:
             changes["metadata"] = copy.deepcopy(self.metadata)
         copied = replace(self, id=uuid4().hex, **changes)
+        if hasattr(self, "_data_workspace_preference"):
+            copied._data_workspace_preference = self._data_workspace_preference
         if hasattr(self, "_project_path_resolution"):
             copied._project_path_resolution = self._project_path_resolution
         if hasattr(self, "_project_artifact_source") and "data" not in changes:
@@ -225,6 +227,8 @@ class DatasetEntry:
         memo[id(self)] = copied
         for item in fields(self):
             setattr(copied, item.name, copy.deepcopy(getattr(self, item.name), memo))
+        if hasattr(self, "_data_workspace_preference"):
+            copied._data_workspace_preference = copy.deepcopy(self._data_workspace_preference, memo)
         if hasattr(self, "_project_path_resolution"):
             copied._project_path_resolution = self._project_path_resolution
         copied.data = _immutable_data(copied.data)

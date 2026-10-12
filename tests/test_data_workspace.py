@@ -149,3 +149,239 @@ def test_empty_explorer_opens_without_temporary_storage(tmp_path, monkeypatch):
     finally:
         explorer._allow_window_close = True
         explorer.window.close()
+
+
+def _cache_location(dataset, signature):
+    from nfit.raw_dgs_cache import cache_event_chunks
+
+    list(cache_event_chunks(dataset, signature, {}, {}, iter(())))
+    return dataset._raw_dgs_reduction_cache.content
+
+
+def test_same_source_unsaved_projects_allocate_independently_and_reset(tmp_path):
+    from nfit.project_io import NfitProject
+
+    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    source = tmp_path / "shared.nxs"
+    first = DatasetEntry("first", None, metadata={"source_file": str(source)})
+    second = DatasetEntry("second", None, metadata={"source_file": str(source)})
+    left = NfitProject([DataGroup("left", datasets=[first])])
+    right = NfitProject([DataGroup("right", datasets=[second])])
+    data_workspace.set_project_temporary_directory(left, str(first_dir))
+    data_workspace.set_project_temporary_directory(right, str(second_dir))
+    assert str(source) not in data_workspace._WORKSPACE_OVERRIDES
+    old_cache = None
+    try:
+        old = _cache_location(first, "first")
+        old_cache = first._raw_dgs_reduction_cache
+        assert old.is_relative_to(first_dir)
+        assert _cache_location(second, "second").is_relative_to(second_dir)
+        data_workspace.set_project_temporary_directory(left, None)
+        assert _cache_location(first, "reset").is_relative_to(tmp_path / ".nfit-work")
+        assert old.is_file()
+        assert _cache_location(second, "unchanged").is_relative_to(second_dir)
+        assert "_project_path" not in first.metadata
+        assert "_project_path" not in second.metadata
+    finally:
+        for dataset in (first, second):
+            dataset._raw_dgs_reduction_cache.staging.cleanup()
+        if old_cache is not None:
+            old_cache.staging.cleanup()
+
+
+def test_same_saved_path_explicit_default_ignores_other_project_choice(tmp_path):
+    from nfit.project_io import NfitProject
+
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    archive = tmp_path / "shared.nfit"
+    first = DatasetEntry("first", None, metadata={"_project_path": str(archive)})
+    second = DatasetEntry("second", None, metadata={"_project_path": str(archive)})
+    left = NfitProject([DataGroup("left", datasets=[first])])
+    right = NfitProject([DataGroup("right", datasets=[second])])
+    left._project_path = right._project_path = archive
+    data_workspace.set_project_temporary_directory(left, None)
+    data_workspace.set_project_temporary_directory(right, str(selected))
+    try:
+        assert _cache_location(first, "default").is_relative_to(tmp_path / ".nfit-work")
+        assert _cache_location(second, "selected").is_relative_to(selected)
+        with temporary_data_directory(archive, prefix="legacy-") as name:
+            assert Path(name).is_relative_to(selected)
+    finally:
+        first._raw_dgs_reduction_cache.staging.cleanup()
+        second._raw_dgs_reduction_cache.staging.cleanup()
+        data_workspace.set_project_temporary_directory(right, None)
+
+
+def test_empty_project_choice_is_inherited_by_new_groups_imports_and_copies(tmp_path):
+    import copy
+
+    from nfit.project_gui import create_data_group
+    from nfit.project_imports import import_dataset_paths
+    from nfit.project_io import NfitProject
+
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    project = NfitProject()
+    data_workspace.set_project_temporary_directory(project, str(selected))
+    group = create_data_group(project)
+    entry = import_dataset_paths(group, [tmp_path / "source.npz"],
+                                 dataset_file_loader=lambda _path: (None, {}))[0]
+    alias = entry.copy()
+    copied_project = copy.deepcopy(project)
+    copied = copied_project.data_groups[0].datasets[0]
+    try:
+        for dataset in (entry, alias, copied):
+            assert _cache_location(dataset, dataset.id).is_relative_to(selected)
+        data_workspace.set_project_temporary_directory(project, None)
+        assert _cache_location(alias, "alias-default").is_relative_to(tmp_path / ".nfit-work")
+        assert _cache_location(copied, "independent").is_relative_to(selected)
+        assert "_project_path" not in entry.metadata
+    finally:
+        for dataset in (entry, alias, copied):
+            dataset._raw_dgs_reduction_cache.staging.cleanup()
+
+
+def test_failed_save_restores_runtime_choices_and_path_compatibility(tmp_path, monkeypatch):
+    from nfit import project_gui
+    from nfit.project_io import NfitProject
+
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    old = tmp_path / "old.nfit"
+    new = tmp_path / "new.nfit"
+    entry = DatasetEntry("run", None, metadata={"source_file": str(tmp_path / "run.nxs")})
+    group = DataGroup("runs", datasets=[entry])
+    project = NfitProject([group])
+    project._project_path = old
+    data_workspace.bind_data_workspace(group, old)
+    data_workspace.set_project_temporary_directory(project, str(selected))
+    preference = entry._data_workspace_preference
+
+    def fail(*_args, **_kwargs):
+        assert entry.metadata["_project_path"] == str(new)
+        assert _cache_location(entry, "during-save").is_relative_to(selected)
+        raise RuntimeError("save failed")
+
+    monkeypatch.setattr(project_gui, "write_project_manifest", fail)
+    try:
+        with pytest.raises(RuntimeError, match="save failed"):
+            project_gui.save_project(project, new)
+        assert entry.metadata["_project_path"] == str(old)
+        assert group._data_workspace_owner_path == str(old)
+        assert project._project_path == old
+        assert entry._data_workspace_preference is preference
+        assert str(new) not in data_workspace._WORKSPACE_OVERRIDES
+        with temporary_data_directory(old, prefix="legacy-") as name:
+            assert Path(name).is_relative_to(selected)
+        assert _cache_location(entry, "after-save").is_relative_to(selected)
+    finally:
+        entry._raw_dgs_reduction_cache.staging.cleanup()
+        data_workspace.set_project_temporary_directory(project, None)
+
+
+def test_selected_storage_missing_does_not_spill_for_dataset(tmp_path):
+    from nfit.project_io import NfitProject
+
+    entry = DatasetEntry("run", None, metadata={"source_file": str(tmp_path / "run.nxs")})
+    project = NfitProject([DataGroup("runs", datasets=[entry])])
+    missing = tmp_path / "missing"
+    data_workspace.set_project_temporary_directory(project, str(missing), validate=False)
+    with pytest.raises(DataWorkspaceError, match="unavailable"):
+        _cache_location(entry, "missing")
+    assert not missing.exists()
+    assert not (tmp_path / ".nfit-work").exists()
+
+
+def test_composite_scope_keeps_runtime_storage_preference(tmp_path):
+    from nfit.pipeline import DatasetGroup
+    from nfit.project_composites import _composite_scope
+    from nfit.project_io import NfitProject
+
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    node = DatasetGroup("nested")
+    group = DataGroup("root", subgroups=[node])
+    project = NfitProject([group])
+    data_workspace.set_project_temporary_directory(project, str(selected))
+    scope = _composite_scope(group, node)
+    with temporary_data_directory(tmp_path / "project.nfit", prefix="scope-", workspace=scope) as name:
+        assert Path(name).is_relative_to(selected)
+
+
+def test_save_reads_edited_storage_setting_and_restores_choice_on_failure(tmp_path):
+    from nfit.project_io import NfitProject
+
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    archive = tmp_path / "saved.nfit"
+    entry = DatasetEntry("run", None, metadata={"source_file": str(tmp_path / "run.nxs")})
+    project = NfitProject([DataGroup("runs", datasets=[entry])])
+    project._project_path = archive
+    data_workspace.set_project_temporary_directory(project, str(first))
+    project.settings["temporary_storage_directory"] = str(second)
+    try:
+        with pytest.raises(RuntimeError, match="failed"):
+            with project_data_workspace(project, tmp_path / "new.nfit"):
+                assert _cache_location(entry, "during").is_relative_to(second)
+                raise RuntimeError("failed")
+        assert _cache_location(entry, "after").is_relative_to(first)
+        with temporary_data_directory(archive, prefix="legacy-") as name:
+            assert Path(name).is_relative_to(first)
+        with project_data_workspace(project, tmp_path / "new.nfit"):
+            assert _cache_location(entry, "retry").is_relative_to(second)
+        assert _cache_location(entry, "complete").is_relative_to(second)
+    finally:
+        entry._raw_dgs_reduction_cache.staging.cleanup()
+        data_workspace.set_project_temporary_directory(project, None)
+
+
+def test_explicit_dataset_context_never_borrows_legacy_path_choice(tmp_path):
+    from nfit.project_io import NfitProject
+
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    source = tmp_path / "same-path.nxs"
+    legacy_project = NfitProject()
+    legacy_project._project_path = source
+    data_workspace.set_project_temporary_directory(legacy_project, str(selected))
+    independent = DatasetEntry("independent", None, metadata={"source_file": str(source)})
+    try:
+        assert _cache_location(independent, "independent").is_relative_to(tmp_path / ".nfit-work")
+        with temporary_data_directory(source, prefix="legacy-") as name:
+            assert Path(name).is_relative_to(selected)
+    finally:
+        independent._raw_dgs_reduction_cache.staging.cleanup()
+        data_workspace.set_project_temporary_directory(legacy_project, None)
+
+
+def test_copied_project_save_as_preserves_original_path_compatibility(tmp_path):
+    import copy
+
+    from nfit.project_io import NfitProject
+
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    old, new = tmp_path / "old.nfit", tmp_path / "new.nfit"
+    original = NfitProject()
+    original._project_path = old
+    data_workspace.set_project_temporary_directory(original, str(selected))
+    independent = copy.deepcopy(original)
+    try:
+        with project_data_workspace(independent, new):
+            pass
+        for path in (old, new):
+            with temporary_data_directory(path, prefix="legacy-") as name:
+                assert Path(name).is_relative_to(selected)
+        with pytest.raises(RuntimeError):
+            with project_data_workspace(original, new):
+                original._project_path = new
+                raise RuntimeError("failed late save")
+        assert original._project_path == old
+    finally:
+        data_workspace.set_project_temporary_directory(original, None)
+        independent._project_path = new
+        data_workspace.set_project_temporary_directory(independent, None)

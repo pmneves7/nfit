@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
+import math
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
+from .pipeline import DataGroup, DatasetEntry, DatasetGroup
 from .project_rebin_panels import rebin_symmetry_expression_width
 from .qt_controls import constrain_input_width
 
 # The compatibility dispatcher supplies these established project_gui globals
 # at invocation time. Keeping the contract explicit avoids a reverse import.
-DETAIL_DATASET_PAGE_SIZE: Any = None
-DataGroup: Any = None
 _CompositeScope: Any = None
 _composite_rebin_status_text: Any = None
 _composite_root: Any = None
 _composite_scope: Any = None
-_dataset_data_point_count: Any = None
 _format_number: Any = None
 _momentum_rebin_matrix: Any = None
 _momentum_rebin_vector_text: Any = None
@@ -30,21 +31,40 @@ _rebin_minimum_coverage: Any = None
 _rebin_minimum_samples: Any = None
 _sanitize_rebin_axis_config: Any = None
 _saved_binning_compressed_size: Any = None
-_tooltip_table_corner_buttons: Any = None
 data_group_composite_config: Any = None
 data_group_composite_binnings: Any = None
 data_group_composite_enabled: Any = None
 data_group_composite_status: Any = None
-data_type_label: Any = None
-math: Any = None
 metadata_rebin_rows: Any = None
 symmetry_spec_from_config: Any = None
 
 
-def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -> Any:
+@dataclass(frozen=True)
+class GroupInventoryPanelContext:
+    """Read-only collection selection and live presentation capabilities.
+
+    Row callbacks run only for visible datasets, so constructing a panel does
+    not prepare the complete collection or retain its numerical payloads.
+    """
+
+    node: DataGroup | DatasetGroup
+    page_size: Callable[[], int]
+    dataset_cells: Callable[[DatasetEntry], tuple[str, str, str, str, str]]
+    child_collection_cells: Callable[[DatasetGroup], tuple[str, str, str, str, str]]
+    set_corner_tooltip: Callable[[Any, str], None]
+
+
+def _group_dataset_weights_group_box(
+    self, group: DataGroup | _CompositeScope, *, context: GroupInventoryPanelContext,
+) -> Any:
+    """Build collection membership using explicit read-only capabilities.
+
+    ``self`` and ``group`` retain the compatibility builder's argument surface;
+    all selection and helper dependencies come from ``context``.
+    """
     from PySide6 import QtCore, QtWidgets
 
-    node = group.node if isinstance(group, _CompositeScope) else group
+    node = context.node
     datasets = list(node.datasets)
     child_groups = list(node.subgroups)
     showing_children = not datasets and bool(child_groups)
@@ -80,14 +100,7 @@ def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -
         )
         table.setRowCount(len(child_groups))
         for row, child in enumerate(child_groups):
-            scope = _composite_scope(_composite_root(group), child)
-            values = (
-                child.name,
-                "Live composite" if data_group_composite_enabled(scope) else "Collection",
-                str(len(child.datasets)),
-                str(sum(1 for _dataset in child.iter_datasets())),
-                "Yes" if child.enabled else "No",
-            )
+            values = context.child_collection_cells(child)
             for column, value in enumerate(values):
                 table.setItem(row, column, QtWidgets.QTableWidgetItem(value))
         note = QtWidgets.QLabel(
@@ -111,24 +124,18 @@ def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -
         page_combo.setToolTip(
             "Choose which small page of direct datasets is shown. The full collection remains active."
         )
-        page_count = max(math.ceil(len(datasets) / DETAIL_DATASET_PAGE_SIZE), 1)
+        page_count = max(math.ceil(len(datasets) / context.page_size()), 1)
         for page in range(page_count):
-            start = page * DETAIL_DATASET_PAGE_SIZE
-            end = min(start + DETAIL_DATASET_PAGE_SIZE, len(datasets))
+            start = page * context.page_size()
+            end = min(start + context.page_size(), len(datasets))
             page_combo.addItem(f"{start + 1}-{end}", page)
 
         def populate(page: int) -> None:
-            start = int(page) * DETAIL_DATASET_PAGE_SIZE
-            visible = datasets[start : start + DETAIL_DATASET_PAGE_SIZE]
+            start = int(page) * context.page_size()
+            visible = datasets[start : start + context.page_size()]
             table.setRowCount(len(visible))
             for row, dataset in enumerate(visible):
-                values = (
-                    dataset.name,
-                    data_type_label(dataset.data_type),
-                    _format_number(_dataset_data_point_count(dataset)),
-                    _format_number(dataset.fit_weight),
-                    _format_number(dataset.scale_factor),
-                )
+                values = context.dataset_cells(dataset)
                 for column, value in enumerate(values):
                     table.setItem(row, column, QtWidgets.QTableWidgetItem(value))
             end = start + len(visible)
@@ -152,7 +159,7 @@ def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -
         QtCore.Qt.AlignmentFlag.AlignLeft
     )
     table.resizeColumnsToContents()
-    _tooltip_table_corner_buttons(table, "Select all visible rows on this page.")
+    context.set_corner_tooltip(table, "Select all visible rows on this page.")
     layout.addWidget(table)
     box.setToolTip(
         "Direct datasets or immediate child collections. Run-heavy collections are paginated; "

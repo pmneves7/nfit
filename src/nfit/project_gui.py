@@ -23,6 +23,7 @@ from . import project_data as _project_data
 from . import project_data_panels as _project_data_panels
 from . import project_lindhard_editor as _project_lindhard_editor
 from . import project_model_editor as _project_model_editor
+from . import project_rebinning as _project_rebinning
 from . import project_summary as _project_summary
 from . import project_tight_binding_editor as _project_tight_binding_editor
 from . import project_viewer_loading as _project_viewer_loading
@@ -39,7 +40,7 @@ from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
 from .application_preferences import application_settings, preload_viewer_data
 from .cache_utils import lru_store as _lru_store
-from .data_workspace import bind_data_workspace, project_data_workspace, temporary_data_directory
+from .data_workspace import project_data_workspace, temporary_data_directory
 from .dataset import PointData4D, PointListData
 from .dataset_criteria import DATASET_CRITERION_DEFINITION, DATASET_CRITERION_TYPE
 from .file_dialogs import (
@@ -874,9 +875,9 @@ def create_data_group(project: NfitProject, name: str | None = None) -> DataGrou
     group = DataGroup(name=next_data_group_name(project.data_groups) if name is None else name)
     if group.name in {existing.name for existing in project.data_groups}:
         raise ValueError(f"duplicate data group name {group.name!r}")
-    owner = getattr(project, "_project_path", None)
-    if owner is not None:
-        bind_data_workspace(group, owner)
+    from .data_workspace import inherit_data_workspace
+
+    inherit_data_workspace(group, project)
     project.data_groups.append(group)
     return group
 
@@ -6208,7 +6209,7 @@ def _save_project_archive(
             project,
             progress_callback=progress_callback,
         )
-        with temporary_data_directory(target, prefix="nfit-binning-cache-") as temporary:
+        with temporary_data_directory(target, prefix="nfit-binning-cache-", workspace=project) as temporary:
             artifacts, entries = _project_binning_artifacts(project, Path(temporary))
             artifacts.update(incoming)
             project.settings[PROJECT_BINNING_CACHE_ENTRIES_KEY] = entries
@@ -6393,7 +6394,7 @@ def import_project_items(project, path, *, target_role="project", data_group=Non
     from .project_transfer import adopt_project_selection, paste_project_selection
 
     owner = getattr(project, "_project_path", None) or Path(path).absolute()
-    selection = adopt_project_selection(path, owner)
+    selection = adopt_project_selection(path, owner, workspace=project)
     return paste_project_selection(selection, project, target_role=target_role, data_group=data_group,
                                    dataset_node=dataset_node, dataset=dataset,
                                    install_binnings=_install_transfer_binnings)
@@ -14561,12 +14562,38 @@ class NfitProjectExplorer:
         self._refresh_cache_badges()
         return True
 
+    def _group_inventory_panel_context(
+        self, group: DataGroup | _CompositeScope,
+    ) -> _project_data_panels.GroupInventoryPanelContext:
+        """Supply collection membership with live compatibility presentation hooks."""
+
+        return _project_data_panels.GroupInventoryPanelContext(
+            node=group.node if isinstance(group, _CompositeScope) else group,
+            page_size=lambda: DETAIL_DATASET_PAGE_SIZE,
+            dataset_cells=lambda dataset: (
+                dataset.name,
+                data_type_label(dataset.data_type),
+                _format_number(_dataset_data_point_count(dataset)),
+                _format_number(dataset.fit_weight),
+                _format_number(dataset.scale_factor),
+            ),
+            child_collection_cells=lambda child: (
+                child.name,
+                "Live composite" if data_group_composite_enabled(
+                    _composite_scope(_composite_root(group), child)
+                ) else "Collection",
+                str(len(child.datasets)),
+                str(sum(1 for _dataset in child.iter_datasets())),
+                "Yes" if child.enabled else "No",
+            ),
+            set_corner_tooltip=lambda table, tooltip: _tooltip_table_corner_buttons(table, tooltip),
+        )
+
     def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._group_dataset_weights_group_box,
+        return _project_data_panels._group_dataset_weights_group_box(
             self,
             group,
-            helper_namespace=globals(),
+            context=self._group_inventory_panel_context(group),
         )
 
     def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
@@ -16448,17 +16475,9 @@ class NfitProjectExplorer:
         group: DataGroup | _CompositeScope,
         mode: str,
     ) -> None:
-        mode = "bins" if mode == "bins" else "step"
         config = data_group_composite_config(group)
-        if _rebin_resolution_mode(config) == mode:
-            return
-        config[REBIN_RESOLUTION_MODE_KEY] = mode
-        if mode == "bins":
-            for axis in config.get("axes", []):
-                axis["step_size"] = _step_size_from_bounds(
-                    axis.get("lower", 0.0), axis.get("upper", 0.0), max(int(axis.get("num_bins", 1)), 1)
-                )
-        self._after_group_composite_changed(group)
+        if _project_rebinning.set_rebin_resolution_mode(config, mode):
+            self._after_group_composite_changed(group)
 
     def _set_group_composite_coordinate_mode(
         self, group: DataGroup | _CompositeScope, value: str
@@ -16481,59 +16500,11 @@ class NfitProjectExplorer:
 
     def _set_group_composite_axis_value(self, group: DataGroup | _CompositeScope, index: int, key: str, text: str) -> None:
         config = data_group_composite_config(group)
-        axes = config.get("axes")
-        if not isinstance(axes, list) or not (0 <= index < len(axes)):
-            return
-        axis = dict(axes[index])
-        previous_step = float(axis.get("step_size", 0.0) or 0.0)
-        if key in {"lower", "upper"} and not text.strip():
-            if _rebin_axis_bound_is_auto(axis, key):
-                return
-            axis[f"auto_{key}"] = True
-            automatic = axis.get(f"auto_{key}_value")
-            if automatic is not None and np.isfinite(float(automatic)):
-                axis[key] = float(automatic)
-            axes[index] = axis
-            self._after_group_composite_changed(group)
-            return
-        try:
-            if key == "num_bins":
-                value = max(int(float(text)), 1)
-                if axis.get(key) == value:
-                    return
-                axis[key] = value
-                axis["step_size"] = _step_size_from_bounds(
-                    axis.get("lower", 0.0), axis.get("upper", 0.0), axis["num_bins"]
-                )
-            else:
-                value = float(text)
-                if axis.get(key) == value and not bool(axis.get(f"auto_{key}", False)):
-                    return
-                axis[key] = value
-                if key == "step_size":
-                    axis["auto_step_size"] = False
-                if key in {"lower", "upper"}:
-                    axis[f"auto_{key}"] = False
-        except ValueError:
+        result = _project_rebinning.edit_composite_rebin_axis_value(config, index, key, text)
+        if result is _project_rebinning.RebinAxisEditResult.INVALID:
             self._sync_details()
-            return
-        if key == "step_size":
-            step = float(axis.get("step_size", 0.0))
-            if step > 0.0:
-                axis["num_bins"] = _num_bins_from_step_size(axis.get("lower", 0.0), axis.get("upper", 0.0), step)
-        elif key in {"lower", "upper"} and _rebin_axis_mode(config, axis) == "step":
-            if previous_step > 0.0 and np.isfinite(previous_step):
-                axis["num_bins"] = _num_bins_from_step_size(
-                    axis.get("lower", 0.0), axis.get("upper", 0.0), previous_step
-                )
-        elif key in {"lower", "upper"}:
-            axis["step_size"] = _step_size_from_bounds(
-                axis.get("lower", 0.0), axis.get("upper", 0.0), axis["num_bins"]
-            )
-        axis.update(_sanitize_rebin_axis_config(axis))
-        axes[index] = axis
-        config["normalize"] = True
-        self._after_group_composite_changed(group)
+        elif result is _project_rebinning.RebinAxisEditResult.CHANGED:
+            self._after_group_composite_changed(group)
 
     def _set_group_composite_axis_edges(
         self,
@@ -16547,14 +16518,7 @@ class NfitProjectExplorer:
             return
         try:
             parsed = _parse_parameter_text(text)
-            if parsed == "":
-                axes[index].pop("bin_edges", None)
-            else:
-                axes[index].update(
-                    _sanitize_rebin_axis_config(
-                        {**axes[index], "bin_edges": _normalize_rebin_bin_edges(parsed)}
-                    )
-                )
+            _project_rebinning.set_rebin_axis_edges(config, index, parsed)
         except (TypeError, ValueError):
             self._sync_details()
             return
@@ -16567,20 +16531,8 @@ class NfitProjectExplorer:
         value: str,
     ) -> None:
         config = data_group_composite_config(group)
-        axes = config.get("axes", [])
-        if not (0 <= index < len(axes)):
-            return
-        mode = value if value in REBIN_AXIS_MODES else "step"
-        if _rebin_axis_mode(config, axes[index]) == mode:
-            return
-        axes[index]["mode"] = mode
-        if mode in {"discrete", "tolerance"}:
-            axes[index]["fractional"] = False
-        if mode == "tolerance":
-            axes[index].setdefault(
-                "tolerance", max(float(axes[index].get("step_size", 0.1)), 1e-12)
-            )
-        self._after_group_composite_changed(group)
+        if _project_rebinning.set_rebin_axis_mode(config, index, value):
+            self._after_group_composite_changed(group)
 
     def _set_group_composite_axis_fractional(
         self,
@@ -16589,17 +16541,8 @@ class NfitProjectExplorer:
         fractional: bool,
     ) -> None:
         config = data_group_composite_config(group)
-        axes = config.get("axes", [])
-        if not (0 <= index < len(axes)):
-            return
-        value = bool(fractional) and _rebin_axis_mode(config, axes[index]) not in {
-            "discrete",
-            "tolerance",
-        }
-        if _rebin_axis_fractional(config, axes[index]) == value:
-            return
-        axes[index]["fractional"] = value
-        self._after_group_composite_changed(group)
+        if _project_rebinning.set_rebin_axis_fractional(config, index, fractional):
+            self._after_group_composite_changed(group)
 
     def _set_group_composite_axis_vector(self, group: DataGroup | _CompositeScope, index: int, text: str) -> None:
         config = data_group_composite_config(group)
@@ -16652,65 +16595,9 @@ class NfitProjectExplorer:
         text: str,
     ) -> None:
         config = dataset_rebin_config(dataset)
-        axes = config.get("axes", [])
-        if not (0 <= index < len(axes)):
-            return
-        axis = axes[index]
-        previous_step = float(axis.get("step_size", 0.0) or 0.0)
-        if key in {"lower", "upper"} and not text.strip():
-            if _rebin_axis_bound_is_auto(axis, key):
-                return
-            axis[f"auto_{key}"] = True
-            automatic = axis.get(f"auto_{key}_value")
-            if automatic is not None and np.isfinite(float(automatic)):
-                axis[key] = float(automatic)
+        result = _project_rebinning.edit_dataset_rebin_axis_value(config, index, key, text)
+        if result is _project_rebinning.RebinAxisEditResult.CHANGED:
             self._after_dataset_rebin_changed(dataset, group)
-            return
-        try:
-            if key == "num_bins":
-                value: Any = max(int(float(text)), 1)
-                if axis.get("num_bins") == value:
-                    return
-                axis["num_bins"] = value
-                axis["step_size"] = _step_size_from_bounds(
-                    axis.get("lower", 0.0), axis.get("upper", 0.0), value
-                )
-            else:
-                value = float(text)
-                if key == "step_size":
-                    if value <= 0.0 or not np.isfinite(value):
-                        return
-                    if axis.get("step_size") == value and not bool(axis.get("auto_step_size", False)):
-                        return
-                    axis["step_size"] = value
-                    axis["auto_step_size"] = False
-                    num_bins = _num_bins_from_step_size(axis.get("lower", 0.0), axis.get("upper", 0.0), value)
-                    axis["num_bins"] = num_bins
-                else:
-                    if axis.get(key) == value and not bool(
-                        axis.get(f"auto_{key}", False)
-                    ):
-                        return
-                    axis[key] = value
-                    if key in {"lower", "upper"}:
-                        axis[f"auto_{key}"] = False
-                    if (
-                        key in {"lower", "upper"}
-                        and _rebin_axis_mode(config, axis) == "step"
-                        and previous_step > 0.0
-                        and np.isfinite(previous_step)
-                    ):
-                        axis["num_bins"] = _num_bins_from_step_size(
-                            axis.get("lower", 0.0), axis.get("upper", 0.0), previous_step
-                        )
-                    elif key in {"lower", "upper"}:
-                        axis["step_size"] = _step_size_from_bounds(
-                            axis.get("lower", 0.0), axis.get("upper", 0.0), axis["num_bins"]
-                        )
-        except ValueError:
-            return
-        axis.update(_sanitize_rebin_axis_config(axis))
-        self._after_dataset_rebin_changed(dataset, group)
 
     def _set_dataset_rebin_axis_edges(
         self,
@@ -16725,14 +16612,7 @@ class NfitProjectExplorer:
             return
         try:
             parsed = _parse_parameter_text(text)
-            if parsed == "":
-                axes[index].pop("bin_edges", None)
-            else:
-                axes[index].update(
-                    _sanitize_rebin_axis_config(
-                        {**axes[index], "bin_edges": _normalize_rebin_bin_edges(parsed)}
-                    )
-                )
+            _project_rebinning.set_rebin_axis_edges(config, index, parsed)
         except (TypeError, ValueError):
             self._set_dataset_details_preserving_scroll(dataset, group)
             return
@@ -16746,21 +16626,9 @@ class NfitProjectExplorer:
         value: str,
     ) -> None:
         config = dataset_rebin_config(dataset)
-        axes = config.get("axes", [])
-        if not (0 <= index < len(axes)):
-            return
-        mode = value if value in REBIN_AXIS_MODES else "step"
-        if _rebin_axis_mode(config, axes[index]) == mode:
-            return
-        axes[index]["mode"] = mode
-        if mode in {"discrete", "tolerance"}:
-            axes[index]["fractional"] = False
-        if mode == "tolerance":
-            axes[index].setdefault(
-                "tolerance", max(float(axes[index].get("step_size", 0.1)), 1e-12)
-            )
-        self._after_dataset_rebin_changed(dataset, group)
-        self._set_dataset_details_preserving_scroll(dataset, group)
+        if _project_rebinning.set_rebin_axis_mode(config, index, value):
+            self._after_dataset_rebin_changed(dataset, group)
+            self._set_dataset_details_preserving_scroll(dataset, group)
 
     def _set_dataset_rebin_axis_fractional(
         self,
@@ -16770,17 +16638,8 @@ class NfitProjectExplorer:
         fractional: bool,
     ) -> None:
         config = dataset_rebin_config(dataset)
-        axes = config.get("axes", [])
-        if not (0 <= index < len(axes)):
-            return
-        value = bool(fractional) and _rebin_axis_mode(config, axes[index]) not in {
-            "discrete",
-            "tolerance",
-        }
-        if _rebin_axis_fractional(config, axes[index]) == value:
-            return
-        axes[index]["fractional"] = value
-        self._after_dataset_rebin_changed(dataset, group)
+        if _project_rebinning.set_rebin_axis_fractional(config, index, fractional):
+            self._after_dataset_rebin_changed(dataset, group)
 
     def _set_dataset_rebin_resolution_mode(
         self,
@@ -16788,17 +16647,9 @@ class NfitProjectExplorer:
         group: DataGroup | None,
         mode: str,
     ) -> None:
-        mode = "bins" if mode == "bins" else "step"
         config = dataset_rebin_config(dataset)
-        if _rebin_resolution_mode(config) == mode:
-            return
-        config[REBIN_RESOLUTION_MODE_KEY] = mode
-        if mode == "bins":
-            for axis in config.get("axes", []):
-                axis["step_size"] = _step_size_from_bounds(
-                    axis.get("lower", 0.0), axis.get("upper", 0.0), max(int(axis.get("num_bins", 1)), 1)
-                )
-        self._after_dataset_rebin_changed(dataset, group)
+        if _project_rebinning.set_rebin_resolution_mode(config, mode):
+            self._after_dataset_rebin_changed(dataset, group)
 
     def _set_dataset_rebin_axis_vector(
         self,

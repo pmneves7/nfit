@@ -227,6 +227,10 @@ class _CompositeScope:
     inherit_root_backgrounds: bool = True
 
     @property
+    def _data_workspace_preference(self):
+        return getattr(self.root, "_data_workspace_preference", None)
+
+    @property
     def name(self) -> str:
         return self.node.name
 
@@ -2417,7 +2421,7 @@ def materialize_composite_dataset(
             "import_status": "loaded",
         },
     )
-    with temporary_data_directory(project_path, prefix="nfit-materialized-dataset-") as temporary:
+    with temporary_data_directory(project_path, prefix="nfit-materialized-dataset-", workspace=group) as temporary:
         temporary_artifact = Path(temporary) / "data.npz"
         write_dataset_artifact(data, temporary_artifact)
         artifact_path = replace_dataset_artifact(

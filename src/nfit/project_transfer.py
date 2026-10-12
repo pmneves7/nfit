@@ -223,7 +223,7 @@ def write_project_selection(selection, path, *, collect_binnings=None):
     """Write a self-contained selection without reducing or rebinning sources."""
     target = Path(path).expanduser().absolute()
     target.parent.mkdir(parents=True, exist_ok=True)
-    with temporary_data_directory(target, prefix="nfit-transfer-write-") as directory:
+    with temporary_data_directory(target, prefix="nfit-transfer-write-", workspace=selection.project) as directory:
         dataset_ids = {item.id for root in selection.project.data_groups for item in root.iter_datasets()}
         scopes = {(index, node.id) for index, root in enumerate(selection.project.data_groups)
                   for node in root.iter_subgroups()}
@@ -355,8 +355,12 @@ def project_selection_script(selection_path, *, kind="group"):
     return "\n".join(lines)
 
 
-def adopt_project_selection(path, owner_path):
-    """Adopt a private immutable archive, using a hard link where possible."""
+def adopt_project_selection(path, owner_path, *, workspace=None):
+    """Adopt a private immutable archive, using a hard link where possible.
+
+    Pass the destination project as ``workspace`` to honor its runtime storage
+    choice; an explicit default bypasses saved-path compatibility overrides.
+    """
     source = Path(path).absolute()
     owner_path = Path(owner_path).absolute()
     # An unsaved destination may choose the clipboard packet as its storage
@@ -365,7 +369,7 @@ def adopt_project_selection(path, owner_path):
         if parent.name == ".nfit-work":
             owner_path = parent.parent / f".nfit-unsaved-project-{uuid4().hex}"
             break
-    owner = temporary_data_directory(owner_path, prefix="nfit-pasted-selection-")
+    owner = temporary_data_directory(owner_path, prefix="nfit-pasted-selection-", workspace=workspace)
     destination = Path(owner.name) / "selection.nfit"
     try:
         before = source.stat()
@@ -484,6 +488,10 @@ def paste_project_selection(selection, destination, *, target_role, data_group=N
             copied.extend(item.iter_datasets())
         elif isinstance(item, DatasetEntry):
             copied.append(item)
+    from .data_workspace import inherit_temporary_storage
+
+    for root in destination.data_groups:
+        inherit_temporary_storage(root, destination)
     for item in copied:
         if hasattr(item, "_project_artifact_source") and not item.metadata.get("derived_from_analysis"):
             member = dataset_artifact_member(item.id)

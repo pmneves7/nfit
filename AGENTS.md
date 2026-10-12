@@ -84,7 +84,7 @@ different Python.
   selection rules and bounded scalar diagnostics. `dataset_criterion_gui.py`
   presents their preview; `docs/dataset_conditions.md` documents the workflow.
 - `src/nfit/project_rebinning.py`: numerical grid configuration, symmetry-aware
-  rebinning, and histogram construction.
+  rebinning, histogram construction, and shared dataset/composite axis edits.
 - `src/nfit/raw_dgs.py`, `raw_dgs_geometry.py`, `raw_dgs_geometry_precision.py`,
   `raw_dgs_hyspec.py`, `raw_dgs_goniometer.py`, and `raw_dgs_cache.py`:
   direct-geometry reduction, resolved instrument geometry, HYSPEC preprocessing,
@@ -150,8 +150,9 @@ different Python.
 - `src/nfit/mapped_archive.py`: bounded temporary-disk array loading and
   accounting for heap and mapped numerical storage.
 - `src/nfit/data_workspace.py` and `workspace_sessions.py`: operation-owned
-  temporary scientific storage, lazy hidden sessions, ownership inspection,
-  and save-destination ownership without startup filesystem dependencies.
+  temporary scientific storage, project-scoped preferences, lazy hidden
+  sessions, ownership inspection, and save-destination ownership without
+  startup filesystem dependencies.
 - `src/nfit/project_resources.py`, `resource_budget.py`, and `storage_budget.py`:
   flat resource inventory, explicit cache lifecycle and memory/disk admission.
 - `src/nfit/project_resource_gui.py`, `qt_resource_manager.py`, and

@@ -107,6 +107,8 @@ def publish_project_clipboard(explorer, role, objects, *, collect_binnings, has_
                 if value and Path(value).is_absolute() and Path(value).parent.is_dir():
                     owner_path = Path(value)
                     break
+    if owner_path is None and explorer.project.settings.get("temporary_storage_directory"):
+        owner_path = Path(explorer.project.settings["temporary_storage_directory"]) / ".nfit-copied-selection"
     if owner_path is None:
         from .file_dialogs import get_existing_directory
 
@@ -116,7 +118,7 @@ def publish_project_clipboard(explorer, role, objects, *, collect_binnings, has_
         owner_path = Path(directory) / ".nfit-copied-selection"
 
     def task(_report):
-        owner = temporary_data_directory(owner_path, prefix="nfit-copied-selection-")
+        owner = temporary_data_directory(owner_path, prefix="nfit-copied-selection-", workspace=explorer.project)
         try:
             with operation_progress(_report):
                 path = write_project_selection(selection, Path(owner.name) / "selection.nfit",
@@ -152,7 +154,7 @@ def paste_project_clipboard(explorer, *, target_role, data_group, dataset_node, 
                 raise OSError("The copied project archive changed; copy the selection again")
             owner_path = explorer.project_path or path
             with operation_progress(_report):
-                return adopt_project_selection(path, owner_path)
+                return adopt_project_selection(path, owner_path, workspace=explorer.project)
         return read_project_selection(manifest=descriptor["manifest"])
 
     def installed(selection):

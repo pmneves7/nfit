@@ -89,6 +89,20 @@ service directly, and `viewer_data` owns the shared cancellation types.
 explicitly supported derived-recipe and composite migrations. Serialization
 and GUI entry points retain compatibility exports of the same implementation.
 
+`project_rebinning` owns axis configuration edits as well as numerical grid
+preparation. Dataset and composite editors call its shared mutation functions;
+the GUI handles refreshes and validation feedback. The numeric edit functions
+retain the distinct dataset and composite validation policies.
+The group inventory panel receives a `GroupInventoryPanelContext` with explicit
+row-formatting and pagination callbacks. It queries only visible dataset rows;
+the explorer supplies callbacks that retain live helper lookup.
+
+`data_workspace` carries temporary-directory preferences through runtime
+project, group, and dataset ownership. Project-aware allocations pass that
+context explicitly, so projects sharing source or archive paths keep independent
+choices. These runtime preferences are separate from source metadata and cache
+identities; only the project's directory setting is serialized.
+
 For example, the GUI's data-group workflow corresponds to ordinary package
 calls:
 

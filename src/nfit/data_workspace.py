@@ -12,6 +12,7 @@ import os
 import tempfile
 import weakref
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 
@@ -24,7 +25,44 @@ from .workspace_sessions import (
     owner_workspace_path,
 )
 
+# Saved-path callers retain the established last-selected directory behavior.
+# Contextual scientific operations always use their owning runtime preference.
 _WORKSPACE_OVERRIDES: dict[str, str] = {}
+
+
+@dataclass(eq=False)
+class _WorkspacePreference:
+    directory: str | None = None
+
+
+def _register_preference(preference, owner):
+    if owner is not None:
+        identity = str(Path(owner).absolute())
+        if preference.directory:
+            _WORKSPACE_OVERRIDES[identity] = preference.directory
+        else:
+            _WORKSPACE_OVERRIDES.pop(identity, None)
+
+
+def _path_directory(owner):
+    return _WORKSPACE_OVERRIDES.get(str(owner))
+
+
+def _preference(workspace):
+    preference = getattr(workspace, "_data_workspace_preference", None)
+    if preference is None and hasattr(workspace, "settings"):
+        directory = workspace.settings.get("temporary_storage_directory")
+        preference = _WorkspacePreference(str(Path(directory).expanduser().absolute()) if directory else None)
+        workspace._data_workspace_preference = preference
+    return preference
+
+
+def _attach_preference(group, preference):
+    if preference is not None:
+        for owner in (group, *group.iter_subgroups(), *group.iter_datasets()):
+            owner._data_workspace_preference = preference
+
+
 _TEMPORARY_DIRECTORIES: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
 _TEMPORARY_FILES: dict[str, dict[str, int]] = {}
 _STORAGE_LOCK = RLock()
@@ -50,17 +88,13 @@ def set_project_temporary_directory(project, directory: str | None, *, validate=
         directory = str(root)
     if hasattr(project, "settings"):
         project.settings["temporary_storage_directory"] = directory or ""
-    owner = getattr(project, "_project_path", None)
-    paths = [owner] if owner else []
-    paths.extend(dataset.metadata.get("_project_path") or dataset.metadata.get("source_file")
-                 for group in project.data_groups for dataset in group.iter_datasets())
-    for path in paths:
-        if path:
-            identity = str(Path(path).absolute())
-            if directory:
-                _WORKSPACE_OVERRIDES[identity] = directory
-            else:
-                _WORKSPACE_OVERRIDES.pop(identity, None)
+    preference = _preference(project)
+    if preference is None:
+        preference = project._data_workspace_preference = _WorkspacePreference()
+    preference.directory = directory or None
+    _register_preference(preference, getattr(project, "_project_path", None))
+    for group in project.data_groups:
+        _attach_preference(group, preference)
 
 
 def temporary_storage_usage() -> tuple[tuple[str, int], ...]:
@@ -78,17 +112,24 @@ class DataWorkspaceError(OSError):
     """An operation's selected scientific storage is unavailable."""
 
 
-def bind_data_workspace(group, path):
+def bind_data_workspace(group, path, *, workspace=None):
     """Attach runtime project ownership to a collection and its source entries."""
+    _attach_preference(group, _preference(workspace if workspace is not None else group))
     for node in (group, *group.iter_subgroups()):
         node._data_workspace_owner_path = str(path)
     for dataset in group.iter_datasets():
         dataset.metadata["_project_path"] = str(path)
 
 
+def inherit_temporary_storage(group, parent):
+    """Share future allocation preferences without changing source ownership."""
+    _attach_preference(group, _preference(parent))
+
+
 def inherit_data_workspace(group, parent):
     """Keep newly imported runs in the existing project's scientific storage."""
-    owner = getattr(parent, "_data_workspace_owner_path", None)
+    inherit_temporary_storage(group, parent)
+    owner = getattr(parent, "_data_workspace_owner_path", None) or getattr(parent, "_project_path", None)
     if owner is not None:
         bind_data_workspace(group, owner)
 
@@ -104,15 +145,28 @@ def project_data_workspace(project, path):
 
     missing = object()
     datasets = [dataset for group in project.data_groups for dataset in group.iter_datasets()]
-    previous = [dataset.metadata.get("_project_path", missing) for dataset in datasets]
     nodes = [node for group in project.data_groups for node in (group, *group.iter_subgroups())]
+    owners = [project, *nodes, *datasets]
+    previous_preferences = [getattr(owner, "_data_workspace_preference", missing) for owner in owners]
+    previous = [dataset.metadata.get("_project_path", missing) for dataset in datasets]
     previous_nodes = [getattr(node, "_data_workspace_owner_path", missing) for node in nodes]
+    previous_project_path = getattr(project, "_project_path", missing)
+    preference = _preference(project)
+    previous_directory = None if preference is None else preference.directory
+    if preference is not None and hasattr(project, "settings"):
+        selected = project.settings.get("temporary_storage_directory")
+        preference.directory = str(Path(selected).expanduser().absolute()) if selected else None
     for group in project.data_groups:
-        bind_data_workspace(group, path)
-    set_project_temporary_directory(project, getattr(project, "settings", {}).get("temporary_storage_directory"), validate=False)
+        bind_data_workspace(group, path, workspace=project)
     try:
         yield
     except BaseException:
+        if preference is not None:
+            preference.directory = previous_directory
+        if previous_project_path is missing:
+            project.__dict__.pop("_project_path", None)
+        else:
+            project._project_path = previous_project_path
         for dataset, owner in zip(datasets, previous, strict=True):
             if owner is missing:
                 dataset.metadata.pop("_project_path", None)
@@ -123,24 +177,41 @@ def project_data_workspace(project, path):
                 del node._data_workspace_owner_path
             else:
                 node._data_workspace_owner_path = owner
+        for owner, previous_preference in zip(owners, previous_preferences, strict=True):
+            if previous_preference is missing:
+                owner.__dict__.pop("_data_workspace_preference", None)
+            else:
+                owner._data_workspace_preference = previous_preference
         raise
+    else:
+        if preference is not None:
+            _register_preference(preference, path)
 
 
 def temporary_data_directory(
     owner_path: str | os.PathLike[str] | None,
     *,
     prefix: str,
+    workspace=None,
 ) -> tempfile.TemporaryDirectory | SessionTemporaryDirectory:
     """Allocate staging in an owner's hidden, private session workspace.
 
     The parent must already exist. Unavailable storage fails at the operation;
     it never silently spills file-backed scientific data into system scratch.
     The returned object owns cleanup, including retained reduced-event caches.
+    ``workspace`` selects runtime project/group/dataset preferences, including
+    an explicit default choice; path-only calls retain saved-path compatibility.
     """
 
     owner = None if owner_path is None else Path(owner_path).absolute()
-    override = _WORKSPACE_OVERRIDES.get(str(owner)) if owner is not None else None
+    preference = _preference(workspace) if workspace is not None else None
+    override = (None if preference is None else preference.directory)
+    if workspace is None and owner is not None:
+        override = _path_directory(owner)
     parent = Path(override) if override else (None if owner is None else owner.parent)
+    if owner is None and parent is not None:
+        # A selected directory also governs source-free scientific operations.
+        owner = parent / ".nfit-unsaved-project"
     if parent is not None and not parent.is_dir():
         raise DataWorkspaceError(
             f"Scientific workspace directory is unavailable: {parent}. "
@@ -164,7 +235,7 @@ def _workspace_owner_parent(owner_path, directory=None) -> tuple[Path, Path]:
         raise ValueError("An owner path is required for scientific workspace inspection")
     owner = Path(owner_path).absolute()
     parent = (Path(directory).expanduser().absolute() if directory is not None
-              else Path(_WORKSPACE_OVERRIDES.get(str(owner), owner.parent)))
+              else Path(_path_directory(owner) or owner.parent))
     return owner, parent
 
 

@@ -195,8 +195,14 @@ def execute_to_artifacts(
     *,
     progress_callback=None,
     cancel_callback=None,
+    workspace=None,
 ) -> AnalysisResultRecord:
-    """Run an analysis and atomically publish all of its artifact outputs."""
+    """Run an analysis and atomically publish all of its artifact outputs.
+
+    ``workspace`` may be the owning project, group, or dataset. Its runtime
+    storage choice takes precedence over saved-path compatibility overrides,
+    including when the owner explicitly chooses default storage.
+    """
 
     definition = analysis_definition(analysis.type)
     analysis.operation_version = definition.version
@@ -213,7 +219,7 @@ def execute_to_artifacts(
         for output in (analysis.result.outputs if analysis.result is not None else [])
         if output.dataset_id
     }
-    with temporary_data_directory(project_path, prefix="nfit-analysis-") as temporary:
+    with temporary_data_directory(project_path, prefix="nfit-analysis-", workspace=workspace) as temporary:
         staging = Path(temporary)
         artifact_payloads: dict[str, Path] = {}
         for key, output in execution.outputs.items():

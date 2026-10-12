@@ -302,6 +302,9 @@ an existing writable temporary directory for future allocations. Existing files
 stay where their current owners placed them. The choice is recorded in the
 project but is checked only when storage is used, so an unavailable old path
 does not prevent opening an empty application or inspecting a project.
+Project-aware operations carry that choice explicitly through datasets and
+groups. Source filenames do not determine which project's preference applies;
+unsaved projects sharing a source can select different staging directories.
 
 File-backed operations never silently move scientific staging into another
 filesystem. On clusters requiring data in experiment directories, keep the

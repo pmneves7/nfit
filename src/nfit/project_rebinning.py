@@ -11,6 +11,7 @@ import json
 import math
 import re
 from collections.abc import Mapping, Sequence
+from enum import Enum
 from itertools import product
 from typing import Any
 
@@ -263,6 +264,214 @@ def _rebin_axis_bound_is_auto(axis: Mapping[str, Any], key: str) -> bool:
     except (KeyError, TypeError, ValueError):
         return False
     return bool(np.isclose(value, automatic))
+
+
+class RebinAxisEditResult(Enum):
+    """Outcome of a numeric configuration edit, before presentation callbacks."""
+
+    CHANGED = "changed"
+    UNCHANGED = "unchanged"
+    INVALID = "invalid"
+
+
+def edit_dataset_rebin_axis_value(
+    config: dict[str, Any], index: int, key: str, text: str
+) -> RebinAxisEditResult:
+    """Edit a dataset axis in place, rejecting invalid step sizes.
+
+    Return CHANGED, UNCHANGED (including rejected steps), or INVALID for
+    malformed numeric input. Only changed edits need cache invalidation.
+    Validation during recalculation can retain a partial in-place edit;
+    sanitization errors propagate, matching existing dataset editing behavior.
+    """
+
+    return _edit_rebin_axis_value(config, index, key, text, composite=False)
+
+
+def edit_composite_rebin_axis_value(
+    config: dict[str, Any], index: int, key: str, text: str
+) -> RebinAxisEditResult:
+    """Replace a composite axis, retaining its bounds-derived step fallback.
+
+    Return CHANGED, UNCHANGED, or INVALID for malformed numeric input. Numeric
+    edits set normalization; restoring automatic bounds leaves it untouched.
+    Unlike dataset edits, nonpositive and nonfinite steps are sanitized from
+    the bounds. Recalculation and sanitization errors propagate before the
+    copied axis is installed. The caller owns presentation and invalidation.
+    """
+
+    return _edit_rebin_axis_value(config, index, key, text, composite=True)
+
+
+def _edit_rebin_axis_value(
+    config: dict[str, Any], index: int, key: str, text: str, *, composite: bool
+) -> RebinAxisEditResult:
+    axes = config.get("axes") if composite else config.get("axes", [])
+    if composite and not isinstance(axes, list):
+        return RebinAxisEditResult.UNCHANGED
+    if not (0 <= index < len(axes)):
+        return RebinAxisEditResult.UNCHANGED
+    axis = dict(axes[index]) if composite else axes[index]
+    previous_step = float(axis.get("step_size", 0.0) or 0.0)
+    if key in {"lower", "upper"} and not text.strip():
+        if _rebin_axis_bound_is_auto(axis, key):
+            return RebinAxisEditResult.UNCHANGED
+        axis[f"auto_{key}"] = True
+        automatic = axis.get(f"auto_{key}_value")
+        if automatic is not None and np.isfinite(float(automatic)):
+            axis[key] = float(automatic)
+        if composite:
+            axes[index] = axis
+        return RebinAxisEditResult.CHANGED
+    try:
+        if key == "num_bins":
+            value = max(int(float(text)), 1)
+            if axis.get(key) == value:
+                return RebinAxisEditResult.UNCHANGED
+            axis[key] = value
+            axis["step_size"] = _step_size_from_bounds(
+                axis.get("lower", 0.0), axis.get("upper", 0.0), value
+            )
+        else:
+            value = float(text)
+            if key == "step_size" and not composite:
+                if value <= 0.0 or not np.isfinite(value):
+                    return RebinAxisEditResult.UNCHANGED
+            if axis.get(key) == value and not bool(axis.get(f"auto_{key}", False)):
+                return RebinAxisEditResult.UNCHANGED
+            axis[key] = value
+            if key == "step_size":
+                axis["auto_step_size"] = False
+            if key in {"lower", "upper"}:
+                axis[f"auto_{key}"] = False
+            if not composite:
+                if key == "step_size":
+                    axis["num_bins"] = _num_bins_from_step_size(
+                        axis.get("lower", 0.0), axis.get("upper", 0.0), value
+                    )
+                elif key in {"lower", "upper"}:
+                    if (
+                        _rebin_axis_mode(config, axis) == "step"
+                        and previous_step > 0.0
+                        and np.isfinite(previous_step)
+                    ):
+                        axis["num_bins"] = _num_bins_from_step_size(
+                            axis.get("lower", 0.0), axis.get("upper", 0.0), previous_step
+                        )
+                    else:
+                        axis["step_size"] = _step_size_from_bounds(
+                            axis.get("lower", 0.0), axis.get("upper", 0.0), axis["num_bins"]
+                        )
+    except ValueError:
+        return RebinAxisEditResult.INVALID
+    # Composite recalculation historically follows numeric parsing; failures
+    # here must propagate rather than becoming editor-validation outcomes.
+    if composite:
+        if key == "step_size":
+            step = float(axis.get("step_size", 0.0))
+            if step > 0.0:
+                axis["num_bins"] = _num_bins_from_step_size(
+                    axis.get("lower", 0.0), axis.get("upper", 0.0), step
+                )
+        elif key in {"lower", "upper"} and _rebin_axis_mode(config, axis) == "step":
+            if previous_step > 0.0 and np.isfinite(previous_step):
+                axis["num_bins"] = _num_bins_from_step_size(
+                    axis.get("lower", 0.0), axis.get("upper", 0.0), previous_step
+                )
+        elif key in {"lower", "upper"}:
+            axis["step_size"] = _step_size_from_bounds(
+                axis.get("lower", 0.0), axis.get("upper", 0.0), axis["num_bins"]
+            )
+    axis.update(_sanitize_rebin_axis_config(axis))
+    if composite:
+        axes[index] = axis
+        config["normalize"] = True
+    return RebinAxisEditResult.CHANGED
+
+
+def set_rebin_axis_edges(config: dict[str, Any], index: int, edges: Any) -> bool:
+    """Install validated explicit edges, or remove them for an empty string.
+
+    Return False for an invalid index and True even when clearing absent
+    edges. Validation errors propagate before mutating the existing axis.
+    """
+
+    axes = config.get("axes", [])
+    if not (0 <= index < len(axes)):
+        return False
+    if isinstance(edges, str) and edges == "":
+        axes[index].pop("bin_edges", None)
+    else:
+        axes[index].update(
+            _sanitize_rebin_axis_config(
+                {**axes[index], "bin_edges": _normalize_rebin_bin_edges(edges)}
+            )
+        )
+    return True
+
+
+def set_rebin_axis_mode(config: dict[str, Any], index: int, value: str) -> bool:
+    """Set the grid mode and its assignment and tolerance defaults.
+
+    Return whether it changed; invalid indices and unchanged modes are no-ops.
+    Unknown modes select step spacing. Existing tolerance values are retained.
+    """
+
+    axes = config.get("axes", [])
+    if not (0 <= index < len(axes)):
+        return False
+    mode = value if value in REBIN_AXIS_MODES else "step"
+    if _rebin_axis_mode(config, axes[index]) == mode:
+        return False
+    axes[index]["mode"] = mode
+    if mode in {"discrete", "tolerance"}:
+        axes[index]["fractional"] = False
+    if mode == "tolerance":
+        axes[index].setdefault(
+            "tolerance", max(float(axes[index].get("step_size", 0.1)), 1e-12)
+        )
+    return True
+
+
+def set_rebin_axis_fractional(
+    config: dict[str, Any], index: int, fractional: bool
+) -> bool:
+    """Set fractional assignment when the axis mode permits it.
+
+    Return whether it changed; invalid indices and unchanged values are no-ops.
+    Discrete and tolerance axes always use nonfractional assignment.
+    """
+
+    axes = config.get("axes", [])
+    if not (0 <= index < len(axes)):
+        return False
+    value = bool(fractional) and _rebin_axis_mode(config, axes[index]) not in {
+        "discrete", "tolerance",
+    }
+    if _rebin_axis_fractional(config, axes[index]) == value:
+        return False
+    axes[index]["fractional"] = value
+    return True
+
+
+def set_rebin_resolution_mode(config: dict[str, Any], mode: str) -> bool:
+    """Set the legacy resolution mode, retaining per-axis mode choices.
+
+    Return whether it changed. Switching to bin counts recalculates step sizes;
+    all other values select step spacing. Invalid saved axis values propagate.
+    """
+
+    mode = "bins" if mode == "bins" else "step"
+    if _rebin_resolution_mode(config) == mode:
+        return False
+    config[REBIN_RESOLUTION_MODE_KEY] = mode
+    if mode == "bins":
+        for axis in config.get("axes", []):
+            axis["step_size"] = _step_size_from_bounds(
+                axis.get("lower", 0.0), axis.get("upper", 0.0),
+                max(int(axis.get("num_bins", 1)), 1),
+            )
+    return True
 
 
 def estimated_rebin_shape(config: Mapping[str, Any]) -> tuple[int, ...]:

@@ -678,7 +678,7 @@ class DataPlaygroundWindow:
             analysis.parameters = parameters
 
         def task(progress_callback):
-            return execute_to_artifacts(analysis, analysis_inputs, self.explorer.project_path, progress_callback=progress_callback)
+            return execute_to_artifacts(analysis, analysis_inputs, self.explorer.project_path, progress_callback=progress_callback, workspace=self.explorer.project)
 
         def success(result):
             analysis.result = result

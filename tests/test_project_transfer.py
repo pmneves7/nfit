@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -347,3 +348,33 @@ def test_repeated_workspace_copies_preserve_independent_analysis_assets(tmp_path
     save_project(another, tmp_path / "third.nfit")
     with open_project_artifact(tmp_path / "third.nfit", third.analyses[0].result.outputs[0].artifact_path) as reader:
         assert reader.read() == b"first"
+
+
+def test_paste_uses_destination_storage_for_adoption_and_future_cache(tmp_path):
+    from nfit import data_workspace
+    from nfit.raw_dgs_cache import cache_event_chunks
+
+    first, second = tmp_path / "source-storage", tmp_path / "destination-storage"
+    first.mkdir()
+    second.mkdir()
+    source = DatasetEntry("measured", _tiny_mdhisto_data(3.), kind="mdhisto")
+    group = DataGroup("Source", datasets=[source])
+    source_project = NfitProject([group])
+    data_workspace.set_project_temporary_directory(source_project, str(first))
+    packet = tmp_path / "selection.nfit"
+    export_project_items(source_project, "dataset", [source], packet, source_group=group)
+    destination_group = DataGroup("Destination")
+    destination = NfitProject([destination_group])
+    data_workspace.set_project_temporary_directory(destination, str(second))
+    pasted = import_project_items(destination, packet, target_role="datasets", data_group=destination_group).items[0]
+    owner = destination._project_transfer_owners[0]
+    try:
+        assert Path(owner.name).is_relative_to(second)
+        # Pasted lazy data keep their real private archive identity.
+        assert Path(pasted.metadata["_project_path"]).is_relative_to(second)
+        list(cache_event_chunks(pasted, "new-cache", {}, {}, iter(())))
+        assert pasted._raw_dgs_reduction_cache.content.is_relative_to(second)
+        assert pasted._data_workspace_preference is destination._data_workspace_preference
+    finally:
+        pasted._raw_dgs_reduction_cache.staging.cleanup()
+        owner.cleanup()

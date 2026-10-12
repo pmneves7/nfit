@@ -61,6 +61,10 @@ does not evict loaded histograms.
 Select an existing writable temporary directory to control future scientific
 staging. The choice is saved in the project. Existing staging stays in place
 until its owners release it; files are not moved during a directory change.
+Each project keeps its own choice, including unsaved projects that use the same
+source files in one Python process. Changing or clearing one project's choice
+does not redirect another project's staging. Newly imported datasets inherit
+their destination project's choice.
 The temporary total covers live nfit-owned staging directories, not unrelated
 files in the chosen directory. Atomic archive replacements stage beside their
 save destination so that publication stays on the same filesystem.
@@ -131,6 +135,14 @@ resources.load(saved_cache_keys)
 resources.delete(cache_keys)  # removal is committed by the next project save
 set_project_temporary_directory(project, "/path/to/experiment/work")
 ```
+
+Custom staging code can call
+`temporary_data_directory(owner_path, prefix="nfit-custom-", workspace=project)`
+from `nfit.data_workspace` to use that project's choice. A bound group or dataset
+can also supply the workspace context. A project whose choice has been cleared
+uses the default owner directory even if another project selected a directory
+for the same archive path. Calls with only an archive path retain the legacy
+last-selected path preference.
 
 Inspect crash leftovers independently of a loaded project:
 

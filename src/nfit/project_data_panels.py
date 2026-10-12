@@ -25,6 +25,7 @@ from .project_dataset_panels import (
     _point_list_wavelength_box,
 )
 from .project_group_panels import (
+    GroupInventoryPanelContext,
     _group_composite_group_box,
     _group_dataset_weights_group_box,
 )
@@ -39,9 +40,16 @@ def invoke_panel_builder(
 ) -> Any:
     """Invoke an extracted builder with the explorer module's live helpers.
 
-    A fresh function object gives nested callbacks the exact live global lookup
-    surface of the original method without mutating shared module state.
+    Migrated collection inventory uses its explicit explorer context. Legacy
+    builders receive a fresh function object whose nested callbacks keep the
+    original method's live global lookup without mutating shared module state.
     """
+
+    if builder is _group_dataset_weights_group_box:
+        if "context" not in kwargs:
+            group = args[0] if args else kwargs["group"]
+            kwargs["context"] = explorer._group_inventory_panel_context(group)
+        return builder(explorer, *args, **kwargs)
 
     rebound = FunctionType(
         builder.__code__,

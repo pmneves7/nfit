@@ -145,7 +145,7 @@ def cached_reduction(dataset, signature):
 def cache_event_chunks(dataset, signature, header, normalization, chunks):
     """Write and yield chunks; publish a cache only after complete reduction."""
     owner = dataset.metadata.get("_project_path") or dataset.metadata.get("source_file")
-    staging = temporary_data_directory(owner, prefix="nfit-reduced-events-")
+    staging = temporary_data_directory(owner, prefix="nfit-reduced-events-", workspace=dataset)
     path = Path(staging.name) / "events.npz"
     chunk_count = 0
     # Column storage makes the coordinate/weight columns contiguous. Buffering
@@ -247,7 +247,7 @@ def bind_project_reduced_event_caches(project, path):
     # One metadata snapshot for all runs; never reopen a large index per run.
     with open_project_zip(path) as archive:
         for group in project.data_groups:
-            bind_data_workspace(group, path)
+            bind_data_workspace(group, path, workspace=project)
             for dataset in group.iter_datasets():
                 payload = dataset.metadata.get(_CACHE_KEY)
                 if isinstance(payload, dict) and payload.get("version") == RAW_DGS_REDUCTION_VERSION:
