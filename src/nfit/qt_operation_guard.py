@@ -5,6 +5,15 @@ from __future__ import annotations
 from functools import wraps
 
 
+def gui_operation_active() -> bool:
+    """Report whether a guarded GUI operation is still publishing shared state."""
+    from PySide6 import QtWidgets
+
+    app = QtWidgets.QApplication.instance()
+    guard_filter = getattr(app, "_nfit_operation_input_filter", None)
+    return bool(guard_filter is not None and guard_filter.depth)
+
+
 def close_widget_popups(root=None) -> None:
     """Dismiss combo/menu popups before their controls or windows are rebuilt."""
     from PySide6 import QtWidgets

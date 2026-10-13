@@ -66,6 +66,11 @@ does not close another. Performance preferences apply to each process, so severa
 active jobs share the machine's available resources. Save different projects to
 different files; these windows do not coordinate simultaneous edits to one file.
 
+If another process changes an open project's file, nfit offers to reload it,
+save the current state under another name, or keep working. Checks wait until
+active GUI operations finish. A successful save from the current window updates
+its file identity and does not require reloading the project.
+
 Copy a tree selection in one window, then select a compatible destination and
 paste in another. Configuration-only selections use the system clipboard.
 Scientific selections use a lossless transfer archive in the project's temporary

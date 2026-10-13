@@ -5,7 +5,12 @@ import time
 import pytest
 from PySide6 import QtCore, QtGui, QtTest, QtWidgets
 
-from nfit.qt_operation_guard import GuiOperationGuard, close_operation_window, close_widget_popups
+from nfit.qt_operation_guard import (
+    GuiOperationGuard,
+    close_operation_window,
+    close_widget_popups,
+    gui_operation_active,
+)
 
 
 @pytest.fixture
@@ -70,11 +75,14 @@ def test_guard_blocks_other_windows_and_queued_input_but_not_cancel(app):
 def test_nested_guards_restore_after_exception_without_enabling_disabled_controls(app):
     window, combo = _selector()
     combo.setEnabled(False)
+    assert not gui_operation_active()
     with pytest.raises(ValueError), GuiOperationGuard():
+        assert gui_operation_active()
         with GuiOperationGuard():
             assert app._nfit_operation_input_filter.depth == 2
         assert app._nfit_operation_input_filter.depth == 1
         raise ValueError("operation failed")
+    assert not gui_operation_active()
     assert not combo.isEnabled()
     window.close()
 

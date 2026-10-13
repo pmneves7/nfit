@@ -248,6 +248,7 @@ from .qt_operation_guard import (
     GuiOperationGuard,
     close_operation_window,
     guarded_gui_operation,
+    gui_operation_active,
 )
 from .qt_widget_state import preserve_widget_state
 from .spectral_channels import (
@@ -8494,18 +8495,24 @@ class NfitProjectExplorer:
     def check_for_external_project_change(self) -> bool:
         """Prompt once when the open project has been replaced on disk."""
 
+        # Worker completion and dialog cleanup process Qt events before Save
+        # adopts its new disk signature. Poll only after the whole guarded
+        # operation finishes, including its final GUI bookkeeping.
+        if gui_operation_active():
+            return False
         if not self._project_changed_on_disk():
             return False
         current = _project_file_signature(self.project_path)
         if current == self._ignored_project_disk_signature:
             return False
-        action = self._prompt_external_change_action()
-        if action == "reload":
-            return self._load_project_path(self.project_path, remember=True)
-        if action == "save_as":
-            return self.save_as()
-        self._ignored_project_disk_signature = current
-        return True
+        with GuiOperationGuard():
+            action = self._prompt_external_change_action()
+            if action == "reload":
+                return self._load_project_path(self.project_path, remember=True)
+            if action == "save_as":
+                return self.save_as()
+            self._ignored_project_disk_signature = current
+            return True
 
     @guarded_gui_operation
     def save(self) -> bool:
