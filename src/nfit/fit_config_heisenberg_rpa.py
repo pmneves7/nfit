@@ -21,6 +21,8 @@ from .spin_fluctuations import (
     heisenberg_rpa_chipp,
     heisenberg_rpa_chipp_and_gradients,
     heisenberg_rpa_susceptibility,
+    heisenberg_rpa_zero_energy_slope,
+    heisenberg_rpa_zero_energy_slope_and_gradients,
     reduce_site_network,
     reduce_site_network_with_tensors,
     rpa_exchange_matrix,
@@ -158,6 +160,14 @@ class _RpaComponentEvaluator:
             )
         self.component = component
         self.config = config
+        # A local site trace needs every folded sector in the conventional
+        # reciprocal cell. The bright neutron sector alone is sufficient only
+        # for the measured response, so retain the original network for BZ
+        # moment integrals and their diagnostics.
+        self._closure_site_positions = site_positions
+        self._closure_orbits = orbits
+        self._closure_site_rotations = config.get("site_rotations")
+        self._closure_sia = config.get("sia")
         # Magnetic sites in the user's cell (before primitive reduction).
         # A complete chemical crystal converts this count to sites per formula
         # unit; legacy magnetic-only structures retain the historical fallback.
@@ -294,11 +304,22 @@ class _RpaComponentEvaluator:
                 form_factor_sq=form_factor_sq,
                 polarization=_isotropic_polarization(),
                 bose_denominator_values=self._bose_denominator(data),
+                zero_energy_slope=0.0,
             ),
             dtype=float,
         )
         self._intensity_per_chipp_cache[id(data)] = (data, factor)
         return factor
+
+    @staticmethod
+    def _needs_zero_energy_slope(data: PointData4D) -> bool:
+        """Whether a measured spectral channel needs the exact Bose limit."""
+
+        convention = data.metadata.get("spectral_observable")
+        return bool(np.any(np.asarray(data.E) == 0.0)) and not (
+            isinstance(convention, dict)
+            and convention.get("fit_representation") == "chi_double_prime"
+        )
 
     def _geometry(self, data: PointData4D) -> tuple[Any, Any, Any, int]:
         cached = self._geometry_cache.get(id(data))
@@ -443,7 +464,8 @@ class _RpaComponentEvaluator:
             grid_size = self.closure_spec.bz_grid if self.closure_spec is not None else 12
             grid = bz_sample_hkl(grid_size)
             bz_geometry = build_rpa_geometry(
-                grid[:, 0], grid[:, 1], grid[:, 2], self.site_positions, self.orbits
+                grid[:, 0], grid[:, 1], grid[:, 2],
+                self._closure_site_positions, self._closure_orbits,
             )
             bz_structure = None
             if self.tensor_mode:
@@ -451,12 +473,12 @@ class _RpaComponentEvaluator:
 
                 bz_structure = build_tensor_structure(
                     bz_geometry,
-                    self.site_positions,
-                    orbits=self.orbits,
+                    self._closure_site_positions,
+                    orbits=self._closure_orbits,
                     lattice=self._lattice,
                     anisotropy=self._anisotropy,
-                    sia=self._sia,
-                    site_rotations=self._site_rotations,
+                    sia=self._closure_sia,
+                    site_rotations=self._closure_site_rotations,
                     dipole=self._dipole,
                 )
             self._closure_bz_context = (bz_geometry, bz_structure)
@@ -474,6 +496,7 @@ class _RpaComponentEvaluator:
             from .tensor_rpa import (
                 MU_B_MEV_PER_T,
                 assemble_tensor_exchange,
+                zeeman_cartesian_affine_inverse,
                 zeeman_cartesian_propagator,
             )
 
@@ -509,12 +532,26 @@ class _RpaComponentEvaluator:
                         gamma_perp_ratio=gamma_perp,
                     )
 
+                def affine_inverse(chi0, gamma0):
+                    return zeeman_cartesian_affine_inverse(
+                        b_hat,
+                        chi0=chi0,
+                        gamma0=gamma0,
+                        omega_larmor=omega_larmor,
+                        chi_perp_ratio=chi_perp,
+                        gamma_perp_ratio=gamma_perp,
+                    )
+
                 model = TierBMoments(
                     exchange,
                     bz_geometry.n_sites,
                     builder,
-                    omega_points=self.closure_spec.omega_points,
+                    omega_points=(
+                        self.closure_spec.omega_points
+                        if self.closure_spec is not None else 200
+                    ),
                     static_response_bound=max(1.0, chi_perp),
+                    affine_inverse_builder=affine_inverse,
                 )
         elif self.tensor_mode:
             from .tensor_rpa import assemble_tensor_exchange
@@ -877,14 +914,24 @@ class _RpaComponentEvaluator:
             np.column_stack(key_columns) if key_columns else np.zeros((n, 1)),
             9,
         )
+        if self.closure_spec is not None:
+            # Temperature is a scientific solve/cache input, not a display or
+            # field-direction grouping key. Keep its exact imported value.
+            keys[:, 0] = temperature
         unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
         chi_values = np.empty(n, dtype=float)
         invalid = np.zeros(n, dtype=bool)
         closure_by_temperature: dict[float, Any] = {}
         if self.closure_spec is not None and not self.zeeman_mode:
-            closure_by_temperature = self._solve_closures_at_temperatures(
-                params, unique_keys[:, 0], None
-            )
+            try:
+                closure_by_temperature = self._solve_closures_at_temperatures(
+                    params, unique_keys[:, 0], None
+                )
+            except ValueError:
+                # Continuation is a fast path. If one temperature has no
+                # stable solution, isolate each solve in the row guard below
+                # so valid temperatures still contribute to the objective.
+                pass
         for index, _row in enumerate(unique_keys):
             sel = inverse == index
             representative = int(np.flatnonzero(sel)[0])
@@ -896,11 +943,11 @@ class _RpaComponentEvaluator:
                 chi0 = float(params[self.chi0_key])
                 lambda_shift = 0.0
                 if self.closure_spec is not None:
-                    closure = (
-                        self._solve_closure(params, t, field_vec)
-                        if self.zeeman_mode
-                        else closure_by_temperature[t]
-                    )
+                    closure = closure_by_temperature.get(t)
+                    if closure is None:
+                        closure = self._solve_closure(
+                            params, t, field_vec if self.zeeman_mode else None
+                        )
                     chi0 = closure.chi0_eff
                     lambda_shift = closure.lambda_shift
                 chi_uniform = self._bulk_static_chi(params, chi0, lambda_shift, b_hat)
@@ -938,6 +985,8 @@ class _RpaComponentEvaluator:
             else np.asarray(data.E, dtype=float)
         )
         elastic = _is_elastic_dataset(data)
+        needs_zero_slope = not elastic and self._needs_zero_energy_slope(data)
+        zero_energy_slope = None
         try:
             chi0 = float(params[self.chi0_key])
             lambda_shift = 0.0
@@ -951,6 +1000,7 @@ class _RpaComponentEvaluator:
                     tensor_rpa_zeeman_unpolarized_chipp,
                     tensor_zeeman_susceptibility,
                     unpolarized_static_chi,
+                    zeeman_cartesian_dissipative_factor,
                     zeeman_cartesian_propagator,
                 )
 
@@ -988,12 +1038,51 @@ class _RpaComponentEvaluator:
                     )
                     response = unpolarized_static_chi(chi_tensor, q_hat)
                 else:
+                    local_factors = zeeman_cartesian_dissipative_factor(
+                        energy,
+                        b_hat,
+                        chi0=chi0,
+                        gamma0=float(params[self.gamma0_key]),
+                        omega_larmor=g_factor * MU_B_MEV_PER_T * magnitude,
+                        chi_perp_ratio=float(params[self._zeeman_keys["chi_perp_ratio"]]),
+                        gamma_perp_ratio=float(params[self._zeeman_keys["gamma_perp_ratio"]]),
+                    )
                     response = tensor_rpa_zeeman_unpolarized_chipp(
                         structure, geometry, energy, q_hat, propagator,
                         param_values=self._tensor_values(params),
                         lambda_shift=lambda_shift,
                         static_local_propagator=static_local,
+                        local_dissipative_factor=local_factors,
                     )
+                    if needs_zero_slope:
+                        from .tensor_rpa import (
+                            tensor_rpa_zeeman_zero_energy_slope,
+                            zeeman_cartesian_propagator_zero_energy_derivative,
+                            zeeman_cartesian_zero_energy_dissipative_factor,
+                        )
+
+                        derivative = zeeman_cartesian_propagator_zero_energy_derivative(
+                            b_hat,
+                            chi0=chi0,
+                            gamma0=float(params[self.gamma0_key]),
+                            omega_larmor=g_factor * MU_B_MEV_PER_T * magnitude,
+                            chi_perp_ratio=float(params[self._zeeman_keys["chi_perp_ratio"]]),
+                            gamma_perp_ratio=float(params[self._zeeman_keys["gamma_perp_ratio"]]),
+                        )
+                        dissipative_factor = zeeman_cartesian_zero_energy_dissipative_factor(
+                            b_hat,
+                            chi0=chi0,
+                            gamma0=float(params[self.gamma0_key]),
+                            omega_larmor=g_factor * MU_B_MEV_PER_T * magnitude,
+                            chi_perp_ratio=float(params[self._zeeman_keys["chi_perp_ratio"]]),
+                            gamma_perp_ratio=float(params[self._zeeman_keys["gamma_perp_ratio"]]),
+                        )
+                        zero_energy_slope = tensor_rpa_zeeman_zero_energy_slope(
+                            structure, geometry, q_hat, static_local, derivative,
+                            param_values=self._tensor_values(params),
+                            lambda_shift=lambda_shift,
+                            local_dissipative_factor=dissipative_factor,
+                        )
                 polarization = 1.0
             elif self.tensor_mode:
                 from .tensor_rpa import (
@@ -1027,6 +1116,17 @@ class _RpaComponentEvaluator:
                         lambda_shift=lambda_shift,
                         inverse_mode_energy_sq=self._inertia(params),
                     )
+                    if needs_zero_slope:
+                        from .tensor_rpa import tensor_rpa_zero_energy_slope
+
+                        zero_energy_slope = tensor_rpa_zero_energy_slope(
+                            structure, geometry, q_hat,
+                            chi0=chi0,
+                            gamma0=float(params[self.gamma0_key]),
+                            param_values=self._tensor_values(params),
+                            lambda_shift=lambda_shift,
+                            inverse_mode_energy_sq=self._inertia(params),
+                        )
                 # The unpolarized channel already carries the polarization
                 # average, so no extra scalar polarization factor here.
                 polarization = 1.0
@@ -1055,6 +1155,15 @@ class _RpaComponentEvaluator:
                         lambda_shift=lambda_shift,
                         inverse_mode_energy_sq=self._inertia(params),
                     )
+                    if needs_zero_slope:
+                        zero_energy_slope = heisenberg_rpa_zero_energy_slope(
+                            geometry,
+                            chi0=chi0,
+                            gamma0=float(params[self.gamma0_key]),
+                            j_values=self._j_values(params),
+                            lambda_shift=lambda_shift,
+                            inverse_mode_energy_sq=self._inertia(params),
+                        )
                 polarization = _isotropic_polarization()
         except ValueError:
             # Unphysical trial parameters (RPA instability, non-positive
@@ -1063,6 +1172,10 @@ class _RpaComponentEvaluator:
             # aborting the fit.
             return np.full(data.size, 1e6, dtype=float)
         response = self._powder_average(response, data.size, powder_count)
+        if zero_energy_slope is not None:
+            zero_energy_slope = self._powder_average(
+                zero_energy_slope, data.size, powder_count
+            )
         if elastic:
             return _quasistatic_model_observable(
                 data,
@@ -1076,6 +1189,8 @@ class _RpaComponentEvaluator:
             form_factor_sq=form_factor_sq,
             polarization=polarization,
             bose_denominator_values=self._bose_denominator(data),
+            zero_energy_slope=zero_energy_slope,
+            polarization_contracted=self.tensor_mode or self.zeeman_mode,
         )
 
     def susceptibility_response(
@@ -1137,7 +1252,8 @@ class _RpaComponentEvaluator:
 
         bz_geometry, bz_structure = self._closure_context()
         q0_geometry = build_rpa_geometry(
-            [0.0], [0.0], [0.0], self.site_positions, self.orbits
+            [0.0], [0.0], [0.0],
+            self._closure_site_positions, self._closure_orbits,
         )
 
         def eig_weights(geometry: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -1149,12 +1265,12 @@ class _RpaComponentEvaluator:
                     if geometry is bz_geometry
                     else build_tensor_structure(
                         geometry,
-                        self.site_positions,
-                        orbits=self.orbits,
+                        self._closure_site_positions,
+                        orbits=self._closure_orbits,
                         lattice=self._lattice,
                         anisotropy=self._anisotropy,
-                        sia=self._sia,
-                        site_rotations=self._site_rotations,
+                        sia=self._closure_sia,
+                        site_rotations=self._closure_site_rotations,
                         dipole=self._dipole,
                     )
                 )
@@ -1162,7 +1278,7 @@ class _RpaComponentEvaluator:
                 lam, modes = np.linalg.eigh(exchange)
                 n_sites = structure.n_sites
                 amps = modes.reshape(geometry.n_q, n_sites, 3, 3 * n_sites).sum(axis=1)
-                weights = (np.abs(amps) ** 2).sum(axis=1) / n_sites
+                weights = (np.abs(amps) ** 2).sum(axis=1) / (3.0 * n_sites)
             else:
                 exchange = rpa_exchange_matrix(geometry, self._j_values(params))
                 lam, modes = np.linalg.eigh(exchange)
@@ -1255,6 +1371,8 @@ class _RpaComponentEvaluator:
         so they remain available for unstable parameters.
         """
 
+        from .sum_rules import MomentIntegrationError
+
         temperature = _dataset_temperature(data)
         field = _dataset_magnetic_field(data) if self.zeeman_mode else None
         t_values = np.unique(np.atleast_1d(np.asarray(temperature, dtype=float)))
@@ -1295,6 +1413,7 @@ class _RpaComponentEvaluator:
                 chi0 = closure.chi0_eff
                 lambda_shift = closure.lambda_shift
         except ValueError as exc:
+            numerical_failure = isinstance(exc, MomentIntegrationError)
             record.update(bare_stability)
             record.update(
                 {
@@ -1302,10 +1421,14 @@ class _RpaComponentEvaluator:
                     "lambda_shift": float("nan"),
                     "stability_uses_effective_closure": 0.0,
                     "closure_solution": 0.0,
-                    "unstable": 1.0,
+                    "unstable": float("nan") if numerical_failure else 1.0,
                     "diagnostic_error": str(exc),
                 }
             )
+            if numerical_failure:
+                record.update(
+                    {"moment_integral_available": 0.0, "numerical_integration_failed": 1.0}
+                )
             return record
         record.update(
             self._stability_metrics(model, chi0, lambda_shift, gamma0=gamma0)
@@ -1345,7 +1468,17 @@ class _RpaComponentEvaluator:
             )
             chi_q0, chi_peak = self._static_chi_grid_and_q0(params, chi0, lambda_shift)
         except ValueError as exc:
-            record.update({"unstable": 1.0, "diagnostic_error": str(exc)})
+            if isinstance(exc, MomentIntegrationError):
+                record.update(
+                    {
+                        "unstable": float(record["stability_margin"] <= 0.0),
+                        "moment_integral_available": 0.0,
+                        "numerical_integration_failed": 1.0,
+                        "diagnostic_error": str(exc),
+                    }
+                )
+            else:
+                record.update({"unstable": 1.0, "diagnostic_error": str(exc)})
             return record
         record.update(
             {
@@ -1380,6 +1513,15 @@ class _RpaComponentEvaluator:
                 j_values=self._j_values(params),
                 inverse_mode_energy_sq=self._inertia(params),
             )
+            slope_gradients = None
+            if self._needs_zero_energy_slope(data):
+                _, slope_gradients = heisenberg_rpa_zero_energy_slope_and_gradients(
+                    geometry,
+                    chi0=float(params[self.chi0_key]),
+                    gamma0=float(params[self.gamma0_key]),
+                    j_values=self._j_values(params),
+                    inverse_mode_energy_sq=self._inertia(params),
+                )
         except ValueError:
             # Sentinel-penalty region: the value is a constant with no
             # parameter dependence, so every column is zero.
@@ -1409,4 +1551,22 @@ class _RpaComponentEvaluator:
         )
         for label, key in self.j_keys.items():
             columns[key] = d_intensity_d_chipp * chipp_grads[label]
+        if slope_gradients is not None:
+            zero_energy = np.asarray(data.E) == 0.0
+            parameter_keys = {
+                "chi0": self.chi0_key,
+                "gamma0": self.gamma0_key,
+                "inverse_mode_energy_sq": self.inertia_key,
+                **self.j_keys,
+            }
+            for label, slope in slope_gradients.items():
+                derivative = _spectral_model_observable(
+                    data,
+                    np.zeros(data.size, dtype=float),
+                    form_factor_sq=form_factor_sq,
+                    polarization=_isotropic_polarization(),
+                    bose_denominator_values=self._bose_denominator(data),
+                    zero_energy_slope=self._powder_average(slope, data.size, powder_count),
+                )
+                columns[parameter_keys[label]][zero_energy] = derivative[zero_energy]
         return columns

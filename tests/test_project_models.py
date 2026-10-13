@@ -1257,6 +1257,20 @@ def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
     assert not chi0_fit_check.isEnabled()
     assert "root-search seed" in chi0_fit_check.toolTip()
 
+    explorer._set_model_interaction("zeeman", True)
+    field_effort = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_closure_omega_points"
+    )
+    assert field_effort is not None
+    field_label = field_effort.parentWidget().layout().labelForField(field_effort)
+    assert field_label.text() == "Field integration effort"
+    assert field_effort.toolTip() == field_label.toolTip()
+    assert "refines automatically" in field_effort.toolTip()
+    assert "fallback" in field_effort.toolTip()
+    field_effort.setText("360")
+    field_effort.editingFinished.emit()
+    assert model.config["closure"]["omega_points"] == 360
+
     # Round-trips through save/load.
     path = tmp_path / "closure.json"
     save_project(NfitProject([group]), path)
@@ -1264,6 +1278,7 @@ def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
     assert loaded_model.config["closure"]["mode"] == "tac"
     assert loaded_model.config["closure"]["energy_cutoff_mev"] == 50.0
     assert loaded_model.config["closure"]["bz_grid"] == 20
+    assert loaded_model.config["closure"]["omega_points"] == 360
     assert loaded_model.config["powder_orientations"] == 72
     assert "total_amplitude" in loaded_model.parameters
 

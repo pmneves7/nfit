@@ -38,8 +38,10 @@ from .crystal import cartesian_rotation
 from .spin_fluctuations import (
     RpaGeometry,
     _batched_eigh,
+    _gradient_block_size,
     _select_rpa_backend,
     _use_numba_eigh,
+    _validate_rpa_scalars,
 )
 
 try:  # optional acceleration, mirroring the scalar path
@@ -393,6 +395,7 @@ def tensor_susceptibility(
     computation untouched.
     """
 
+    _validate_rpa_scalars(chi0, gamma0)
     inertia = float(inverse_mode_energy_sq)
     if not np.isfinite(inertia) or inertia < 0.0:
         raise ValueError("inverse_mode_energy_sq must be finite and nonnegative")
@@ -469,14 +472,185 @@ def zeeman_cartesian_propagator(
     ``omega_L -> 0`` with unit ratios it becomes the scalar ``chi0(omega) I3``.
     """
 
+    return _zeeman_cartesian_response(
+        energy,
+        b_hat,
+        chi0=chi0,
+        gamma0=gamma0,
+        omega_larmor=omega_larmor,
+        chi_perp_ratio=chi_perp_ratio,
+        gamma_perp_ratio=gamma_perp_ratio,
+    )
+
+
+def zeeman_cartesian_propagator_zero_energy_derivative(
+    b_hat: FloatArray,
+    *,
+    chi0: float,
+    gamma0: float,
+    omega_larmor: float,
+    chi_perp_ratio: float = 1.0,
+    gamma_perp_ratio: float = 1.0,
+) -> ComplexArray:
+    """Return the exact ``dX0/dE`` at E=0 as a 3x3 matrix in meV^-2.
+
+    Differentiates the same causal circular responses as
+    :func:`zeeman_cartesian_propagator`, including their equilibrium-driving
+    numerators. Its anti-Hermitian part determines zero-energy absorption;
+    the gyrotropic derivative also has a Hermitian part.
+    """
+
+    return _zeeman_cartesian_response(
+        np.zeros(1),
+        b_hat,
+        chi0=chi0,
+        gamma0=gamma0,
+        omega_larmor=omega_larmor,
+        chi_perp_ratio=chi_perp_ratio,
+        gamma_perp_ratio=gamma_perp_ratio,
+        energy_derivative=True,
+    )[0]
+
+
+def zeeman_cartesian_affine_inverse(
+    b_hat: FloatArray,
+    *,
+    chi0: float,
+    gamma0: float,
+    omega_larmor: float,
+    chi_perp_ratio: float = 1.0,
+    gamma_perp_ratio: float = 1.0,
+) -> tuple[ComplexArray, ComplexArray]:
+    """Return analytic ``(D, D^-1)`` for ``X0(E)^-1 = X0(0)^-1 - i E D``.
+
+    Both matrices are dimensionless. In the field frame, the circular
+    eigenvalues of D are ``1/[chi_perp (gamma_perp +/- i omega_larmor)]``;
+    its longitudinal eigenvalue is ``1/(chi0 gamma0)``. Constructing both
+    matrices directly avoids inverting a poorly conditioned Cartesian
+    propagator or D when the linewidth is much smaller than the field energy.
+    """
+
+    chi_perp, gamma_perp, zz, antisym = _zeeman_cartesian_terms(
+        b_hat,
+        chi0=chi0,
+        gamma0=gamma0,
+        omega_larmor=omega_larmor,
+        chi_perp_ratio=chi_perp_ratio,
+        gamma_perp_ratio=gamma_perp_ratio,
+    )
+    transverse = np.eye(3) - zz
+    circular_inverse = (1.0 / complex(gamma_perp, omega_larmor)) / chi_perp
+    dynamic = (
+        zz / (chi0 * gamma0)
+        + circular_inverse.real * transverse
+        + circular_inverse.imag * antisym
+    )
+    mobility = chi0 * gamma0 * zz + chi_perp * (
+        gamma_perp * transverse + omega_larmor * antisym
+    )
+    return dynamic.astype(complex), mobility.astype(complex)
+
+
+def zeeman_cartesian_zero_energy_dissipative_factor(
+    b_hat: FloatArray,
+    *,
+    chi0: float,
+    gamma0: float,
+    omega_larmor: float,
+    chi_perp_ratio: float = 1.0,
+    gamma_perp_ratio: float = 1.0,
+) -> ComplexArray:
+    """Factor the local absorptive derivative as ``L L^dagger``, in meV^-2.
+
+    The three columns of L are the field-frame directions times the square
+    roots of their dissipative slopes. Keeping longitudinal and transverse
+    columns separate preserves a small transverse slope when neutron
+    polarization removes the much larger longitudinal contribution.
+    """
+
+    chi_perp, gamma_perp, _, _ = _zeeman_cartesian_terms(
+        b_hat,
+        chi0=chi0,
+        gamma0=gamma0,
+        omega_larmor=omega_larmor,
+        chi_perp_ratio=chi_perp_ratio,
+        gamma_perp_ratio=gamma_perp_ratio,
+    )
+    axis = np.asarray(b_hat, dtype=float)
+    axis = axis / np.linalg.norm(axis)
+    x_axis, y_axis = _perpendicular_frame(axis)
+    transverse = np.sqrt(chi_perp) * np.sqrt(gamma_perp) / np.hypot(
+        gamma_perp, omega_larmor
+    )
+    longitudinal = np.sqrt(chi0) / np.sqrt(gamma0)
+    return np.column_stack(
+        (transverse * x_axis, transverse * y_axis, longitudinal * axis)
+    ).astype(complex)
+
+
+def zeeman_cartesian_dissipative_factor(
+    energy: FloatArray,
+    b_hat: FloatArray,
+    *,
+    chi0: float,
+    gamma0: float,
+    omega_larmor: float,
+    chi_perp_ratio: float = 1.0,
+    gamma_perp_ratio: float = 1.0,
+) -> ComplexArray:
+    """Factor local absorption as ``sign(E) L L^dagger`` at each energy.
+
+    The circular transverse columns have squared amplitudes
+    ``chi_perp gamma_perp |E| / [gamma_perp^2 + (E -/+ omega_larmor)^2]``;
+    the longitudinal column has the analogous unshifted relaxational weight.
+    Each factor has units meV^-1/2. Projecting these columns before squaring
+    avoids subtracting large longitudinal signals from a transverse channel.
+    At E=0 the factor is zero; use the dissipative slope factor for that limit.
+    """
+
+    chi_perp, gamma_perp, _, _ = _zeeman_cartesian_terms(
+        b_hat,
+        chi0=chi0,
+        gamma0=gamma0,
+        omega_larmor=omega_larmor,
+        chi_perp_ratio=chi_perp_ratio,
+        gamma_perp_ratio=gamma_perp_ratio,
+    )
+    axis = np.asarray(b_hat, dtype=float)
+    axis = axis / np.linalg.norm(axis)
+    x_axis, y_axis = _perpendicular_frame(axis)
+    e = np.asarray(energy, dtype=float).ravel()
+    root_energy = np.sqrt(np.abs(e))
+    transverse = np.sqrt(chi_perp) * np.sqrt(gamma_perp) * root_energy
+    plus = transverse / np.hypot(gamma_perp, e - omega_larmor)
+    minus = transverse / np.hypot(gamma_perp, e + omega_larmor)
+    longitudinal = np.sqrt(chi0) * np.sqrt(gamma0) * root_energy / np.hypot(gamma0, e)
+    return np.stack(
+        (
+            plus[:, None] * (x_axis + 1j * y_axis)[None] / np.sqrt(2.0),
+            minus[:, None] * (x_axis - 1j * y_axis)[None] / np.sqrt(2.0),
+            longitudinal[:, None] * axis[None],
+        ),
+        axis=-1,
+    )
+
+
+def _zeeman_cartesian_terms(
+    b_hat: FloatArray,
+    *,
+    chi0: float,
+    gamma0: float,
+    omega_larmor: float,
+    chi_perp_ratio: float,
+    gamma_perp_ratio: float,
+) -> tuple[float, float, FloatArray, FloatArray]:
+    """Validate field parameters and build their shared Cartesian projectors."""
+
     field_axis = np.asarray(b_hat, dtype=float).reshape(3)
     norm = float(np.linalg.norm(field_axis))
     if not np.all(np.isfinite(field_axis)) or norm == 0.0:
         raise ValueError("b_hat must be a finite nonzero 3-vector")
-    if not np.isfinite(chi0) or chi0 <= 0.0:
-        raise ValueError("chi0 must be finite and positive")
-    if not np.isfinite(gamma0) or gamma0 <= 0.0:
-        raise ValueError("gamma0 must be finite and positive")
+    _validate_rpa_scalars(chi0, gamma0)
     if not np.isfinite(omega_larmor):
         raise ValueError("omega_larmor must be finite")
     if not np.isfinite(chi_perp_ratio) or chi_perp_ratio <= 0.0:
@@ -486,10 +660,35 @@ def zeeman_cartesian_propagator(
     # The frame construction below (and the zz / antisymmetric projectors) is
     # only correct for a unit vector, so normalize rather than trusting callers.
     b_hat = field_axis / norm
+    x_axis, y_axis = _perpendicular_frame(b_hat)
+    zz = np.outer(b_hat, b_hat)
+    antisym = np.outer(x_axis, y_axis) - np.outer(y_axis, x_axis)
+    return chi_perp_ratio * chi0, gamma_perp_ratio * gamma0, zz, antisym
+
+
+def _zeeman_cartesian_response(
+    energy: FloatArray,
+    b_hat: FloatArray,
+    *,
+    chi0: float,
+    gamma0: float,
+    omega_larmor: float,
+    chi_perp_ratio: float,
+    gamma_perp_ratio: float,
+    energy_derivative: bool = False,
+) -> ComplexArray:
+    """Evaluate the field-frame responses or their exact energy derivatives."""
+
+    chi_perp, gamma_perp, zz, antisym = _zeeman_cartesian_terms(
+        b_hat,
+        chi0=chi0,
+        gamma0=gamma0,
+        omega_larmor=omega_larmor,
+        chi_perp_ratio=chi_perp_ratio,
+        gamma_perp_ratio=gamma_perp_ratio,
+    )
     e = np.asarray(energy, dtype=float)
     x_par = chi0 / (1.0 - 1j * e / gamma0)
-    chi_perp = chi_perp_ratio * chi0
-    gamma_perp = gamma_perp_ratio * gamma0
     # The precession term also acts on the field-induced equilibrium spin.
     # Keeping only shifted denominators loses that driving term and produces
     # an antisymmetric static response and negative low-energy absorption.
@@ -499,19 +698,19 @@ def zeeman_cartesian_propagator(
     x_minus = chi_perp * (gamma_perp - 1j * omega_larmor) / (
         gamma_perp - 1j * (e + omega_larmor)
     )
+    if energy_derivative:
+        x_par = 1j * x_par / (gamma0 - 1j * e)
+        x_plus = 1j * x_plus / (gamma_perp - 1j * (e - omega_larmor))
+        x_minus = 1j * x_minus / (gamma_perp - 1j * (e + omega_larmor))
     diag_perp = 0.5 * (x_plus + x_minus)
     # Electron moments are -g mu_B S, hence H_Z = +E_L S_z. The retarded
     # xy response then has the -i sign for the positive-energy circular pole.
     off_perp = -0.5j * (x_plus - x_minus)
 
-    x_axis, y_axis = _perpendicular_frame(b_hat)
-    z_axis = b_hat
     # X0_frame = diag_perp (xx,yy) + off_perp (xy antisymmetric) + x_par (zz).
     # Build directly in Cartesian: X0 = a (I - zz^T) + s (zz^T) + g [xy antisym],
     # where the antisymmetric transverse part is off_perp * (x y^T - y x^T).
     identity = np.eye(3)
-    zz = np.outer(z_axis, z_axis)
-    antisym = np.outer(x_axis, y_axis) - np.outer(y_axis, x_axis)
     propagator = (
         diag_perp[:, None, None] * (identity - zz)[None]
         + x_par[:, None, None] * zz[None]
@@ -550,7 +749,66 @@ def _unpolarized_weight(q_hat: FloatArray) -> FloatArray:
     return weight
 
 
+def _unpolarized_amplitude_weights(
+    amplitudes: ComplexArray, q_hat: FloatArray
+) -> FloatArray:
+    """Project Cartesian amplitudes before forming their nonnegative weights."""
+
+    parallel = np.einsum("pa,pan->pn", q_hat, amplitudes)
+    transverse = amplitudes - q_hat[:, :, None] * parallel[:, None, :]
+    weights = np.sum(np.abs(transverse)**2, axis=1)
+    zero_q = np.linalg.norm(q_hat, axis=1) <= np.finfo(float).eps
+    weights[zero_q] = (2.0 / 3.0) * np.sum(np.abs(amplitudes[zero_q])**2, axis=1)
+    return weights
+
+
 _ZEEMAN_SOLVE_BLOCK = 200_000
+
+
+def _shifted_tensor_exchange(
+    structure: TensorStructure,
+    param_values: Mapping[str, float],
+    lambda_shift: float,
+    static_local_propagator: ComplexArray | None,
+) -> ComplexArray:
+    """Assemble, check static stability when available, and shift exchange."""
+
+    exchange = assemble_tensor_exchange(structure, param_values)
+    if static_local_propagator is not None:
+        check_tensor_exchange_stability(
+            exchange, structure.n_sites, static_local_propagator, lambda_shift=lambda_shift
+        )
+    if lambda_shift != 0.0:
+        exchange = exchange - lambda_shift * np.eye(3 * structure.n_sites)[None]
+    return exchange
+
+
+def _tensor_local_denominator(
+    exchange: ComplexArray, local: ComplexArray, n_sites: int
+) -> ComplexArray:
+    """Build I-X0 J for a bounded batch of site-local tensor propagators."""
+
+    count, dim = exchange.shape[0], 3 * n_sites
+    local = np.broadcast_to(local, (count, 3, 3))
+    local_exchange = np.einsum(
+        "pag,pngB->pnaB", local, exchange.reshape(count, n_sites, 3, dim)
+    ).reshape(count, dim, dim)
+    return np.eye(dim)[None] - local_exchange
+
+
+def _tensor_local_factor_amplitudes(
+    exchange: ComplexArray, local: ComplexArray, factor: ComplexArray, n_sites: int
+) -> ComplexArray:
+    """Return phi^dagger (I-X0 J)^-1 L in Cartesian source columns."""
+
+    denominator = _tensor_local_denominator(exchange, local, n_sites)
+    source = np.tile(np.eye(3), (n_sites, 1))
+    z = np.linalg.solve(
+        np.conj(np.swapaxes(denominator, -1, -2)), source[None]
+    ).reshape(-1, n_sites, 3, 3)
+    factors = np.broadcast_to(factor, (exchange.shape[0], 3, 3))
+    amplitudes = np.einsum("pnab,pac->pnbc", np.conj(z), factors)
+    return amplitudes.transpose(0, 2, 1, 3).reshape(-1, 3, 3 * n_sites)
 
 
 def tensor_zeeman_susceptibility(
@@ -580,25 +838,17 @@ def tensor_zeeman_susceptibility(
     zero-energy propagator explicitly.
     """
 
-    exchange = assemble_tensor_exchange(structure, param_values)  # (n_q, 3N, 3N)
     n_sites = structure.n_sites
     dim = 3 * n_sites
     if static_local_propagator is None:
         zero_rows = np.flatnonzero(np.asarray(energy, dtype=float) == 0.0)
         if zero_rows.size:
             static_local_propagator = propagator[int(zero_rows[0])]
-    if static_local_propagator is not None:
-        check_tensor_exchange_stability(
-            exchange,
-            n_sites,
-            static_local_propagator,
-            lambda_shift=lambda_shift,
-        )
-    if lambda_shift != 0.0:
-        exchange = exchange - lambda_shift * np.eye(dim)[None]
+    exchange = _shifted_tensor_exchange(
+        structure, param_values, lambda_shift, static_local_propagator
+    )
     idx = geometry.point_index
     n_points = energy.shape[0]
-    identity = np.eye(dim)
 
     chi = np.empty((n_points, 3, 3), dtype=complex)
     block = _ZEEMAN_SOLVE_BLOCK
@@ -610,9 +860,7 @@ def tensor_zeeman_susceptibility(
         m = stop - start
         # X0_full @ J : apply the site-local 3x3 X0 to the alpha index of each
         # site row of J. Reshape J to (m, N, 3, 3N).
-        j_reshaped = j_block.reshape(m, n_sites, 3, dim)
-        x0_j = np.einsum("pag,pngB->pnaB", x0, j_reshaped).reshape(m, dim, dim)
-        a_matrix = identity[None] - x0_j
+        a_matrix = _tensor_local_denominator(j_block, x0, n_sites)
         # RHS: X0_full phi_beta has block (a, alpha) = X0[alpha, beta] for all a.
         rhs = np.broadcast_to(x0[:, None, :, :], (m, n_sites, 3, 3)).reshape(m, dim, 3)
         solution = np.linalg.solve(a_matrix, rhs)  # (m, 3N, 3)
@@ -645,8 +893,47 @@ def tensor_rpa_zeeman_unpolarized_chipp(
     param_values: Mapping[str, float],
     lambda_shift: float = 0.0,
     static_local_propagator: ComplexArray | None = None,
+    local_dissipative_factor: ComplexArray | None = None,
 ) -> FloatArray:
-    """Unpolarized ``chi''`` per point for the field-on (Tier-B) path."""
+    """Unpolarized ``chi''`` per point for the field-on (Tier-B) path.
+
+    ``local_dissipative_factor`` optionally supplies per-point factors L with
+    local absorption ``sign(E) L L^dagger``. Source amplitudes are projected
+    before their positive weights are summed, preserving small transverse
+    signals. Use :func:`zeeman_cartesian_dissipative_factor` for this model.
+    The generic complex susceptibility remains available without a factor.
+    """
+
+    if local_dissipative_factor is not None:
+        factor = np.asarray(local_dissipative_factor, dtype=complex)
+        energy = np.asarray(energy, dtype=float).ravel()
+        if factor.shape != (energy.size, 3, 3) or not np.all(np.isfinite(factor)):
+            raise ValueError("local dissipative factor must have finite shape (n_points,3,3)")
+        propagator = np.asarray(propagator, dtype=complex)
+        absorptive = (propagator - np.conj(np.swapaxes(propagator, -1, -2))) / 2j
+        signed_factor = np.sign(energy)[:, None, None] * (factor @ np.conj(np.swapaxes(factor, -1, -2)))
+        if not np.allclose(signed_factor, absorptive, rtol=1e-10, atol=1e-12):
+            raise ValueError("local dissipative factor does not match the absorptive response")
+        if static_local_propagator is None:
+            zero_rows = np.flatnonzero(energy == 0.0)
+            if zero_rows.size:
+                static_local_propagator = propagator[int(zero_rows[0])]
+        exchange = _shifted_tensor_exchange(
+            structure, param_values, lambda_shift, static_local_propagator
+        )
+        n_sites = structure.n_sites
+        result = np.empty(energy.size, dtype=float)
+        block = _gradient_block_size(3 * n_sites, energy.size)
+        for start in range(0, energy.size, block):
+            stop = min(start + block, energy.size)
+            amplitudes = _tensor_local_factor_amplitudes(
+                exchange[geometry.point_index[start:stop]], propagator[start:stop],
+                factor[start:stop], n_sites,
+            )
+            result[start:stop] = np.sign(energy[start:stop]) * np.sum(
+                _unpolarized_amplitude_weights(amplitudes, q_hat[start:stop]), axis=1
+            ) / n_sites
+        return result
 
     chi = tensor_zeeman_susceptibility(
         structure,
@@ -685,6 +972,7 @@ def tensor_rpa_unpolarized_chipp(
     without Numba.
     """
 
+    _validate_rpa_scalars(chi0, gamma0)
     if (
         float(inverse_mode_energy_sq) == 0.0
         and _NUMBA_KERNELS is not None
@@ -718,3 +1006,119 @@ def tensor_rpa_unpolarized_chipp(
         inverse_mode_energy_sq=inverse_mode_energy_sq,
     )
     return _chipp_from_chi(chi, q_hat)
+
+
+def tensor_rpa_zero_energy_slope(
+    structure: TensorStructure,
+    geometry: RpaGeometry,
+    q_hat: FloatArray,
+    *,
+    chi0: float,
+    gamma0: float,
+    param_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
+    inverse_mode_energy_sq: float = 0.0,
+) -> FloatArray:
+    """Exact unpolarized limit ``chi''(Q,E)/E`` at E=0, in meV^-2.
+
+    The Cartesian mode matrix has weight
+    ``chi0 / [gamma0 (1 - chi0 lambda_nu)^2]``. The result already includes
+    the neutron polarization projector and equals twice the scalar slope
+    in the isotropic limit. Inertia does not enter the linear energy term.
+    """
+
+    _validate_rpa_scalars(chi0, gamma0)
+    inertia = float(inverse_mode_energy_sq)
+    if not np.isfinite(inertia) or inertia < 0.0:
+        raise ValueError("inverse_mode_energy_sq must be finite and nonnegative")
+    lam, amplitudes = _tensor_modes(
+        structure, geometry, param_values, chi0=chi0, lambda_shift=lambda_shift
+    )
+    weight = chi0 / (gamma0 * (1.0 - chi0 * lam)**2)
+    n_points = geometry.point_index.size
+    result = np.empty(n_points, dtype=float)
+    block = _tensor_point_block(3 * structure.n_sites, n_points)
+    for start in range(0, n_points, block):
+        stop = min(start + block, n_points)
+        idx = geometry.point_index[start:stop]
+        neutron_weight = _unpolarized_amplitude_weights(
+            amplitudes[idx], q_hat[start:stop]
+        )
+        result[start:stop] = np.sum(neutron_weight * weight[idx], axis=1) / structure.n_sites
+    return result
+
+
+def tensor_rpa_zeeman_zero_energy_slope(
+    structure: TensorStructure,
+    geometry: RpaGeometry,
+    q_hat: FloatArray,
+    static_local_propagator: ComplexArray,
+    local_energy_derivative: ComplexArray,
+    *,
+    param_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
+    local_dissipative_factor: ComplexArray | None = None,
+) -> FloatArray:
+    """Exact unpolarized zero-energy slope for a tensor local response.
+
+    ``C=X0(0)`` must be Hermitian positive definite, in meV^-1; ``D=X0'(0)``
+    is a finite 3x3 matrix in meV^-2. For the repeated site-local matrices,
+    the RPA derivative is ``A^-1 D A^-dagger``, with
+    ``A=I-C [J-lambda_shift I]``. Solving ``A^dagger z=phi`` gives its
+    neutron projection as ``z^dagger D z/N`` without forming a dense inverse.
+    Static stability is checked at all supplied momenta before solving.
+    If supplied, ``local_dissipative_factor=L`` factors the local absorptive
+    derivative as ``L L^dagger``. Its source amplitudes are projected before
+    squaring, retaining small transverse responses in strongly anisotropic
+    limits; use :func:`zeeman_cartesian_zero_energy_dissipative_factor` for
+    the Zeeman local model.
+    """
+
+    n_sites = structure.n_sites
+    dim = 3 * n_sites
+    local = np.asarray(static_local_propagator, dtype=complex)
+    derivative = np.asarray(local_energy_derivative, dtype=complex)
+    if derivative.shape != (3, 3) or not np.all(np.isfinite(derivative)):
+        raise ValueError("local energy derivative must be a finite 3x3 matrix")
+    factor = None
+    if local_dissipative_factor is not None:
+        factor = np.asarray(local_dissipative_factor, dtype=complex)
+        if factor.shape != (3, 3) or not np.all(np.isfinite(factor)):
+            raise ValueError("local dissipative factor must be a finite 3x3 matrix")
+        absorptive = (derivative - derivative.conj().T) / 2j
+        if not np.allclose(factor @ factor.conj().T, absorptive, rtol=1e-10, atol=1e-12):
+            raise ValueError("local dissipative factor does not match the absorptive derivative")
+    exchange = _shifted_tensor_exchange(structure, param_values, lambda_shift, local)
+    source = np.tile(np.eye(3), (n_sites, 1))
+    response_derivative = np.empty((geometry.n_q, 3, 3), dtype=complex)
+    factor_amplitudes = (
+        np.empty((geometry.n_q, 3, 3 * n_sites), dtype=complex)
+        if factor is not None else None
+    )
+    block = _gradient_block_size(dim, geometry.n_q)
+    for start in range(0, geometry.n_q, block):
+        stop = min(start + block, geometry.n_q)
+        if factor is not None:
+            factor_amplitudes[start:stop] = _tensor_local_factor_amplitudes(
+                exchange[start:stop], local, factor, n_sites
+            )
+            continue
+        a_matrix = _tensor_local_denominator(exchange[start:stop], local, n_sites)
+        z = np.linalg.solve(
+            np.conj(np.swapaxes(a_matrix, -1, -2)), source[None]
+        ).reshape(-1, n_sites, 3, 3)
+        response_derivative[start:stop] = np.einsum(
+            "qnab,ac,qncd->qbd", np.conj(z), derivative, z
+        ) / n_sites
+    if factor_amplitudes is not None:
+        n_points = geometry.point_index.size
+        result = np.empty(n_points, dtype=float)
+        block = _tensor_point_block(dim, n_points)
+        for start in range(0, n_points, block):
+            stop = min(start + block, n_points)
+            amplitudes = factor_amplitudes[geometry.point_index[start:stop]]
+            result[start:stop] = np.sum(
+                _unpolarized_amplitude_weights(amplitudes, q_hat[start:stop]), axis=1
+            ) / n_sites
+        return result
+    return _chipp_from_chi(response_derivative[geometry.point_index], q_hat)

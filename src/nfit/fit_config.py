@@ -882,6 +882,8 @@ def _spectral_model_observable(
     polarization: float | np.ndarray,
     legacy: str = "intensity",
     bose_denominator_values: np.ndarray | None = None,
+    zero_energy_slope: float | np.ndarray | None = None,
+    polarization_contracted: bool = False,
 ) -> np.ndarray:
     """Map a model's canonical ``chi''`` to the selected dataset channel.
 
@@ -891,6 +893,10 @@ def _spectral_model_observable(
     iteration can hoist it out of the loop (see
     :meth:`_RpaComponentEvaluator._bose_denominator`). The arithmetic is
     unchanged either way.
+
+    Tensor kernels already include the neutron polarization projection.
+    For a susceptibility channel, divide that projection by the same factor
+    used to convert the dataset to its effective scalar susceptibility.
     """
 
     convention = data.metadata.get("spectral_observable")
@@ -904,6 +910,7 @@ def _spectral_model_observable(
             form_factor_sq=form_factor_sq,
             polarization=polarization,
             bose_denominator_values=bose_denominator_values,
+            zero_energy_slope=zero_energy_slope,
         )
     # Model kernels return a spin-operator response. Convert it to the
     # dataset's declared response convention exactly once.
@@ -912,6 +919,10 @@ def _spectral_model_observable(
     target_moment_unit = str(convention.get("moment_unit", "mu_B_squared"))
     if convention.get("fit_representation") == "chi_double_prime":
         response = np.asarray(chipp, dtype=float)
+        from .spectral_channels import spectral_polarization_factor
+
+        projected = response if polarization_contracted else response * polarization
+        response = projected / spectral_polarization_factor(convention)
         if target_moment_unit == "mu_B_squared":
             response = response * magnetic_moment_factor("spin_squared", g_factor)
         elif target_moment_unit != "spin_squared":
@@ -941,6 +952,7 @@ def _spectral_model_observable(
         moment_unit="spin_squared",
         g_factor=g_factor,
         bose_denominator_values=bose_denominator_values,
+        zero_energy_slope=zero_energy_slope,
     )
     unit = str(convention.get("unit", ""))
     if unit.startswith("mbarn/"):

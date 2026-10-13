@@ -79,6 +79,42 @@ def test_intensity_from_chipp_accepts_array_temperature():
     )
 
 
+def test_intensity_zero_energy_uses_regular_slope_with_all_prefactors():
+    energy = np.array([-0.3, 0.0, 0.3, 0.0])
+    temperature = np.array([10.0, 20.0, 30.0, 0.0])
+    slope = np.array([0.4, 0.5, 0.6, -0.7])
+    chipp = energy * slope
+    with np.errstate(divide="raise", invalid="raise"):
+        actual = intensity_from_chipp(
+            chipp, energy, temperature, scale=3.0, form_factor_sq=0.4,
+            polarization=2.0, background=1.5, zero_energy_slope=slope,
+            bose_denominator_values=bose_denominator(energy, temperature),
+        )
+    weighted = KB_MEV_PER_K * temperature * slope
+    nonzero = energy != 0.0
+    weighted[nonzero] = chipp[nonzero] / bose_denominator(
+        energy[nonzero], temperature[nonzero]
+    )
+    np.testing.assert_allclose(
+        actual, 1.5 + 3.0 * MAGNETIC_GAMMA0_PER_MU_B**2 / np.pi * 0.4 * 2.0 * weighted
+    )
+
+
+def test_zero_energy_cross_section_converts_slope_moment_units_once():
+    actual = cross_section_from_chipp(
+        0.0, 0.0, 12.0, zero_energy_slope=0.7, moment_unit="spin_squared",
+        g_factor=2.3, kf_ki=0.8, polarization=2.0, form_factor_sq=0.6,
+    )
+    expected = (
+        MAGNETIC_GAMMA0_PER_MU_B**2 / np.pi * KB_MEV_PER_K * 12.0
+        * 0.7 * 2.3**2 * 0.8 * 2.0 * 0.6
+    )
+    assert float(actual) == pytest.approx(expected)
+    assert float(intensity_from_chipp(
+        0.0, 0.0, 12.0, include_bose=False, zero_energy_slope=0.7
+    )) == 0.0
+
+
 def test_absolute_cross_section_uses_standard_magnetic_constant_and_round_trips():
     chipp = np.array([2.0, 3.0])
     energy = np.array([4.0, 7.0])

@@ -291,11 +291,34 @@ Moment integrals use a midpoint-shifted Monkhorst--Pack grid configured by
 `config["closure"]["bz_grid"]`. This grid spans the full Brillouin zone and is
 independent of the measured points. `energy_cutoff_mev` sets $\Lambda$.
 
+The compiled model uses the complete crystallographic cell on this grid and
+averages its site trace per magnetic ion. If the cell is nonprimitive, all
+folded branches are retained over its smaller reciprocal cell. Reducing the
+site network while keeping that reciprocal integration cell would omit
+modes, even when the measured neutron response is unchanged.
+
 With no applied field, nfit integrates the mode Lorentzians using analytic or
-Matsubara forms checked against adaptive quadrature. With a field, it
-integrates $\operatorname{Tr}\chi''$ numerically. Closure results are cached
-across repeated evaluations; see [Performance notes](performance.md) for the
-computational implications.
+Matsubara forms checked against adaptive quadrature. For the field-on
+precessing relaxor, the inverse local propagator is affine in energy. nfit
+integrates the resulting matrix poles with exact finite-cutoff logarithms
+and a Matsubara thermal sum with a bounded remainder. This resolves narrow
+relaxation and precession peaks without a fixed low-energy cutoff.
+
+`omega_points` sets the initial integration effort; the solver refines to a
+fixed error tolerance. It also controls the adaptive direct-solve fallback
+used for ill-conditioned pole decompositions or custom nonaffine propagators.
+Unresolved integrals raise `MomentIntegrationError`; arbitrary custom spectra
+still require independent checks for features missed by quadrature probes.
+Fit diagnostics distinguish numerical integration failures from sampled
+magnetic instabilities; an unresolved closure does not certify either a
+stable or an unstable effective state.
+An extremely narrow resonance at the hard cutoff can be sensitive to
+roundoff in its pole position. Choose the cutoff on physical grounds and
+check the result's sensitivity to it; increasing integration effort alone
+cannot remove that conditioning problem.
+Converge the BZ grid separately, particularly near an instability. Closure
+results are cached across repeated evaluations; see
+[Performance notes](performance.md) for the computational implications.
 
 For a molar CGS comparison, the scalar model conversion used internally is
 

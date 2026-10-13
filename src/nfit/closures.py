@@ -20,9 +20,9 @@ The moment integrals come from :mod:`nfit.sum_rules`. Two "moment model"
 backends supply ``<m^2>`` as a function of the closure variable: Tier A
 (scalar and tensor eigendecomposition paths — closed-form energy integrals on
 the BZ-grid eigenvalues of ``J(Q)``, which shift rigidly under the Onsager
-``lambda``) and Tier B (applied field: the gyrotropic local propagator breaks
-the eigenbasis, so the site-traced ``chi''`` is solved numerically on a
-(BZ x omega) grid). All solvers raise ``ValueError`` when the closure
+``lambda``) and Tier B (applied field: complex matrix poles and finite-cutoff
+Matsubara integrals, with checked adaptive direct solves for general
+propagators). All solvers raise ``ValueError`` when the closure
 equation has no solution in the stable domain (e.g. a moment target below
 the zero-point floor), which the fit evaluator converts to its standard
 unphysical-parameter sentinel.
@@ -36,12 +36,17 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.integrate import quad_vec
 from scipy.optimize import brentq, newton
 
+from .cross_section import KB_MEV_PER_K
 from .sum_rules import (
+    _MOMENT_ATOL,
+    _MOMENT_RTOL,
+    MomentIntegrationError,
+    _rational_trace_moment_parts,
     mode_amplitude_per_site,
     tier_b_omega_grid,
-    trace_moment_quadrature,
 )
 
 FloatArray = NDArray[np.float64]
@@ -189,10 +194,15 @@ class TierBMoments:
     ``exchange`` is the assembled ``(n_q, 3N, 3N)`` interaction matrix on the
     BZ grid; ``propagator_builder(omega, chi0, gamma0)`` returns the per-site
     ``X0(omega)`` tensor ``(n_omega, 3, 3)`` (the Zeeman Larmor propagator).
-    The site-traced dissipative response is solved by batched LU per energy
-    on the grid and integrated numerically -- there is no eigenbasis shortcut,
-    so every solver probe pays a full (BZ x omega) sweep; see
-    docs/performance.md.
+    When X0^-1 is affine in energy (the Zeeman relaxor), the full response has
+    matrix poles whose trace is integrated with exact logarithms and a checked
+    Matsubara tail. General callable propagators and ill-conditioned pole
+    decompositions use adaptive direct solves. ``omega_points`` controls the
+    initial integration work and the adaptive fallback's subdivision budget;
+    an unresolved integral raises ``MomentIntegrationError``.
+    ``affine_inverse_builder(chi0, gamma0)`` may supply exact ``(D, D^-1)``
+    for a known ``X0(E)^-1 = C^-1-i E D``. Supplying both avoids numerical
+    inversion of a strongly anisotropic D for a narrow, rotated Zeeman mode.
     """
 
     def __init__(
@@ -203,16 +213,222 @@ class TierBMoments:
         *,
         omega_points: int = 200,
         static_response_bound: float = 1.0,
+        affine_inverse_builder: Callable[[float, float], tuple[ComplexArray, ComplexArray]] | None = None,
     ) -> None:
         self.exchange = np.ascontiguousarray(exchange)
         self.n_sites = int(n_sites)
         self.propagator_builder = propagator_builder
         self.omega_points = int(omega_points)
+        self.affine_inverse_builder = affine_inverse_builder
         # Hermitian-part eigenvalues of J bound the stability edge estimate.
         self._lambda_max = float(np.max(np.linalg.eigvalsh(self.exchange)))
         # X0(0) can exceed chi0 (e.g. chi_perp_ratio > 1); the bound rescales
         # the Tier-A edge estimate used to seed the bracketing search.
         self._static_bound = float(static_response_bound)
+
+    def _trace_response(
+        self, energy: float, chi0: float, gamma0: float, shifted: ComplexArray
+    ) -> complex:
+        """Site- and momentum-averaged complex trace, using bounded direct solves."""
+
+        dim = 3 * self.n_sites
+        x0 = self.propagator_builder(np.array([energy]), chi0, gamma0)[0]
+        rhs = np.kron(np.eye(self.n_sites), x0)
+        result = 0.0j
+        block = max(1, 250_000 // (dim * dim))
+        for start in range(0, shifted.shape[0], block):
+            matrix = shifted[start : start + block]
+            denominator = np.eye(dim)[None] - rhs[None] @ matrix
+            solution = np.linalg.solve(denominator, rhs[None])
+            result += np.trace(solution, axis1=-2, axis2=-1).sum()
+        return complex(result / (self.n_sites * shifted.shape[0]))
+
+    def _affine_inverse(
+        self, chi0: float, gamma0: float, cutoff: float, static: ComplexArray
+    ) -> tuple[ComplexArray, ComplexArray] | None:
+        """Verify X0(E)^-1 = C^-1-i E D without assuming callable internals."""
+
+        scale = max(gamma0, cutoff, 1.0)
+        energies = scale * np.array([-0.731, 0.731, 0.371, 1.337])
+        try:
+            inverse = np.linalg.inv(self.propagator_builder(energies, chi0, gamma0))
+            dynamic = 1j * (inverse[1] - inverse[0]) / (2.0 * scale)
+            dynamic /= 0.731
+            expected = np.linalg.inv(static)[None] - 1j * energies[:, None, None] * dynamic
+            mobility = np.linalg.inv(dynamic)
+        except np.linalg.LinAlgError:
+            return None
+        if not np.allclose(inverse, expected, rtol=0.1 * _MOMENT_RTOL, atol=_MOMENT_ATOL):
+            return None
+        return dynamic, mobility
+
+    def _pole_moment(
+        self, static: ComplexArray, mobility: ComplexArray, shifted: ComplexArray,
+        temperature: float, cutoff: float, chi0: float, gamma0: float,
+    ) -> tuple[float, float] | None:
+        """Integrate affine responses, falling back when a pole basis loses accuracy."""
+
+        dim = 3 * self.n_sites
+        try:
+            dynamic_inverse = np.kron(np.eye(self.n_sites), mobility)
+            static_inverse = np.kron(np.eye(self.n_sites), np.linalg.inv(static))
+            totals = np.zeros(2)
+            block = max(1, 250_000 // (dim * dim))
+            for start in range(0, shifted.shape[0], block):
+                a_matrix = static_inverse[None] - shifted[start : start + block]
+                generator = dynamic_inverse[None] @ a_matrix
+                # A real generator has exactly real unpaired eigenvalues.
+                # Complex LAPACK roundoff can otherwise put a tiny artificial
+                # frequency on a slow longitudinal mode (O(eps E_L/Gamma)
+                # thermal error); the real routine preserves conjugate pairs.
+                eig_input = generator.real if np.all(generator.imag == 0) else generator
+                poles, vectors = np.linalg.eig(eig_input)
+                poles = np.asarray(poles, dtype=complex)
+                vectors = np.asarray(vectors, dtype=complex)
+                inverse_vectors = np.linalg.inv(vectors)
+                condition = (
+                    np.linalg.norm(vectors, axis=(-2, -1))
+                    * np.linalg.norm(inverse_vectors, axis=(-2, -1))
+                )
+                if np.max(condition) > 1e4 or np.any(poles.real <= 0):
+                    return None
+                # G A^-1 = D^-1, so r_n=lambda_n*(V^-1 A^-1 V)_nn.
+                # Computing static weights first preserves r_n/lambda_n for a
+                # very slow longitudinal mode. Projecting D^-1 independently
+                # would subtract O(E_L) matrix entries to recover O(Gamma),
+                # introducing frame-dependent thermal amplitudes.
+                a_inverse = np.linalg.inv(a_matrix)
+                static_weights = np.einsum("qij,qji->qi", inverse_vectors, a_inverse @ vectors)
+                residues = poles * static_weights
+                # At a static instability edge, A^-1 itself loses accuracy;
+                # mobility projection remains better conditioned there.
+                static_condition = np.linalg.norm(a_matrix, axis=(-2, -1)) * np.linalg.norm(a_inverse, axis=(-2, -1))
+                ill_static = static_condition > 1e6
+                if np.any(ill_static):
+                    residues[ill_static] = np.einsum(
+                        "qij,qji->qi", inverse_vectors[ill_static], dynamic_inverse[None] @ vectors[ill_static]
+                    )
+                # Compare the partial fractions to independent direct resolvents.
+                # This also guards cancellation in non-normal eigenvector bases.
+                # Near the static stability boundary, direct inversion at E=0
+                # amplifies matrix roundoff; finite-energy resolvents check the
+                # pole expansion without that unrelated ill-conditioning.
+                for energy in (cutoff * 0.371, cutoff * 0.731, cutoff):
+                    local = self.propagator_builder(np.array([energy]), chi0, gamma0)[0]
+                    local_full = np.kron(np.eye(self.n_sites), local)
+                    actual = np.trace(
+                        np.linalg.solve(
+                            np.eye(dim)[None] - local_full[None] @ shifted[start : start + block],
+                            np.broadcast_to(local_full, a_matrix.shape),
+                        ), axis1=-2, axis2=-1,
+                    )
+                    reconstructed = np.sum(residues / (poles - 1j * energy), axis=1)
+                    if not np.allclose(actual, reconstructed, rtol=_MOMENT_RTOL, atol=_MOMENT_ATOL):
+                        return None
+                residues /= self.n_sites * shifted.shape[0]
+                totals += _rational_trace_moment_parts(
+                    poles, residues, temperature, cutoff,
+                    initial_terms=max(self.omega_points // 4, 32),
+                    absolute_tolerance=_MOMENT_ATOL * a_matrix.shape[0] / shifted.shape[0],
+                )
+            return float(totals[0]), float(totals[1])
+        except (np.linalg.LinAlgError, MomentIntegrationError):
+            return None
+
+    def _adaptive_moment(
+        self, chi0: float, gamma0: float, temperature: float, cutoff: float,
+        shifted: ComplexArray, static: ComplexArray, dynamic: ComplexArray | None,
+        stability_margin: float,
+    ) -> tuple[float, float]:
+        """Checked direct-resolvent fallback with a finite thermal origin limit.
+
+        Convergence checks concern the sampled callable; arbitrary features
+        unseen by all quadrature probes cannot be certified for a general
+        propagator. Affine poles explicitly seed narrow resonances.
+        """
+
+        kt = KB_MEV_PER_K * max(temperature, 0.0)
+        scale = min(cutoff, gamma0 * min(stability_margin, 1.0))
+        if not np.isfinite(scale) or scale <= 0:
+            raise MomentIntegrationError("moment integration has no finite stable energy scale")
+        centers = np.array([])
+        if dynamic is not None:
+            a_matrix = np.kron(np.eye(self.n_sites), np.linalg.inv(static))[None] - shifted
+            d_matrix = np.kron(np.eye(self.n_sites), dynamic)
+            poles = np.linalg.eigvals(np.linalg.solve(d_matrix[None], a_matrix)).ravel()
+            stable = poles.real[poles.real > 0]
+            if stable.size:
+                scale = min(scale, float(np.min(stable)))
+            centers = np.concatenate([poles.imag, poles.imag - poles.real, poles.imag + poles.real])
+            inverse = np.linalg.inv(a_matrix)
+            slope = float(np.trace(inverse @ d_matrix[None] @ inverse, axis1=-2, axis2=-1).real.mean() / self.n_sites)
+            dissipative_dynamic = 0.5 * (d_matrix + d_matrix.conj().T)
+        else:
+            # Central differentiation removes the roundoff-sized static
+            # imaginary trace. Refine until the endpoint limit converges.
+            previous = None
+            for exponent in range(12):
+                step = scale * 0.01 / 2.0**exponent
+                slope = (
+                    self._trace_response(step, chi0, gamma0, shifted).imag
+                    - self._trace_response(-step, chi0, gamma0, shifted).imag
+                ) / (2.0 * step)
+                if previous is not None and abs(slope - previous) <= 1e-7 * max(abs(slope), 1e-12):
+                    break
+                previous = slope
+            else:
+                raise MomentIntegrationError("moment integration could not converge the zero-energy limit")
+        upper = float(np.log1p(cutoff / scale))
+        energy_seeds = np.concatenate([centers, [kt], tier_b_omega_grid(cutoff, max(16, self.omega_points // 4))])
+        energy_seeds = energy_seeds[(energy_seeds > 0) & (energy_seeds < cutoff)]
+        points = np.unique(np.log1p(energy_seeds / scale))
+        budget = max(256, min(8192, 4 * self.omega_points))
+        if points.size > budget // 4:
+            raise MomentIntegrationError(
+                "moment integration has too many unresolved pole intervals; increase omega_points"
+            )
+
+        def integrand(coordinate: float) -> FloatArray:
+            energy = scale * np.expm1(coordinate)
+            jacobian = scale * np.exp(coordinate)
+            if energy < scale * 1e-7:
+                spectral = slope * energy
+            elif dynamic is not None:
+                # Im R = E R^dagger Herm(D) R avoids subtracting enormous,
+                # almost-real static responses at a soft-mode endpoint.
+                response = np.linalg.inv(a_matrix - 1j * energy * d_matrix[None])
+                spectral = float(
+                    energy * np.einsum("qij,ik,qkj->", response.conj(), dissipative_dynamic, response).real
+                    / (self.n_sites * shifted.shape[0])
+                )
+            else:
+                spectral = self._trace_response(float(energy), chi0, gamma0, shifted).imag
+            if not np.isfinite(spectral) or spectral < -1e-10 * max(abs(spectral), 1.0):
+                raise MomentIntegrationError("moment integration encountered nonpassive or nonfinite spectral weight")
+            zero = spectral * jacobian / np.pi
+            if kt == 0 or energy / kt > 700:
+                thermal = 0.0
+            elif energy == 0:
+                thermal = 2.0 * kt * slope * jacobian / np.pi
+            else:
+                thermal = zero * 2.0 / np.expm1(energy / kt)
+            return np.array([zero, thermal])
+
+        previous = None
+        for refinement in range(2):
+            value, error, info = quad_vec(
+                integrand, 0.0, upper, points=points,
+                epsabs=_MOMENT_ATOL, epsrel=_MOMENT_RTOL,
+                limit=budget * 2**refinement, full_output=True,
+            )
+            tolerance = _MOMENT_ATOL + _MOMENT_RTOL * float(np.max(np.abs(value)))
+            if not info.success or not np.all(np.isfinite(value)) or error > tolerance:
+                raise MomentIntegrationError("moment integration did not converge its adaptive direct solves")
+            if previous is not None and np.max(np.abs(value - previous)) > tolerance:
+                raise MomentIntegrationError("moment integration failed its adaptive refinement check")
+            previous = value
+            points = np.unique(np.concatenate([points, np.linspace(0.0, upper, 2 * max(16, self.omega_points // 4))[1:-1]]))
+        return float(value[0]), float(value[1])
 
     def lambda_floor(self, chi0: float) -> float:
         """Estimated stability edge (seed for the bracket search, not exact)."""
@@ -278,20 +494,41 @@ class TierBMoments:
         cutoff_mev: float,
         lambda_shift: float = 0.0,
     ) -> tuple[float, float]:
-        if chi0 <= 0 or gamma0 <= 0:
-            raise ValueError("chi0 and gamma0 must be positive")
-        omega = tier_b_omega_grid(cutoff_mev, self.omega_points)
-        trace = self._site_trace_chipp(omega, chi0, gamma0, lambda_shift)
-        if np.min(trace) < -1e-9 * max(np.max(np.abs(trace)), 1.0):
-            raise ValueError(
-                "Tier-B closure: negative spectral weight (parameters beyond "
-                "the instability)"
-            )
-        zero_point = float(
-            np.mean(np.trapezoid(trace, omega, axis=0)) / np.pi
+        from .tensor_rpa import check_tensor_exchange_stability
+
+        if not np.isfinite(chi0) or not np.isfinite(gamma0) or chi0 <= 0 or gamma0 <= 0:
+            raise ValueError("chi0 and gamma0 must be finite and positive")
+        if not np.isfinite(cutoff_mev) or cutoff_mev <= 0:
+            raise ValueError("energy cutoff must be finite and positive")
+        if not np.isfinite(temperature_K) or temperature_K < 0:
+            raise ValueError("temperature must be finite and nonnegative")
+        static = np.asarray(self.propagator_builder(np.zeros(1), chi0, gamma0)[0], dtype=complex)
+        margin = check_tensor_exchange_stability(self.exchange, self.n_sites, static, lambda_shift=lambda_shift)
+        shifted = self.exchange - lambda_shift * np.eye(3 * self.n_sites)[None]
+        coefficients = (
+            self.affine_inverse_builder(chi0, gamma0)
+            if self.affine_inverse_builder is not None
+            else self._affine_inverse(chi0, gamma0, cutoff_mev, static)
         )
-        total = float(np.mean(trace_moment_quadrature(trace, omega, temperature_K)))
-        return zero_point, total - zero_point
+        dynamic = None
+        if coefficients is not None:
+            dynamic, mobility = [np.asarray(matrix, dtype=complex) for matrix in coefficients]
+            if any(matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)) for matrix in (dynamic, mobility)):
+                raise MomentIntegrationError("affine inverse builder must return two finite 3x3 matrices")
+            result = self._pole_moment(static, mobility, shifted, temperature_K, cutoff_mev, chi0, gamma0)
+            if result is not None:
+                return result
+        # A fallback never assembles an unbounded union of all BZ pole seeds or
+        # repeats every quadrature solve over the full BZ. Small Q blocks bound
+        # both dense matrices and the number of potentially distinct features.
+        total = np.zeros(2)
+        for start in range(0, shifted.shape[0], 16):
+            block = shifted[start : start + 16]
+            parts = self._adaptive_moment(
+                chi0, gamma0, temperature_K, cutoff_mev, block, static, dynamic, margin,
+            )
+            total += np.asarray(parts) * block.shape[0] / shifted.shape[0]
+        return float(total[0]), float(total[1])
 
 
 def _stable_probe(
@@ -306,6 +543,8 @@ def _stable_probe(
     for _ in range(_MAX_EXPANSIONS):
         try:
             return x, moment_at(x)
+        except MomentIntegrationError:
+            raise
         except ValueError:
             x += direction * step
             step *= 1.5
@@ -339,6 +578,8 @@ def _bisect_to_boundary(
             )
         try:
             zero_point, thermal = moment_at(mid)
+        except MomentIntegrationError:
+            raise
         except ValueError:
             bad = mid
             continue
@@ -518,6 +759,8 @@ def solve_onsager_temperatures(
                 result = ClosureResult(
                     root, chi0, zero_point + thermal, zero_point, thermal
                 )
+            except MomentIntegrationError:
+                raise
             except (RuntimeError, ValueError, OverflowError, ZeroDivisionError):
                 result = solve_onsager(
                     model,
@@ -576,6 +819,8 @@ def _solve_chi0_equation(
     for _ in range(_MAX_EXPANSIONS):
         try:
             v_hi = value(x_hi)
+        except MomentIntegrationError:
+            raise
         except ValueError:
             # Past the ceiling: the equation is -inf there; bisect back to a
             # stable point, which must be negative-valued or we keep going.
@@ -584,6 +829,8 @@ def _solve_chi0_equation(
                 mid = 0.5 * (lo_probe + hi_probe)
                 try:
                     v_mid = value(mid)
+                except MomentIntegrationError:
+                    raise
                 except ValueError:
                     hi_probe = mid
                     continue
@@ -743,6 +990,8 @@ def solve_scr_temperatures(
                 result = ClosureResult(
                     0.0, root, zero_point + thermal, zero_point, thermal
                 )
+            except MomentIntegrationError:
+                raise
             except (RuntimeError, ValueError, OverflowError, ZeroDivisionError):
                 result = solve_scr(
                     model,
@@ -892,6 +1141,8 @@ def solve_tac_temperatures(
                     zero_point,
                     thermal,
                 )
+            except MomentIntegrationError:
+                raise
             except (RuntimeError, ValueError, OverflowError, ZeroDivisionError):
                 result = solve_tac(
                     model,

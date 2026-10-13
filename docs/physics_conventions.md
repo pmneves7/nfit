@@ -258,7 +258,12 @@ $$
 
 In this convention, $1/\pi$ relates $S_s$ to $\chi''_s$ and is not included
 in the definition of $\chi''_s$. The Bose or detailed-balance denominator is
-evaluated stably near $E=0$. For reciprocal scalar channels the dissipative
+evaluated stably near $E=0$. At exactly zero energy, a regular response with
+slope $A=\lim_{E\to0}\chi''_s/E$ has Bose-weighted limit $k_BT A$.
+The RPA fitting path uses its analytic slope; direct cross-section conversion
+accepts it through `zero_energy_slope` in susceptibility units per meV.
+The value $\chi''_s(0)=0$ alone does not specify this limit.
+For reciprocal scalar channels the dissipative
 response is odd in energy at fixed $\mathbf Q$. In general detailed balance
 relates opposite momenta and exchanged tensor indices:
 $S_s^{\alpha\beta}(\mathbf Q,-E)=e^{-E/(k_BT)}
@@ -462,6 +467,12 @@ represented by a scalar, its meaning determines the polarization factor:
 
 For an anisotropic response, the full tensor contraction is required; a single
 scalar $P$ is not generally physical.
+
+In a fitted susceptibility channel, nfit divides the model's full neutron
+projection by the same declared $P$ used for the data. Thus the isotropic
+one-component and trace conventions remain consistent between scalar and
+tensor models. An anisotropic result in that channel is an effective
+projected susceptibility, rather than an individual tensor component.
 
 ### Form factor and kinematics
 

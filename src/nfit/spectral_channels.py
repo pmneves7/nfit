@@ -100,13 +100,15 @@ def _energy_grid(data: MDHistoData) -> np.ndarray:
     return data.axes[dimension].centers.reshape(shape)
 
 
-def _polarization_factor(config: dict[str, Any]) -> float:
-    mode = str(config["polarization_mode"])
+def spectral_polarization_factor(config: dict[str, Any]) -> float:
+    """Return the scalar polarization correction declared by a spectral channel."""
+
+    mode = str(config.get("polarization_mode", "isotropic_single_component"))
     factors = {
         "already_corrected": 1.0,
         "isotropic_single_component": 2.0,
         "isotropic_trace": 2.0 / 3.0,
-        "custom_scalar": float(config["polarization_scalar"]),
+        "custom_scalar": float(config.get("polarization_scalar", 2.0)),
     }
     try:
         value = float(factors[mode])
@@ -115,6 +117,9 @@ def _polarization_factor(config: dict[str, Any]) -> float:
     if not np.isfinite(value) or value <= 0.0:
         raise ValueError("polarization factor must be finite and positive")
     return value
+
+
+_polarization_factor = spectral_polarization_factor
 
 
 def _form_factor(data: MDHistoData, config: dict[str, Any]) -> float | np.ndarray:

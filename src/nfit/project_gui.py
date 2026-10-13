@@ -19557,7 +19557,8 @@ class NfitProjectExplorer:
         else:
             grid_tooltip = (
                 "Brillouin-zone sampling for the self-consistency integral, "
-                "using an N x N x N grid over the reduced cell. Increase N "
+                "using an N x N x N grid over the original cell's reciprocal "
+                "volume, with all folded modes retained. Increase N "
                 "until fitted values are converged; cost grows as N cubed."
             )
             grid_label = QtWidgets.QLabel("Closure BZ grid (N per axis)")
@@ -19577,11 +19578,12 @@ class NfitProjectExplorer:
 
             if (model.config.get("zeeman") or {}).get("enabled"):
                 omega_tooltip = (
-                    "Energy-quadrature points for the field-on closure moment "
-                    "integral. Increase this together with the BZ grid until "
-                    "the self-consistent result is stable."
+                    "Initial integration effort for the field-on closure moment. "
+                    "The solver refines automatically to its numerical tolerance; "
+                    "this also sets the adaptive fallback's work budget. Increase "
+                    "it and the BZ grid to check convergence."
                 )
-                omega_label = QtWidgets.QLabel("Field energy points")
+                omega_label = QtWidgets.QLabel("Field integration effort")
                 omega_label.setToolTip(omega_tooltip)
                 omega = QtWidgets.QLineEdit(
                     _parameter_to_text(closure.get("omega_points", 200))

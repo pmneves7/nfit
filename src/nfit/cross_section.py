@@ -142,6 +142,7 @@ def intensity_from_chipp(
     background: float | ArrayLike = 0.0,
     include_bose: bool = True,
     bose_denominator_values: ArrayLike | None = None,
+    zero_energy_slope: ArrayLike | None = None,
 ) -> FloatArray:
     """Convert chi''(Q,E) to measured neutron intensity.
 
@@ -162,6 +163,12 @@ def intensity_from_chipp(
     factor is fixed by the dataset, so fit loops that call this function once
     per optimizer iteration can evaluate it once and pass it here; the
     arithmetic is otherwise unchanged.
+
+    ``zero_energy_slope`` optionally supplies ``lim(E -> 0) chi''/E`` in
+    susceptibility units per meV. At exactly zero energy the regular
+    inelastic Bose-weighted response is then ``k_B T * zero_energy_slope``.
+    This does not describe an elastic delta function. Without a supplied
+    slope, the zero-energy limit cannot be inferred from ``chipp`` alone.
     """
 
     signal = np.asarray(chipp, dtype=float)
@@ -171,7 +178,19 @@ def intensity_from_chipp(
             if bose_denominator_values is None
             else np.asarray(bose_denominator_values, dtype=float)
         )
-        signal = signal / denominator
+        if zero_energy_slope is None:
+            signal = signal / denominator
+        else:
+            signal, denominator, energy, temperature, slope = np.broadcast_arrays(
+                signal, denominator, np.asarray(E_meV, dtype=float),
+                np.asarray(temperature_K, dtype=float),
+                np.asarray(zero_energy_slope, dtype=float),
+            )
+            zero = energy == 0.0
+            weighted = np.empty(signal.shape, dtype=float)
+            np.divide(signal, denominator, out=weighted, where=~zero)
+            weighted[zero] = KB_MEV_PER_K * temperature[zero] * slope[zero]
+            signal = weighted
     return (
         float(scale)
         * MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ
@@ -228,6 +247,7 @@ def cross_section_from_chipp(
     moment_unit: str = "mu_B_squared",
     g_factor: float | None = None,
     bose_denominator_values: ArrayLike | None = None,
+    zero_energy_slope: ArrayLike | None = None,
 ) -> FloatArray:
     """Return absolute magnetic ``d2sigma/dOmega/dE`` in barn/(sr meV).
 
@@ -235,12 +255,13 @@ def cross_section_from_chipp(
     ``spin^2/meV`` when ``moment_unit="spin_squared"``. The returned cross
     section retains the declared per-ion/formula-unit/cell basis. ``kf_ki`` is
     explicit so data normalized to remove the kinematic factor can leave it at
-    one. ``bose_denominator_values`` is forwarded to
+    one. ``bose_denominator_values`` and ``zero_energy_slope`` are forwarded to
     :func:`intensity_from_chipp`.
     """
 
+    moment_factor = magnetic_moment_factor(moment_unit, g_factor)
     return np.asarray(kf_ki, dtype=float) * intensity_from_chipp(
-        np.asarray(chipp, dtype=float) * magnetic_moment_factor(moment_unit, g_factor),
+        np.asarray(chipp, dtype=float) * moment_factor,
         E_meV,
         temperature_K,
         scale=1.0,
@@ -248,6 +269,10 @@ def cross_section_from_chipp(
         polarization=polarization,
         include_bose=include_bose,
         bose_denominator_values=bose_denominator_values,
+        zero_energy_slope=(
+            None if zero_energy_slope is None
+            else np.asarray(zero_energy_slope, dtype=float) * moment_factor
+        ),
     )
 
 

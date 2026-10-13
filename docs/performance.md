@@ -466,6 +466,8 @@ cost without changing the result:
 Primitive-cell reduction is often the largest exact saving because the
 eigendecomposition cost is cubic in $N$. See
 [Heisenberg RPA](heisenberg_rpa.md#primitive-cell-reduction).
+Local-moment closures retain the full crystallographic site network and all
+folded branches; this pointwise reduction does not apply to their BZ trace.
 
 For many small matrices, a fused Numba Jacobi eigensolver removes repeated
 LAPACK call overhead. Larger matrices use LAPACK with batch-level threading,
@@ -727,13 +729,16 @@ definitions.
 
 Field-free Onsager, SCR, and TAC calculations reuse one Brillouin-zone
 eigendecomposition and cache exact closure results across a temperature
-series. Field-on closures require numerical energy integration and batched
-linear solves, so their cost scales with both Brillouin-zone and energy-grid
-sizes.
+series. Field-on closures decompose the relaxor's matrix poles once per trial
+local response and integrate their trace analytically in energy, with a
+converged Matsubara thermal sum. Ill-conditioned decompositions and custom
+nonaffine propagators use a slower adaptive direct-solve fallback.
 
-Use a coarse grid for exploration, then check convergence of fitted and derived
-quantities before reporting quantitative results. The closure equations and
-grid controls are in [Sum rules and self-consistency](theory_notes.md).
+Use a coarse BZ grid for exploration, then check convergence of fitted and
+derived quantities before reporting quantitative results. The field
+integration effort (`omega_points`) controls initial work and the fallback
+budget, rather than a fixed number of energy samples. The closure equations
+and controls are in [Sum rules and self-consistency](theory_notes.md).
 
 ## Current limitations
 

@@ -62,7 +62,9 @@ def _erfc(x: FloatArray) -> FloatArray:
     return erfc(x)
 
 
-def _axis_shells(basis: FloatArray, radius: float, minimum: int) -> list[int]:
+def _axis_shells(
+    basis: FloatArray, radius: float, minimum: int, *, index_margin: float = 0.0
+) -> list[int]:
     """Per-axis image counts covering ``radius`` in every lattice direction.
 
     A single index range is wrong for an anisotropic cell: six shells along a
@@ -84,7 +86,7 @@ def _axis_shells(basis: FloatArray, radius: float, minimum: int) -> list[int]:
             else float(np.linalg.norm(basis[:, axis]))
         )
         spacing = max(spacing, 1.0e-12)
-        shells.append(max(int(minimum), int(np.ceil(radius / spacing))))
+        shells.append(max(int(minimum), int(np.ceil(radius / spacing + index_margin))))
     return shells
 
 
@@ -121,7 +123,8 @@ def ewald_dipole_tensor(
     counts with a single count on every axis. Leaving them at ``None`` chooses
     each axis independently so that a strongly anisotropic cell converges;
     ``alpha`` and the cutoffs affect convergence only, not the converged
-    result.
+    result. Momenta are reduced by integer reciprocal vectors during the
+    sum; the returned tensor retains the extended-zone sublattice phases.
     """
 
     basis = _lattice_vectors(lattice)  # columns = a, b, c (Angstrom)
@@ -130,7 +133,11 @@ def ewald_dipole_tensor(
     n_sites = tau.shape[0]
     volume = float(abs(np.linalg.det(basis)))
     recip = 2.0 * np.pi * np.linalg.inv(basis).T  # columns = reciprocal vectors
-    q_cart = (recip @ np.asarray(hkl, dtype=float).T).T  # (n_q, 3)
+    hkl = np.asarray(hkl, dtype=float)
+    reciprocal_shift = np.rint(hkl)
+    # The Gaussian reciprocal sum is localized around Q, not around G=0.
+    # Keep Q in a bounded reciprocal cell and restore its site gauge below.
+    q_cart = (recip @ (hkl - reciprocal_shift).T).T  # (n_q, 3)
     n_q = q_cart.shape[0]
 
     if alpha is None:
@@ -142,7 +149,9 @@ def ewald_dipole_tensor(
     else:
         real_shell_counts = [int(real_shells)] * 3
     if recip_shells is None:
-        recip_shell_counts = _axis_shells(recip, 12.0 * alpha, 6)
+        recip_shell_counts = _axis_shells(
+            recip, 12.0 * alpha, 6, index_margin=0.5
+        )
     else:
         recip_shell_counts = [int(recip_shells)] * 3
 
@@ -210,4 +219,7 @@ def ewald_dipole_tensor(
     for j in range(n_sites):
         dipole[:, j, j] -= self_coeff * eye3
 
+    site_phase = np.exp(2j * np.pi * (reciprocal_shift @ frac.T))
+    gauge = site_phase[:, :, None].conj() * site_phase[:, None, :]
+    dipole *= gauge[:, :, :, None, None]
     return dipole

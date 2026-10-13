@@ -1,10 +1,36 @@
 import numpy as np
+import pytest
 
 from nfit.dipole import dipole_coupling_constant, ewald_dipole_tensor
 
 LATTICE = {"a": 4.0, "b": 4.0, "c": 4.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0}
 FRAC = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
 HKL = np.array([[0.1, 0.2, 0.3], [0.5, 0.0, 0.0], [0.25, 0.25, 0.25], [0.4, 0.1, 0.6]])
+
+
+@pytest.mark.parametrize("alpha", [0.18, 0.40, None])
+def test_ewald_extended_zone_restores_sublattice_gauge(alpha):
+    frac = np.array([[0.0, 0.0, 0.0], [0.31, 0.17, 0.23]])
+    hkl = np.array([[0.1, 0.2, 0.3], [0.0, 0.0, 0.0], [-0.5, 0.5, 0.25]])
+    shifts = np.array([[10, -7, 6], [-11, 5, 2], [7, -9, 3]])
+    reference = ewald_dipole_tensor(hkl, frac, LATTICE, alpha=alpha)
+    actual = ewald_dipole_tensor(hkl + shifts, frac, LATTICE, alpha=alpha)
+    phase = np.exp(2j * np.pi * np.einsum(
+        "qd,abd->qab", shifts, frac[None, :, :] - frac[:, None, :]
+    ))
+    np.testing.assert_allclose(actual, reference * phase[..., None, None], atol=2e-12)
+
+
+def test_ewald_extended_zone_converges_in_a_skew_cell():
+    lattice = {"a": 4.0, "b": 7.0, "c": 3.0, "alpha": 72.0, "beta": 83.0, "gamma": 67.0}
+    frac = [[0.0, 0.0, 0.0], [0.31, 0.17, 0.23]]
+    hkl = np.array([[10.1, -7.2, 6.3], [-8.3, 11.1, -9.25]])
+    low = ewald_dipole_tensor(hkl, frac, lattice, alpha=0.18)
+    high = ewald_dipole_tensor(hkl, frac, lattice, alpha=0.40)
+    np.testing.assert_allclose(low, high, atol=2e-11)
+    np.testing.assert_allclose(
+        low, ewald_dipole_tensor(-hkl, frac, lattice, alpha=0.18).conj(), atol=2e-12
+    )
 
 
 def test_ewald_dipole_is_independent_of_the_splitting_parameter():

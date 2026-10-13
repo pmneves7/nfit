@@ -1130,10 +1130,10 @@ def rpa_exchange_matrix(
 
 
 def _validate_rpa_scalars(chi0: float, gamma0: float) -> None:
-    if gamma0 <= 0:
-        raise ValueError("gamma0 must be positive")
-    if chi0 <= 0:
-        raise ValueError("chi0 must be positive")
+    if not np.isfinite(gamma0) or gamma0 <= 0:
+        raise ValueError("gamma0 must be finite and positive")
+    if not np.isfinite(chi0) or chi0 <= 0:
+        raise ValueError("chi0 must be finite and positive")
 
 
 def _validate_rpa_energy(geometry: RpaGeometry, energy: FloatArray) -> None:
@@ -1224,9 +1224,14 @@ def _stacked_phases(geometry: RpaGeometry, labels: Sequence[str]) -> ComplexArra
     key = tuple(labels)
     stack = cache.get(key)
     if stack is None:
-        stack = np.ascontiguousarray(
-            np.stack([geometry.bond_phases[label] for label in labels], axis=0)
-        )
+        if labels:
+            stack = np.ascontiguousarray(
+                np.stack([geometry.bond_phases[label] for label in labels], axis=0)
+            )
+        else:
+            stack = np.empty(
+                (0, geometry.n_q, geometry.n_sites, geometry.n_sites), dtype=complex
+            )
         cache[key] = stack
     return stack
 
@@ -1485,3 +1490,105 @@ def heisenberg_rpa_chipp_and_gradients(
             gradients[label][sel] = (f_sq * z_p_x).imag / n_sites
 
     return chipp, gradients
+
+
+def _rpa_zero_energy_modes(
+    geometry: RpaGeometry,
+    *,
+    chi0: float,
+    gamma0: float,
+    j_values: Mapping[str, float],
+    lambda_shift: float,
+    inverse_mode_energy_sq: float,
+) -> tuple[FloatArray, ComplexArray, FloatArray, FloatArray, FloatArray]:
+    """Static mode data shared by the dissipative slope and its derivatives."""
+
+    _validate_rpa_scalars(chi0, gamma0)
+    if not np.isfinite(inverse_mode_energy_sq) or inverse_mode_energy_sq < 0.0:
+        raise ValueError("inverse_mode_energy_sq must be finite and nonnegative")
+    lam, modes = _rpa_modes(geometry, j_values, chi0, lambda_shift)
+    lam = lam - lambda_shift
+    denominator = 1.0 - chi0 * lam
+    weights = np.abs(modes.sum(axis=1)) ** 2 / geometry.n_sites
+    slopes = chi0 / gamma0 * np.sum(weights / denominator**2, axis=1)
+    return lam, modes, denominator, weights, slopes
+
+
+def heisenberg_rpa_zero_energy_slope(
+    geometry: RpaGeometry,
+    *,
+    chi0: float,
+    gamma0: float,
+    j_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
+    inverse_mode_energy_sq: float = 0.0,
+) -> FloatArray:
+    """Return the exact limit ``chi''(Q, E)/E`` at zero energy, in meV^-2.
+
+    With ``R = [I - chi0 (J - lambda_shift I)]^-1``, the slope is
+    ``chi0/gamma0 * phi^dagger R^2 phi/N``. It is independent of the
+    inertial coefficient, which first enters the denominator at order E^2.
+    The returned array follows the geometry's original point order.
+    """
+
+    *_, slopes = _rpa_zero_energy_modes(
+        geometry,
+        chi0=float(chi0),
+        gamma0=float(gamma0),
+        j_values=j_values,
+        lambda_shift=float(lambda_shift),
+        inverse_mode_energy_sq=float(inverse_mode_energy_sq),
+    )
+    return slopes[geometry.point_index]
+
+
+def heisenberg_rpa_zero_energy_slope_and_gradients(
+    geometry: RpaGeometry,
+    *,
+    chi0: float,
+    gamma0: float,
+    j_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
+    inverse_mode_energy_sq: float = 0.0,
+) -> tuple[FloatArray, dict[str, FloatArray]]:
+    """Return the zero-energy dissipative slope and its parameter derivatives.
+
+    These are partial derivatives at fixed ``lambda_shift``; a closure's
+    total derivatives still require differentiating its solved parameters.
+    The exchange derivative uses the static resolvent vectors ``x=R phi``
+    and ``y=R^2 phi``: ``2 chi0^2/gamma0 Re(x^dagger P_o y)/N``.
+    No eigenvector derivatives are needed, including at mode degeneracy.
+    """
+
+    chi0, gamma0 = float(chi0), float(gamma0)
+    lam, modes, denominator, weights, slopes = _rpa_zero_energy_modes(
+        geometry,
+        chi0=chi0,
+        gamma0=gamma0,
+        j_values=j_values,
+        lambda_shift=float(lambda_shift),
+        inverse_mode_energy_sq=float(inverse_mode_energy_sq),
+    )
+    idx = geometry.point_index
+    gradients = {
+        "chi0": (
+            np.sum(
+                weights * (1.0 / denominator**2 + 2.0 * chi0 * lam / denominator**3),
+                axis=1,
+            ) / gamma0
+        )[idx],
+        "gamma0": -slopes[idx] / gamma0,
+        "inverse_mode_energy_sq": np.zeros(idx.shape, dtype=float),
+    }
+    if j_values:
+        c = np.conj(modes.sum(axis=1))
+        x = np.einsum("qan,qn->qa", modes, c / denominator)
+        y = np.einsum("qan,qn->qa", modes, c / denominator**2)
+        for label in j_values:
+            contraction = np.einsum(
+                "qa,qab,qb->q", np.conj(x), geometry.bond_phases[label], y
+            ).real
+            gradients[label] = (
+                2.0 * chi0**2 / (gamma0 * geometry.n_sites) * contraction
+            )[idx]
+    return slopes[idx], gradients

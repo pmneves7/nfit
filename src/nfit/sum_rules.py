@@ -28,10 +28,11 @@ machine precision against split-interval adaptive quadrature):
   ``1/nu^2 + 1/nu^4 + 1/nu^6`` asymptotics summed exactly via the Hurwitz
   zeta function.
 
-The brute-force quadrature (`trace_moment_quadrature`) is retained both as
-the numerical referee for the closed forms and as the building block for the
-field-on (Tier-B) case, whose gyrotropic ``chi''(w)`` is not a finite sum of
-Lorentzians.
+Field-on (Tier-B) responses with an affine inverse local propagator have
+complex matrix poles. Their trace uses exact logarithmic zero-point integrals
+and finite-cutoff Matsubara integrals with a bounded tail. General propagators
+use checked adaptive direct solves in :mod:`nfit.closures`. The sampled-data
+``trace_moment_quadrature`` remains a numerical referee.
 """
 
 from __future__ import annotations
@@ -48,6 +49,143 @@ except Exception:  # pragma: no cover - Numba is an optional runtime fallback.
     tier_a_matsubara_moment_sums = None
 
 FloatArray = NDArray[np.float64]
+
+
+class MomentIntegrationError(ValueError):
+    """A numerical moment integral could not meet its error tolerance."""
+
+
+_MOMENT_RTOL = 2.0e-12
+_MOMENT_ATOL = 2.0e-14
+
+
+def _pole_log_ratio(poles: NDArray[np.complex128]) -> NDArray[np.complex128]:
+    """Log[(z-i)/z], continuous for poles with positive real part."""
+
+    return np.log1p(-1j / poles)
+
+
+def _pole_power_integrals(
+    poles: NDArray[np.complex128],
+) -> tuple[NDArray[np.complex128], ...]:
+    """Integrals of x^p/(z-i x) on [0,1], for p=1,3,5.
+
+    Polynomial division is accurate near poles; a geometric series avoids its
+    cancellation when the pole is far beyond the integration interval.
+    """
+
+    near = np.abs(poles) <= 4.0
+    current = 1j * _pole_log_ratio(poles[near])
+    result = []
+    for power in range(1, 6):
+        current = 1j / power - 1j * poles[near] * current
+        if power not in (1, 3, 5):
+            continue
+        integral = np.empty_like(poles)
+        integral[near] = current
+        inverse = 1.0 / poles[~near]
+        term = inverse.copy()
+        series = term / (power + 1)
+        for order in range(1, 32):
+            term *= 1j * inverse
+            series += term / (power + order + 1)
+        integral[~near] = series
+        result.append(integral)
+    return tuple(result)
+
+
+def _matsubara_pole_kernel(
+    poles: NDArray[np.complex128], frequencies: FloatArray
+) -> NDArray[np.complex128]:
+    """Integral x/[(x^2+v^2)(z-i x)] on [0,1].
+
+    The log1p divided difference handles z=v without an artificial singularity.
+    Both energies are normalized by the finite integration cutoff.
+    """
+
+    z = poles[None, :]
+    v = frequencies[:, None]
+    difference = -1j * (z - v) / (v * (z - 1j))
+    ratio = np.empty_like(difference)
+    small = np.abs(difference) < 1e-4
+    x = difference[small]
+    ratio[small] = 1.0 - x / 2.0 + x**2 / 3.0 - x**3 / 4.0 + x**4 / 5.0
+    ratio[~small] = np.log1p(difference[~small]) / difference[~small]
+    return 1j * (np.arctan(1.0 / v) - z / (v * (z - 1j)) * ratio) / (z + v)
+
+
+def _rational_trace_moment_parts(
+    poles: NDArray[np.complex128],
+    residues: NDArray[np.complex128],
+    temperature_K: float,
+    cutoff_mev: float,
+    *,
+    initial_terms: int = 32,
+    absolute_tolerance: float = _MOMENT_ATOL,
+) -> tuple[float, float]:
+    """Integrate Im sum r/(lambda-i E), including nonreciprocal spectra.
+
+    The zero-point integral is an exact logarithm. For the thermal part, the
+    coth Matsubara expansion has analytic finite-cutoff integrals. Its tail
+    through nu^-6 is summed with Hurwitz zeta; positivity bounds the remaining
+    tail by Lambda^6 int E chi'' dE sum nu^-8. No conjugate-pole pairing or
+    momentum inversion is assumed. The static trace must be real.
+    """
+
+    poles = np.asarray(poles, dtype=complex).ravel()
+    residues = np.asarray(residues, dtype=complex).ravel()
+    if (
+        poles.shape != residues.shape or np.any(poles.real <= 0)
+        or not np.all(np.isfinite(poles)) or not np.all(np.isfinite(residues))
+    ):
+        raise MomentIntegrationError("moment integration requires poles in the stable half-plane")
+    static = np.sum(residues / poles)
+    if abs(static.imag) > 1e-9 * max(abs(static.real), 1.0):
+        raise MomentIntegrationError("moment integration requires a real static trace")
+    cutoff = float(cutoff_mev)
+    zero_point = float(np.real(np.sum(residues * _pole_log_ratio(poles / cutoff))) / np.pi)
+    if not np.isfinite(zero_point) or zero_point < -absolute_tolerance:
+        raise MomentIntegrationError("moment integration produced nonpositive spectral amplitude")
+    zero_point = max(zero_point, 0.0)
+    if temperature_K <= 0:
+        return zero_point, 0.0
+    kt = KB_MEV_PER_K * temperature_K
+    # Positivity gives a rigorous omitted thermal bound:
+    # 2 n_B(40 kT) * zero_point(full cutoff) < 9e-18 * zero_point.
+    thermal_cutoff = min(cutoff, 40.0 * kt)
+    z = poles / thermal_cutoff
+    nu1 = 2.0 * np.pi * kt / thermal_cutoff
+    log_ratio = _pole_log_ratio(z)
+    zero_point_low = float(np.real(np.sum(residues * log_ratio)) / np.pi)
+    classical = -float(np.imag(np.sum((residues / z) * log_ratio)))
+    power_integrals = _pole_power_integrals(z)
+    m1, m3, m5 = [float(np.imag(np.sum(residues * integral))) for integral in power_integrals]
+    prefactor = 4.0 * kt / (np.pi * thermal_cutoff)
+    count = max(32, min(int(initial_terms), 256), int(np.ceil(8.0 / nu1)))
+    summed = 0.0
+    completed = 0
+    while count <= 4096:
+        # Bound the complex working arrays independently of the number of poles.
+        frequency_block = max(1, min(16, 250_000 // max(poles.size, 1)))
+        for start in range(completed + 1, count + 1, frequency_block):
+            frequencies = nu1 * np.arange(start, min(start + frequency_block, count + 1))
+            summed += float(np.imag(np.sum(_matsubara_pole_kernel(z, frequencies) * residues[None])))
+        tail = (
+            m1 * zeta(2, count + 1) / nu1**2
+            - m3 * zeta(4, count + 1) / nu1**4
+            + m5 * zeta(6, count + 1) / nu1**6
+        )
+        total_low = prefactor * (0.5 * classical + summed + tail)
+        error_bound = prefactor * abs(m1) * zeta(8, count + 1) / nu1**8
+        tolerance = absolute_tolerance + _MOMENT_RTOL * max(abs(total_low), abs(zero_point))
+        if error_bound <= tolerance:
+            thermal = total_low - zero_point_low
+            if not np.isfinite(thermal) or thermal < -tolerance or zero_point < -tolerance:
+                raise MomentIntegrationError("moment integration produced nonpositive spectral amplitude")
+            return max(zero_point, 0.0), max(thermal, 0.0)
+        completed = count
+        count *= 2
+    raise MomentIntegrationError("moment integration did not converge its Matsubara tail")
 
 # Above this Lambda / k_B T the thermal weight beyond the cutoff is < e^-20 of
 # the thermal part and the infinite-cutoff digamma form is exact in double
@@ -217,48 +355,63 @@ def trace_moment_quadrature(
     chipp_trace: ArrayLike,
     omega_grid: ArrayLike,
     temperature_K: float,
+    *,
+    zero_energy_slope: ArrayLike | None = None,
 ) -> FloatArray:
     """Energy integral ``(1/pi) int coth(w/2T) Tr chi''(w) dw`` on a grid.
 
-    Building block for the field-on (Tier-B) closure, where ``chi''(Q, w)`` is
-    only available numerically. ``chipp_trace`` has the energy grid on its
-    first axis; remaining axes (e.g. Q) are preserved.
+    ``chipp_trace`` has energy on its first axis; remaining axes are preserved.
+    At zero energy the finite integrand is ``2 k_B T d chi''/dE``. Supply that
+    slope when known; otherwise the first positive row estimates it. This
+    sampled-data helper cannot resolve spectral features absent from its grid;
+    field-on closures use checked rational or adaptive integration instead.
     """
 
     omega = np.asarray(omega_grid, dtype=float)
     values = np.asarray(chipp_trace, dtype=float)
-    weight = coth_weight(omega, temperature_K)
+    if omega.ndim != 1 or omega.size < 2 or np.any(np.diff(omega) <= 0):
+        raise ValueError("energy grid must be strictly increasing with at least two rows")
+    if omega[0] < 0 or values.shape[0] != omega.size:
+        raise ValueError("spectral rows must match a nonnegative energy grid")
+    weight = coth_weight(np.where(omega == 0, 1.0, omega), temperature_K)
     shape = weight.shape + (1,) * (values.ndim - 1)
-    return np.trapezoid(values * weight.reshape(shape), omega, axis=0) / np.pi
+    integrand = values * weight.reshape(shape)
+    if omega[0] == 0:
+        slope = values[1] / omega[1] if zero_energy_slope is None else zero_energy_slope
+        integrand[0] = 2.0 * KB_MEV_PER_K * max(temperature_K, 0.0) * np.asarray(slope)
+    return np.trapezoid(integrand, omega, axis=0) / np.pi
 
 
 def tier_b_omega_grid(cutoff_mev: float, n_points: int = 200) -> FloatArray:
     """Energy quadrature grid for Tier-B trace integrals.
 
-    Log-spaced below 1 meV to resolve narrow quasielastic weight, linear
-    above; starts slightly off zero (the coth-weighted integrand is finite at
-    ``w -> 0`` but ``chi''`` itself vanishes there, so no weight is lost).
+    Includes zero, with logarithmic spacing below the linear segment. The
+    lower positive energy scales with the cutoff and point count, so even a
+    very small cutoff gives an ordered grid. No fixed grid guarantees that an
+    arbitrarily narrow resonance is resolved; this is a plotting/referee grid.
     """
 
-    n_log = max(n_points // 4, 8)
-    n_lin = max(n_points - n_log, 8)
-    low = np.geomspace(1e-4, min(1.0, 0.1 * cutoff_mev), n_log, endpoint=False)
-    high = np.linspace(min(1.0, 0.1 * cutoff_mev), float(cutoff_mev), n_lin)
-    return np.concatenate([low, high])
+    cutoff = float(cutoff_mev)
+    if not np.isfinite(cutoff) or cutoff <= 0:
+        raise ValueError("energy cutoff must be finite and positive")
+    count = max(int(n_points), 16)
+    n_log = max(count // 4, 4)
+    n_lin = count - n_log - 1
+    join = min(1.0, 0.1 * cutoff)
+    low = np.geomspace(join / count**2, join, n_log, endpoint=False)
+    high = np.linspace(join, cutoff, n_lin)
+    return np.concatenate([[0.0], low, high])
 
 
 def bz_sample_hkl(n: int) -> FloatArray:
     """Uniform ``n^3`` Brillouin-zone sampling grid in fractional H, K, L.
 
     Midpoint-shifted Monkhorst-Pack points ``(i + 1/2)/n`` on the reciprocal
-    torus ``[0, 1)^3``. Uniform sampling of the conventional-cell torus is
-    also uniform on the primitive reciprocal torus (the primitive reciprocal
-    lattice contains the conventional one, so the primitive torus is a
-    quotient group and uniform measure pushes forward), which is why the same
-    grid is exact for both the full and the primitive-reduced site network --
-    locked by the 16<->4 pyrochlore test. The half-step shift avoids placing
-    points exactly on Gamma/zone-boundary high-symmetry points where the soft
-    mode diverges at the RPA instability.
+    torus ``[0, 1)^3`` of the declared cell. A full conventional-cell site
+    trace includes all folded primitive momenta; reducing the site network
+    without also transforming and expanding the momentum grid does not
+    preserve a local moment integral. The half-step shift avoids Gamma. It
+    does not remove every zone-boundary or high-symmetry point.
     """
 
     if n < 1:
@@ -382,4 +535,7 @@ def kk_static_chi(chipp: ArrayLike, omega_grid: ArrayLike) -> FloatArray:
     omega = np.asarray(omega_grid, dtype=float)
     values = np.asarray(chipp, dtype=float)
     shape = omega.shape + (1,) * (values.ndim - 1)
-    return (2.0 / np.pi) * np.trapezoid(values / omega.reshape(shape), omega, axis=0)
+    integrand = values / np.where(omega == 0, 1.0, omega).reshape(shape)
+    if omega[0] == 0:
+        integrand[0] = values[1] / omega[1]
+    return (2.0 / np.pi) * np.trapezoid(integrand, omega, axis=0)

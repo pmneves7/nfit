@@ -166,6 +166,13 @@ restricted region can miss an instability elsewhere; inspect full-zone
 diagnostics and converge their momentum grid before interpreting a fitted
 state as a stable paramagnet. A finite grid does not prove global stability.
 
+At exactly $E=0$, the inelastic intensity uses the regular limit
+$\chi''/[1-e^{-E/(k_BT)}]\to k_BT\,\partial_E\chi''|_0$.
+The scalar slope is
+$\sum_\nu w_\nu\chi_0/(\Gamma_0\delta_\nu^2)$, independent of inertia;
+tensor and field-on models use the corresponding matrix derivative. This
+limit also applies to fit derivatives and excludes elastic Bragg weight.
+
 ### Physical scope and local-moment benchmark
 
 The exchange feedback is the molecular-field/RPA construction; the local
@@ -239,6 +246,8 @@ The reduction is exact for the scalar model and for translationally compatible
 anisotropic exchange and single-ion anisotropy. It is disabled when the
 network does not possess the required translation symmetry or when dipolar
 evaluation requires the full Bravais-lattice description.
+This reduction applies to pointwise neutron and bulk response; local-moment
+integrals retain all sites and folded branches of the original cell.
 
 ## Powder average
 
@@ -290,6 +299,13 @@ requires a compatible internal-field convention or a separate demagnetization
 correction; changing the Ewald convergence cutoffs does not supply that
 macroscopic boundary term.
 
+The Ewald sum is evaluated at reduced momentum and then restored to the
+extended-zone phase convention. For an integer reciprocal translation
+$\mathbf G$, its site block obeys
+$\mathbb T_{ab}(\mathbf Q+\mathbf G)=
+e^{2\pi i\mathbf G\cdot(\mathbf r_b-\mathbf r_a)}\mathbb T_{ab}(\mathbf Q)$.
+The diagonal blocks are periodic; off-diagonal blocks retain the basis phase.
+
 With no tensor terms, nfit uses the scalar path unchanged. At zero field, one
 Hermitian eigendecomposition of $\mathbb J(\mathbf Q)$ serves every energy at a
 given momentum. A field makes the local propagator gyrotropic and requires a
@@ -306,6 +322,12 @@ Kronecker delta, and $\hat{\mathbf Q}$ is the unit momentum-transfer vector.
 Its isotropic limit is exactly $2\chi''_s$, matching the scalar one-component
 convention. See [Physics conventions](physics_conventions.md#tensor-anisotropic-interactions)
 for frames and signs.
+
+When fitting a dataset's susceptibility channel, this projected response is
+divided by the dataset's declared polarization correction, just as in the
+data conversion. The default factor two gives one Cartesian component in
+the isotropic limit. For anisotropic models, it is an effective projected
+susceptibility, not a selected diagonal tensor element.
 
 ### Zeeman response
 
@@ -356,9 +378,6 @@ tensor, as defined in [Physics conventions](physics_conventions.md#tensor-anisot
 Testing only $1-\lambda_\nu\chi_0$ can miss a transverse instability.
 The fit evaluator and field-on moment integrals check this criterion; bulk
 predictions solve the full static matrix before projecting along the field.
-Fits using unequal `chi_perp_ratio` with versions before 0.102.2 should be
-rechecked, especially when anisotropic exchange mixes longitudinal and
-transverse components.
 
 For a direct `tensor_zeeman_susceptibility` call, supply
 `static_local_propagator=C` when the energy array contains no zero-energy
@@ -368,9 +387,16 @@ stability. The model fitting path supplies the matrix automatically.
 
 This is a phenomenological precessing relaxor with adjustable static
 susceptibilities, not a calculation of saturation or thermal level populations.
-Finite-field spectra and closures fitted with versions before 0.80.5 should
-be refitted: those versions used shifted relaxors without the equilibrium
-numerator. A field direction and magnitude must be defined in the dataset.
+A field direction and magnitude must be defined in the dataset.
+
+It also does not enforce the exchange-independent uniform Larmor resonance
+of an isolated isotropic Heisenberg system with uniform $g$. In bare RPA, a
+one-site isotropic network has transverse uniform pole
+$[1-\chi_\perp J(\mathbf0)](E_L-i\Gamma_\perp)$, so exchange shifts both
+precession and damping. Use this ansatz for phenomenological dissipative
+response; a conserving microscopic treatment is required when the protected
+uniform resonance is essential. See [Oshikawa and Affleck, Section II](https://arxiv.org/abs/cond-mat/0108424)
+for the isolated-system constraint.
 
 ## Self-consistency closures
 
@@ -391,8 +417,14 @@ The closure configuration selects its energy cutoff. The **Advanced** tab
 shows the $N\times N\times N$ Brillouin-zone grid only when a closure is
 active, because bare RPA evaluates requested data points directly without a
 full-zone grid. With both a closure and a Zeeman term, the tab also exposes
-the field-on energy quadrature. Solved quantities such as $\lambda(T)$,
+the field integration effort. Solved quantities such as $\lambda(T)$,
 $\chi_{0,\rm eff}$, and $\langle m^2\rangle$ appear in fit diagnostics.
+
+Moment integrals retain the complete crystallographic site network over
+the conventional reciprocal cell, including all folded modes. A reduced
+network sufficient for the measured neutron response cannot replace this
+local site trace. Static scalar diagnostics use one Cartesian component;
+their tensor counterparts report one third of the Cartesian trace.
 
 Closures use finite-difference gradients and support the relaxational scalar,
 tensor, and field-on models. Sum-rule closures and the Zeeman propagator
