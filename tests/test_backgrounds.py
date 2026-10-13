@@ -451,6 +451,7 @@ def test_project_tree_exposes_background_controls_with_tooltips(monkeypatch):
     assert source_combo is not None and source_combo.toolTip()
     assert scale is not None and scale.toolTip()
     scale.setValue(0.5)
+    scale.editingFinished.emit()
     assert background.scale == 0.5
 
 

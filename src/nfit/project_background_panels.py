@@ -96,12 +96,14 @@ def build_background_details(
     scale.setObjectName("background_scale")
     scale.setRange(-1.0e12, 1.0e12)
     scale.setDecimals(8)
+    scale.setKeyboardTracking(False)
     scale.setValue(float(background.scale))
     scale.setToolTip(
-        "Multiplier applied to this background before subtraction. Its absolute value also scales the uncertainty."
+        "Multiplier applied to this background before subtraction. Its absolute value also scales the uncertainty. "
+        "Press Enter or leave the field to apply the new value."
     )
-    scale.valueChanged.connect(
-        lambda value: self._update_background(group, owner, background, scale=float(value))
+    scale.editingFinished.connect(
+        lambda: self._update_background(group, owner, background, scale=float(scale.value()))
     )
     layout.addWidget(scale, 2, 1)
     layout.addWidget(QtWidgets.QLabel("Projection"), 3, 0)

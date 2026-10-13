@@ -1553,8 +1553,9 @@ on its own grid using the source group's UB and symmetry. The background group's
 standalone viewing grid is not required. Source symmetry changes require rebuilding
 affected background histograms; background scale changes reuse existing caches.
 
-Changing a background link's **Scale** updates open data viewers after a short
-pause in editing. The signal and uncertainty update together, while the selected
+Changing a background link's **Scale** updates open data viewers when you press
+Enter or leave the field. Intermediate values typed into the field do not trigger
+calculations. The signal and uncertainty update together, while the selected
 binning and plot settings are retained. This also works for large live composites
 with automatic rebinning disabled: current sample and background histograms are
 reused. Setting the scale to zero restores the unsubtracted sample and its

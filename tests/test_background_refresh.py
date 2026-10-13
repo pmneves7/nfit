@@ -53,6 +53,7 @@ def test_background_scale_updates_open_large_manual_composite_viewers(monkeypatc
     try:
         for factor in (0.0, 0.25):
             scale.setValue(factor)
+            scale.editingFinished.emit()
             QtTest.QTest.qWait(300)
             for viewer in viewers:
                 assert viewer.binning_combo.currentText() == "zoom"
@@ -62,6 +63,48 @@ def test_background_scale_updates_open_large_manual_composite_viewers(monkeypatc
         explorer._interactive = False
         for viewer in viewers:
             viewer.window.close()
+        explorer.has_unsaved_changes = False
+        explorer.window.close()
+
+
+@pytest.mark.parametrize("finish", ["enter", "focus_loss"])
+def test_background_scale_typing_applies_once_when_editing_finishes(monkeypatch, finish):
+    from PySide6 import QtCore, QtTest, QtWidgets
+
+    source = DatasetEntry("background", _histogram(2.0), kind="mdhisto")
+    background = BackgroundSpec("bkg", source_dataset_id=source.id, source_entry=source)
+    sample = DatasetEntry("sample", _histogram(5.0), kind="mdhisto", backgrounds=[background])
+    group = DataGroup("workspace", datasets=[sample, source])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._set_background_details(group, sample, background)
+    scale = explorer.details_widget.findChild(QtWidgets.QDoubleSpinBox, "background_scale")
+    source_combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "background_source_dataset")
+    refreshes = []
+    monkeypatch.setattr(explorer, "_request_overlay_refresh",
+                        lambda *_args, **_kwargs: refreshes.append(background.scale))
+    explorer.window.show()
+    scale.setFocus()
+    scale.selectAll()
+    try:
+        for text in ("0", ".7", "5"):
+            QtTest.QTest.keyClicks(scale, text)
+            QtTest.QTest.qWait(250)
+            assert background.scale == 1.0
+            assert refreshes == []
+            assert not explorer.has_unsaved_changes
+        if finish == "enter":
+            QtTest.QTest.keyClick(scale, QtCore.Qt.Key.Key_Return)
+        else:
+            source_combo.setFocus()
+        QtWidgets.QApplication.processEvents()
+        assert background.scale == 0.75
+        assert refreshes == [0.75]
+        assert explorer.has_unsaved_changes
+        # Enter followed by leaving the field must not schedule a duplicate.
+        source_combo.setFocus()
+        QtWidgets.QApplication.processEvents()
+        assert refreshes == [0.75]
+    finally:
         explorer.has_unsaved_changes = False
         explorer.window.close()
 
