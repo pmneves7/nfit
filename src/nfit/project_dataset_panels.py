@@ -4,6 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from .project_readonly_panels import (
+    _analysis_table_group_box as _analysis_table_group_box,
+)
+from .project_readonly_panels import (
+    _dataset_metadata_group_box as _dataset_metadata_group_box,
+)
+from .project_readonly_panels import (
+    _details_group_box as _details_group_box,
+)
+from .project_readonly_panels import (
+    _metadata_tree_group_box as _metadata_tree_group_box,
+)
 from .project_rebin_panels import rebin_symmetry_expression_width
 from .qt_controls import (
     COMPACT_SCALAR_FIELD_WIDTH,
@@ -25,13 +37,11 @@ PointData4D: Any = None
 PointListData: Any = None
 QUANTITY_TYPES: Any = None
 _CompositeScope: Any = None
-_add_metadata_tree_item: Any = None
 _bold_label: Any = None
 _compact_point_list_form: Any = None
 _composite_root: Any = None
 _dataset_can_rebin: Any = None
 _dataset_lattice_parameters: Any = None
-_dataset_metadata_mapping: Any = None
 _dataset_rebin_status_text: Any = None
 _format_number: Any = None
 _momentum_rebin_matrix: Any = None
@@ -1206,60 +1216,6 @@ def _add_rebin_performance_controls(self, row, *, dataset=None, group=None, comp
     row.addWidget(benchmark)
 
 
-def _details_group_box(self, title: str, lines: list[str]) -> Any:
-    from PySide6 import QtCore, QtWidgets
-
-    group_box = QtWidgets.QGroupBox(title)
-    layout = QtWidgets.QVBoxLayout(group_box)
-    layout.setContentsMargins(10, 8, 10, 8)
-    text = "\n".join(lines) if lines else "-"
-    label = QtWidgets.QLabel(text)
-    label.setWordWrap(True)
-    label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignLeft)
-    label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-    layout.addWidget(label)
-    return group_box
-
-
-def _dataset_metadata_group_box(self, dataset: DatasetEntry) -> Any:
-    metadata = dict(_dataset_metadata_mapping(dataset))
-    if dataset.parameters:
-        metadata["Parameters"] = dict(dataset.parameters)
-    return self._metadata_tree_group_box(
-        "Metadata",
-        metadata,
-        object_name="dataset_metadata_tree",
-        empty_text="No additional metadata.",
-    )
-
-
-def _analysis_table_group_box(self, data: PointListData) -> Any:
-    from PySide6 import QtCore, QtGui, QtWidgets
-
-    box = QtWidgets.QGroupBox("Results table")
-    layout = QtWidgets.QVBoxLayout(box)
-    table = QtWidgets.QTableWidget(data.size, len(data.column_names))
-    table.setObjectName("analysis_output_table")
-    table.setToolTip("Persisted analysis values. Rejected Bragg reflections are shown in red.")
-    table.setHorizontalHeaderLabels(data.column_names)
-    accepted = data.column("Accepted") if "Accepted" in data.columns else np.ones(data.size)
-    for row in range(data.size):
-        for column, name in enumerate(data.column_names):
-            value = float(data.column(name)[row])
-            item = QtWidgets.QTableWidgetItem(_format_number(value) if np.isfinite(value) else "-")
-            item.setTextAlignment(
-                QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
-            )
-            if not bool(accepted[row]):
-                item.setForeground(QtGui.QColor("#d94b45"))
-            table.setItem(row, column, item)
-    table.resizeColumnsToContents()
-    table.setMinimumHeight(180)
-    table.setMaximumHeight(420)
-    layout.addWidget(table)
-    return box
-
-
 def _dataset_signal_semantics_group_box(
     self, dataset: DatasetEntry, group: DataGroup | None
 ) -> Any:
@@ -1652,49 +1608,3 @@ def _dataset_spectral_channels_group_box(
     )
     main_form.addRow("Status", status)
     return box
-
-
-def _metadata_tree_group_box(
-    self,
-    title: str,
-    mapping: dict[str, Any],
-    *,
-    object_name: str,
-    empty_text: str,
-) -> Any:
-    from PySide6 import QtCore, QtWidgets
-
-    group_box = QtWidgets.QGroupBox(title)
-    layout = QtWidgets.QVBoxLayout(group_box)
-    layout.setContentsMargins(10, 8, 10, 8)
-    if not mapping:
-        label = QtWidgets.QLabel(empty_text)
-        label.setWordWrap(True)
-        layout.addWidget(label)
-        return group_box
-
-    tree = QtWidgets.QTreeWidget()
-    tree.setObjectName(object_name)
-    tree.setToolTip("Expandable metadata table. Expand rows to inspect nested fields and hover values for full text.")
-    tree.setColumnCount(2)
-    tree.setHeaderLabels(["Field", "Value"])
-    tree.setRootIsDecorated(True)
-    tree.setAlternatingRowColors(True)
-    tree.setUniformRowHeights(True)
-    tree.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
-    tree.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    tree.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-    tree.setMinimumHeight(120)
-    tree.setMaximumHeight(260)
-    tree.header().setStretchLastSection(True)
-    tree.header().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-
-    for key in sorted(mapping):
-        item = _add_metadata_tree_item(tree, str(key), mapping[key])
-        if key == "Parameters":
-            item.setExpanded(True)
-    for index in range(min(4, tree.topLevelItemCount())):
-        tree.topLevelItem(index).setExpanded(True)
-    tree.resizeColumnToContents(0)
-    layout.addWidget(tree)
-    return group_box

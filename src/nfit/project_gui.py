@@ -15707,20 +15707,19 @@ class NfitProjectExplorer:
         )
 
     def _details_group_box(self, title: str, lines: list[str]) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._details_group_box,
-            self,
-            title,
-            lines,
-            helper_namespace=globals(),
+        return _project_data_panels._details_group_box(self, title, lines)
+
+    def _dataset_metadata_panel_context(self) -> _project_data_panels.DatasetMetadataPanelContext:
+        return _project_data_panels.DatasetMetadataPanelContext(
+            metadata_mapping=lambda dataset: _dataset_metadata_mapping(dataset),
+            metadata_tree=lambda *args, **kwargs: self._metadata_tree_group_box(*args, **kwargs),
         )
 
     def _dataset_metadata_group_box(self, dataset: DatasetEntry) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._dataset_metadata_group_box,
+        return _project_data_panels._dataset_metadata_group_box(
             self,
             dataset,
-            helper_namespace=globals(),
+            context=self._dataset_metadata_panel_context(),
         )
 
     def _set_analysis_output_details(self, output: AnalysisOutputRef) -> None:
@@ -15768,12 +15767,16 @@ class NfitProjectExplorer:
             )
         self.details_layout.addStretch(1)
 
+    def _analysis_table_panel_context(self) -> _project_data_panels.AnalysisTablePanelContext:
+        return _project_data_panels.AnalysisTablePanelContext(
+            format_number=lambda value: _format_number(value),
+        )
+
     def _analysis_table_group_box(self, data: PointListData) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._analysis_table_group_box,
+        return _project_data_panels._analysis_table_group_box(
             self,
             data,
-            helper_namespace=globals(),
+            context=self._analysis_table_panel_context(),
         )
 
     def _dataset_signal_semantics_group_box(
@@ -15898,6 +15901,11 @@ class NfitProjectExplorer:
         self._refresh_cache_badges()
         self._set_dataset_details_preserving_scroll(dataset, group)
 
+    def _metadata_tree_panel_context(self) -> _project_data_panels.MetadataTreePanelContext:
+        return _project_data_panels.MetadataTreePanelContext(
+            add_item=lambda parent, key, value: _add_metadata_tree_item(parent, key, value),
+        )
+
     def _metadata_tree_group_box(
         self,
         title: str,
@@ -15906,14 +15914,13 @@ class NfitProjectExplorer:
         object_name: str,
         empty_text: str,
     ) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._metadata_tree_group_box,
+        return _project_data_panels._metadata_tree_group_box(
             self,
             title,
             mapping,
             object_name=object_name,
             empty_text=empty_text,
-            helper_namespace=globals(),
+            context=self._metadata_tree_panel_context(),
         )
 
     def _copy_rebin_settings(self, config: dict[str, Any]) -> None:

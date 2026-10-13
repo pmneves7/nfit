@@ -76,6 +76,12 @@ parameter reconciliation. The project explorer keeps compatibility wrappers
 for public APIs; widgets and plotting windows remain presentation modules
 rather than owners of scientific state.
 
+`dataset_archive` reads and writes prepared numerical payloads without importing
+the project preparation facade. `project_data.save_dataset_file` chooses the
+prepared view or original data and passes it to the archive writer. Existing
+`project_dataset_io` imports remain available as compatibility exports, with
+the same archive formats and save defaults.
+
 Shared direct-geometry grid planning and validation live in `dgs_binning`;
 Python detector-trajectory accumulation lives in `dgs_trajectory_accumulation`.
 Raw and reduced-event adapters use these services with the numerical policies
@@ -96,6 +102,9 @@ retain the distinct dataset and composite validation policies.
 The group inventory panel receives a `GroupInventoryPanelContext` with explicit
 row-formatting and pagination callbacks. It queries only visible dataset rows;
 the explorer supplies callbacks that retain live helper lookup.
+`project_readonly_panels` owns details, dataset metadata, analysis tables, and
+metadata trees. These builders receive their formatting and metadata callbacks
+explicitly, preserving explorer overrides without rebinding GUI globals.
 
 `data_workspace` carries temporary-directory preferences through runtime
 project, group, and dataset ownership. Project-aware allocations pass that

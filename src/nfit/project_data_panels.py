@@ -29,6 +29,11 @@ from .project_group_panels import (
     _group_composite_group_box,
     _group_dataset_weights_group_box,
 )
+from .project_readonly_panels import (
+    AnalysisTablePanelContext,
+    DatasetMetadataPanelContext,
+    MetadataTreePanelContext,
+)
 
 
 def invoke_panel_builder(
@@ -40,7 +45,7 @@ def invoke_panel_builder(
 ) -> Any:
     """Invoke an extracted builder with the explorer module's live helpers.
 
-    Migrated collection inventory uses its explicit explorer context. Legacy
+    Migrated read-only panels use explicit explorer contexts. Legacy
     builders receive a fresh function object whose nested callbacks keep the
     original method's live global lookup without mutating shared module state.
     """
@@ -49,6 +54,19 @@ def invoke_panel_builder(
         if "context" not in kwargs:
             group = args[0] if args else kwargs["group"]
             kwargs["context"] = explorer._group_inventory_panel_context(group)
+        return builder(explorer, *args, **kwargs)
+
+    if builder is _details_group_box:
+        return builder(explorer, *args, **kwargs)
+
+    context_factories = {
+        _dataset_metadata_group_box: "_dataset_metadata_panel_context",
+        _analysis_table_group_box: "_analysis_table_panel_context",
+        _metadata_tree_group_box: "_metadata_tree_panel_context",
+    }
+    if builder in context_factories:
+        if "context" not in kwargs:
+            kwargs["context"] = getattr(explorer, context_factories[builder])()
         return builder(explorer, *args, **kwargs)
 
     rebound = FunctionType(

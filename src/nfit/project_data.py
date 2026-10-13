@@ -14,6 +14,7 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -34,6 +35,31 @@ from .cache_utils import (
     lru_store as _lru_store,
 )
 from .dataset import PointData4D, PointListData
+from .dataset_archive import DATASET_CONTEXT_KEYS, write_dataset_archive
+from .dataset_archive import (
+    _json_safe_value as _json_safe_value,
+)
+from .dataset_archive import (
+    _load_nfit_dataset_file as _load_nfit_dataset_file,
+)
+from .dataset_archive import (
+    _load_nfit_mdhisto_archive as _load_nfit_mdhisto_archive,
+)
+from .dataset_archive import (
+    _load_nfit_point_list_archive as _load_nfit_point_list_archive,
+)
+from .dataset_archive import (
+    _nfit_archive_json_mapping as _nfit_archive_json_mapping,
+)
+from .dataset_archive import (
+    _nfit_archive_optional_int as _nfit_archive_optional_int,
+)
+from .dataset_archive import (
+    _nfit_archive_text as _nfit_archive_text,
+)
+from .dataset_archive import (
+    _save_point_list_file as _save_point_list_file,
+)
 from .importers import IMPORTERS
 from .mdevent import (  # noqa: F401
     bin_mdevent_group,
@@ -108,31 +134,6 @@ from .project_coordinates import (
 from .project_coordinates import (
     _resolve_projected_axis_grid as _resolve_projected_axis_grid,
 )
-from .project_dataset_io import (
-    _json_safe_value as _json_safe_value,
-)
-from .project_dataset_io import (
-    _load_nfit_dataset_file as _load_nfit_dataset_file,
-)
-from .project_dataset_io import (
-    _load_nfit_mdhisto_archive as _load_nfit_mdhisto_archive,
-)
-from .project_dataset_io import (
-    _load_nfit_point_list_archive as _load_nfit_point_list_archive,
-)
-from .project_dataset_io import (
-    _nfit_archive_json_mapping as _nfit_archive_json_mapping,
-)
-from .project_dataset_io import (
-    _nfit_archive_optional_int as _nfit_archive_optional_int,
-)
-from .project_dataset_io import (
-    _nfit_archive_text as _nfit_archive_text,
-)
-from .project_dataset_io import (
-    _save_point_list_file as _save_point_list_file,
-)
-from .project_dataset_io import save_dataset_file as save_dataset_file
 from .project_derived_grid import plan_shared_derived_grid
 from .project_imports import (
     DATA_TYPE_DEFINITIONS as DATA_TYPE_DEFINITIONS,
@@ -1009,6 +1010,23 @@ def derived_analysis_dataset_data(
     if isinstance(result, PointListData):
         return result.with_updates(metadata=metadata)
     return result.with_updates(metadata=metadata)
+
+
+def save_dataset_file(
+    dataset: DatasetEntry,
+    path: str | Path,
+    *,
+    use_view: bool = True,
+) -> None:
+    """Save a dataset's prepared view or original payload as a portable archive."""
+
+    data = dataset_for_slice_viewer(dataset) if use_view else dataset.data
+    context = {
+        key: dataset.parameters[key]
+        for key in DATASET_CONTEXT_KEYS
+        if key in dataset.parameters
+    }
+    write_dataset_archive(data, path, context=context)
 
 
 def dataset_for_slice_viewer(

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .dataset_archive import _json_safe_value
 from .histogram_statistics import EVENT_STATISTICS_CHANNELS, NORMALIZATION_DENOMINATOR
 from .measurement_aggregation import MEASUREMENT_STATISTICS_CHANNELS, MEASUREMENT_STATISTICS_KEY
 from .measurement_dependencies import (
@@ -17,7 +18,6 @@ from .measurement_dependencies import (
 )
 from .measurement_profiles import MeasurementProfile
 from .plotting_core import WaterfallTrace
-from .project_dataset_io import _json_safe_value
 
 
 def save_viewer_columns_csv(

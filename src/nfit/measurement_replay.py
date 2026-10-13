@@ -6,8 +6,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from .dataset_archive import _json_safe_value
 from .measurement_dependencies import SourceReplayRequired
-from .project_dataset_io import _json_safe_value
 
 MEASUREMENT_REPLAY_VERSION = 1
 

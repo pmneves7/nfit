@@ -1,0 +1,331 @@
+"""Portable dataset archive encoding and loading without project preparation."""
+
+from __future__ import annotations
+
+import copy
+import json
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from .analysis.coordinates import signal_semantics
+from .background_channel_io import background_metadata_payload, restore_background_metadata
+from .dataset import PointData4D, PointListData
+from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
+from .measurement_dependencies import (
+    counting_dependency_archive_payload,
+    restore_counting_dependencies,
+    restore_source_dependencies,
+    source_dependency_archive_payload,
+)
+from .point_data_archive import point_data_archive_payload, restore_point_data_archive
+from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
+
+KINEMATIC_KF_KI_INCLUDED_KEY = "kf_ki_included"
+DATASET_CONTEXT_KEYS = ("temperature", "magnetic_field", KINEMATIC_KF_KI_INCLUDED_KEY, SPECTRAL_CHANNEL_CONFIG_KEY)
+
+
+def write_dataset_archive(
+    data: MDHistoData | PointData4D | PointListData,
+    path: str | Path,
+    *,
+    context: Mapping[str, Any] | None = None,
+) -> None:
+    """Write an already selected payload and dataset context as a portable archive.
+
+    Preparation, lazy source loading, and choosing the original or viewer data
+    belong to the caller. Point-list archives retain their historical schema,
+    which stores column metadata without a separate dataset-context field.
+    """
+
+    context = {} if context is None else context
+    if isinstance(data, PointData4D):
+        payload = {"nfit_dataset_format": np.asarray("nfit-dataset"), "nfit_dataset_version": np.asarray(1),
+                   "nfit_data_container": np.asarray("point4d"),
+                   "metadata_json": np.asarray(json.dumps(_json_safe_value(data.metadata), sort_keys=True)),
+                   "dataset_context_json": np.asarray(json.dumps(_json_safe_value(dict(context)), sort_keys=True)),
+                   **point_data_archive_payload(data)}
+        np.savez_compressed(path, **payload)
+        return
+    if isinstance(data, PointListData):
+        _save_point_list_file(data, path)
+        return
+    if not isinstance(data, MDHistoData):
+        raise TypeError(
+            "dataset saving currently supports MDHistoData, PointData4D or PointListData datasets"
+        )
+    saved_metadata = dict(data.metadata)
+    normalization_denominator = saved_metadata.get("normalization_denominator")
+    if isinstance(normalization_denominator, np.ndarray):
+        saved_metadata.pop("normalization_denominator")
+    else:
+        normalization_denominator = None
+    saved_metadata.setdefault("signal_semantics", signal_semantics(data))
+    saved_metadata, background_arrays = background_metadata_payload(saved_metadata)
+    payload: dict[str, Any] = {
+        "nfit_dataset_format": np.asarray("nfit-dataset"),
+        "nfit_dataset_version": np.asarray(3, dtype=int),
+        "nfit_data_container": np.asarray("mdhisto"),
+        "signal": data.signal,
+        "errors": data.errors,
+        "mask": data.mask,
+        "num_events": data.num_events,
+        "metadata_json": json.dumps(_json_safe_value(saved_metadata), sort_keys=True),
+        "axis_count": np.asarray(len(data.axes), dtype=int),
+        "coordinate_system": np.asarray(
+            -1 if data.coordinate_system is None else data.coordinate_system
+        ),
+        "visual_normalization": np.asarray(
+            -1 if data.visual_normalization is None else data.visual_normalization
+        ),
+    }
+    payload.update(background_arrays)
+    payload.update(source_dependency_archive_payload(data.source_dependencies))
+    payload.update(counting_dependency_archive_payload(data.counting_dependencies))
+    if normalization_denominator is not None:
+        channel = data.auxiliary_channels.get("normalization_denominator")
+        if (
+            channel is not None
+            and channel.values.shape == normalization_denominator.shape
+            and np.shares_memory(channel.values, normalization_denominator)
+        ):
+            payload["normalization_denominator_auxiliary_channel"] = np.asarray(
+                "normalization_denominator"
+            )
+        else:
+            payload["normalization_denominator"] = normalization_denominator
+    context = copy.deepcopy(dict(context))
+    observable = data.metadata.get("spectral_observable")
+    if isinstance(observable, dict) and SPECTRAL_CHANNEL_CONFIG_KEY in context:
+        saved_config = dict(context[SPECTRAL_CHANNEL_CONFIG_KEY])
+        saved_config["source_representation"] = str(
+            observable.get(
+                "fit_representation", saved_config["source_representation"]
+            )
+        )
+        saved_config["source_unit"] = (
+            str(data.metadata.get("signal_unit", "arbitrary")) or "arbitrary"
+        )
+        saved_config["signal_per_mbarn"] = 0.0
+        context[SPECTRAL_CHANNEL_CONFIG_KEY] = saved_config
+    payload["dataset_context_json"] = np.asarray(
+        json.dumps(_json_safe_value(context), sort_keys=True)
+    )
+    for index, axis in enumerate(data.axes):
+        payload[f"axis_{index}_values"] = axis.values
+        payload[f"axis_{index}_name"] = np.asarray(axis.name)
+        payload[f"axis_{index}_units"] = np.asarray(axis.units)
+        payload[f"axis_{index}_kind"] = np.asarray(axis.kind)
+        payload[f"axis_{index}_frame"] = np.asarray(axis.frame or "")
+        payload[f"axis_{index}_path"] = np.asarray(axis.path or "")
+        payload[f"axis_{index}_metadata_json"] = np.asarray(
+            json.dumps(_json_safe_value(axis.metadata), sort_keys=True)
+        )
+    payload["auxiliary_channel_names_json"] = np.asarray(
+        json.dumps(list(data.auxiliary_channels))
+    )
+    for index, channel in enumerate(data.auxiliary_channels.values()):
+        payload[f"auxiliary_{index}_values"] = channel.values
+        if channel.errors is not None:
+            payload[f"auxiliary_{index}_errors"] = channel.errors
+        payload[f"auxiliary_{index}_label"] = np.asarray(channel.label)
+        payload[f"auxiliary_{index}_unit"] = np.asarray(channel.unit)
+        payload[f"auxiliary_{index}_quantity_type"] = np.asarray(
+            channel.quantity_type
+        )
+    np.savez_compressed(path, **payload)
+
+
+def _save_point_list_file(data: PointListData, path: str | Path) -> None:
+    """Save point-list columns and roles to a script-readable ``.npz`` file."""
+
+    payload: dict[str, Any] = {
+        "nfit_dataset_format": np.asarray("nfit-dataset"),
+        "nfit_dataset_version": np.asarray(1, dtype=int),
+        "nfit_data_container": np.asarray("point_list"),
+        "column_names_json": json.dumps(list(data.column_names)),
+        "coordinate_names_json": json.dumps(list(data.coordinate_names)),
+        "channels_json": json.dumps(_json_safe_value(data.channels)),
+        "units_json": json.dumps(_json_safe_value(data.units)),
+        "quantity_types_json": json.dumps(_json_safe_value(data.quantity_types)),
+        "metadata_json": json.dumps(_json_safe_value(data.metadata), sort_keys=True),
+    }
+    for index, name in enumerate(data.column_names):
+        payload[f"column_{index}"] = np.asarray(data.column(name), dtype=float)
+    np.savez_compressed(path, **payload)
+
+
+def _load_nfit_dataset_file(
+    path: str | Path,
+) -> tuple[MDHistoData | PointData4D | PointListData, dict[str, Any]]:
+    """Load an nfit dataset archive written by :func:`write_dataset_archive`."""
+
+    from .analysis.artifacts import dataset_artifact_capacity
+    from .resource_budget import reserve_memory
+    source = Path(path)
+    capacity = dataset_artifact_capacity(source)
+    with reserve_memory(capacity.peak_bytes + capacity.expanded_bytes, operation="Loading source dataset"):
+        return _decode_nfit_dataset_file(source)
+
+
+def _decode_nfit_dataset_file(source):
+    try:
+        archive = np.load(source, allow_pickle=False)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"could not read nfit dataset archive {source}") from exc
+    with archive:
+        files = set(archive.files)
+        if {"H", "K", "L", "E", "intensity", "sigma", "mask"} <= files:
+            data = restore_point_data_archive(archive, _nfit_archive_json_mapping(archive, "metadata_json"))
+        elif {"signal", "errors", "mask", "num_events", "axis_count"} <= files:
+            data = _load_nfit_mdhisto_archive(archive, source)
+        elif {
+            "column_names_json",
+            "coordinate_names_json",
+            "channels_json",
+            "units_json",
+        } <= files:
+            data = _load_nfit_point_list_archive(archive, source)
+        else:
+            raise ValueError(f"{source} is not an nfit dataset archive")
+        context = _nfit_archive_json_mapping(archive, "dataset_context_json")
+    return data, context
+
+
+def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
+    axis_count = int(np.asarray(archive["axis_count"]).item())
+    axes = []
+    for index in range(axis_count):
+        prefix = f"axis_{index}_"
+        values_key = f"{prefix}values"
+        if values_key not in archive:
+            raise ValueError(f"{source} is missing {values_key}")
+        axes.append(
+            MDHistoAxis(
+                name=_nfit_archive_text(archive, f"{prefix}name", f"Axis {index}"),
+                values=np.asarray(archive[values_key], dtype=float),
+                units=_nfit_archive_text(archive, f"{prefix}units"),
+                kind=_nfit_archive_text(archive, f"{prefix}kind", "unknown"),
+                frame=_nfit_archive_text(archive, f"{prefix}frame") or None,
+                path=_nfit_archive_text(archive, f"{prefix}path") or None,
+                metadata=_nfit_archive_json_mapping(
+                    archive, f"{prefix}metadata_json"
+                ),
+            )
+        )
+    metadata = _nfit_archive_json_mapping(archive, "metadata_json")
+    metadata = restore_background_metadata(metadata, archive)
+    metadata["export_file"] = str(source)
+    if "signal_semantics" not in metadata:
+        raise ValueError(
+            f"{source} is missing signal_semantics metadata; "
+            "re-export it with a current nfit version"
+        )
+    channel_names = json.loads(
+        _nfit_archive_text(archive, "auxiliary_channel_names_json", "[]")
+    )
+    auxiliary_channels = {
+        str(name): MDHistoChannel(
+            values=np.asarray(archive[f"auxiliary_{index}_values"], dtype=float),
+            errors=(
+                np.asarray(archive[f"auxiliary_{index}_errors"], dtype=float)
+                if f"auxiliary_{index}_errors" in archive
+                else None
+            ),
+            label=_nfit_archive_text(
+                archive, f"auxiliary_{index}_label", str(name)
+            ),
+            unit=_nfit_archive_text(archive, f"auxiliary_{index}_unit"),
+            quantity_type=_nfit_archive_text(
+                archive, f"auxiliary_{index}_quantity_type", "unknown"
+            ),
+        )
+        for index, name in enumerate(channel_names)
+    }
+    if "normalization_denominator" in archive:
+        denominator = np.asarray(archive["normalization_denominator"], dtype=float)
+        denominator.setflags(write=False)
+        metadata["normalization_denominator"] = denominator
+    elif "normalization_denominator_auxiliary_channel" in archive:
+        name = _nfit_archive_text(
+            archive, "normalization_denominator_auxiliary_channel"
+        )
+        if name not in auxiliary_channels:
+            raise ValueError(
+                f"{source} is missing normalization auxiliary channel {name!r}"
+            )
+        metadata["normalization_denominator"] = auxiliary_channels[name].values
+    return MDHistoData(
+        axes=tuple(axes),
+        signal=np.asarray(archive["signal"], dtype=float),
+        errors=np.asarray(archive["errors"], dtype=float),
+        mask=np.asarray(archive["mask"], dtype=bool),
+        num_events=np.asarray(archive["num_events"], dtype=float),
+        coordinate_system=_nfit_archive_optional_int(archive, "coordinate_system"),
+        visual_normalization=_nfit_archive_optional_int(
+            archive, "visual_normalization"
+        ),
+        metadata=metadata,
+        auxiliary_channels=auxiliary_channels,
+        source_dependencies=restore_source_dependencies(archive),
+        counting_dependencies=restore_counting_dependencies(archive),
+    )
+
+
+def _load_nfit_point_list_archive(archive: Any, source: Path) -> PointListData:
+    names = json.loads(_nfit_archive_text(archive, "column_names_json"))
+    columns = {
+        str(name): np.asarray(archive[f"column_{index}"], dtype=float)
+        for index, name in enumerate(names)
+    }
+    metadata = _nfit_archive_json_mapping(archive, "metadata_json")
+    metadata["export_file"] = str(source)
+    return PointListData(
+        columns=columns,
+        units=_nfit_archive_json_mapping(archive, "units_json"),
+        coordinate_names=json.loads(
+            _nfit_archive_text(archive, "coordinate_names_json")
+        ),
+        channels=json.loads(_nfit_archive_text(archive, "channels_json")),
+        metadata=metadata,
+        quantity_types=_nfit_archive_json_mapping(archive, "quantity_types_json"),
+    )
+
+
+def _nfit_archive_text(archive: Any, key: str, default: str = "") -> str:
+    return str(np.asarray(archive[key]).item()) if key in archive else default
+
+
+def _nfit_archive_optional_int(archive: Any, key: str) -> int | None:
+    """Read an optional archive integer, where ``-1`` represents ``None``."""
+
+    if key not in archive:
+        return None
+    value = int(np.asarray(archive[key]).item())
+    return None if value < 0 else value
+
+
+def _nfit_archive_json_mapping(archive: Any, key: str) -> dict[str, Any]:
+    if key not in archive:
+        return {}
+    try:
+        value = json.loads(_nfit_archive_text(archive, key))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON field {key!r} in nfit dataset archive") from exc
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return repr(value)

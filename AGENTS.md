@@ -55,9 +55,10 @@ different Python.
 ## Project map
 
 - `src/nfit/project_gui.py`: project explorer and GUI workflow coordination.
-- `src/nfit/project_group_panels.py`, `project_dataset_panels.py`, and
-  `project_data_panels.py`: focused dataset/composite detail builders and their
-  compatibility dispatch.
+- `src/nfit/project_group_panels.py`, `project_dataset_panels.py`,
+  `project_readonly_panels.py`, and `project_data_panels.py`: focused
+  dataset/composite detail builders, read-only presentation, and compatibility
+  dispatch.
 - `src/nfit/project_window_builder.py`, `project_model_editor.py`,
   `project_lindhard_editor.py`, and `project_tight_binding_editor.py`: project
   window construction and focused model-editor presentation helpers.
@@ -77,9 +78,12 @@ different Python.
   materialization, caching, and background alignment.
 - `src/nfit/project_background_cache.py`: persistence of background histograms
   owned by sample binnings.
-- `src/nfit/project_dataset_io.py`, `project_point_lists.py`, `project_masks.py`,
-  and `project_coordinates.py`: dataset archives, point-list preparation,
-  masks, and coordinate projection services.
+- `src/nfit/dataset_archive.py` and `project_dataset_io.py`: prepared dataset
+  archive codecs and compatibility exports; `project_data.py` coordinates
+  preparation before export.
+- `src/nfit/project_point_lists.py`, `project_masks.py`, and
+  `project_coordinates.py`: point-list preparation, masks, and coordinate
+  projection services.
 - `src/nfit/dataset_criteria.py` and `dataset_criterion_values.py`: whole-run
   selection rules and bounded scalar diagnostics. `dataset_criterion_gui.py`
   presents their preview; `docs/dataset_conditions.md` documents the workflow.

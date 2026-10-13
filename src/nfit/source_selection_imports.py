@@ -107,7 +107,7 @@ def _import_source_selection(
     ordinary sources in one slot are rejected until their adapters can retain
     this covariance. Across slots, aliases retain one physical source identity.
     """
-    from .project_dataset_io import _load_nfit_dataset_file
+    from .dataset_archive import _load_nfit_dataset_file
     from .project_imports import (
         GROUP_COMPOSITE_KEY,
         _single_normalization_companion,

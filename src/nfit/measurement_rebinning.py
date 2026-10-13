@@ -200,7 +200,7 @@ def combine_measurement_histograms(datasets) -> MDHistoData:
         raise ValueError("At least one measurement histogram is required")
     first = datasets[0]
     contract = MeasurementContract.from_dict(first.metadata.get("measurement_contract", {}))
-    from .project_dataset_io import _json_safe_value
+    from .dataset_archive import _json_safe_value
     for data in datasets:
         if data.metadata.get("measurement_contract") != contract.to_dict():
             raise ValueError("Combining measurements requires matching explicit contracts and units")

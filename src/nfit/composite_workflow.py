@@ -163,7 +163,7 @@ def replay_composite_recipe(recipe: dict[str, Any], *, progress_callback=None) -
     remain lazy until reduction/binning is requested. Runtime background owner
     context is resolved after all source collections have been reconstructed.
     """
-    from .project_dataset_io import _load_nfit_dataset_file
+    from .dataset_archive import _load_nfit_dataset_file
     from .project_imports import dataset_entry_from_path
 
     if recipe.get("version") != COMPOSITE_RECIPE_VERSION:

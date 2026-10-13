@@ -418,7 +418,7 @@ class ProjectResources:
 
     @staticmethod
     def _load_source(dataset):
-        from .project_dataset_io import _load_nfit_dataset_file
+        from .dataset_archive import _load_nfit_dataset_file
         from .project_imports import _ensure_dataset_data_loaded
         return _ensure_dataset_data_loaded(dataset, dataset_file_loader=_load_nfit_dataset_file)
 
