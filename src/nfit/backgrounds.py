@@ -13,6 +13,7 @@ from .measurement_dependencies import (
     combine_source_dependencies,
     project_source_dependencies,
 )
+from .scientific_compatibility import validate_scientific_compatibility
 from .source_lineage import merge_source_lineage_metadata, validate_independent_source_lineage
 
 
@@ -69,6 +70,7 @@ def subtract_aligned_background(
 
     if float(scale) == 0.0:
         return data
+    validate_scientific_compatibility([(None, data), (None, background)], compare_coordinates=False)
     background = background_with_user_mask_zeros(background)
     if data.shape != background.shape or len(data.axes) != len(background.axes):
         raise ValueError("aligned background subtraction requires identical shapes")
@@ -196,6 +198,7 @@ def subtract_powder_background(
 
     if float(scale) == 0.0:
         return data
+    validate_scientific_compatibility([(None, data), (None, background)], compare_coordinates=False)
     if (data.source_dependencies is None) != (background.source_dependencies is None):
         raise SourceReplayRequired("Background interpolation requires tracked dependencies for both operands or source replay")
     if interpolation not in {"linear", "nearest"}:

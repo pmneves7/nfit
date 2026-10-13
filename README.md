@@ -88,6 +88,9 @@ A few of its main capabilities are:
   rotatable histogram box cuts with one-dimensional pop-out viewers, selectable
   two-dimensional axes ratios, x/y axis swapping, CSV export of maps and cuts,
   and high-resolution raster and vector figure exports;
+- integrate Bragg peaks with measured momentum/energy coverage and fit diagnostics,
+  and convert INS histograms with declared physical units, corrections, retained
+  statistics, and compatible cross-instrument histogram combination;
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
 - declare statistical targets through a Python API for count exposure pooling,
   continuous means, coordinate integrals, and shared-source linear uncertainty;

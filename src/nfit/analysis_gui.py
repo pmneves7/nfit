@@ -15,7 +15,9 @@ from .analysis import (
 )
 from .analysis.artifacts import read_project_dataset_artifact
 from .analysis.runner import (
+    COMPOSITE_ANALYSIS_SOURCE_PREFIX,
     analysis_source_choices,
+    composite_analysis_scope,
     execute_to_artifacts,
     prepare_analysis_source,
 )
@@ -26,6 +28,7 @@ from .analysis_bragg_gui import (
     _bragg_status_text,
     _format_table_value,
 )
+from .analysis_physics_gui import SpectralConventionEditor
 from .analysis_window_builder import build_data_playground_window
 from .dataset import PointData4D, PointListData
 from .file_dialogs import get_save_file_name
@@ -120,7 +123,9 @@ class DataPlaygroundWindow:
 
         for name, value in parameters.items():
             widget = self.parameter_widgets.get(name)
-            if isinstance(widget, QtWidgets.QCheckBox):
+            if isinstance(widget, SpectralConventionEditor):
+                widget.setValue(value)
+            elif isinstance(widget, QtWidgets.QCheckBox):
                 widget.setChecked(bool(value))
             elif isinstance(widget, QtWidgets.QComboBox):
                 index = widget.findData(value)
@@ -130,6 +135,7 @@ class DataPlaygroundWindow:
                 widget.setValue(value)
             elif isinstance(widget, QtWidgets.QLineEdit):
                 widget.setText("" if value is None else json.dumps(value))
+        self._sync_physics_parameter_visibility()
 
     def new_analysis(self) -> None:
         self.analysis_combo.setCurrentIndex(0)
@@ -179,7 +185,9 @@ class DataPlaygroundWindow:
                 grouped_forms[title] = form
                 self.parameter_form.addRow(group_box)
         for parameter in analysis_definition(key).parameters:
-            if isinstance(parameter.default, bool):
+            if parameter.name == "spectral_convention":
+                widget = SpectralConventionEditor(parameter.default)
+            elif isinstance(parameter.default, bool):
                 widget = QtWidgets.QCheckBox()
                 widget.setChecked(parameter.default)
             elif parameter.choices:
@@ -213,6 +221,21 @@ class DataPlaygroundWindow:
                 if isinstance(widget, QtWidgets.QComboBox):
                     widget.currentIndexChanged.connect(self._sync_bragg_parameter_visibility)
             self._sync_bragg_parameter_visibility()
+        for name in ("temperature_source", "polarization_mode"):
+            widget = self.parameter_widgets.get(name)
+            if isinstance(widget, QtWidgets.QComboBox):
+                widget.currentIndexChanged.connect(self._sync_physics_parameter_visibility)
+        self._sync_physics_parameter_visibility()
+
+    def _sync_physics_parameter_visibility(self) -> None:
+        for name, selector, choice in (
+            ("temperature_K", "temperature_source", "fixed"),
+            ("polarization_scalar", "polarization_mode", "custom_scalar"),
+        ):
+            control = self.parameter_widgets.get(selector)
+            if control is not None and name in self.parameter_rows:
+                for widget in self.parameter_rows[name]:
+                    widget.setVisible(control.currentData() == choice)
 
     def _operation_changed(self) -> None:
         self._rebuild_parameters()
@@ -278,7 +301,9 @@ class DataPlaygroundWindow:
 
         values = default_analysis_parameters(self.operation_combo.currentData())
         for name, widget in self.parameter_widgets.items():
-            if isinstance(widget, QtWidgets.QCheckBox):
+            if isinstance(widget, SpectralConventionEditor):
+                values[name] = widget.value()
+            elif isinstance(widget, QtWidgets.QCheckBox):
                 values[name] = widget.isChecked()
             elif isinstance(widget, QtWidgets.QComboBox):
                 values[name] = widget.currentData()
@@ -354,10 +379,11 @@ class DataPlaygroundWindow:
                 self.explorer.project_path,
                 output.artifact_path,
             )
-        except (OSError, TypeError, ValueError):
+        except (KeyError, OSError, TypeError, ValueError):
             return None
 
     def _render_analysis_result(self, analysis: AnalysisEntry) -> None:
+        self._clear_result_views()
         result = analysis.result
         if result is None:
             self._clear_result_views()
@@ -419,13 +445,10 @@ class DataPlaygroundWindow:
     def _analysis_primary_data(self, analysis: AnalysisEntry) -> MDHistoData | None:
         if self.group is None or not analysis.input_dataset_ids:
             return None
-        dataset = next(
-            (item for item in self.group.iter_datasets() if item.id == analysis.input_dataset_ids[0]),
-            None,
-        )
-        if dataset is None:
+        try:
+            data = prepare_analysis_source(self.group, analysis.input_dataset_ids[0]).data
+        except (KeyError, OSError, TypeError, ValueError):
             return None
-        data = self._primary_analysis_data(dataset)
         return data if isinstance(data, MDHistoData) else None
 
     def _populate_result_table(self, data: PointListData) -> None:
@@ -563,20 +586,28 @@ class DataPlaygroundWindow:
             return False
         if not analysis.input_dataset_ids:
             return False
-        dataset = next(
-            (item for item in self.group.iter_datasets() if item.id == analysis.input_dataset_ids[0]),
-            None,
-        )
-        if dataset is None:
-            return False
+        source_id = analysis.input_dataset_ids[0]
+        composite = str(source_id).startswith(COMPOSITE_ANALYSIS_SOURCE_PREFIX)
+        if composite:
+            from .project_data import _composite_dataset_name
+
+            try:
+                name = _composite_dataset_name(composite_analysis_scope(self.group, source_id))
+            except (KeyError, ValueError):
+                return False
+        else:
+            dataset = next((item for item in self.group.iter_datasets() if item.id == source_id), None)
+            if dataset is None:
+                return False
+            name = dataset.name
         viewer = self.explorer.open_slice_viewer(
             self.group,
-            selected_dataset_name=dataset.name,
-            use_composite=False,
+            selected_dataset_name=name,
+            use_composite=composite,
         )
         if viewer is None or not hasattr(viewer, "set_bragg_peak_overlay"):
             return False
-        viewer.set_bragg_peak_overlay(data, dataset_name=dataset.name)
+        viewer.set_bragg_peak_overlay(data, dataset_name=name)
         return True
 
     def run(self) -> bool:
@@ -607,7 +638,11 @@ class DataPlaygroundWindow:
         if not self._confirm_memory(analysis_data):
             return False
         analysis_inputs = [primary_input]
-        parameters = self._parameters()
+        try:
+            parameters = self._parameters()
+        except (TypeError, ValueError) as exc:
+            QtWidgets.QMessageBox.warning(self.window, "Analysis Window", str(exc))
+            return False
         if self.operation_combo.currentData() == "bragg_integration" and parameters.get("peak_source") == "table":
             secondary_id = self.secondary_dataset_combo.currentData()
             if secondary_id is None:
@@ -685,8 +720,10 @@ class DataPlaygroundWindow:
             if is_new:
                 self.group.analyses.append(analysis)
             output_dataset_ids = set()
+            linked_ids = {item.id for item in self.group.iter_datasets()
+                          if item.metadata.get("derived_from_analysis", {}).get("analysis_id") == analysis.id}
             for output in result.outputs:
-                if output.kind == "dataset" and output.artifact_path and output.dataset_id:
+                if (output.kind == "dataset" or output.dataset_id in linked_ids) and output.artifact_path and output.dataset_id:
                     data = read_project_dataset_artifact(
                         self.explorer.project_path,
                         output.artifact_path,

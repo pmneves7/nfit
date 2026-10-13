@@ -89,6 +89,11 @@ from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group
 from .raw_dgs_cache import RAW_DGS_REDUCTION_VERSION, reduction_convention_signature
 from .rebin import REBIN_NUMERICAL_VERSION, rebin_nd
 from .rebin_cache import SHARED_REBIN_CACHE_BUDGET, RebinCache
+from .scientific_compatibility import (
+    combined_scientific_metadata,
+    scientific_data_identity,
+    validate_scientific_compatibility,
+)
 from .source_lineage import source_lineage_metadata
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
 from .symmetry import SymmetrySpec, symmetry_config
@@ -781,9 +786,13 @@ def _composite_candidates(
 
     from .dataset_criteria import filter_dataset_criteria
 
+    entries = list(considered_datasets(node, selected_root=True))
+    background_ids.update(background.source_dataset_id for dataset in entries
+                          for background in dataset.backgrounds
+                          if background.enabled and float(background.scale) != 0.)
     return filter_dataset_criteria(_composite_root(group), [
         dataset
-        for dataset in considered_datasets(node, selected_root=True)
+        for dataset in entries
         if dataset.enabled and (include_backgrounds or dataset.id not in background_ids)
     ], require_current=False)
 
@@ -839,7 +848,25 @@ def data_group_composite_status(group: DataGroup) -> tuple[bool, str]:
     )
     if not datasets:
         return False, "No enabled datasets are available to combine."
+    try:
+        # Compare entry declarations separately from loaded payloads. This
+        # covers lazy native reducers without equating "not loaded" with an
+        # unknown convention in an otherwise identical persisted source.
+        validate_scientific_compatibility([(dataset, None) for dataset in datasets
+                                          if dataset.data is None or _dataset_composite_kind(dataset) in {"mdevent", "raw_dgs_nexus"}])
+        validate_scientific_compatibility([(dataset, dataset.data) for dataset in datasets if dataset.data is not None])
+    except ValueError as exc:
+        return False, str(exc)
     kinds = {_dataset_composite_kind(dataset) for dataset in datasets}
+    for dataset in datasets:
+        if _dataset_composite_kind(dataset) != "mdhisto" and any(
+            background.enabled and float(background.scale) != 0. for background in dataset.backgrounds
+        ):
+            return False, (
+                f"Dataset {dataset.name!r} has an individual background link that cannot be applied "
+                "before this source is pooled. Attach the background to its dataset group, "
+                "or prepare a background-subtracted histogram before combining."
+            )
     if len(kinds) != 1:
         return (
             False,
@@ -899,8 +926,10 @@ def _source_data_for_group_composite(
         return prepared_point_list_data(dataset) if include_source_masks else data
     if isinstance(data, MDHistoData):
         if include_source_masks:
-            return _mdhisto_with_nfit_masks(dataset, data=data, extra_masks=extra_masks)
-        return _mdhisto_without_nfit_masks(data)
+            data = _mdhisto_with_nfit_masks(dataset, data=data, extra_masks=extra_masks)
+        else:
+            data = _mdhisto_without_nfit_masks(data)
+        return _apply_dataset_backgrounds(dataset, data) if dataset.backgrounds else data
     if isinstance(data, PointData4D):
         if include_source_masks:
             return _point_data_with_nfit_masks(dataset, data, extra_masks=extra_masks)
@@ -948,6 +977,9 @@ def _composite_cache_signature(
     from .source_selection_imports import validate_source_selection_combination
 
     validate_source_selection_combination(_composite_candidates(group))
+    validate_scientific_compatibility([(dataset, None) for dataset in _composite_candidates(group)
+                                      if dataset.data is None or _dataset_composite_kind(dataset) in {"mdevent", "raw_dgs_nexus"}])
+    validate_scientific_compatibility([(dataset, dataset.data) for dataset in _composite_candidates(group) if dataset.data is not None])
     cache_key = _composite_cache_key(group, binning_id)
     if cache_key in _trail:
         raise ValueError("composite dependency cycle through a live group background")
@@ -1030,6 +1062,14 @@ def _composite_cache_signature(
             [
                 dataset.name,
                 dataset_content_signature(dataset),
+                scientific_data_identity(
+                    None if dataset.metadata.get("source_file") and
+                    (dataset.data is None or dataset.data_matches_source) else dataset.data,
+                    dataset,
+                ),
+                _viewer_view_signature(dataset, None)
+                if any(background.enabled and float(background.scale) != 0.
+                       for background in dataset.backgrounds) else None,
                 dataset.data_type,
                 dataset.kind,
                 bool(dataset.enabled),
@@ -1102,6 +1142,8 @@ def composite_dataset_data(
     recipe snapshot through ``metadata_dimensions_override``; an empty list
     explicitly requests no metadata dimensions. ``apply_spectral_channels=False``
     returns the underlying composite before its saved INS conversion.
+    ``apply_backgrounds=False`` skips backgrounds owned by this group. A
+    histogram source's individual background is always prepared before pooling.
     """
     if node is not None:
         group = _composite_scope(group, node)
@@ -1957,6 +1999,7 @@ def _composite_background_data(group, background, data, *, config, progress_call
                     auto_step_size=False,
                 )
             source_metadata = dict(source_data.metadata)
+            scientific_metadata = combined_scientific_metadata([(source, source_data)], signal_semantics="density")
             source_root = _background_owner_root(group, background)
             if source_root.lattice_parameters:
                 source_metadata.setdefault("lattice_parameters", dict(source_root.lattice_parameters))
@@ -1965,6 +2008,7 @@ def _composite_background_data(group, background, data, *, config, progress_call
                 aligned_config,
                 progress_callback=progress_callback,
             )
+            source_data = source_data.with_updates(metadata={**source_data.metadata, **scientific_metadata})
             if source.backgrounds:
                 source_data = _apply_dataset_backgrounds(source, source_data)
     if not isinstance(source_data, MDHistoData):
@@ -2039,6 +2083,7 @@ def _apply_composite_backgrounds(
             _COMPOSITE_DATA_CACHE[projection_key] = (projection_signature, source_data)
         if source is not None:
             source_data = _apply_dataset_scale(source, source_data)
+        validate_scientific_compatibility([(None, result), (source, source_data)], compare_coordinates=False)
         before_subtraction = result
         cancels_self = (
             reference_entry is not None
@@ -2525,6 +2570,7 @@ def _composite_mdhisto_data(
                 dataset_name=dataset.name,
             )
         prepared_sources.append((dataset, data))
+    scientific_metadata = combined_scientific_metadata(prepared_sources, signal_semantics="density")
     declared = [data for _, data in prepared_sources if isinstance(data, MDHistoData)
                 and "measurement_contract" in data.metadata]
     if declared:
@@ -2799,6 +2845,7 @@ def _composite_mdhisto_data(
     coverage_mask = coverage < _rebin_minimum_coverage(config)
     mask |= coverage_mask
     metadata = {
+        **scientific_metadata,
         "composite": True,
         "source_group": group.name,
         "source_datasets": [dataset.name for dataset in _composite_candidates(group)],
@@ -2946,6 +2993,7 @@ def _composite_point_data(
     normalization_weighted = False
     source_datasets = datasets if datasets is not None else _composite_candidates(group)
     report_sources = datasets is None
+    scientific_sources = []
     if report_sources:
         _report_source_dataset_progress(
             progress_callback,
@@ -2972,6 +3020,8 @@ def _composite_point_data(
             )
         if not isinstance(data, PointData4D):
             continue
+        scientific_sources.append((dataset, data))
+        validate_scientific_compatibility(scientific_sources)
         from .point_counting import is_counting_measurement
 
         counting = is_counting_measurement(data.metadata)
@@ -3029,6 +3079,7 @@ def _composite_point_data(
         coordinate_system=first_data.metadata.get("coordinate_system"),
         visual_normalization=first_data.metadata.get("visual_normalization"),
         metadata_updates={
+            **combined_scientific_metadata(scientific_sources, signal_semantics="density"),
             "composite": True,
             "source_group": group.name,
             "source_datasets": [dataset.name for dataset in _composite_candidates(group)],
@@ -3081,6 +3132,7 @@ def _composite_point_list_data(
     point_lists = [data for data in prepared if isinstance(data, PointListData)]
     if not point_lists:
         raise ValueError("no point-list datasets are available to composite")
+    scientific_metadata = combined_scientific_metadata(list(zip(datasets, prepared, strict=True)))
     coordinate_names = list(point_lists[0].coordinate_names)
     channel_label = point_lists[0].channel_labels[0] if point_lists[0].channel_labels else None
     if not coordinate_names or channel_label is None:
@@ -3172,6 +3224,7 @@ def _composite_point_list_data(
         coordinate_names=coordinate_names,
         channels=[{"label": channel_label, "value": value_name, "error": error_name}],
         metadata={
+            **scientific_metadata,
             "composite": True,
             "source_group": group.name,
             "source_datasets": [dataset.name for dataset in datasets],

@@ -1263,8 +1263,20 @@ additional uncertainty factor; **Inverse variance** additionally applies
 $1/\sigma^2$. Gridded MDEvent outputs carry their detector-trajectory
 normalization denominator, and MACS points carry their monitor- and
 detector-efficiency-based denominator. Use a dataset or group background for
-subtraction. When a composite is active, its constituents are not fitted
-separately.
+subtraction. Prepared histogram sources apply their individual linked backgrounds
+before pooling; source backgrounds are not added again as ordinary sample inputs.
+Native source links that cannot be subtracted before pooling require a group
+background or an independently prepared background-subtracted histogram.
+When a composite is active, its constituents are not fitted separately.
+
+Before pooling or arithmetic, nfit checks the declared physical quantity, signal
+and coordinate units, normalization basis, moment convention, and correction
+states. A dataset scale does not establish an absolute calibration or erase an
+incompatible declaration. Correct each source's calibration and k_f/k_i before
+mixing fixed incident/final energies; canonical absolute histograms from different
+instruments can then combine when their declarations agree. Automated native
+HYSPEC/MACS reference calibration remains separate
+[planned work](planned_features.md#statistical-binning-and-reduction-recipes).
 
 A parent collection with no direct datasets can combine the live composites of
 its enabled child collections. This is useful for keeping separate angle ranges

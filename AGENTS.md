@@ -187,9 +187,13 @@ different Python.
 - `src/nfit/fit_config.py`, `fit_config_electronic.py`, and
   `fit_config_heisenberg_rpa.py`: model-component compilation and parameter mapping.
 - `src/nfit/fitting.py`: optimizer-facing fitting framework.
-- `src/nfit/cross_section.py`: neutron cross-section and susceptibility
-  conversions.
-- `src/nfit/analysis/`: non-destructive analysis operations.
+- `src/nfit/cross_section.py` and `spectral_conversion.py`: neutron cross-section
+  factors and shared statistics-preserving spectral transformations.
+- `src/nfit/sample_temperature.py` and `scientific_compatibility.py`: common
+  temperature resolution and physical-identity checks before combination.
+- `src/nfit/analysis/`: non-destructive analysis operations; `bragg_regions.py`
+  owns joint peak/shell geometry and `input_preparation.py` routes scientific inputs.
+- `src/nfit/analysis_physics_gui.py`: focused presentation of saved spectral conventions.
 - `src/nfit/workflow.py`: dependency graphs and human-readable script export.
 - `src/nfit/composite_workflow.py`: portable source closure and composite recipe replay.
 - `docs/physics_conventions.md`: authoritative physics and unit conventions.

@@ -271,12 +271,20 @@ for a series. Missing or ambiguous temperatures stop conversion with an explanat
 A nominal temperature is an explicit approximation for small temperature drifts.
 
 Review the imported quantity, units, and corrections before enabling conversion.
+For a composite with a declared physical signal, its INS source quantity, units,
+normalization, and correction settings must match that signal; these controls do
+not reinterpret already calibrated data.
 Common source conventions and fixed incident/final energies are proposed when
 unambiguous. If the imported cross section includes the neutron wavevector ratio
 k_f/k_i, supply the fixed incident energy Ei or final energy Ef in meV appropriate
-to the whole composite. Different instrument-energy settings should remain in
-separate composites. The shared normalization, magnetic form factor, polarization,
-and susceptibility units follow [physics conventions](physics_conventions.md).
+to the whole composite. Remove source-specific k_f/k_i and apply each source's
+calibration before combining different incident/final-energy settings. Compatible
+histograms already expressed in the same canonical absolute quantity, units,
+basis, and correction convention can be combined across instruments. The guard
+rejects unlike declarations rather than selecting one source's units or energy.
+A common unit label does not calibrate raw HYSPEC or MACS data. The shared
+normalization, magnetic form factor, polarization, and susceptibility units follow
+[physics conventions](physics_conventions.md).
 
 The scripting API uses the same saved recipe:
 

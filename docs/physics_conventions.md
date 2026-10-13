@@ -391,6 +391,42 @@ Welch *et al.* for an explicit absolute-unit derivation
 [Squires, chapter 7](https://doi.org/10.1017/CBO9781139107808.008);
 [Welch *et al.* 2022](https://doi.org/10.1103/PhysRevB.105.094402)).
 
+### Histogram spectral conversion
+
+Histogram conversion and spectral integration use the same declared scalar
+correction factors. Form-factor squared $|f(Q)|^2$, dimensionless scalar
+polarization $P$, and the
+Bose population state specify which factors are present in the input. A
+susceptibility target removes included factors; a cross-section target restores
+removed factors. Thus $S(\mathbf Q,E)$ converts to $\chi''(\mathbf Q,E)$ with
+$\pi[1-\exp(-E/k_BT)]$ on the same spin or moment basis, without another
+magnetic cross-section constant. Cross sections use the area coefficient above
+and retain their per-ion, per-formula-unit, or per-cell normalization.
+
+For measured input, the declared scale has measured signal units per
+barn/(sr meV); choosing a physical unit label alone supplies no calibration.
+Absolute spectral integrals require both an absolute scale and a known sample
+basis. Moment-unit QFI requires the dimensionless $g$ to recover the spin
+response through division by $g^2$; no default $g=2$ is inferred. A converted
+histogram records its quantity, units, correction states, and original convention.
+
+A deterministic multiplier $a_i$, in output/input signal units, converts
+signal $y_i$ and standard uncertainty
+$s_i$ to $a_i y_i$ and $|a_i|s_i$ in each bin $i$. Retained additive measurement
+statistics, source sensitivities, and background channels follow the same
+transformation. A deterministic background offset changes a raw count target
+and invalidates its count likelihood. Neither transformation creates unknown
+calibration covariance. Kinematically unavailable cells are masked; a forward
+zero-energy conversion without the limiting slope remains unavailable.
+
+Signals must share quantity, units, normalization basis, moment convention,
+and correction states before pooling or subtraction. If $k_f/k_i$ is still
+included, different fixed $E_i$ or $E_f$ settings require correction of each
+source before combination. Already calibrated histograms in one canonical
+physical convention can be combined across instruments; their acquisition
+energies then remain provenance. This does not infer a native instrument
+calibration or a missing detector/monitor exposure model.
+
 ### Quasistatic elastic magnetic scattering
 
 An elastic diffraction measurement that does not resolve a narrow quasielastic
@@ -887,6 +923,38 @@ Shared-source propagation replaces the diagonal expression by the source
 coefficient formula above. Uncertain count normalization instead retains both
 numerator and exposure primitives; rate sensitivities alone cannot recover the
 variance of a differently pooled ratio.
+
+### Bragg histogram integrals
+
+A local background shell estimates its peak-region contribution as
+
+$$
+I_{\rm bg}=I_{\rm shell}\frac{V_{\rm peak}}{V_{\rm shell}},
+$$
+
+where $I_{\rm shell}$ is the measured shell integral and $V_{\rm peak}$ and
+$V_{\rm shell}$ are reciprocal-space volumes in Å$^{-3}$ weighted by the
+measured fraction of the requested energy window (unity for 3D data). For partial
+energy windows the shell model assumes constant local background density in
+momentum and energy, and scales only to measured peak support. This is
+physical-volume scaling for either density or bin-integral signal storage;
+counting voxels is equivalent only on a uniform grid. Neighbor exclusions remove
+joint shell intersections. This convention follows Mantid's
+[IntegratePeaksMD](https://docs.mantidproject.org/v5.1.1/algorithms/IntegratePeaksMD-v2.html).
+Signed peak-minus-shell coefficients retain represented primitive covariance.
+
+For 4D input, the elastic window integrates measured energy overlap in meV.
+Missing energy support reduces momentum-and-energy coverage without filling
+signal. `EnergyCoverage` gives its volume-weighted fraction over measured momentum
+support. A box or ellipsoid intensity is the measured partial-region integral;
+a Gaussian intensity is the full analytic integral of its axis-aligned model.
+Gaussian ordinates are evaluated at voxel centers, so coarse voxel averages
+introduce a model approximation. Supplied standard errors are absolute.
+More observations than fit parameters and a well-conditioned full-rank weighted
+Jacobian are required; a pseudoinverse does not make an unidentifiable peak
+integral measurable. Partial elastic-energy observations are rejected for Gaussian
+fitting because their missing spectral shape is not encoded by coverage fractions.
+Cross-reflection covariance is not retained in output tables.
 
 ### Declared fitting likelihoods
 

@@ -13,6 +13,7 @@ from ..background_channels import (
 )
 from ..dataset import PointData4D
 from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, mdhisto_measured_bins
+from ..scientific_compatibility import validate_scientific_compatibility
 from ..source_lineage import merge_source_lineage_metadata, validate_independent_source_lineage
 from .coordinates import (
     physical_axis_vectors,
@@ -41,6 +42,7 @@ def combine_aligned_histograms(
     """
 
     _validate_matching_histograms(left, right)
+    validate_scientific_compatibility([(None, left), (None, right)])
     if operation not in {"subtract", "add"}:
         raise ValueError("operation must be 'subtract' or 'add'")
     scale = float(right_scale)
@@ -116,6 +118,7 @@ def separate_bose_elastic(
     """
 
     _validate_matching_histograms(first, second)
+    validate_scientific_compatibility([(None, first), (None, second)])
     validate_independent_source_lineage(first, second)
     t1 = _positive_temperature(first_temperature_K, "first")
     t2 = _positive_temperature(second_temperature_K, "second")
@@ -434,6 +437,7 @@ def angle_energy_background(
 
     if len(runs) < 2:
         raise ValueError("angle-energy background requires at least two runs")
+    validate_scientific_compatibility([(None, run) for run in runs])
     if int(q_bins) < 1 or int(energy_bins) < 1:
         raise ValueError("q_bins and energy_bins must be positive")
     fraction = float(lowest_fraction)

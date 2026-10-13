@@ -32,6 +32,10 @@ $I$ denotes signal in the common input unit, $a$ the dimensionless right-input
 scale, and each $\sigma$ a one-sigma signal uncertainty. This formula assumes
 independent inputs and fixed $a$; uncertainty in the chosen scale is not included.
 
+Inputs must have compatible physical quantities, units, sample normalization,
+and correction conventions before the arithmetic is evaluated. A unit label or
+right-hand scale does not convert an incompatible source convention.
+
 Both source datasets or live composites remain independently viewable. The
 derived dataset panel begins with editable left source, right source,
 arithmetic operation, and right-hand scale controls. Its output binning and
@@ -118,10 +122,25 @@ HKL list. Available methods are:
 
 Widths may be in HKL or inverse angstroms. An optional shell estimates a
 volume-scaled local background, propagates its variance, and can exclude
-neighboring peak regions. Dataset `signal_semantics` determines whether nfit
-integrates a density over physical bin volume or treats each bin as an
-already-integrated value. An `unknown` convention blocks quantitative
-integration.
+neighboring peak regions. Shell scaling and coverage use physical reciprocal-space
+volume for both density and bin-integral inputs, including unequal voxel sizes.
+For partial elastic windows, shell scaling uses joint momentum/energy support
+and assumes a locally constant background density over those coordinates. It
+subtracts the estimate only from measured peak support.
+Direct HKL boxes use exact joint intersections; ellipsoids and projected regions
+use common subvoxel samples for the shell and every neighbor exclusion.
+Projected and inverse-angstrom boxes therefore have sampling error; increase
+`subvoxel_samples` and check convergence when regions are small relative to bins.
+Dataset `signal_semantics` determines whether intensity coefficients integrate a
+density over physical bin volume or take fractional contributions from
+already-integrated bins. An `unknown` convention blocks quantitative integration.
+
+`Coverage` measures support in the requested momentum and elastic-energy region;
+`EnergyCoverage` reports its volume-weighted energy support among measured
+momentum voxels. Missing energy bins and energy bounds beyond the input range
+reduce coverage. The corresponding signal remains a measured partial integral;
+nfit does not fill or rescale missing intensity. `BackgroundCoverage` applies
+the same energy-support rule to the shell.
 
 Results retain HKL, intensity $I$, standard uncertainty $\delta I$,
 $I/\delta I$, coverage, acceptance, and rejection reasons. Box and ellipsoid
@@ -131,6 +150,16 @@ over all reciprocal space. `FitWindowRaw`, `FitWindowBackground`, and
 `FitWindowPeak` are separate finite integrals over the measured voxels used by
 the fit; their domain is therefore explicit. Gaussian results also retain
 fitted centers, widths, amplitude, baseline density, and reduced chi-squared.
+The Gaussian is axis aligned in the selected coordinate frame and evaluated at
+voxel centers; it approximates voxel averages when bins are coarse compared with
+the peak width. The fit uses voxels intersecting its local window, and coverage
+refers to that window. A constant baseline requires more than eight observations;
+a linear baseline requires more than eleven. An unidentifiable or numerically
+ill-conditioned fit is rejected with unavailable uncertainty. Gaussian fitting
+also rejects partial elastic-energy observations, even with a lowered coverage
+threshold: their requested-window response needs an energy-shape assumption
+that a 3D coverage fraction cannot provide. Supplied standard
+errors are absolute: reduced chi-squared does not rescale their covariance.
 Rejected reflections remain visible for diagnosis. The status bitmask is:
 
 | bit | reason |
@@ -139,7 +168,7 @@ Rejected reflections remain visible for diagnosis. The status bitmask is:
 | 2 | low background coverage |
 | 4 | low or non-finite $I/\delta I$ |
 | 8 | excessive background |
-| 16 | Gaussian fit failure |
+| 16 | Gaussian fit failure or unidentifiable fit |
 
 **Export .int** writes accepted reflections as `H K L I dI`, rounding HKL to
 the nearest integers while retaining floating-point intensity and uncertainty.
@@ -215,9 +244,30 @@ workflow. Attach the result through a dataset's **Backgrounds** branch.
 
 Ordinary inelastic datasets can expose paired cross-section and $\chi''$
 channels directly. **INS absolute conversion** instead creates an immutable
-derived dataset for a downstream analysis recipe. It requires the measured
-signal scale, temperature, normalization basis, form factor, and polarization
-convention.
+derived dataset for a downstream analysis recipe. Declare the input quantity,
+units, normalization basis, and existing corrections with labeled controls;
+**Corrections and scale** holds the detailed convention. Unit declarations do
+not calibrate counts. For a measured-intensity input, `scale` is the measured
+signal per barn/(sr meV) on the declared basis and must come from a calibration.
+Form factor and polarization corrections are supplied separately and applied
+according to whether they are still included in the input.
+
+With **From dataset / composite** temperature, a temperature coordinate in K or per-point
+experimental temperature takes precedence. Otherwise a manual dataset temperature
+precedes imported temperature metadata. A live composite uses its agreeing source
+temperatures or the existing **Composite dataset → Physics → Nominal temperature
+(K)** setting; keep a temperature dimension for a series. **Manual** selects the
+analysis recipe's temperature explicitly for data without a conflicting temperature
+coordinate. Missing temperatures stop the operation
+with an explanation.
+
+Conversion records the output physical quantity, units, basis, and correction
+states. Signal uncertainties and represented source sensitivities use the same
+linear conversion factor. Retained count/mean statistics and background channels
+are transformed consistently; a deterministic count-background offset retires
+the raw count likelihood and records a derived target. Inaccessible kinematic
+cells are masked. A forward zero-energy susceptibility-to-cross-section value
+needs a limiting slope, which histogram ordinates alone do not provide.
 
 For the physical moment susceptibility $\chi''_{\rm moment}$ in
 $\mu_B^2$/meV on the selected sample basis, the conversion is
@@ -283,7 +333,9 @@ non-Hermitian Fourier probe does not automatically acquire this interpretation.
 
 Physical results require absolute scale, known normalization, and an explicit
 spectral convention. QFI from moment units requires `g_factor` and divides by
-$g^2$; nfit never assumes $g=2$. If spin length $S$ is supplied, nfit also
+$g^2$; nfit never assumes $g=2$. The g-factor control remains available for either
+moment convention, including conversion between spin-model predictions and
+moment-unit data. If spin length $S$ is supplied, nfit also
 reports normalized QFI $f_Q/(12S^2)$, where $f_Q$ is the QFI density.
 
 Energy reduction returns a scalar, curve, or map according to the remaining

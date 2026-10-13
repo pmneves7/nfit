@@ -5,10 +5,8 @@ from typing import Any
 import numpy as np
 
 from ..dataset import PointListData
-from ..form_factors import form_factor_sq as evaluate_form_factor_sq
 from ..mdhisto import MDHistoData
 from .bragg import generate_bragg_peaks, integrate_bragg_peaks
-from .coordinates import q_modulus_for_spectral
 from .core import AnalysisExecution, TableOutput
 from .corrections import SpectralConvention
 from .curie_weiss import execute_curie_weiss, validate_curie_weiss
@@ -21,6 +19,13 @@ from .data_reduction import (
 from .heat_capacity import (
     execute_low_temperature_heat_capacity,
     validate_low_temperature_heat_capacity,
+)
+from .input_preparation import (
+    analysis_convention,
+    analysis_form_factor,
+    analysis_histogram,
+    analysis_input_channel,
+    analysis_temperature,
 )
 from .registry import (
     AnalysisOperationDefinition,
@@ -61,13 +66,13 @@ def register_builtin_operations() -> None:
         _p("subvoxel_samples", 3, "Odd samples per voxel dimension."),
     )
     spectral_parameters = (
-        _p("kernel", "qfi", "Registered spectral weighting kernel."), _p("input_channel", "signal", "Input signal channel."),
+        _p("kernel", "qfi", "Quantity to integrate over energy.", choices=(("qfi", "Quantum Fisher information"), ("total_moment", "Total moment"), ("static_susceptibility", "Static susceptibility"), ("energy_moment", "Energy moment"), ("weighted_integral_arbitrary_units", "Integral (arbitrary units)"))), _p("input_channel", "signal", "Input signal channel."),
         _p("spectral_convention", {"representation": "measured_intensity", "unit": "counts", "normalization_basis": "unknown", "magnetic_ions_per_basis": None, "moment_unit": "mu_B_squared", "g_factor": None, "form_factor_state": "included", "polarization_state": "included", "bose_state": "included", "kf_ki_state": "removed", "absolute_scale": False}, "Complete quantitative intensity convention.", required=True),
-        _p("temperature_source", "dataset", "Read temperature from data or use fixed value."), _p("temperature_K", None, "Fixed temperature in kelvin."),
+        _p("temperature_source", "dataset", "Use the dataset/composite temperature or enter a manual value.", choices=(("dataset", "From dataset / composite"), ("fixed", "Manual"))), _p("temperature_K", None, "Fixed temperature in kelvin."),
         _p("energy_min_meV", 0.0, "Lower energy boundary."), _p("energy_max_meV", None, "Upper energy boundary."), _p("elastic_exclusion_meV", 0.0, "Excluded region around zero energy."),
         _p("positive_energy_policy", "positive_only", "Positive-energy handling policy."), _p("form_factor_ion", "", "Magnetic ion form-factor key."),
-        _p("custom_form_factor", None, "Optional seven form-factor coefficients."), _p("polarization_mode", "already_corrected", "Polarization correction assumption."),
-        _p("polarization_scalar", 1.0, "Custom polarization divisor."), _p("g_factor", None, "Landé g factor."), _p("spin_S", None, "Spin for normalized QFI."),
+        _p("custom_form_factor", None, "Optional seven form-factor coefficients."), _p("polarization_mode", "already_corrected", "Polarization correction assumption.", choices=(("already_corrected", "Already corrected"), ("isotropic_single_component", "Isotropic single component"), ("isotropic_trace", "Isotropic trace"), ("custom_scalar", "Custom scalar"))),
+        _p("polarization_scalar", 1.0, "Custom polarization divisor."), _p("g_factor", None, "Optional override of the convention's Landé g factor; leave blank to use its value."), _p("spin_S", None, "Spin for normalized QFI."),
         _p("zone_mode", "none", "No zones, automatic zones, or explicit centers."), _p("zone_centers_hkl", [], "Explicit zone centers."), _p("zone_basis_hkl", None, "Override reciprocal-zone basis."),
         _p("zone_subvoxel_samples", 3, "Odd zone samples per voxel dimension."), _p("minimum_energy_coverage", 0.9, "Minimum measured energy fraction."),
         _p("minimum_zone_coverage", 0.8, "Minimum measured zone fraction."), _p("partial_zone_policy", "report", "Report or reject partial zones."),
@@ -76,7 +81,7 @@ def register_builtin_operations() -> None:
     conversion_parameters = (
         _p("target_representation", "chi_double_prime", "Output physical representation.", choices=(("chi_double_prime", "Dynamic susceptibility"), ("cross_section", "Absolute cross section"))),
         _p("spectral_convention", {"representation": "measured_intensity", "unit": "counts", "normalization_basis": "unknown", "magnetic_ions_per_basis": None, "moment_unit": "mu_B_squared", "g_factor": None, "form_factor_state": "included", "polarization_state": "included", "bose_state": "included", "kf_ki_state": "removed", "absolute_scale": False}, "Complete input intensity convention.", required=True),
-        _p("temperature_source", "dataset", "Read temperature from data or use fixed value.", choices=(("dataset", "Dataset"), ("fixed", "Fixed"))),
+        _p("temperature_source", "dataset", "Read temperature from data or use fixed value.", choices=(("dataset", "From dataset / composite"), ("fixed", "Manual"))),
         _p("temperature_K", None, "Fixed temperature in kelvin."),
         _p("scale", 1.0, "Measured signal units per barn/(sr meV); may come from a vanadium or nuclear-Bragg normalization."),
         _p("background", 0.0, "Constant background in measured signal units, subtracted before conversion."),
@@ -147,7 +152,7 @@ def register_builtin_operations() -> None:
         ),
         _p("right_scale", 1.0, "Multiplier applied to the right input."),
     )
-    register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 4, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
+    register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 5, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
     register_analysis_operation(
         AnalysisOperationDefinition(
             "dataset_clone",
@@ -162,8 +167,8 @@ def register_builtin_operations() -> None:
             _execute_dataset_clone,
         )
     )
-    register_analysis_operation(AnalysisOperationDefinition("spectral_integration", "Spectral integration", 1, "Reduce spectra using physical kernels.", 1, 1, ("MDHistoData",), spectral_parameters, _validate_spectral, _execute_spectral))
-    register_analysis_operation(AnalysisOperationDefinition("spectral_conversion", "INS absolute conversion", 1, "Convert measured INS intensity to an absolute cross section or dynamic susceptibility.", 1, 1, ("MDHistoData",), conversion_parameters, _validate_conversion, _execute_conversion))
+    register_analysis_operation(AnalysisOperationDefinition("spectral_integration", "Spectral integration", 2, "Reduce spectra using physical kernels.", 1, 1, ("MDHistoData",), spectral_parameters, _validate_spectral, _execute_spectral))
+    register_analysis_operation(AnalysisOperationDefinition("spectral_conversion", "INS absolute conversion", 2, "Convert measured INS intensity to an absolute cross section or dynamic susceptibility.", 1, 1, ("MDHistoData",), conversion_parameters, _validate_conversion, _execute_conversion))
     register_analysis_operation(
         AnalysisOperationDefinition(
             "histogram_arithmetic",
@@ -453,17 +458,10 @@ def _execute_angle_background(inputs, parameters, **callbacks):
 
 
 def _execute_conversion(inputs, parameters, **callbacks):
-    convention = SpectralConvention.from_dict(dict(parameters["spectral_convention"]))
-    temperature = parameters["temperature_K"] if parameters["temperature_source"] == "fixed" else inputs[0].context.temperature_K
-    if temperature is None:
-        raise ValueError("INS conversion requires temperature")
-    data = inputs[0].data
-    q = q_modulus_for_spectral(data, inputs[0].context)
-    form_factor = evaluate_form_factor_sq(
-        q,
-        ion=parameters["form_factor_ion"] or None,
-        coefficients=parameters["custom_form_factor"],
-    )
+    convention = analysis_convention(parameters)
+    temperature = analysis_temperature(inputs[0], parameters)
+    data = analysis_histogram(inputs[0])
+    form_factor = analysis_form_factor(data, inputs[0].context, parameters)
     mode = parameters["polarization_mode"]
     polarization = {
         "already_corrected": 1.0,
@@ -477,7 +475,7 @@ def _execute_conversion(inputs, parameters, **callbacks):
         data,
         convention=convention,
         target_representation=parameters["target_representation"],
-        temperature_K=float(temperature),
+        temperature_K=temperature,
         scale=float(parameters["scale"]),
         background=parameters["background"],
         form_factor_sq=form_factor,
@@ -486,7 +484,8 @@ def _execute_conversion(inputs, parameters, **callbacks):
     label = "Dynamic susceptibility" if parameters["target_representation"] == "chi_double_prime" else "Absolute cross section"
     from .core import DatasetOutput
 
-    return AnalysisExecution({"converted": DatasetOutput(converted, label, "derived_analysis")})
+    data_type = str(data.metadata.get("nfit_data_type") or "derived_analysis")
+    return AnalysisExecution({"converted": DatasetOutput(converted, label, data_type)})
 
 
 def _validate_bragg(inputs, parameters):
@@ -497,7 +496,7 @@ def _validate_bragg(inputs, parameters):
 
 
 def _execute_bragg(inputs, parameters, **callbacks):
-    data = inputs[0].data
+    data = analysis_histogram(inputs[0])
     positions = parameters.get("peak_positions_hkl") or []
     if positions:
         peaks = np.asarray(positions, dtype=float)
@@ -554,16 +553,13 @@ def _validate_spectral(inputs, parameters):
 
 
 def _execute_spectral(inputs, parameters, **callbacks):
-    convention = SpectralConvention.from_dict(dict(parameters["spectral_convention"]))
-    temperature = parameters["temperature_K"] if parameters["temperature_source"] == "fixed" else inputs[0].context.temperature_K
-    if temperature is None:
-        raise ValueError("spectral integration requires temperature")
+    convention = analysis_convention(parameters)
+    temperature = analysis_temperature(inputs[0], parameters)
     maximum = np.inf if parameters["energy_max_meV"] is None else parameters["energy_max_meV"]
-    data = inputs[0].data
+    data = analysis_input_channel(analysis_histogram(inputs[0]), parameters["input_channel"])
     form_factor = parameters["form_factor_sq"]
     if convention.form_factor_state == "included" and parameters["kernel"] != "weighted_integral_arbitrary_units":
-        q = q_modulus_for_spectral(data, inputs[0].context)
-        form_factor = evaluate_form_factor_sq(q, ion=parameters["form_factor_ion"] or None, coefficients=parameters["custom_form_factor"])
+        form_factor = analysis_form_factor(data, inputs[0].context, parameters)
     mode = parameters["polarization_mode"]
     polarization = {"already_corrected": 1.0, "isotropic_single_component": 2.0, "isotropic_trace": 2.0 / 3.0, "custom_scalar": parameters["polarization_scalar"]}.get(mode)
     if polarization is None:
@@ -571,12 +567,12 @@ def _execute_spectral(inputs, parameters, **callbacks):
     if parameters["kernel"] == "weighted_integral_arbitrary_units":
         polarization = 1.0
     minimum_energy = max(float(parameters["energy_min_meV"]), float(parameters["elastic_exclusion_meV"]))
-    common = dict(convention=convention, temperature_K=float(temperature), energy_min_meV=minimum_energy, energy_max_meV=maximum, scale=parameters["scale"], form_factor_sq=form_factor, polarization=polarization, minimum_energy_coverage=parameters["minimum_energy_coverage"], power=parameters["power"], spin_S=parameters["spin_S"])
+    common = dict(convention=convention, temperature_K=temperature, energy_min_meV=minimum_energy, energy_max_meV=maximum, scale=parameters["scale"], form_factor_sq=form_factor, polarization=polarization, minimum_energy_coverage=parameters["minimum_energy_coverage"], power=parameters["power"], spin_S=parameters["spin_S"])
     if parameters["kernel"] == "total_moment" and parameters["zone_mode"] != "none":
         explicit_centers = parameters["zone_centers_hkl"] if parameters["zone_mode"] == "explicit_centers" else None
-        table, scalar = integrate_total_moment_by_zone(inputs[0].data, spacegroup=inputs[0].context.spacegroup or "P1", minimum_zone_coverage=parameters["minimum_zone_coverage"], zone_basis_hkl=parameters["zone_basis_hkl"], zone_centers_hkl=explicit_centers, zone_subvoxel_samples=parameters["zone_subvoxel_samples"], progress_callback=callbacks.get("progress_callback"), cancel_callback=callbacks.get("cancel_callback"), **common)
+        table, scalar = integrate_total_moment_by_zone(data, spacegroup=inputs[0].context.spacegroup or "P1", minimum_zone_coverage=parameters["minimum_zone_coverage"], zone_basis_hkl=parameters["zone_basis_hkl"], zone_centers_hkl=explicit_centers, zone_subvoxel_samples=parameters["zone_subvoxel_samples"], progress_callback=callbacks.get("progress_callback"), cancel_callback=callbacks.get("cancel_callback"), **common)
         if parameters["partial_zone_policy"] == "reject" and np.any(table.column("accepted") < 0.5):
             raise ValueError("one or more Brillouin zones do not meet minimum_zone_coverage")
         return AnalysisExecution({"zones": TableOutput(table, "Total moment by zone"), "total_moment": scalar})
-    output = spectral_energy_reduce(inputs[0].data, kernel=parameters["kernel"], progress_callback=callbacks.get("progress_callback"), cancel_callback=callbacks.get("cancel_callback"), **common)
+    output = spectral_energy_reduce(data, kernel=parameters["kernel"], progress_callback=callbacks.get("progress_callback"), cancel_callback=callbacks.get("cancel_callback"), **common)
     return AnalysisExecution({parameters["kernel"]: output})

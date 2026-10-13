@@ -492,6 +492,33 @@ def test_saved_bragg_result_renders_tables_diagnostics_and_materializes_disabled
     metadata_tree = explorer.details_widget.findChild(QtWidgets.QTreeWidget, "analysis_output_metadata_tree")
     assert output_table is not None and output_table.rowCount() == 2
     assert metadata_tree is not None
+
+    # Re-running a linked table must refresh it without deleting its identity
+    # or user settings, which downstream fits and masks refer to.
+    materialized.scale_factor = 3.0
+    old_id = materialized.id
+    monkeypatch.setattr(window, "_confirm_memory", lambda _data: True)
+    monkeypatch.setattr(explorer, "_start_background_task", lambda **kwargs: kwargs["on_success"](analysis.result))
+    assert window.run()
+    refreshed = next(item for item in group.iter_datasets() if item.id == old_id)
+    assert refreshed is materialized
+    assert refreshed.scale_factor == 3.0
+    assert refreshed.data_type == "bragg_reflections"
+
+    # Scalar-only and unavailable artifacts must not leave the previous table
+    # available through export, overlay, or materialization actions.
+    for outputs in (
+        [AnalysisOutputRef("value", "Value", "scalar", scalar_value=1.0)],
+        [AnalysisOutputRef("missing", "Missing", "table", artifact_path="missing.npz")],
+    ):
+        analysis.result.outputs = outputs
+        window._render_analysis_result(analysis)
+        assert window._current_result_data is None
+        assert window._current_result_output is None
+        assert not window.add_output_button.isEnabled()
+        assert not window.view_peak_overlay_button.isEnabled()
+        assert not window.export_bragg_button.isEnabled()
+        assert not window.export_current_bragg_int()
     window.window.close()
 
 
@@ -582,3 +609,73 @@ def test_data_viewer_marks_accepted_and_rejected_bragg_peaks(monkeypatch):
     assert np.count_nonzero(viewer.bragg_peak_overlay["accepted"]) == 1
     assert len(viewer.ax_image.collections) >= 3
     viewer.window.close()
+
+
+@pytest.mark.parametrize("operation", ["spectral_conversion", "spectral_integration"])
+def test_physics_recipe_controls_roundtrip_and_manual_temperature(monkeypatch, operation):
+    from nfit.analysis_physics_gui import SpectralConventionEditor
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    group = DataGroup("Workspace1", datasets=[DatasetEntry("scan", _bragg_volume_for_gui())])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    window = explorer.open_data_playground_for_selection()
+    window.operation_combo.setCurrentIndex(window.operation_combo.findData(operation))
+    editor = window.parameter_widgets["spectral_convention"]
+    assert isinstance(editor, SpectralConventionEditor)
+    assert window.parameter_widgets["temperature_K"].isHidden()
+    values = default_analysis_parameters(operation)
+    values.update(temperature_source="fixed", temperature_K=17.0, polarization_mode="custom_scalar", polarization_scalar=0.8)
+    values["spectral_convention"].update(normalization_basis="per_magnetic_ion", g_factor=2.2)
+    window._set_parameter_values(values)
+    assert window._parameters() == values
+    assert not window.parameter_widgets["temperature_K"].isHidden()
+    assert not window.parameter_widgets["polarization_scalar"].isHidden()
+    assert all(control.toolTip() for control in window.parameter_widgets.values())
+    window.window.close()
+
+
+def test_composite_peak_analysis_has_data_overlay_and_fresh_status(monkeypatch):
+    from nfit.analysis.runner import analysis_source_fingerprint, prepare_analysis_source
+    from nfit.project_composites import _composite_dataset_name
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    dataset = DatasetEntry("scan", _bragg_volume_for_gui(), kind="mdhisto")
+    group = DataGroup("Workspace1", datasets=[dataset])
+    config = project_data.data_group_composite_config(group)
+    config.update(enabled=True, fractional=False, spectral_channels={"enabled": False, "temperature_K": 12.0})
+    source_id = composite_analysis_source_id(group, group)
+    prepared = prepare_analysis_source(group, source_id)
+    assert prepared.context.temperature_K == 12.0
+    parameters = default_analysis_parameters("bragg_integration")
+    analysis = AnalysisEntry("Composite peaks", "bragg_integration", [source_id], parameters)
+    analysis.result = AnalysisResultRecord(
+        recipe_hash(analysis.type, analysis_definition(analysis.type).version, parameters, [source_id]),
+        {source_id: prepared.fingerprint}, [], "success", "now",
+    )
+    assert prepared.fingerprint == analysis_source_fingerprint(group, source_id)
+    group.analyses.append(analysis)
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    assert "[fresh]" in explorer.tree.topLevelItem(0).child(3).child(0).text(0)
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    window = explorer.open_data_playground_for_selection()
+    window.analysis_combo.setCurrentIndex(window.analysis_combo.findData(analysis.id))
+    assert isinstance(window._analysis_primary_data(analysis), MDHistoData)
+    window._current_result_data = integrate_bragg_peaks(dataset.data, [[0, 0, 0]], method="box_sum")
+    calls = []
+    from types import SimpleNamespace
+    overlays = []
+    viewer = SimpleNamespace(set_bragg_peak_overlay=lambda *args, **kwargs: overlays.append((args, kwargs)))
+    def open_viewer(*args, **kwargs):
+        calls.append((args, kwargs))
+        return viewer
+    monkeypatch.setattr(explorer, "open_slice_viewer", open_viewer)
+    assert window.view_input_with_peaks()
+    assert calls[0][1]["use_composite"] is True
+    assert overlays[0][1]["dataset_name"] == _composite_dataset_name(group)
+    dataset.scale_factor = 2.0
+    explorer._refresh_tree()
+    assert "[stale]" in explorer.tree.topLevelItem(0).child(3).child(0).text(0)
+    window.window.close()

@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from typing import Any, TypeAlias
 from uuid import uuid4
 
+import numpy as np
+
 from ..dataset import PointData4D, PointListData
 from ..mdhisto import MDHistoData
 
@@ -59,7 +61,7 @@ class AnalysisContext:
     lattice_parameters: dict[str, float] | None
     spacegroup: str | None
     crystal: dict[str, Any] | None
-    temperature_K: float | None
+    temperature_K: float | np.ndarray | None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

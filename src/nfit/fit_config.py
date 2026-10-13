@@ -915,6 +915,12 @@ def _spectral_model_observable(
     # Model kernels return a spin-operator response. Convert it to the
     # dataset's declared response convention exactly once.
     g_value = convention.get("g_factor", 2.0)
+    needs_moment_scale = (
+        convention.get("fit_representation") != "chi_double_prime"
+        or convention.get("moment_unit", "mu_B_squared") == "mu_B_squared"
+    )
+    if convention.get("absolute_scale") and needs_moment_scale and g_value in (None, ""):
+        raise ValueError("An explicit g_factor is required to fit spin models to absolute magnetic-moment data.")
     g_factor = 2.0 if g_value in (None, "") else float(g_value)
     target_moment_unit = str(convention.get("moment_unit", "mu_B_squared"))
     if convention.get("fit_representation") == "chi_double_prime":

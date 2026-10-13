@@ -66,6 +66,13 @@ tracks the staged implementation and review checkpoints for these changes.
   rather than assigning all events a run-average angle. Preserve separate
   SPEC/DIFF semantics and the CW counting contract. Validate with representative
   VIPER event files and angle logs before extending the current stepped importer.
+- Add an automated native absolute-calibration workflow for HYSPEC/MACS using
+  validated reference measurements, per-source kinematics, detector/monitor
+  exposure, and calibration uncertainty before cross-instrument pooling.
+  Already calibrated histograms can combine today when quantity, units, sample
+  basis, and correction conventions agree. That capability does not automate
+  native reference reduction or convert an uncalibrated dataset scale into an
+  absolute normalization.
 - Add experiment-specific MACS vanadium detector calibration when reference
   measurements become available. Specify correction-factor units, masks and
   calibration uncertainty; keep equal sensitivity as the uncalibrated default.
@@ -124,6 +131,8 @@ tracks the staged implementation and review checkpoints for these changes.
 - Complete generalized multidimensional sampled-function interpolation and
   primitive-source likelihoods for singular reconstructions. Bragg output tables
   need represented covariance between reflections before such tables can be fit.
+  Gaussian peak fitting currently uses center-evaluated axis-aligned profiles;
+  add voxel-averaged and general covariance models with calibrated validation.
   Source-node interval binning and bounded nonsingular GLS are already available.
   Low-count intervals, observed standard errors and count objectives stay distinct.
 - Preserve declared sufficient statistics and source dependencies through

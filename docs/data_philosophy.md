@@ -349,9 +349,16 @@ the target quantity and assumptions independently of the file adapter. Its
 one-bin reference estimators support count exposure pooling, independent
 continuous means, coordinate interval means/integrals, and linear shared-source
 uncertainty. Contracts serialize completely; units are explicit labels and
-must be made compatible before combination. Explicit declarations drive aligned
-project rebinning and viewer aggregation; unmarked projects preserve their saved
-compatibility behavior without an inferred instrument-specific contract.
+must be made compatible before combination. Quantity, units, normalization,
+correction states, and any still-active incident/final-energy dependence are
+checked before pooling, subtraction, and histogram arithmetic. Unknown legacy
+conventions can agree with each other but cannot replace a declared physical
+quantity. A numeric scale alone does not infer calibration. Canonically calibrated
+histograms may combine across instruments after source-specific corrections;
+reference calibration of native sources remains an adapter responsibility.
+Explicit declarations drive aligned project rebinning and viewer aggregation;
+unmarked projects preserve their saved compatibility behavior without an inferred
+instrument-specific contract.
 
 Instrument reduction determines coordinates, calibrated signals, exposure,
 and statistical dependencies. General binning then combines compatible

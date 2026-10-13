@@ -18,6 +18,7 @@ from .mdhisto import MDHistoData
 from .measurement_scaling import scale_measurement_data
 from .pipeline import DatasetEntry
 from .resource_budget import reserve_memory
+from .sample_temperature import dataset_temperature
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY, with_paired_spectral_channels
 
 KINEMATIC_KF_KI_INCLUDED_KEY = "kf_ki_included"
@@ -41,7 +42,7 @@ def cached_viewer_preparation(
     """
 
     physical_keys = (
-        SPECTRAL_CHANNEL_CONFIG_KEY, "temperature", KINEMATIC_KF_KI_INCLUDED_KEY,
+        SPECTRAL_CHANNEL_CONFIG_KEY, "temperature", "temperature_K", KINEMATIC_KF_KI_INCLUDED_KEY,
         "incident_energy", "incident_energy_meV", "Ei", "ei",
         "final_energy", "final_energy_meV", "Ef", "ef",
     )
@@ -97,20 +98,10 @@ def _apply_spectral_channel_view(
         and dataset.data_type in {"single_crystal_inelastic", "powder_inelastic"}
         and isinstance(config, dict)
     ):
-        temperature = dataset.parameters.get("temperature", data.metadata.get("temperature"))
-        from .metadata_dimensions import metadata_temperature_grid
-
-        temperatures = metadata_temperature_grid(data)
         return with_paired_spectral_channels(
             data,
             config,
-            temperature_K=(
-                temperatures
-                if temperatures is not None
-                else None
-                if temperature in (None, "")
-                else float(temperature)
-            ),
+            temperature_K=dataset_temperature(dataset, data),
         )
     return _apply_kinematic_normalization_to_view(dataset, data)
 

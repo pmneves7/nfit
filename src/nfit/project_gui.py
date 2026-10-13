@@ -36,7 +36,7 @@ from .analysis.core import (
     AnalysisEntry,
     AnalysisOutputRef,
 )
-from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
+from .analysis.fingerprint import recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
 from .application_preferences import application_settings, preload_viewer_data
 from .cache_utils import lru_store as _lru_store
@@ -2833,16 +2833,11 @@ def _heat_capacity_point_data(view: PointListData, dataset: DatasetEntry) -> Poi
 def effective_dataset_temperature(
     group: DataGroup, dataset: DatasetEntry
 ) -> float | None:
-    """Return the dataset temperature override in K, or ``None`` if unset.
+    """Resolve scalar manual/imported temperature in K; retain per-point axes."""
+    from .sample_temperature import dataset_temperature
 
-    ``dataset.parameters["temperature"]`` takes precedence over any
-    temperature carried by the imported data itself.
-    """
-
-    value = dataset.parameters.get("temperature")
-    if value in (None, ""):
-        return None
-    return float(value)
+    value = dataset_temperature(dataset)
+    return value if value is None or np.ndim(value) == 0 else None
 
 
 def effective_dataset_field(
@@ -17525,12 +17520,13 @@ class NfitProjectExplorer:
         if analysis.result.status != "success":
             return analysis.result.status
         try:
+            from .analysis.runner import analysis_source_fingerprint
+
             definition = analysis_definition(analysis.type)
-            datasets = {dataset.id: dataset for dataset in group.iter_datasets()}
-            selected = [datasets[dataset_id] for dataset_id in analysis.input_dataset_ids]
             parameters = {**default_analysis_parameters(analysis.type), **analysis.parameters}
             current_recipe = recipe_hash(analysis.type, definition.version, parameters, analysis.input_dataset_ids)
-            fingerprints = {dataset.id: dataset_entry_fingerprint(dataset, group) for dataset in selected}
+            fingerprints = {source_id: analysis_source_fingerprint(group, source_id)
+                            for source_id in analysis.input_dataset_ids}
         except (KeyError, TypeError, ValueError, OSError):
             return "unavailable"
         if self.project_path is not None:

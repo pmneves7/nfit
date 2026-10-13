@@ -4,6 +4,7 @@ import hashlib
 import json
 import weakref
 from collections import OrderedDict
+from collections.abc import Mapping
 from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,8 @@ _DATA_ARRAY_HASH_CACHE: OrderedDict[
     tuple[weakref.ReferenceType[Any], Any, dict[str, Any]],
 ] = OrderedDict()
 _DATA_ARRAY_HASH_CACHE_LIMIT = 64
+_ARRAY_HASH_CACHE: OrderedDict[int, tuple[weakref.ReferenceType[Any], Any, str]] = OrderedDict()
+_ARRAY_HASH_CACHE_LIMIT = 512
 
 
 def _identity_signature(value: Any) -> Any:
@@ -31,8 +34,10 @@ def _identity_signature(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return ("array", id(value), value.shape, str(value.dtype))
     if isinstance(value, np.generic):
-        return value.item()
-    if isinstance(value, dict):
+        return _identity_signature(value.item())
+    if isinstance(value, float) and not np.isfinite(value):
+        return ("nonfinite_float", "nan" if np.isnan(value) else "+inf" if value > 0 else "-inf")
+    if isinstance(value, Mapping):
         return tuple(
             (str(key), _identity_signature(item))
             for key, item in sorted(value.items(), key=lambda item: str(item[0]))
@@ -88,6 +93,7 @@ def _fingerprint_cache_signature(dataset: DatasetEntry, group: DataGroup) -> Any
         dataset.data_cache_token,
         dataset.data_matches_source,
         tuple(arrays),
+        _identity_signature(data),
         dataset.id,
         dataset.kind,
         dataset.data_type,
@@ -133,6 +139,15 @@ def _dataset_array_hashes(data: Any) -> dict[str, Any]:
     columns = getattr(data, "columns", None)
     if isinstance(columns, dict):
         arrays["columns"] = {name: array_hash(value) for name, value in columns.items()}
+    for name in (
+        "axes", "metadata", "auxiliary_channels", "source_dependencies",
+        "counting_dependencies", "temperature", "units", "coordinate_names", "channels",
+        "quantity_types", "measurement_payload", "normalization_denominator", "magnetic_field",
+        "coordinate_system", "visual_normalization",
+    ):
+        value = getattr(data, name, None)
+        if value is not None:
+            arrays[name] = _normalize(value, allow_nonfinite=True)
     _DATA_ARRAY_HASH_CACHE[key] = (weakref.ref(data), signature, arrays)
     _DATA_ARRAY_HASH_CACHE.move_to_end(key)
     while len(_DATA_ARRAY_HASH_CACHE) > _DATA_ARRAY_HASH_CACHE_LIMIT:
@@ -140,12 +155,12 @@ def _dataset_array_hashes(data: Any) -> dict[str, Any]:
     return arrays
 
 
-def canonical_json(value: Any) -> str:
-    return json.dumps(_normalize(value), sort_keys=True, separators=(",", ":"), allow_nan=False)
+def canonical_json(value: Any, *, allow_nonfinite: bool = False) -> str:
+    return json.dumps(_normalize(value, allow_nonfinite=allow_nonfinite), sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
-def sha256_json(value: Any) -> str:
-    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+def sha256_json(value: Any, *, allow_nonfinite: bool = False) -> str:
+    return hashlib.sha256(canonical_json(value, allow_nonfinite=allow_nonfinite).encode("utf-8")).hexdigest()
 
 
 def recipe_hash(
@@ -162,12 +177,25 @@ def recipe_hash(
 
 
 def array_hash(array: np.ndarray) -> str:
+    cacheable = isinstance(array, np.ndarray) and not array.flags.writeable
+    key = id(array)
+    signature = (array.shape, str(array.dtype), array.strides) if cacheable else None
+    cached = _ARRAY_HASH_CACHE.get(key) if cacheable else None
+    if cached is not None and cached[0]() is array and cached[1] == signature:
+        _ARRAY_HASH_CACHE.move_to_end(key)
+        return cached[2]
     value = np.ascontiguousarray(np.asarray(array))
     digest = hashlib.sha256()
     digest.update(str(value.dtype).encode())
     digest.update(repr(value.shape).encode())
     digest.update(value.view(np.uint8))
-    return digest.hexdigest()
+    result = digest.hexdigest()
+    if cacheable:
+        _ARRAY_HASH_CACHE[key] = (weakref.ref(array), signature, result)
+        _ARRAY_HASH_CACHE.move_to_end(key)
+        while len(_ARRAY_HASH_CACHE) > _ARRAY_HASH_CACHE_LIMIT:
+            _ARRAY_HASH_CACHE.popitem(last=False)
+    return result
 
 
 def file_fingerprint(path: str | Path, *, content_hash: bool = False) -> dict[str, Any]:
@@ -230,7 +258,7 @@ def dataset_entry_fingerprint(dataset: DatasetEntry, group: DataGroup) -> str:
             "lattice": group.lattice_parameters,
             "spacegroup": group.spacegroup,
             "crystal": group.metadata.get("crystal"),
-        }
+        }, allow_nonfinite=True,
     )
     _DATASET_FINGERPRINT_CACHE[cache_key] = (cache_signature, result)
     _DATASET_FINGERPRINT_CACHE.move_to_end(cache_key)
@@ -239,18 +267,20 @@ def dataset_entry_fingerprint(dataset: DatasetEntry, group: DataGroup) -> str:
     return result
 
 
-def _normalize(value: Any) -> Any:
+def _normalize(value: Any, *, allow_nonfinite: bool = False) -> Any:
     if is_dataclass(value):
-        return _normalize(asdict(value))
+        return {item.name: _normalize(getattr(value, item.name), allow_nonfinite=allow_nonfinite) for item in fields(value)}
     if isinstance(value, np.ndarray):
         return {"dtype": str(value.dtype), "shape": list(value.shape), "sha256": array_hash(value)}
     if isinstance(value, np.generic):
-        return _normalize(value.item())
-    if isinstance(value, dict):
-        return {str(key): _normalize(item) for key, item in value.items()}
+        return _normalize(value.item(), allow_nonfinite=allow_nonfinite)
+    if isinstance(value, Mapping):
+        return {str(key): _normalize(item, allow_nonfinite=allow_nonfinite) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
-        return [_normalize(item) for item in value]
+        return [_normalize(item, allow_nonfinite=allow_nonfinite) for item in value]
     if isinstance(value, float) and not np.isfinite(value):
+        if allow_nonfinite:
+            return {"__nfit_nonfinite_float__": "nan" if np.isnan(value) else "+inf" if value > 0 else "-inf"}
         raise ValueError("fingerprints require finite numeric values")
     if value is None or isinstance(value, (str, int, float, bool)):
         return value

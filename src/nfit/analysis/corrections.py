@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from math import isfinite
 from typing import Any
 
 _REPRESENTATIONS = {"measured_intensity", "cross_section", "s_qw", "chi_double_prime"}
@@ -37,14 +38,10 @@ class SpectralConvention:
         for name in ("form_factor_state", "polarization_state", "bose_state", "kf_ki_state"):
             if getattr(self, name) not in _STATES:
                 raise ValueError(f"{name} must be 'included' or 'removed'")
-        if self.magnetic_ions_per_basis is not None and self.magnetic_ions_per_basis <= 0:
-            raise ValueError("magnetic_ions_per_basis must be positive")
-        if self.g_factor is not None and self.g_factor <= 0:
-            raise ValueError("g_factor must be positive")
-        for name in ("incident_energy_meV", "final_energy_meV"):
+        for name in ("magnetic_ions_per_basis", "g_factor", "incident_energy_meV", "final_energy_meV"):
             value = getattr(self, name)
-            if value is not None and value <= 0:
-                raise ValueError(f"{name} must be positive")
+            if value is not None and (not isfinite(value) or value <= 0):
+                raise ValueError(f"{name} must be finite and positive")
         if self.incident_energy_meV is not None and self.final_energy_meV is not None:
             raise ValueError("provide incident_energy_meV or final_energy_meV, not both")
         if (

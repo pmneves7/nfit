@@ -1586,10 +1586,12 @@ def _dataset_spectral_channels_group_box(
             )
         )
         form.addRow(label, editor)
-    temperature = dataset.parameters.get(
-        "temperature", getattr(dataset.data, "metadata", {}).get("temperature")
-    )
-    if temperature in (None, ""):
+    import numpy as np
+
+    from .sample_temperature import dataset_temperature
+
+    temperature = dataset_temperature(dataset)
+    if temperature is None:
         status_text = "Set T in Conditions to create the paired channel."
     elif (
         config["kf_ki_state"] == "included"
@@ -1598,7 +1600,8 @@ def _dataset_spectral_channels_group_box(
     ):
         status_text = "Provide fixed Ei or Ef to remove k_f/k_i."
     else:
-        status_text = "Cross-section and χ″ channels are available."
+        temperature_text = f"T = {float(temperature):g} K" if np.ndim(temperature) == 0 else "T from the temperature coordinate"
+        status_text = f"{temperature_text}. Cross-section and χ″ channels are available."
     status = QtWidgets.QLabel(status_override or status_text)
     status.setObjectName("ins_channel_status")
     status.setWordWrap(True)

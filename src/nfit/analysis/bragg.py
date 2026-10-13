@@ -12,6 +12,7 @@ from ..measurement_dependencies import (
     project_source_dependencies,
     select_counting_dependencies,
 )
+from .bragg_regions import box_region_fraction, box_shell_fraction, sampled_region_fraction
 from .coordinates import (
     bin_edges,
     measured_mask,
@@ -128,7 +129,7 @@ def integrate_bragg_peaks(
         if cancel_callback is not None and cancel_callback():
             raise RuntimeError("Bragg integration cancelled")
         result = _integrate_bragg_peak(context, nominal_peak, peak_array)
-        rows.append(result.row)
+        rows.append((*result.row, result.energy_coverage))
         accepted_count += int(result.status == 0)
         _report_bragg_progress(
             progress_callback,
@@ -168,6 +169,7 @@ class _BraggIntegrationContext:
     all_edges: tuple[np.ndarray, ...]
     all_measured: np.ndarray
     all_qvolume: np.ndarray
+    all_energy_coverage: np.ndarray
     background_mode: str
     background_inner_scale: float
     background_outer_scale: float
@@ -188,6 +190,7 @@ class _LocalPeakRegion:
     edges: tuple[np.ndarray, ...]
     measured: np.ndarray
     qvolume: np.ndarray
+    energy_coverage: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -196,6 +199,7 @@ class _IntegratedBraggPeak:
     status: int
     coverage: float
     signal_to_noise: float
+    energy_coverage: float
 
 
 def _prepare_bragg_integration(
@@ -282,6 +286,7 @@ def _prepare_bragg_integration(
         ),
         all_measured=measured_mask(data),
         all_qvolume=q_bin_volume(data),
+        all_energy_coverage=_energy_support(data),
         background_mode=background_mode,
         background_inner_scale=background_inner_scale,
         background_outer_scale=background_outer_scale,
@@ -372,6 +377,7 @@ def _local_peak_region(
         edges=_sliced_edges(context.all_edges, slices),
         measured=context.all_measured[slices],
         qvolume=context.all_qvolume[slices],
+        energy_coverage=context.all_energy_coverage[slices],
     )
 
 
@@ -405,6 +411,7 @@ def _integrate_gaussian_peak(
         context.gaussian_max_nfev,
         context.coordinate_frame,
         context.gaussian_background,
+        region.energy_coverage,
     )
     (
         fitted_h,
@@ -425,6 +432,7 @@ def _integrate_gaussian_peak(
         sigma_3,
         reduced_chi_squared,
         fit_window_peak,
+        energy_coverage,
     ) = fit_row
     status = _peak_rejection_status(
         context,
@@ -460,6 +468,7 @@ def _integrate_gaussian_peak(
         status=status,
         coverage=coverage,
         signal_to_noise=signal_to_noise,
+        energy_coverage=energy_coverage,
     )
 
 
@@ -477,19 +486,22 @@ def _integrate_summed_peak(
         context.semantics,
     )
     peak_measured = np.where(region.measured, peak_total, 0.0)
-    peak_volume = float(np.sum(peak_measured))
+    peak_support = np.where(region.measured, peak_fraction * region.qvolume, 0.0)
+    peak_volume = float(np.sum(peak_support))
+    supported_volume = float(np.sum(peak_support * region.energy_coverage))
+    energy_coverage = supported_volume / peak_volume if peak_volume > 0 else 0.0
     geometric_peak_volume = _expected_region_weight(
         context.data,
         context.half_widths,
         context.method,
         context.coordinate_frame,
-        context.semantics,
+        "density",
         context.vectors,
         context.qmatrix,
         1.0,
     )
     coverage = (
-        min(peak_volume / geometric_peak_volume, 1.0)
+        min(supported_volume / geometric_peak_volume, 1.0)
         if geometric_peak_volume > 0
         else 0.0
     )
@@ -498,7 +510,8 @@ def _integrate_summed_peak(
         context,
         region,
         all_peaks,
-        peak_volume,
+        supported_volume,
+        nominal_peak,
     )
     intensity = raw - background
     final_weights = peak_measured if shell_weights is None else peak_measured-shell_weights
@@ -534,6 +547,7 @@ def _integrate_summed_peak(
         status=status,
         coverage=coverage,
         signal_to_noise=signal_to_noise,
+        energy_coverage=energy_coverage,
     )
 
 
@@ -573,7 +587,8 @@ def _shell_background(
     context: _BraggIntegrationContext,
     region: _LocalPeakRegion,
     all_peaks: np.ndarray,
-    peak_volume: float,
+    peak_supported_volume: float,
+    nominal_peak: np.ndarray,
 ) -> tuple[float, float, float, np.ndarray | None]:
     if context.background_mode != "shell":
         return 0.0, 0.0, 1.0, None
@@ -583,15 +598,25 @@ def _shell_background(
     inner = _region_fraction(
         context, region.edges, region.center, context.background_inner_scale
     )
-    shell_fraction = np.clip(outer - inner, 0.0, 1.0)
-    shell_before_neighbor_exclusion = shell_fraction.copy()
-    if context.exclude_neighbor_regions:
-        for neighbor in all_peaks:
-            if np.allclose(neighbor, region.center):
-                continue
-            shell_fraction *= 1.0 - _region_fraction(
-                context, region.edges, neighbor, 1.0
-            )
+    shell_before_neighbor_exclusion = np.clip(outer - inner, 0.0, 1.0)
+    neighbors = (
+        [neighbor for neighbor in all_peaks if not np.allclose(neighbor, nominal_peak)]
+        if context.exclude_neighbor_regions else []
+    )
+    full_shell_measure = None
+    if context.coordinate_frame == "hkl" and context.direct_axes and context.method == "box_sum":
+        shell_fraction, full_shell_measure = box_shell_fraction(
+            region.edges, context.components, region.center, context.half_widths,
+            context.background_inner_scale, context.background_outer_scale, neighbors,
+        )
+    else:
+        shell_fraction = sampled_region_fraction(
+            region.edges, context.vectors, region.center, context.half_widths,
+            context.ellipsoid_rotation, context.subvoxel_samples,
+            None if context.coordinate_frame == "hkl" else context.qmatrix, context.method,
+            inner_scale=context.background_inner_scale, outer_scale=context.background_outer_scale,
+            neighbors=neighbors,
+        )
     shell_total = _integration_weights(
         context.data,
         shell_fraction,
@@ -599,49 +624,34 @@ def _shell_background(
         context.semantics,
     )
     shell_measured = np.where(region.measured, shell_total, 0.0)
-    shell_volume = float(np.sum(shell_measured))
+    shell_support = np.where(region.measured, shell_fraction * region.qvolume, 0.0)
+    shell_volume = float(np.sum(shell_support))
     geometric_shell_volume = _expected_region_weight(
-        context.data,
-        context.half_widths,
-        context.method,
-        context.coordinate_frame,
-        context.semantics,
-        context.vectors,
-        context.qmatrix,
-        context.background_outer_scale,
+        context.data, context.half_widths, context.method, context.coordinate_frame,
+        "density", context.vectors, context.qmatrix, context.background_outer_scale,
     ) - _expected_region_weight(
-        context.data,
-        context.half_widths,
-        context.method,
-        context.coordinate_frame,
-        context.semantics,
-        context.vectors,
-        context.qmatrix,
-        context.background_inner_scale,
+        context.data, context.half_widths, context.method, context.coordinate_frame,
+        "density", context.vectors, context.qmatrix, context.background_inner_scale,
     )
-    excluded_neighbor_weight = float(
-        np.sum(
-            _integration_weights(
-                context.data,
-                shell_before_neighbor_exclusion - shell_fraction,
-                region.qvolume,
-                context.semantics,
-            )
-        )
-    )
-    geometric_shell_volume = max(
-        geometric_shell_volume - excluded_neighbor_weight, 0.0
-    )
+    if full_shell_measure is not None:
+        geometric_shell_volume = full_shell_measure * abs(float(np.linalg.det(context.qmatrix)))
+    else:
+        excluded_volume = float(np.sum(
+            (shell_before_neighbor_exclusion - shell_fraction) * region.qvolume
+        ))
+        geometric_shell_volume = max(geometric_shell_volume - excluded_volume, 0.0)
+    shell_supported_volume = float(np.sum(shell_support * region.energy_coverage))
     background_coverage = (
-        min(shell_volume / geometric_shell_volume, 1.0)
-        if geometric_shell_volume > 0
-        else 0.0
+        min(shell_supported_volume / geometric_shell_volume, 1.0)
+        if geometric_shell_volume > 0 else 0.0
     )
     if shell_volume <= 0:
         return 0.0, 0.0, background_coverage, None
     shell_sum = float(np.sum(np.where(shell_measured != 0, region.data.signal * shell_measured, 0)))
     shell_var = _linear_region_variance(region.data, shell_measured)
-    ratio = peak_volume / shell_volume
+    # A flat local Q×E background is scaled only to the peak support actually
+    # measured; its signal is never extended into missing energy intervals.
+    ratio = peak_supported_volume / shell_supported_volume if shell_supported_volume > 0 else 0.0
     return shell_sum * ratio, shell_var * ratio**2, background_coverage, shell_measured*ratio
 
 
@@ -732,6 +742,7 @@ def _build_bragg_result(
     )
     if gaussian_fit:
         names = (*names, "FitWindowPeak")
+    names = (*names, "EnergyCoverage")
     values = np.asarray(rows, dtype=float).reshape(-1, len(names))
     columns = {name: values[:, index] for index, name in enumerate(names)}
     accepted_count = int(np.count_nonzero(columns["Accepted"]))
@@ -766,6 +777,9 @@ def _bragg_result_metadata(
         "analysis_kind": "bragg_peak_integration",
         "uncertainty_dependence": "tracked_sources" if context.data.source_dependencies is not None else "assumed_independent",
         "cross_reflection_covariance": "not_retained; source replay required" if context.data.source_dependencies is not None else "not_declared",
+        "elastic_energy_window_meV": context.data.metadata.get("elastic_energy_window_meV"),
+        "coverage_definition": "measured_fraction_of_requested_momentum_and_energy_region",
+        "energy_coverage_definition": "physical_volume_weighted_energy_support_in_measured_peak_region",
         "method": context.method,
         "coordinate_frame": context.coordinate_frame,
         "background_mode": context.background_mode,
@@ -871,11 +885,7 @@ def _bragg_rejection_status(
 
 
 def _box_fraction(edges, components, center, half):
-    factors = []
-    for axis_edges, component in zip(edges, components, strict=True):
-        overlap = np.maximum(0.0, np.minimum(axis_edges[1:], center[component] + half[component]) - np.maximum(axis_edges[:-1], center[component] - half[component]))
-        factors.append(overlap / np.diff(axis_edges))
-    return factors[0][:, None, None] * factors[1][None, :, None] * factors[2][None, None, :]
+    return box_region_fraction(edges, components, center, half)
 
 
 def _integration_weights(data, fraction, qvolume, semantics):
@@ -921,26 +931,8 @@ def _expected_region_weight(
 
 
 def _ellipsoid_fraction(edges, components, center, semiaxes, rotation, samples):
-    if samples < 1 or samples % 2 != 1:
-        raise ValueError("subvoxel_samples must be a positive odd integer")
-    rotation = np.asarray(rotation, dtype=float)
-    if rotation.shape != (3, 3) or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-7):
-        raise ValueError("ellipsoid_rotation must be an orthonormal 3x3 matrix")
-    coordinates = []
-    offsets = (np.arange(samples) + 0.5) / samples
-    for axis_edges in edges:
-        coordinates.append(axis_edges[:-1, None] + np.diff(axis_edges)[:, None] * offsets)
-    fraction = np.zeros(tuple(len(edge) - 1 for edge in edges), dtype=float)
-    for i in range(samples):
-        for j in range(samples):
-            for k in range(samples):
-                physical = np.zeros((*fraction.shape, 3), dtype=float)
-                physical[..., components[0]] = coordinates[0][:, i, None, None]
-                physical[..., components[1]] = coordinates[1][None, :, j, None]
-                physical[..., components[2]] = coordinates[2][None, None, :, k]
-                normalized = (physical - center) @ rotation / semiaxes
-                fraction += np.sum(normalized**2, axis=-1) <= 1.0
-    return fraction / samples**3
+    vectors = np.eye(3)[list(components)]
+    return sampled_region_fraction(edges, vectors, center, semiaxes, rotation, samples, None, "ellipsoid_sum")
 
 
 def _fit_gaussian(
@@ -955,6 +947,7 @@ def _fit_gaussian(
     max_nfev,
     coordinate_frame,
     background_mode,
+    energy_coverage=None,
 ):
     from scipy.optimize import least_squares
 
@@ -968,37 +961,31 @@ def _fit_gaussian(
     qmatrix = rlu_to_q_matrix(data.metadata)
     fit_xyz = xyz if coordinate_frame == "hkl" else xyz @ qmatrix.T
     fit_center = center if coordinate_frame == "hkl" else center @ qmatrix.T
-    region = np.all(np.abs(fit_xyz - fit_center) <= 3.0 * initial_sigma, axis=-1)
-    valid = region & measured & np.isfinite(data.signal) & np.isfinite(data.errors) & (data.errors > 0)
-    expected_points = _expected_region_weight(
-        data,
-        initial_sigma,
-        "box_sum",
-        coordinate_frame,
-        "bin_integral",
-        vectors,
-        qmatrix,
-        3.0,
+    components, direct_axes = _direct_hkl_axes(vectors)
+    fraction = (
+        _box_fraction(edges, components, center, 3.0 * initial_sigma)
+        if coordinate_frame == "hkl" and direct_axes else
+        sampled_region_fraction(edges, vectors, center, 3.0 * initial_sigma, np.eye(3), 3,
+            None if coordinate_frame == "hkl" else qmatrix, "box_sum")
     )
-    coverage = min(float(np.count_nonzero(valid) / max(expected_points, 1.0)), 1.0)
-    if np.count_nonzero(valid) < 8:
+    valid = (fraction > 0) & measured & np.isfinite(data.signal) & np.isfinite(data.errors) & (data.errors > 0)
+    expected_volume = _expected_region_weight(
+        data, initial_sigma, "box_sum", coordinate_frame, "density", vectors, qmatrix, 3.0,
+    )
+    support = np.where(valid, fraction * qvolume, 0.0)
+    energy_support = np.ones(data.shape) if energy_coverage is None else energy_coverage
+    measured_volume = float(np.sum(support))
+    supported_volume = float(np.sum(support * energy_support))
+    coverage = min(supported_volume / expected_volume, 1.0) if expected_volume > 0 else 0.0
+    energy_coverage_value = supported_volume / measured_volume if measured_volume > 0 else 0.0
+    if background_mode not in {"constant", "linear"}:
+        raise ValueError("gaussian_background must be 'constant' or 'linear'")
+    parameter_count = 8 if background_mode == "constant" else 11
+    incomplete_energy = np.any(valid & (energy_support < 1.0 - 1e-12))
+    if np.count_nonzero(valid) <= parameter_count or incomplete_energy:
         return (
-            *center,
-            np.nan,
-            np.nan,
-            np.nan,
-            np.nan,
-            np.nan,
-            coverage,
-            1.0,
-            2.0,
-            np.nan,
-            np.nan,
-            np.nan,
-            np.nan,
-            np.nan,
-            np.nan,
-            np.nan,
+            *center, np.nan, np.nan, np.nan, np.nan, np.nan, coverage, 1.0, 2.0,
+            np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, energy_coverage_value,
         )
     x = fit_xyz[valid]
     y = data.signal[valid]
@@ -1019,16 +1006,33 @@ def _fit_gaussian(
         model = local_background + amplitude * np.exp(-0.5 * np.sum(((x - fitted_center) / np.exp(log_sigma)) ** 2, axis=1))
         return (model - y) / error
 
+    def jacobian(p):
+        # Analytic derivatives keep unobserved directions exactly zero rather
+        # than promoting finite-difference roundoff into an apparent rank.
+        delta = x - p[1:4]
+        inverse_sigma_squared = np.exp(-2.0 * p[4:7])
+        basis = np.exp(-0.5 * np.sum(delta**2 * inverse_sigma_squared, axis=1))
+        peak = p[0] * basis
+        derivatives = np.empty((len(x), len(p)))
+        derivatives[:, 0] = basis
+        derivatives[:, 1:4] = peak[:, None] * delta * inverse_sigma_squared
+        derivatives[:, 4:7] = peak[:, None] * delta**2 * inverse_sigma_squared
+        derivatives[:, 7] = 1.0
+        if background_mode == "linear":
+            derivatives[:, 1:4] -= p[8:11]
+            derivatives[:, 8:11] = delta
+        return derivatives / error[:, None]
+
     lower = np.r_[0.0, fit_center - 2 * initial_sigma, np.log(initial_sigma / 10), -np.inf]
     upper = np.r_[np.inf, fit_center + 2 * initial_sigma, np.log(initial_sigma * 10), np.inf]
     if background_mode == "linear":
         lower = np.r_[lower, [-np.inf] * 3]
         upper = np.r_[upper, [np.inf] * 3]
-    fit = least_squares(residual, p0, bounds=(lower, upper), max_nfev=int(max_nfev))
+    fit = least_squares(residual, p0, jac=jacobian, bounds=(lower, upper), max_nfev=int(max_nfev))
     amplitude = fit.x[0]
     sigma = np.exp(fit.x[4:7])
-    jacobian = abs(float(np.linalg.det(qmatrix))) if coordinate_frame == "hkl" else 1.0
-    gaussian_volume = (2 * np.pi) ** 1.5 * float(np.prod(sigma)) * jacobian
+    hkl_q_jacobian = abs(float(np.linalg.det(qmatrix))) if coordinate_frame == "hkl" else 1.0
+    gaussian_volume = (2 * np.pi) ** 1.5 * float(np.prod(sigma)) * hkl_q_jacobian
     intensity = amplitude * gaussian_volume
     fitted_center_xyz = fit.x[1:4]
     fitted_background = np.full(y.shape, fit.x[7], dtype=float)
@@ -1045,14 +1049,18 @@ def _fit_gaussian(
     fit_window_raw = float(np.sum(y * window_volume))
     fit_window_background = float(np.sum(fitted_background * window_volume))
     fit_window_peak = float(np.sum(fitted_peak * window_volume))
-    covariance = np.linalg.pinv(fit.jac.T @ fit.jac)
+    covariance = _identifiable_fit_covariance(fit.jac)
     dof = max(fit.fun.size - fit.x.size, 1)
     reduced_chi_squared = float(np.sum(fit.fun**2) / dof)
     gradient = np.zeros(fit.x.size)
     gradient[0] = gaussian_volume
     gradient[4:7] = intensity
-    uncertainty = float(np.sqrt(max(gradient @ covariance @ gradient, 0.0)))
-    status = 0.0 if fit.success and coverage >= minimum_coverage else 3.0
+    identifiable = covariance is not None
+    uncertainty = (
+        float(np.sqrt(max(gradient @ covariance @ gradient, 0.0)))
+        if identifiable else np.nan
+    )
+    status = 0.0 if fit.success and identifiable else 3.0
     fitted_center = fit.x[1:4] if coordinate_frame == "hkl" else fit.x[1:4] @ np.linalg.inv(qmatrix).T
     return (
         *fitted_center,
@@ -1069,7 +1077,38 @@ def _fit_gaussian(
         *sigma,
         reduced_chi_squared,
         fit_window_peak,
+        energy_coverage_value,
     )
+
+
+def _identifiable_fit_covariance(jacobian):
+    """Absolute-error covariance only for a numerically identifiable fit.
+
+    Column normalization avoids declaring a fit singular merely because its
+    amplitude and coordinate parameters use different physical units.
+    """
+    if not np.all(np.isfinite(jacobian)):
+        return None
+    norms = np.linalg.norm(jacobian, axis=0)
+    if np.any(~np.isfinite(norms)) or np.any(norms == 0) or jacobian.shape[0] <= jacobian.shape[1]:
+        return None
+    _, singular_values, vt = np.linalg.svd(jacobian / norms, full_matrices=False)
+    if singular_values[-1] <= singular_values[0] * 1e-8:
+        return None
+    inverse = vt.T / singular_values
+    normalized_covariance = inverse @ inverse.T
+    return normalized_covariance / norms[:, None] / norms[None, :]
+
+
+def _energy_support(data):
+    """Return retained elastic support without synthesizing missing signal."""
+    coverage = data.metadata.get("energy_coverage")
+    if coverage is None:
+        return np.ones(data.shape)
+    coverage = np.asarray(coverage, dtype=float)
+    if coverage.shape != data.shape or np.any(~np.isfinite(coverage)) or np.any((coverage < 0) | (coverage > 1 + 1e-12)):
+        raise ValueError("energy_coverage must match the histogram and contain fractions in [0, 1]")
+    return np.clip(coverage, 0.0, 1.0)
 
 
 def _elastic_reduce(data: MDHistoData, lower: float, upper: float) -> MDHistoData:
@@ -1185,33 +1224,7 @@ def _centroid_center(data, edges, vectors, center, radius, measured, transform=N
 
 
 def _sample_region_fraction(edges, vectors, center, widths, rotation, samples, qmatrix, method):
-    if samples < 1 or samples % 2 != 1:
-        raise ValueError("subvoxel_samples must be a positive odd integer")
-    rotation = np.asarray(rotation, dtype=float)
-    if rotation.shape != (3, 3) or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-7):
-        raise ValueError("ellipsoid_rotation must be an orthonormal 3x3 matrix")
-    coordinates = []
-    offsets = (np.arange(samples) + 0.5) / samples
-    for axis_edges in edges:
-        coordinates.append(axis_edges[:-1, None] + np.diff(axis_edges)[:, None] * offsets)
-    shape = tuple(len(edge) - 1 for edge in edges)
-    fraction = np.zeros(shape, dtype=float)
-    for i in range(samples):
-        for j in range(samples):
-            for k in range(samples):
-                hkl = (
-                    coordinates[0][:, i, None, None, None] * vectors[0]
-                    + coordinates[1][None, :, j, None, None] * vectors[1]
-                    + coordinates[2][None, None, :, k, None] * vectors[2]
-                )
-                delta_hkl = hkl - center
-                delta = delta_hkl if qmatrix is None else delta_hkl @ qmatrix.T
-                if method == "box_sum":
-                    inside = np.all(np.abs(delta) <= widths, axis=-1)
-                else:
-                    inside = np.sum(((delta @ rotation) / widths) ** 2, axis=-1) <= 1.0
-                fraction += inside
-    return fraction / samples**3
+    return sampled_region_fraction(edges, vectors, center, widths, rotation, samples, qmatrix, method)
 
 
 def _region_slices(edges, vectors, center, widths, rotation, scale, coordinate_frame, qmatrix, method):

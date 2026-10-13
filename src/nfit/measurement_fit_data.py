@@ -8,6 +8,7 @@ import numpy as np
 from .dataset import PointData4D
 from .mdhisto import MDHistoData, mdhisto_measured_bins
 from .project_coordinates import _mdhisto_coordinate_grids
+from .sample_temperature import data_temperature
 from .source_lineage import SOURCE_LINEAGE_KEY
 
 
@@ -80,10 +81,7 @@ def prepare_histogram_fit_points(data: MDHistoData) -> PointData4D:
         metadata["quantity_type"] = metadata["signal_quantity_type"]
     if "signal_unit" in metadata:
         metadata["unit"] = metadata["signal_unit"]
-    temperature = data.metadata.get("temperature")
-    from .metadata_dimensions import metadata_temperature_grid
-
-    temperatures = metadata_temperature_grid(data)
+    temperature = data_temperature(data)
     powder_q = coords.get("q_modulus")
     powder_only = powder_q is not None and not any(
         axis.role in {"h", "k", "l"} for axis in data.axes
@@ -130,8 +128,9 @@ def prepare_histogram_fit_points(data: MDHistoData) -> PointData4D:
         sigma=np.asarray(data.errors, dtype=float).ravel(),
         mask=keep.ravel(),
         temperature=(
-            np.broadcast_to(temperatures, data.shape).ravel() if temperatures is not None
-            else float(temperature) if temperature is not None else None
+            np.broadcast_to(temperature, data.shape).ravel()
+            if isinstance(temperature, np.ndarray)
+            else temperature
         ),
         metadata=metadata,
         normalization_denominator=payload.get(NORMALIZATION_DENOMINATOR),

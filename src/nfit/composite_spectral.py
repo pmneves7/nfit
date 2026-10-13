@@ -11,6 +11,8 @@ from .mapped_archive import array_storage_nbytes
 from .mdhisto import MDHistoData
 from .metadata_dimensions import metadata_temperature_grid
 from .resource_budget import reserve_memory
+from .sample_temperature import data_temperature, dataset_temperature
+from .scientific_compatibility import validate_spectral_source_settings
 from .spectral_channels import (
     SPECTRAL_CHANNEL_CONFIG_KEY,
     normalized_spectral_channel_config,
@@ -31,7 +33,7 @@ def cached_composite_spectral_view(
     from .source_lineage import source_lineage_metadata, with_source_lineage
 
     physical_keys = (
-        SPECTRAL_CHANNEL_CONFIG_KEY, "temperature", "incident_energy_meV",
+        SPECTRAL_CHANNEL_CONFIG_KEY, "temperature", "temperature_K", "incident_energy_meV",
         "incident_energy", "Ei", "ei", "final_energy_meV", "final_energy", "Ef", "ef",
     )
     sources = list(datasets)
@@ -70,7 +72,7 @@ def common_source_value(datasets, names, *, point_temperature=False):
     for dataset in datasets:
         value = None
         if point_temperature:
-            value = getattr(dataset.data, "temperature", None)
+            value = dataset_temperature(dataset)
         if value is None:
             for source in (dataset.parameters, dataset.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY, {}), dataset.metadata,
                            getattr(dataset.data, "metadata", {})):
@@ -110,6 +112,24 @@ def composite_spectral_config(config, datasets):
     return result
 
 
+def composite_temperature(data, config, datasets):
+    """Resolve a composite's temperature axis, nominal setting, or common source T."""
+    temperatures = metadata_temperature_grid(data) if isinstance(data, MDHistoData) else None
+    if temperatures is not None:
+        return temperatures
+    nominal = config.get(SPECTRAL_CHANNEL_CONFIG_KEY, {}).get("temperature_K")
+    if nominal not in (None, ""):
+        nominal = float(nominal)
+        if not np.isfinite(nominal) or nominal <= 0:
+            raise ValueError("Composite temperature must be positive and finite (K).")
+        return nominal
+    # Converted data carry the temperature actually used in their observable.
+    observable = getattr(data, "metadata", {}).get("spectral_observable", {})
+    if observable.get("temperature_K") is not None:
+        return data_temperature(data)
+    return common_source_value(datasets, ("temperature", "temperature_K"), point_temperature=True)
+
+
 def apply_composite_spectral_channels(data, config, datasets):
     """Convert after background subtraction, using a K axis or a common T."""
     if not isinstance(data, MDHistoData) or SPECTRAL_CHANNEL_CONFIG_KEY not in config:
@@ -117,20 +137,14 @@ def apply_composite_spectral_channels(data, config, datasets):
     convention = composite_spectral_config(config, datasets)
     if not convention["enabled"]:
         return data
-    temperatures = metadata_temperature_grid(data)
+    validate_spectral_source_settings(data, convention)
+    temperatures = composite_temperature(data, config, datasets)
     if temperatures is None:
-        temperatures = convention.get("temperature_K")
-        if temperatures in (None, ""):
-            temperatures = common_source_value(datasets, ("temperature",), point_temperature=True)
-        if temperatures is None:
-            raise ValueError(
-                "Composite susceptibility conversion requires a common source temperature. "
-                "For a temperature series, add a temperature metadata dimension in K; "
-                "for one nominal temperature, set the composite temperature explicitly."
-            )
-        temperatures = float(temperatures)
-        if not np.isfinite(temperatures) or temperatures <= 0:
-            raise ValueError("Composite temperature must be positive and finite (K).")
+        raise ValueError(
+            "Composite susceptibility conversion requires a common source temperature. "
+            "For a temperature series, add a temperature metadata dimension in K; "
+            "for one nominal temperature, set the composite temperature explicitly."
+        )
     result = with_paired_spectral_channels(data, convention, temperature_K=temperatures)
     if result.metadata.get("spectral_channel_error"):
         raise ValueError(result.metadata["spectral_channel_error"])

@@ -431,6 +431,17 @@ their compatibility provenance. `estimate_measurement_region(...)` evaluates a
 stated linear sum, with optional signed or volume coefficients and source factors.
 It is a sum/integral target, not the box-profile mean.
 
+Spectral conversion multiplies signal, standard errors, retained additive
+statistics, represented source sensitivities, and background channels consistently.
+A deterministic background offset changes a count target and retires its raw
+count likelihood. Unit and normalization declarations must agree before source
+pooling; conversion does not infer missing calibration covariance. Bragg shell
+subtraction uses physical volume independently of density versus bin-integral
+storage. Elastic energy support contributes to peak and shell coverage, and an
+unidentifiable Gaussian fit reports unavailable uncertainty rather than a finite
+pseudoinverse error. Supplied Gaussian errors remain absolute, without a
+reduced-chi-squared rescaling.
+
 Current DGS caches do not retain the source model needed to reconstruct shared
 vanadium/monitor calibration uncertainty. Bragg tables record individual reflection
 variances but flag unretained covariance between reflections; fitting such a table

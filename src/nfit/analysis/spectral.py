@@ -6,13 +6,8 @@ import numpy as np
 
 from ..cross_section import (
     KB_MEV_PER_K,
-    MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ,
     MILLIBARN_PER_BARN,
-    bose_denominator,
-    chipp_from_cross_section,
-    cross_section_from_chipp,
     kf_over_ki,
-    magnetic_moment_factor,
 )
 from ..dataset import PointListData
 from ..mdhisto import MDHistoChannel, MDHistoData
@@ -62,7 +57,7 @@ def convert_spectral_representation(
     *,
     convention: SpectralConvention,
     target_representation: str,
-    temperature_K: float,
+    temperature_K: float | np.ndarray,
     scale: float = 1.0,
     background: float | np.ndarray = 0.0,
     form_factor_sq: float | np.ndarray = 1.0,
@@ -80,6 +75,10 @@ def convert_spectral_representation(
         raise ValueError("target_representation must be cross_section or chi_double_prime")
     if not np.isfinite(scale) or scale <= 0.0:
         raise ValueError("scale must be finite and positive")
+    if convention.normalization_basis == "unknown":
+        raise ValueError("absolute INS conversion requires a known normalization basis")
+    if convention.representation != "measured_intensity":
+        convention.require_absolute("absolute INS conversion")
     energy_dims = [
         index
         for index, axis in enumerate(data.axes)
@@ -92,170 +91,104 @@ def convert_spectral_representation(
     shape = [1] * data.signal.ndim
     shape[dim] = centers.size
     energy = centers.reshape(shape)
-    values = np.asarray(data.signal, dtype=float)
-    errors = np.asarray(data.errors, dtype=float)
-    ff = np.asarray(form_factor_sq, dtype=float)
-    pol = np.asarray(polarization, dtype=float)
-    kinematic = _kinematic_factor(energy, convention)
-
-    if convention.representation == "measured_intensity":
-        cross_section = (values - np.asarray(background, dtype=float)) / scale
-        cross_error = errors / abs(scale)
-    elif convention.representation == "cross_section":
-        cross_section = _cross_section_to_barn(values, convention.unit)
-        cross_error = _cross_section_to_barn(errors, convention.unit)
-    elif convention.representation == "s_qw":
-        response_factor = magnetic_moment_factor(
-            convention.moment_unit,
-            convention.g_factor,
-        )
-        forward_ff = ff if convention.form_factor_state == "removed" else 1.0
-        forward_pol = pol if convention.polarization_state == "removed" else 1.0
-        factor = (
-            np.asarray(kinematic, dtype=float)
-            * MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ
-            * forward_ff
-            * forward_pol
-            * response_factor
-        )
-        cross_section = factor * values
-        cross_error = np.abs(factor) * errors
-    elif convention.representation == "chi_double_prime":
-        forward_ff = ff if convention.form_factor_state == "removed" else 1.0
-        forward_pol = pol if convention.polarization_state == "removed" else 1.0
-        cross_section = cross_section_from_chipp(
-            values,
-            energy,
-            temperature_K,
-            form_factor_sq=forward_ff,
-            polarization=forward_pol,
-            kf_ki=kinematic,
-            include_bose=convention.bose_state == "removed",
-            moment_unit=convention.moment_unit,
-            g_factor=convention.g_factor,
-        )
-        cross_error = np.abs(
-            cross_section_from_chipp(
-                errors,
-                energy,
-                temperature_K,
-                form_factor_sq=forward_ff,
-                polarization=forward_pol,
-                kf_ki=kinematic,
-                include_bose=convention.bose_state == "removed",
-                moment_unit=convention.moment_unit,
-                g_factor=convention.g_factor,
-            )
-        )
-    else:  # guarded by SpectralConvention, retained for defensive clarity.
-        raise ValueError(f"unsupported representation {convention.representation!r}")
-
-    if target_representation == "cross_section":
-        signal = cross_section
-        uncertainty = cross_error
-        unit = "barn/(sr meV)"
-        target = SpectralConvention(
-            representation="cross_section",
-            unit=unit,
-            normalization_basis=convention.normalization_basis,
-            magnetic_ions_per_basis=convention.magnetic_ions_per_basis,
-            moment_unit=convention.moment_unit,
-            g_factor=convention.g_factor,
-            form_factor_state="included",
-            polarization_state="included",
-            bose_state="included",
-            kf_ki_state=convention.kf_ki_state,
-            absolute_scale=True,
-            incident_energy_meV=convention.incident_energy_meV,
-            final_energy_meV=convention.final_energy_meV,
-        )
-        quantity_type = "differential_cross_section"
-    else:
-        ff_inverse = ff if convention.form_factor_state == "included" else 1.0
-        pol_inverse = pol if convention.polarization_state == "included" else 1.0
-        signal = chipp_from_cross_section(
-            cross_section,
-            energy,
-            temperature_K,
-            form_factor_sq=ff_inverse,
-            polarization=pol_inverse,
-            kf_ki=kinematic,
-            include_bose=convention.bose_state == "included",
-            moment_unit=convention.moment_unit,
-            g_factor=convention.g_factor,
-        )
-        uncertainty = np.abs(
-            chipp_from_cross_section(
-                cross_error,
-                energy,
-                temperature_K,
-                form_factor_sq=ff_inverse,
-                polarization=pol_inverse,
-                kf_ki=kinematic,
-                include_bose=convention.bose_state == "included",
-                moment_unit=convention.moment_unit,
-                g_factor=convention.g_factor,
-            )
-        )
-        unit = (
-            "mu_B^2/meV"
-            if convention.moment_unit == "mu_B_squared"
-            else "spin^2/meV"
-        )
-        target = SpectralConvention(
-            representation="chi_double_prime",
-            unit=unit,
-            normalization_basis=convention.normalization_basis,
-            magnetic_ions_per_basis=convention.magnetic_ions_per_basis,
-            moment_unit=convention.moment_unit,
-            g_factor=convention.g_factor,
-            form_factor_state="removed",
-            polarization_state="removed",
-            bose_state="removed",
-            kf_ki_state=convention.kf_ki_state,
-            absolute_scale=True,
-            incident_energy_meV=convention.incident_energy_meV,
-            final_energy_meV=convention.final_energy_meV,
-        )
-        quantity_type = "dynamic_susceptibility"
-
-    metadata = dict(data.metadata)
-    metadata.update(
-        {
-            "signal_quantity_type": quantity_type,
-            "signal_unit": unit,
-            "spectral_convention": target.to_dict(),
-            "spectral_conversion": {
-                "source_convention": convention.to_dict(),
-                "temperature_K": float(temperature_K),
-                "scale_signal_per_barn_sr_meV": float(scale),
-            },
-        }
+    from ..spectral_conversion import (
+        convert_histogram_spectral_values,
+        spectral_conversion_factor,
     )
-    return MDHistoData(
-        axes=data.axes,
-        signal=np.asarray(signal, dtype=float),
-        errors=np.asarray(uncertainty, dtype=float),
-        mask=np.asarray(data.mask, dtype=bool),
-        num_events=np.asarray(data.num_events, dtype=float),
-        coordinate_system=data.coordinate_system,
-        visual_normalization=data.visual_normalization,
-        metadata=metadata,
-        auxiliary_channels=dict(data.auxiliary_channels),
+
+    source_scale = (
+        1.0 / scale if convention.representation == "measured_intensity"
+        else float(_cross_section_to_barn(np.asarray(1.0), convention.unit))
+        if convention.representation == "cross_section" else 1.0
+    )
+    factor = spectral_conversion_factor(
+        energy, temperature_K,
+        source_representation=convention.representation,
+        target_representation=target_representation,
+        source_scale=source_scale,
+        form_factor_sq=form_factor_sq, polarization=polarization,
+        kf_ki=_kinematic_factor(energy, convention),
+        form_factor_state=convention.form_factor_state,
+        polarization_state=convention.polarization_state,
+        bose_state=convention.bose_state,
+        moment_unit=convention.moment_unit, g_factor=convention.g_factor,
+    )
+    unit = (
+        "barn/(sr meV)" if target_representation == "cross_section"
+        else "mu_B^2/meV" if convention.moment_unit == "mu_B_squared"
+        else "spin^2/meV"
+    )
+    target = SpectralConvention(
+        representation=target_representation, unit=unit,
+        normalization_basis=convention.normalization_basis,
+        magnetic_ions_per_basis=convention.magnetic_ions_per_basis,
+        moment_unit=convention.moment_unit, g_factor=convention.g_factor,
+        form_factor_state="included" if target_representation == "cross_section" else "removed",
+        polarization_state="included" if target_representation == "cross_section" else "removed",
+        bose_state="included" if target_representation == "cross_section" else "removed",
+        kf_ki_state=convention.kf_ki_state, absolute_scale=True,
+        incident_energy_meV=convention.incident_energy_meV,
+        final_energy_meV=convention.final_energy_meV,
+    )
+    quantity_type = (
+        "differential_cross_section" if target_representation == "cross_section"
+        else "dynamic_susceptibility"
+    )
+    temperature = np.asarray(temperature_K, dtype=float)
+    temperature_record = float(temperature) if temperature.ndim == 0 else temperature.tolist()
+    pol = np.asarray(polarization, dtype=float)
+    pol_record = float(pol) if pol.ndim == 0 else pol.tolist()
+    metadata = dict(data.metadata)
+    metadata.pop("combined_scientific_identity", None)
+    metadata.update(
+        signal_quantity_type=quantity_type, signal_unit=unit,
+        signal_label=("Scattering cross section" if target_representation == "cross_section" else "Dynamical susceptibility χ″"),
+        temperature=temperature_record,
+        spectral_convention=target.to_dict(),
+        spectral_observable={
+            **target.to_dict(),
+            "source_representation": target_representation,
+            "source_unit": unit,
+            "fit_representation": target_representation,
+            "polarization_mode": "custom_scalar" if pol.ndim == 0 else "custom_array",
+            "polarization_scalar": pol_record,
+            "quantity_type": quantity_type,
+            "temperature_K": temperature_record,
+        },
+        spectral_conversion={
+            "source_convention": convention.to_dict(),
+            "temperature_K": temperature_record,
+            "scale_signal_per_barn_sr_meV": float(scale),
+        },
+    )
+    offset = 0.0
+    if convention.representation == "measured_intensity":
+        background_values = np.asarray(background, dtype=float)
+        if np.any(background_values != 0.0):
+            with np.errstate(invalid="ignore"):
+                offset = np.where(background_values == 0.0, 0.0, -background_values * factor)
+    return convert_histogram_spectral_values(
+        data, factor, offset=offset, unit=unit,
+        quantity_type=quantity_type, metadata=metadata,
     )
 
 
 def spectral_kernel(name: str, energy_meV: np.ndarray, temperature_K: float, *, power: int = 0) -> np.ndarray:
     energy = np.asarray(energy_meV, dtype=float)
-    if name == "qfi":
-        if temperature_K == 0:
-            return np.where(energy > 0, 4.0 / np.pi, 0.0)
-        return 4.0 * np.tanh(energy / (2.0 * KB_MEV_PER_K * temperature_K)) / np.pi
-    if name == "total_moment":
-        if temperature_K == 0:
-            return np.where(energy > 0, 1.0 / np.pi, np.inf)
-        x = energy / (2.0 * KB_MEV_PER_K * temperature_K)
-        return 1.0 / (np.pi * np.tanh(x))
+    if name in {"qfi", "total_moment"}:
+        temperature = np.asarray(temperature_K, dtype=float)
+        if np.any(~np.isfinite(temperature)) or np.any(temperature < 0):
+            raise ValueError("temperature_K must be finite and nonnegative")
+        energy, temperature = np.broadcast_arrays(energy, temperature)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x = energy / (2.0 * KB_MEV_PER_K * temperature)
+            if name == "qfi":
+                finite_temperature = 4.0 * np.tanh(x) / np.pi
+                zero_temperature = np.where(energy > 0, 4.0 / np.pi, 0.0)
+            else:
+                finite_temperature = 1.0 / (np.pi * np.tanh(x))
+                zero_temperature = np.where(energy > 0, 1.0 / np.pi, np.inf)
+        return np.where(temperature == 0.0, zero_temperature, finite_temperature)
     if name == "static_susceptibility":
         return 2.0 / (np.pi * energy)
     if name == "energy_moment":
@@ -307,57 +240,31 @@ def spectral_energy_reduce(
     dE = widths.reshape(shape)
     values = np.asarray(data.signal, dtype=float)
     errors = np.asarray(data.errors, dtype=float)
-    ff_correction = form_factor_sq if convention.form_factor_state == "included" else 1.0
-    polarization_correction = polarization if convention.polarization_state == "included" else 1.0
-    divisor = np.asarray(ff_correction) * np.asarray(polarization_correction)
-    correction_valid = np.isfinite(divisor) & (divisor > 1e-12)
-    safe_divisor = np.where(correction_valid, divisor, 1.0)
-    safe_ff = np.where(correction_valid, ff_correction, 1.0)
-    safe_polarization = np.where(correction_valid, polarization_correction, 1.0)
     if kernel == "weighted_integral_arbitrary_units":
         chipp, sigma = values, errors
         correction_valid = np.ones_like(values, dtype=bool)
-    elif convention.representation == "s_qw":
-        factor = np.pi * bose_denominator(E, temperature_K)
-        chipp, sigma = values * factor / safe_divisor, errors * np.abs(factor / safe_divisor)
-    elif convention.representation in {"measured_intensity", "cross_section"}:
-        if convention.representation == "measured_intensity":
-            if not np.isfinite(scale) or scale <= 0.0:
-                raise ValueError("scale must be finite and positive")
-            cross_section = values / scale
-            cross_error = errors / abs(scale)
-        else:
-            cross_section = _cross_section_to_barn(values, convention.unit)
-            cross_error = _cross_section_to_barn(errors, convention.unit)
-        kinematic = _kinematic_factor(E, convention)
-        chipp = chipp_from_cross_section(
-            cross_section,
-            E,
-            temperature_K,
-            form_factor_sq=safe_ff,
-            polarization=safe_polarization,
-            kf_ki=kinematic,
-            include_bose=convention.bose_state == "included",
-            moment_unit=convention.moment_unit,
-            g_factor=convention.g_factor,
-        )
-        sigma = np.abs(
-            chipp_from_cross_section(
-                cross_error,
-                E,
-                temperature_K,
-                form_factor_sq=safe_ff,
-                polarization=safe_polarization,
-                kf_ki=kinematic,
-                include_bose=convention.bose_state == "included",
-                moment_unit=convention.moment_unit,
-                g_factor=convention.g_factor,
-            )
-        )
-    elif convention.representation == "chi_double_prime":
-        chipp, sigma = values / safe_divisor, errors / safe_divisor
     else:
-        raise ValueError(f"unsupported representation {convention.representation!r}")
+        from ..spectral_conversion import spectral_conversion_factor
+
+        source_scale = (
+            1.0 / scale if convention.representation == "measured_intensity"
+            else float(_cross_section_to_barn(np.asarray(1.0), convention.unit))
+            if convention.representation == "cross_section" else 1.0
+        )
+        if not np.isfinite(source_scale) or source_scale <= 0.0:
+            raise ValueError("scale must be finite and positive")
+        factor = spectral_conversion_factor(
+            E, temperature_K, source_representation=convention.representation,
+            target_representation="chi_double_prime", source_scale=source_scale,
+            form_factor_sq=form_factor_sq, polarization=polarization,
+            kf_ki=_kinematic_factor(E, convention),
+            form_factor_state=convention.form_factor_state,
+            polarization_state=convention.polarization_state,
+            bose_state=convention.bose_state,
+            moment_unit=convention.moment_unit, g_factor=convention.g_factor,
+        )
+        chipp, sigma = values * factor, errors * np.abs(factor)
+        correction_valid = np.isfinite(factor)
     weight = spectral_kernel(kernel, E, temperature_K, power=power)
     valid = measured_mask(data) & correction_valid & np.isfinite(chipp) & np.isfinite(sigma) & np.isfinite(weight) & (dE > 0)
     contribution = np.where(valid, weight * chipp * dE, 0.0)
@@ -389,7 +296,7 @@ def spectral_energy_reduce(
     )
     masked = coverage < minimum_energy_coverage
     remaining_axes = tuple(axis for i, axis in enumerate(data.axes) if i != dim)
-    metadata = {**data.metadata, "analysis": {"kernel": kernel, "temperature_K": temperature_K, "energy_window_meV": [energy_min_meV, energy_max_meV], "convention": convention.to_dict(), "invalid_correction_bins": int(np.size(correction_valid) - np.count_nonzero(correction_valid)), "normalized_qfi_formula": "f_Q / (12 S^2)" if normalized is not None else None, "spin_S": spin_S}, "energy_coverage": coverage.tolist() if np.ndim(coverage) else float(coverage)}
+    metadata = {**data.metadata, "analysis": {"kernel": kernel, "temperature_K": np.asarray(temperature_K).tolist(), "energy_window_meV": [energy_min_meV, energy_max_meV], "convention": convention.to_dict(), "invalid_correction_bins": int(np.size(correction_valid) - np.count_nonzero(correction_valid)), "normalized_qfi_formula": "f_Q / (12 S^2)" if normalized is not None else None, "spin_S": spin_S}, "energy_coverage": coverage.tolist() if np.ndim(coverage) else float(coverage)}
     label = {"qfi": "Quantum Fisher information", "total_moment": "Total moment"}.get(kernel, kernel.replace("_", " ").title())
     if progress_callback is not None:
         progress_callback({"stage": "spectral_energy_reduction", "completed": 1, "total": 1})

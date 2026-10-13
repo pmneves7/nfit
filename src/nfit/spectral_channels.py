@@ -9,11 +9,7 @@ import numpy as np
 from .analysis.coordinates import q_modulus_for_spectral
 from .cross_section import (
     MILLIBARN_PER_BARN,
-    bose_denominator,
-    chipp_from_cross_section,
-    cross_section_from_chipp,
     kf_over_ki,
-    magnetic_moment_factor,
 )
 from .form_factors import form_factor_sq
 from .mdhisto import MDHistoChannel, MDHistoData
@@ -104,6 +100,8 @@ def spectral_polarization_factor(config: dict[str, Any]) -> float:
     """Return the scalar polarization correction declared by a spectral channel."""
 
     mode = str(config.get("polarization_mode", "isotropic_single_component"))
+    if mode == "custom_array":
+        raise ValueError("Pointwise array polarization is not supported for model fitting")
     factors = {
         "already_corrected": 1.0,
         "isotropic_single_component": 2.0,
@@ -185,13 +183,14 @@ def _arbitrary_cross_from_chipp(
     moment_unit: str,
     g_factor: float | None,
 ) -> np.ndarray:
-    return (
-        np.asarray(kf_ki, dtype=float)
-        * np.asarray(form_factor_sq_values, dtype=float)
-        * polarization
-        * magnetic_moment_factor(moment_unit, g_factor)
-        * np.asarray(chipp, dtype=float)
-        / bose_denominator(energy, temperature_K)
+    from .spectral_conversion import spectral_conversion_factor
+
+    return np.asarray(chipp, dtype=float) * spectral_conversion_factor(
+        energy, temperature_K, source_representation="chi_double_prime",
+        target_representation="cross_section", form_factor_sq=form_factor_sq_values,
+        polarization=polarization, kf_ki=kf_ki, moment_unit=moment_unit,
+        g_factor=g_factor, form_factor_state="removed", polarization_state="removed",
+        bose_state="removed", absolute=False,
     )
 
 
@@ -206,18 +205,13 @@ def _arbitrary_chipp_from_cross(
     moment_unit: str,
     g_factor: float | None,
 ) -> np.ndarray:
-    divisor = (
-        np.asarray(kf_ki, dtype=float)
-        * np.asarray(form_factor_sq_values, dtype=float)
-        * polarization
-        * magnetic_moment_factor(moment_unit, g_factor)
-    )
-    if np.any(~np.isfinite(divisor)) or np.any(divisor <= 0.0):
-        raise ValueError("form-factor, polarization, and kinematic corrections must be positive")
-    return (
-        np.asarray(cross_section, dtype=float)
-        * bose_denominator(energy, temperature_K)
-        / divisor
+    from .spectral_conversion import spectral_conversion_factor
+
+    return np.asarray(cross_section, dtype=float) * spectral_conversion_factor(
+        energy, temperature_K, source_representation="cross_section",
+        target_representation="chi_double_prime", form_factor_sq=form_factor_sq_values,
+        polarization=polarization, kf_ki=kf_ki, moment_unit=moment_unit,
+        g_factor=g_factor, absolute=False,
     )
 
 
@@ -268,132 +262,40 @@ def with_paired_spectral_channels(
     moment_unit = str(convention["moment_unit"])
     g_factor = float(convention["g_factor"]) if convention.get("g_factor") is not None else None
 
-    cross: np.ndarray | None = None
-    cross_error: np.ndarray | None = None
-    chipp: np.ndarray | None = None
-    chipp_error: np.ndarray | None = None
-    if source_representation == "cross_section":
-        if source_unit.startswith("mbarn/sr/meV"):
-            cross_barn = values / MILLIBARN_PER_BARN
-            cross_error_barn = errors / MILLIBARN_PER_BARN
-        elif source_unit.startswith("barn/sr/meV"):
-            cross_barn = values
-            cross_error_barn = errors
-        elif calibration > 0.0:
-            cross_barn = values / calibration / MILLIBARN_PER_BARN
-            cross_error_barn = errors / calibration / MILLIBARN_PER_BARN
+    from .spectral_conversion import spectral_conversion_factor
+
+    cross_scale = (
+        MILLIBARN_PER_BARN if source_unit.startswith("barn/sr/meV")
+        else 1.0 if source_unit.startswith("mbarn/sr/meV")
+        else 1.0 / calibration if calibration > 0.0 else 1.0
+    )
+    cross_factor = cross_scale if source_representation == "cross_section" else None
+    chipp_factor = 1.0 if source_representation == "chi_double_prime" else None
+    if temperature_K is not None and kinematic is not None:
+        factor = spectral_conversion_factor(
+            energy, temperature_K, source_representation=source_representation,
+            target_representation=("chi_double_prime" if source_representation == "cross_section" else "cross_section"),
+            source_scale=(cross_scale / MILLIBARN_PER_BARN if absolute_cross_section else cross_scale),
+            form_factor_sq=form_factor, polarization=polarization, kf_ki=kinematic,
+            form_factor_state="included" if source_representation == "cross_section" else "removed",
+            polarization_state="included" if source_representation == "cross_section" else "removed",
+            bose_state="included" if source_representation == "cross_section" else "removed",
+            moment_unit=moment_unit, g_factor=g_factor, absolute=absolute_chipp,
+        )
+        if source_representation == "cross_section":
+            chipp_factor = factor
         else:
-            cross_barn = None
-            cross_error_barn = None
-        if cross_barn is None:
-            cross, cross_error = values, errors
-        else:
-            cross = cross_barn * MILLIBARN_PER_BARN
-            cross_error = cross_error_barn * MILLIBARN_PER_BARN
-        if temperature_K is not None and kinematic is not None:
-            if cross_barn is None:
-                chipp = _arbitrary_chipp_from_cross(
-                    values,
-                    energy,
-                    temperature_K,
-                    form_factor_sq_values=form_factor,
-                    polarization=polarization,
-                    kf_ki=kinematic,
-                    moment_unit=moment_unit,
-                    g_factor=g_factor,
-                )
-                chipp_error = np.abs(
-                    _arbitrary_chipp_from_cross(
-                        errors,
-                        energy,
-                        temperature_K,
-                        form_factor_sq_values=form_factor,
-                        polarization=polarization,
-                        kf_ki=kinematic,
-                        moment_unit=moment_unit,
-                        g_factor=g_factor,
-                    )
-                )
-            else:
-                chipp = chipp_from_cross_section(
-                    cross_barn,
-                    energy,
-                    temperature_K,
-                    form_factor_sq=form_factor,
-                    polarization=polarization,
-                    kf_ki=kinematic,
-                    moment_unit=moment_unit,
-                    g_factor=g_factor,
-                )
-                chipp_error = np.abs(
-                    chipp_from_cross_section(
-                        cross_error_barn,
-                        energy,
-                        temperature_K,
-                        form_factor_sq=form_factor,
-                        polarization=polarization,
-                        kf_ki=kinematic,
-                        moment_unit=moment_unit,
-                        g_factor=g_factor,
-                    )
-                )
-        elif temperature_K is None:
-            channel_error = "Set a dataset temperature to calculate dynamic susceptibility."
-    else:
-        chipp, chipp_error = values, errors
-        if temperature_K is not None and kinematic is not None:
-            if absolute_chipp:
-                cross = (
-                    cross_section_from_chipp(
-                        values,
-                        energy,
-                        temperature_K,
-                        form_factor_sq=form_factor,
-                        polarization=polarization,
-                        kf_ki=kinematic,
-                        moment_unit=moment_unit,
-                        g_factor=g_factor,
-                    )
-                    * MILLIBARN_PER_BARN
-                )
-                cross_error = np.abs(
-                    cross_section_from_chipp(
-                        errors,
-                        energy,
-                        temperature_K,
-                        form_factor_sq=form_factor,
-                        polarization=polarization,
-                        kf_ki=kinematic,
-                        moment_unit=moment_unit,
-                        g_factor=g_factor,
-                    )
-                    * MILLIBARN_PER_BARN
-                )
-            else:
-                cross = _arbitrary_cross_from_chipp(
-                    values,
-                    energy,
-                    temperature_K,
-                    form_factor_sq_values=form_factor,
-                    polarization=polarization,
-                    kf_ki=kinematic,
-                    moment_unit=moment_unit,
-                    g_factor=g_factor,
-                )
-                cross_error = np.abs(
-                    _arbitrary_cross_from_chipp(
-                        errors,
-                        energy,
-                        temperature_K,
-                        form_factor_sq_values=form_factor,
-                        polarization=polarization,
-                        kf_ki=kinematic,
-                        moment_unit=moment_unit,
-                        g_factor=g_factor,
-                    )
-                )
-        elif temperature_K is None:
-            channel_error = "Set a dataset temperature to calculate scattering cross section."
+            cross_factor = factor * (MILLIBARN_PER_BARN if absolute_cross_section else 1.0)
+    elif temperature_K is None:
+        channel_error = (
+            "Set a dataset temperature to calculate dynamic susceptibility."
+            if source_representation == "cross_section"
+            else "Set a dataset temperature to calculate scattering cross section."
+        )
+    cross = None if cross_factor is None else values * cross_factor
+    cross_error = None if cross_factor is None else errors * np.abs(cross_factor)
+    chipp = None if chipp_factor is None else values * chipp_factor
+    chipp_error = None if chipp_factor is None else errors * np.abs(chipp_factor)
 
     cross_unit, chipp_unit = _output_units(
         convention,
@@ -439,59 +341,41 @@ def with_paired_spectral_channels(
 
     selected = str(convention["fit_representation"])
     if selected == "chi_double_prime" and chipp is not None:
-        active_values, active_errors = chipp, chipp_error
         quantity_type, unit, label = "dynamic_susceptibility", chipp_unit, "Dynamical susceptibility χ″"
     elif cross is not None:
-        active_values, active_errors = cross, cross_error
         quantity_type, unit, label = "differential_cross_section", cross_unit, "Scattering cross section"
     else:
-        active_values, active_errors = chipp, chipp_error
         quantity_type, unit, label = "dynamic_susceptibility", chipp_unit, "Dynamical susceptibility χ″"
 
-    from .background_channels import available_background_channels, scale_background_channels
-
-    # Apply the same linear physical conversion to the diagnostic component.
-    # Never infer this factor by division by signal: zero differences are valid.
     selected_chipp = (selected == "chi_double_prime" and chipp is not None) or cross is None
-    if source_representation == "cross_section":
-        cross_scale = (
-            MILLIBARN_PER_BARN if source_unit.startswith("barn/sr/meV")
-            else 1.0 if source_unit.startswith("mbarn/sr/meV")
-            else 1.0 / calibration if calibration > 0.0 else 1.0
-        )
-        factor = cross_scale
-        if selected_chipp:
-            if absolute_cross_section:
-                factor = chipp_from_cross_section(
-                    cross_scale / MILLIBARN_PER_BARN, energy, temperature_K,
-                    form_factor_sq=form_factor, polarization=polarization,
-                    kf_ki=kinematic, moment_unit=moment_unit, g_factor=g_factor,
-                )
-            else:
-                factor = _arbitrary_chipp_from_cross(
-                    1.0, energy, temperature_K,
-                    form_factor_sq_values=form_factor, polarization=polarization,
-                    kf_ki=kinematic, moment_unit=moment_unit, g_factor=g_factor,
-                )
-    elif selected_chipp:
-        factor = 1.0
-    elif absolute_chipp:
-        factor = MILLIBARN_PER_BARN * cross_section_from_chipp(
-            1.0, energy, temperature_K,
-            form_factor_sq=form_factor, polarization=polarization,
-            kf_ki=kinematic, moment_unit=moment_unit, g_factor=g_factor,
-        )
-    else:
-        factor = _arbitrary_cross_from_chipp(
-            1.0, energy, temperature_K,
-            form_factor_sq_values=form_factor, polarization=polarization,
-            kf_ki=kinematic, moment_unit=moment_unit, g_factor=g_factor,
-        )
-    if available_background_channels(data):
-        data = scale_background_channels(data, factor, unit=unit, quantity_type=quantity_type)
-        channels["background"] = data.auxiliary_channels["background"]
+    factor = chipp_factor if selected_chipp else cross_factor
 
     metadata = dict(data.metadata)
+    metadata.pop("combined_scientific_identity", None)
+    previous = metadata.get("spectral_convention", {})
+    ions = convention.get("magnetic_ions_per_basis")
+    if ions is None and isinstance(previous, dict) and previous.get("normalization_basis") == convention["normalization_basis"]:
+        ions = previous.get("magnetic_ions_per_basis")
+    state = "removed" if selected_chipp else "included"
+    target = {
+        "representation": "chi_double_prime" if selected_chipp else "cross_section",
+        "unit": unit,
+        "normalization_basis": convention["normalization_basis"],
+        "magnetic_ions_per_basis": ions,
+        "moment_unit": moment_unit,
+        "g_factor": g_factor,
+        "form_factor_state": state,
+        "polarization_state": state,
+        "bose_state": state,
+        "kf_ki_state": convention["kf_ki_state"],
+        "absolute_scale": absolute_chipp if selected_chipp else absolute_cross_section,
+        "incident_energy_meV": convention.get("incident_energy_meV"),
+        "final_energy_meV": convention.get("final_energy_meV"),
+    }
+    metadata["spectral_convention"] = target
+    if temperature_K is not None:
+        temperature = np.asarray(temperature_K, dtype=float)
+        metadata["temperature"] = float(temperature) if temperature.ndim == 0 else temperature.tolist()
     metadata.update(
         {
             "signal_label": label,
@@ -500,6 +384,8 @@ def with_paired_spectral_channels(
             "spectral_channel_error": channel_error,
             "spectral_observable": {
                 **convention,
+                **target,
+                "fit_representation": "chi_double_prime" if selected_chipp else "cross_section",
                 "absolute_scale": absolute_cross_section or absolute_chipp,
                 "quantity_type": quantity_type,
                 "unit": unit,
@@ -507,25 +393,18 @@ def with_paired_spectral_channels(
             },
         }
     )
-    from .histogram_statistics import EVENT_STATISTICS_CHANNELS
-    from .measurement_aggregation import MEASUREMENT_STATISTICS_CHANNELS
-    from .measurement_scaling import scale_measurement_data
+    from .spectral_conversion import convert_histogram_spectral_values
 
-    contract = metadata.get("measurement_contract")
-    if isinstance(contract, dict):
-        metadata["measurement_contract"] = {**contract, "quantity": quantity_type, "value_units": unit}
-    converted = scale_measurement_data(data, factor, metadata=metadata)
-    for name in (*EVENT_STATISTICS_CHANNELS, *MEASUREMENT_STATISTICS_CHANNELS):
-        if name in converted.auxiliary_channels:
-            channels[name] = converted.auxiliary_channels[name]
-    return converted.with_updates(
-        signal=np.asarray(active_values, dtype=float),
-        errors=np.asarray(active_errors, dtype=float),
-        metadata=converted.metadata,
-        auxiliary_channels=channels,
-        source_dependencies=converted.source_dependencies,
-        counting_dependencies=converted.counting_dependencies,
+    converted = convert_histogram_spectral_values(
+        data, factor, unit=unit, quantity_type=quantity_type, metadata=metadata,
     )
+    # The transform owns measurement and background payloads; the three INS
+    # channels are presentations of the original input and its paired response.
+    converted_channels = dict(converted.auxiliary_channels)
+    for name in (IMPORTED_SIGNAL_CHANNEL, CROSS_SECTION_CHANNEL, CHIPP_CHANNEL):
+        if name in channels:
+            converted_channels[name] = channels[name]
+    return converted.with_updates(auxiliary_channels=converted_channels)
 
 
 def updated_spectral_channel_config(config, key, value):

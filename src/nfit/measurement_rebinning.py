@@ -199,6 +199,9 @@ def combine_measurement_histograms(datasets) -> MDHistoData:
     if not datasets:
         raise ValueError("At least one measurement histogram is required")
     first = datasets[0]
+    from .scientific_compatibility import validate_scientific_compatibility
+
+    validate_scientific_compatibility([(None, data) for data in datasets])
     contract = MeasurementContract.from_dict(first.metadata.get("measurement_contract", {}))
     from .dataset_archive import _json_safe_value
     for data in datasets:

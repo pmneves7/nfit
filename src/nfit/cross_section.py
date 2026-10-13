@@ -96,8 +96,8 @@ def bose_denominator(
 
     E = np.asarray(E_meV, dtype=float)
     temperature = np.asarray(temperature_K, dtype=float)
-    if np.any(temperature < 0):
-        raise ValueError("temperature_K must be nonnegative")
+    if np.any(~np.isfinite(temperature)) or np.any(temperature < 0):
+        raise ValueError("temperature_K must be finite and nonnegative")
 
     if temperature.ndim == 0 and temperature > 0.0:
         # Overwhelmingly the common case (one sample temperature for a whole
@@ -173,6 +173,10 @@ def intensity_from_chipp(
 
     signal = np.asarray(chipp, dtype=float)
     if include_bose:
+        if bose_denominator_values is not None:
+            temperature = np.asarray(temperature_K, dtype=float)
+            if np.any(~np.isfinite(temperature)) or np.any(temperature < 0):
+                raise ValueError("temperature_K must be finite and nonnegative")
         denominator = (
             bose_denominator(E_meV, temperature_K)
             if bose_denominator_values is None

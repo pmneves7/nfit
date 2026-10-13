@@ -7,7 +7,7 @@ from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY, updated_spectral_cha
 
 
 def composite_physics_panel(window, group, recipe):
-    from PySide6 import QtWidgets
+    from PySide6 import QtGui, QtWidgets
 
     from .project_dataset_panels import _dataset_spectral_channels_group_box
 
@@ -21,6 +21,8 @@ def composite_physics_panel(window, group, recipe):
     layout = QtWidgets.QVBoxLayout(page)
     editor = QtWidgets.QLineEdit(str(config.get("temperature_K") or ""))
     editor.setObjectName("composite_temperature")
+    validator = QtGui.QDoubleValidator(0.0, 1.0e12, 8, editor)
+    editor.setValidator(validator)
     editor.setPlaceholderText(f"Automatic: {temperature:g} K" if temperature else "Automatic from temperature axis or agreeing sources")
     editor.setToolTip(
         "Optional nominal temperature in kelvin for a single-temperature composite. "
@@ -38,9 +40,13 @@ def composite_physics_panel(window, group, recipe):
                     tabs.setCurrentIndex(index)
                     break
 
-    editor.editingFinished.connect(lambda: changed(
-        None, None, "temperature_K", float(editor.text()) if editor.text().strip() else None
-    ))
+    def temperature_changed():
+        text = editor.text().strip()
+        if text and (not editor.hasAcceptableInput() or float(text) <= 0):
+            return
+        changed(None, None, "temperature_K", float(text) if text else None)
+
+    editor.editingFinished.connect(temperature_changed)
     row = QtWidgets.QFormLayout()
     row.addRow("Nominal temperature (K)", editor)
     layout.addLayout(row)

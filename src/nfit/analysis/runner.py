@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from ..data_workspace import temporary_data_directory
 from ..project_archive import replace_analysis_artifacts
+from ..sample_temperature import dataset_temperature
 from .artifacts import output_data, write_dataset_artifact
 from .core import (
     AnalysisContext,
@@ -32,6 +33,37 @@ def composite_analysis_source_id(group, node) -> str:
 
     suffix = "root" if node is group else node.id
     return f"{COMPOSITE_ANALYSIS_SOURCE_PREFIX}{suffix}"
+
+
+def composite_analysis_scope(group, source_id):
+    """Resolve a composite analysis reference without loading numerical data."""
+    from ..project_data import _composite_scope, data_group_composite_enabled
+
+    if not str(source_id).startswith(COMPOSITE_ANALYSIS_SOURCE_PREFIX):
+        raise KeyError(f"not a composite analysis source: {source_id}")
+    suffix = str(source_id)[len(COMPOSITE_ANALYSIS_SOURCE_PREFIX):]
+    node = group if suffix == "root" else next(
+        (candidate for candidate in group.iter_subgroups() if candidate.id == suffix), None,
+    )
+    if node is None:
+        raise KeyError(f"analysis refers to missing group composite {source_id}")
+    scope = _composite_scope(group, node)
+    if not data_group_composite_enabled(scope):
+        raise ValueError(f"group composite {node.name!r} is disabled")
+    return scope
+
+
+def analysis_source_fingerprint(group, source_id):
+    """Fingerprint an ordinary or composite input without materializing it."""
+    if str(source_id).startswith(COMPOSITE_ANALYSIS_SOURCE_PREFIX):
+        from ..project_data import _composite_cache_signature
+
+        signature = _composite_cache_signature(composite_analysis_scope(group, source_id))
+        return hashlib.sha256(signature.encode("utf-8")).hexdigest()
+    dataset = next((item for item in group.iter_datasets() if item.id == source_id), None)
+    if dataset is None:
+        raise KeyError(f"analysis refers to missing dataset ID {source_id}")
+    return dataset_entry_fingerprint(dataset, group)
 
 
 def analysis_source_choices(group) -> list[tuple[str, str]]:
@@ -65,45 +97,35 @@ def prepare_analysis_source(group, source_id: str, *, progress_callback=None) ->
             progress_callback=progress_callback,
         )
 
+    from ..composite_spectral import composite_temperature
+    from ..project_composites import _composite_candidates, data_group_composite_config
     from ..project_data import (
         _cached_composite_dataset_data,
-        _composite_cache_signature,
-        _composite_scope,
-        data_group_composite_enabled,
     )
 
     suffix = str(source_id)[len(COMPOSITE_ANALYSIS_SOURCE_PREFIX) :]
-    node = group if suffix == "root" else next(
-        (candidate for candidate in group.iter_subgroups() if candidate.id == suffix),
-        None,
-    )
-    if node is None:
-        raise KeyError(f"analysis refers to missing group composite {source_id}")
-    scope = _composite_scope(group, node)
-    if not data_group_composite_enabled(scope):
-        raise ValueError(f"group composite {node.name!r} is disabled")
+    scope = composite_analysis_scope(group, source_id)
     data = _cached_composite_dataset_data(
         scope,
         force_rebin=True,
         progress_callback=progress_callback,
     )
     if data is None:
-        raise ValueError(f"could not prepare group composite {node.name!r}")
-    signature = _composite_cache_signature(scope)
+        raise ValueError(f"could not prepare group composite {scope.name!r}")
     context = AnalysisContext(
         group.name,
         group.lattice_parameters,
         group.spacegroup,
         group.metadata.get("crystal"),
-        None,
-        {"source_group": node.name, "source_group_id": suffix},
+        composite_temperature(data, data_group_composite_config(scope), _composite_candidates(scope)),
+        {"source_group": scope.name, "source_group_id": suffix},
     )
     return AnalysisInput(
         str(source_id),
-        f"{node.name} composite",
+        f"{scope.name} composite",
         data,
         context,
-        hashlib.sha256(signature.encode("utf-8")).hexdigest(),
+        analysis_source_fingerprint(group, source_id),
     )
 
 
@@ -131,7 +153,7 @@ def prepare_analysis_input(group, dataset, *, progress_callback=None) -> Analysi
         group.lattice_parameters,
         group.spacegroup,
         group.metadata.get("crystal"),
-        dataset.parameters.get("temperature"),
+        dataset_temperature(dataset, data),
         {"dataset_metadata": dataset.metadata},
     )
     return AnalysisInput(
