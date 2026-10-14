@@ -1026,8 +1026,9 @@ def _build_waterfall_controls(
     viewer.waterfall_step_spin.setDecimals(8)
     viewer.waterfall_step_spin.setValue(viewer.waterfall_step)
     viewer.waterfall_step_spin.setToolTip(
-        "Width of each coarse bin along the waterfall axis. Bins are reduced to "
-        "inverse-variance weighted mean traces with propagated one-sigma errors."
+        "Width and center spacing of trace bins along w, the waterfall axis. "
+        "The minimum center anchors the grid. Profiles use the dataset's counting "
+        "or measurement statistics with propagated one-sigma errors."
     )
     viewer.waterfall_step_spin.valueChanged.connect(viewer._set_waterfall_step)
     viewer.waterfall_step_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
@@ -1047,20 +1048,21 @@ def _build_waterfall_controls(
     waterfall_layout.addWidget(viewer.waterfall_step_auto_check, 1, 2, 1, 2)
     waterfall_layout.addWidget(viewer.waterfall_step_slider, 2, 0, 1, 4)
 
-    viewer.waterfall_center_label = QtWidgets.QLabel("Bin centers: min / max")
+    viewer.waterfall_center_label = QtWidgets.QLabel("Bin centers: first / max")
     waterfall_layout.addWidget(viewer.waterfall_center_label, 3, 0, 1, 2)
     for which, column in (("min", 2), ("max", 3)):
         spin = _make_float_spinbox(-1.0e12, 1.0e12)
         spin.setDecimals(8)
         spin.setObjectName(f"waterfall_center_{which}")
         spin.setToolTip(
-            "Inclusive bound on trace bin centers along the waterfall axis, in axis units. "
-            "Whole coarse bins are retained; their integration and coverage are unchanged."
+            "First requested trace center and inclusive maximum center along w, in axis units. "
+            "For example, first 5, maximum 45, and width 5 give centers 5, 10, ..., 45. "
+            "Whole native bins are assigned by their centers; shared boundaries belong to the later trace."
         )
         spin.valueChanged.connect(lambda value, which=which: viewer._set_waterfall_center_bound(which, value))
         setattr(viewer, f"waterfall_center_{which}_spin", spin)
         waterfall_layout.addWidget(spin, 3, column)
-    viewer.waterfall_center_label.setToolTip("Minimum and maximum waterfall trace bin centers, in waterfall-axis units.")
+    viewer.waterfall_center_label.setToolTip("The first requested waterfall center anchors the trace grid; the maximum is inclusive.")
 
     waterfall_coverage_label = QtWidgets.QLabel("Coverage")
     viewer.waterfall_coverage_threshold_spin = _make_float_spinbox(0.0, 1.0)

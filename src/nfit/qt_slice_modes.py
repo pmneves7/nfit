@@ -485,6 +485,7 @@ class WaterfallController(_ViewerController):
                 self.waterfall_step = self._helper("default_waterfall_step")(
                     self.data,
                     self.model.y_dim,
+                    centered=self.waterfall_centered,
                 )
             self.waterfall_step = float(
                 np.clip(self.waterfall_step, step_low, step_high)
@@ -504,6 +505,7 @@ class WaterfallController(_ViewerController):
                 integrate_checks=self._export_integrate_checks(),
                 waterfall_step=self.waterfall_step,
                 waterfall_center_bounds=self.waterfall_center_bounds,
+                waterfall_centered=self.waterfall_centered,
                 coverage_threshold=self.waterfall_coverage_threshold,
                 masked=self.model.masked,
                 smoothing_sigma_x=self.smoothing_x,

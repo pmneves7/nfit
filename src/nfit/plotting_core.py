@@ -1025,6 +1025,7 @@ def prepare_mdhisto_waterfall(
     integrate_checks: dict[int, bool] | None = None,
     waterfall_step: float | None = None,
     waterfall_center_bounds: tuple[float | None, float | None] | None = None,
+    waterfall_centered: bool = False,
     coverage_threshold: float = 0.0,
     masked: bool = True,
     smoothing_sigma_x: float = 0.0,
@@ -1041,6 +1042,11 @@ def prepare_mdhisto_waterfall(
     ``waterfall_step``. Each profile is an inverse-variance weighted mean, so
     its units remain those of the displayed channel. For a sequence of 1D
     datasets, each dataset contributes one trace.
+
+    ``waterfall_centered=True`` places trace centers at the lower center bound
+    plus multiples of ``waterfall_step`` (up to the inclusive upper bound).
+    Native bins are assigned by their centers to half-open windows around those
+    requested centers. The default preserves legacy edge-anchored grouping.
     """
 
     datasets = [data] if isinstance(data, MDHistoData) else list(data)
@@ -1191,6 +1197,7 @@ def prepare_mdhisto_waterfall(
         model_values,
         step=waterfall_step,
         center_bounds=waterfall_center_bounds,
+        centered=waterfall_centered,
         coverage_threshold=coverage_threshold,
         unmask_model=unmask_model,
         axis_name=axis.name,
@@ -1210,6 +1217,7 @@ def plot_mdhisto_waterfall(
     integrate_checks: dict[int, bool] | None = None,
     waterfall_step: float | None = None,
     waterfall_center_bounds: tuple[float | None, float | None] | None = None,
+    waterfall_centered: bool = False,
     coverage_threshold: float = 0.0,
     trace_offset: float | None = None,
     cmap: str = "viridis",
@@ -1263,6 +1271,7 @@ def plot_mdhisto_waterfall(
         integrate_checks=integrate_checks,
         waterfall_step=waterfall_step,
         waterfall_center_bounds=waterfall_center_bounds,
+        waterfall_centered=waterfall_centered,
         coverage_threshold=coverage_threshold,
         masked=masked,
         smoothing_sigma_x=smoothing_sigma_x,
@@ -1503,7 +1512,9 @@ def default_waterfall_offset(traces: Sequence[WaterfallTrace]) -> float:
     return 0.5 * maximum if maximum > 0.0 else 1.0
 
 
-def default_waterfall_step(data: MDHistoData, waterfall_dim: int | str) -> float:
+def default_waterfall_step(
+    data: MDHistoData, waterfall_dim: int | str, *, centered: bool = False,
+) -> float:
     """Choose a bin width that yields approximately ten waterfall traces."""
 
     index = _resolve_mdhisto_dim(data, waterfall_dim)
@@ -1513,7 +1524,11 @@ def default_waterfall_step(data: MDHistoData, waterfall_dim: int | str) -> float
     edges = _edges_from_centers(centers)
     span = float(edges[-1] - edges[0])
     target = max(min(int(centers.size), 10), 1)
-    return span / target if np.isfinite(span) and span > 0.0 else 1.0
+    width = span / target if np.isfinite(span) and span > 0.0 else 1.0
+    if centered:
+        native, _maximum = waterfall_step_bounds(data, index)
+        width = max(round(width / native), 1) * native
+    return width
 
 
 def waterfall_step_bounds(
@@ -1544,6 +1559,7 @@ def _coarsen_waterfall_view(
     *,
     step: float | None,
     center_bounds: tuple[float | None, float | None] | None,
+    centered: bool = False,
     coverage_threshold: float,
     unmask_model: bool,
     axis_name: str,
@@ -1556,21 +1572,31 @@ def _coarsen_waterfall_view(
     width = float(step) if step is not None else float(y_edges[-1] - y_edges[0]) / max(min(y.size, 10), 1)
     if not np.isfinite(width) or width <= 0.0:
         raise ValueError("waterfall_step must be positive")
-    start = float(y_edges[0])
-    stop = float(y_edges[-1])
-    boundaries = start + np.arange(max(int(np.ceil((stop - start) / width)), 1) + 1) * width
-    boundaries[-1] = max(boundaries[-1], stop)
     lower, upper = center_bounds or (None, None)
     if any(value is not None and not np.isfinite(value) for value in (lower, upper)):
         raise ValueError("waterfall center bounds must be finite")
     if lower is not None and upper is not None and lower > upper:
         raise ValueError("waterfall center minimum must not exceed maximum")
+    if centered:
+        from .measurement_waterfalls import centered_waterfall_bins
+
+        bins = centered_waterfall_bins(y, width, center_bounds)
+    else:
+        start = float(y_edges[0])
+        stop = float(y_edges[-1])
+        boundaries = start + np.arange(max(int(np.ceil((stop - start) / width)), 1) + 1) * width
+        boundaries[-1] = max(boundaries[-1], stop)
+        def edge_bins():
+            for index, (low, high) in enumerate(zip(boundaries[:-1], boundaries[1:], strict=True)):
+                selected = (y >= low) & ((y < high) if index < len(boundaries) - 2 else (y <= high))
+                if np.any(selected):
+                    yield float(np.nanmean(y[selected])), selected
+
+        bins = edge_bins()
     traces: list[WaterfallTrace] = []
-    for index, (low, high) in enumerate(zip(boundaries[:-1], boundaries[1:], strict=True)):
-        selected = (y >= low) & ((y < high) if index < len(boundaries) - 2 else (y <= high))
+    for coordinate, selected in bins:
         if not np.any(selected):
             continue
-        coordinate = float(np.nanmean(y[selected]))
         if (lower is not None and coordinate < lower) or (upper is not None and coordinate > upper):
             continue
         selected_values = np.asarray(values[selected, :], dtype=float)
@@ -1613,7 +1639,6 @@ def _coarsen_waterfall_view(
             model_profile = _waterfall_profile_with_weights(selected_model, weights)
             if not unmask_model:
                 model_profile = np.where(insufficient, np.nan, model_profile)
-        coordinate = float(np.nanmean(y[selected]))
         displayed_unit = display_unit(axis_units) if axis_units else ""
         unit_suffix = f" {displayed_unit}" if displayed_unit else ""
         traces.append(

@@ -340,6 +340,7 @@ class QtMDHistoSliceViewer:
         self.tile_step_auto_check = None
         self.waterfall_source_label = None
         self.waterfall_center_bounds = None
+        self.waterfall_centered = True
         self.waterfall_center_min_spin = None
         self.waterfall_center_max_spin = None
         self.waterfall_center_label = None
@@ -825,6 +826,7 @@ class QtMDHistoSliceViewer:
             "roi_enabled": bool(self.roi_button and self.roi_button.isChecked()),
             "waterfall_step": self.waterfall_step,
             "waterfall_center_bounds": self.waterfall_center_bounds,
+            "waterfall_centered": self.waterfall_centered,
             "waterfall_coverage_threshold": self.waterfall_coverage_threshold,
             "waterfall_step_auto": self.waterfall_step_auto,
             "waterfall_offset": self.waterfall_offset,
@@ -993,6 +995,11 @@ class QtMDHistoSliceViewer:
         self.waterfall_step = float(settings.get("waterfall_step", self.waterfall_step))
         bounds = settings.get("waterfall_center_bounds", self.waterfall_center_bounds)
         self.waterfall_center_bounds = None if bounds is None else tuple(bounds)
+        if "waterfall_centered" in settings:
+            self.waterfall_centered = bool(settings["waterfall_centered"])
+        elif settings.get("view_mode") == "waterfall":
+            # Older saved plots retain their original edge-anchored grouping.
+            self.waterfall_centered = False
         self.waterfall_coverage_threshold = float(
             settings.get(
                 "waterfall_coverage_threshold",
@@ -1655,6 +1662,7 @@ class QtMDHistoSliceViewer:
         return "\n".join(
             [
                 "import matplotlib.pyplot as plt",
+                "import numpy as np",
                 f"from nfit import {', '.join(sorted(loader_imports))}",
                 "",
                 data_lines,
@@ -1668,6 +1676,7 @@ class QtMDHistoSliceViewer:
                 f"    integrate_checks={self._export_integrate_checks()!r},",
                 f"    waterfall_step={self.waterfall_step!r},",
                 f"    waterfall_center_bounds={self.waterfall_center_bounds!r},",
+                f"    waterfall_centered={self.waterfall_centered!r},",
                 f"    coverage_threshold={self.waterfall_coverage_threshold!r},",
                 f"    trace_offset={self.waterfall_offset!r},",
                 f"    cmap={self.waterfall_cmap!r},",
@@ -2156,6 +2165,7 @@ class QtMDHistoSliceViewer:
         if not (0 <= int(dim) < len(self._display_axis_dims)):
             return
         dim = self._display_axis_dims[int(dim)]
+        previous_y_dim = self.model.y_dim
         if axis_name == "x" and dim == self.model.y_dim:
             self.model.x_dim, self.model.y_dim = self.model.y_dim, self.model.x_dim
             self._sync_axis_combos()
@@ -2166,6 +2176,8 @@ class QtMDHistoSliceViewer:
             self.model.x_dim = int(dim)
         else:
             self.model.y_dim = int(dim)
+        if self.model.y_dim != previous_y_dim:
+            self._reset_waterfall_axis_binning()
         self._sync_tile_controls()
         self._rebuild_hidden_axis_controls()
         self.update_plot(preserve_view=False)
@@ -2174,10 +2186,17 @@ class QtMDHistoSliceViewer:
         if getattr(self.model, "is_point_list", False) or self._is_effective_1d():
             return
         self.model.x_dim, self.model.y_dim = self.model.y_dim, self.model.x_dim
+        self._reset_waterfall_axis_binning()
         self._sync_axis_combos()
         self._sync_tile_controls()
         self._rebuild_hidden_axis_controls()
         self.update_plot(preserve_view=False)
+
+    def _reset_waterfall_axis_binning(self) -> None:
+        """Discard center limits and widths expressed in the previous axis's units."""
+        self.waterfall_center_bounds = None
+        self.waterfall_centered = True
+        self.waterfall_step_auto = True
 
     def _set_axes_ratio(self, _index: int) -> None:
         if self._restoring_dataset_state:
@@ -2440,6 +2459,7 @@ class QtMDHistoSliceViewer:
             tile_dim=self.tile_dim,
             tile_range=self.tile_range,
             waterfall_center_bounds=self.waterfall_center_bounds,
+            waterfall_centered=self.waterfall_centered,
             tile_step=float(self.tile_step),
             tile_step_auto=bool(self.tile_step_auto),
             tile_label_decimals=self.tile_label_decimals,
@@ -2543,6 +2563,7 @@ class QtMDHistoSliceViewer:
             self.brillouin_zone_alpha = float(state.brillouin_zone_alpha)
             self.tile_dim = state.tile_dim
             self.waterfall_center_bounds = state.waterfall_center_bounds
+            self.waterfall_centered = state.waterfall_centered
             self.tile_range = tuple(state.tile_range)
             self.tile_step = float(state.tile_step)
             self.tile_step_auto = bool(state.tile_step_auto)
@@ -2713,6 +2734,10 @@ class QtMDHistoSliceViewer:
         if self.waterfall_step_spin is None:
             return
         centers = self.data.axes[self.model.y_dim].centers
+        if self.waterfall_center_label is not None:
+            self.waterfall_center_label.setText(
+                "Bin centers: first / max" if self.waterfall_centered else "Bin centers: min / max"
+            )
         lower, upper = self.waterfall_center_bounds or (None, None)
         self._set_spin_silent(self.waterfall_center_min_spin, centers[0] if lower is None else lower)
         self._set_spin_silent(self.waterfall_center_max_spin, centers[-1] if upper is None else upper)
@@ -3590,6 +3615,7 @@ class QtMDHistoSliceViewer:
             return
         low, high = self._waterfall_step_limits()
         self.waterfall_step = float(np.clip(value, low, high))
+        self.waterfall_centered = True
         self._sync_waterfall_step_slider()
         if self.waterfall_step_auto_check is not None and self.waterfall_step_auto_check.isChecked():
             self._set_checkbox_silent(self.waterfall_step_auto_check, False)
@@ -3610,6 +3636,7 @@ class QtMDHistoSliceViewer:
             upper = float(value)
             lower = min(lower, upper)
         self.waterfall_center_bounds = (lower, upper)
+        self.waterfall_centered = True
         self._sync_waterfall_controls()
         self.update_plot(preserve_view=False)
 
@@ -4172,8 +4199,19 @@ class QtMDHistoSliceViewer:
             self.y_combo.setVisible(not is_point and not grouped_waterfall)
         if self._axis_y_label is not None:
             self._axis_y_label.setVisible(not is_point and not grouped_waterfall)
+            self._axis_y_label.setText("w" if is_waterfall else "y")
+        if self.y_combo is not None:
+            self.y_combo.setToolTip(
+                "Choose the waterfall axis used to group traces; the plotted y axis is intensity."
+                if is_waterfall else "Choose the dataset axis shown vertically. For 1D data this control is hidden."
+            )
         if self.swap_axes_button is not None:
             self.swap_axes_button.setVisible(not is_point and not is_line and not grouped_waterfall)
+            self.swap_axes_button.setText("Swap x/w" if is_waterfall else "Swap x/y")
+            self.swap_axes_button.setToolTip(
+                "Exchange the horizontal dataset axis and the waterfall trace axis."
+                if is_waterfall else "Exchange the horizontal and vertical displayed axes."
+            )
         if self.axes_ratio_combo is not None:
             self.axes_ratio_combo.setVisible(not is_point and not is_line and not is_waterfall)
         if self.axes_ratio_label is not None:
@@ -4595,6 +4633,7 @@ class QtMDHistoSliceViewer:
             float(self.coverage_threshold),
             float(self.waterfall_coverage_threshold),
             self.waterfall_center_bounds,
+            self.waterfall_centered,
             self.tile_dim,
             tuple(self.tile_range),
             float(self.tile_step),

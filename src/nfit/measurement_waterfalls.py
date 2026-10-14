@@ -23,6 +23,31 @@ from .measurement_aggregation import (
 from .measurement_contracts import MeasurementContract
 
 
+def centered_waterfall_bins(centers, width, bounds):
+    """Group native-bin centers on a requested, half-open trace grid.
+
+    The lower bound is the first requested center and the upper bound is
+    inclusive. Only populated bins are planned, so ranges far beyond the source
+    domain do not allocate an arbitrarily large grid.
+    """
+    centers = np.asarray(centers, float)
+    lower, upper = bounds or (None, None)
+    lower = float(centers[0]) if lower is None else float(lower)
+    upper = float(centers[-1]) if upper is None else float(upper)
+    if lower > upper:
+        return
+    positions = (centers - lower) / width + 0.5
+    # Stabilize points exactly on a common boundary; ties belong to the later bin.
+    nearest = np.rint(positions)
+    positions = np.where(np.isclose(positions, nearest, rtol=0, atol=1e-10), nearest, positions)
+    membership = np.floor(positions)
+    for index in np.unique(membership):
+        coordinate = lower + index * width
+        if index < 0 or coordinate > upper + 1e-10 * max(abs(upper), width, 1):
+            continue
+        yield float(coordinate), membership == index
+
+
 def prepare_waterfall_measurement_profile(view, values, errors, selected):
     """Prepare a declared waterfall strip with additive statistics."""
     from .histogram_statistics import event_statistics_channels

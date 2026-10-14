@@ -737,19 +737,25 @@ in project files. Replacing a table changes future renderings of that name.
 
 Choose **Visualization > Waterfall** to stack one-dimensional traces.
 
-- For multidimensional data, choose the horizontal and waterfall axes; other
-  dimensions retain their ordinary point/range controls.
+- For multidimensional data, choose **x** (horizontal) and **w** (the waterfall
+  trace axis). **Swap x/w** exchanges these dataset axes. The plot's y axis is
+  intensity plus trace offset; **y limits** control that plotted intensity range.
+  Changing w resets trace-center limits and chooses a width in the new axis's units.
+  Other dimensions retain their ordinary point/range controls.
 - For a one-dimensional dataset, compatible datasets in the same immediate
   project group provide the traces. Choosing any sibling dataset switches to
   that sibling's immediate group.
-- **Bin width** controls coarsening along the waterfall axis; **Auto** targets
-  roughly ten traces.
-- **Bin centers: min / max**, below the bin-width slider, selects traces whose
-  centers fall within these inclusive bounds along the waterfall axis, in that
-  axis's units. Each center is the mean of the native bin centers in its coarse
-  trace bin. Filtering retains whole bins and preserves their integration,
-  uncertainties, coverage, and model overlays. These controls are hidden for
-  groups of one-dimensional datasets.
+- **Bin width** sets both the integration-window width and trace-center spacing
+  along w. **Auto** targets roughly ten traces using a whole number of native-bin
+  widths.
+- **Bin centers: first / max**, below the bin-width slider, sets the first
+  requested center and inclusive maximum, in waterfall-axis units. First `5`,
+  maximum `45`, and width `5` produces centers `5, 10, ..., 45`. Each trace
+  groups whole native bins whose centers lie in its half-open window; a shared
+  boundary belongs to the later trace. Empty windows are omitted. Labels report
+  the requested window center, which can differ from the mean of its included
+  native-bin centers. These controls are hidden for groups of one-dimensional
+  datasets.
 - **Minimum coverage** is specific to waterfall trace bins. It is independent
   of the slice and histogram cutoff and also defaults to 0.
 
@@ -762,10 +768,16 @@ The axis **Reset** buttons and Matplotlib **Home** button use the current trace
 extent. That extent is recomputed when the dataset group, displayed axes, or
 waterfall binning or center bounds change.
 
-Python callers pass `waterfall_center_bounds=(minimum, maximum)` to
-`prepare_mdhisto_waterfall` or `plot_mdhisto_waterfall`; `None` bounds retain the
-full axis. Saved plots, exported scripts, copied settings, and held settings
-retain the bounds. CSV export contains the selected traces.
+Python callers pass `waterfall_centered=True`,
+`waterfall_center_bounds=(first, maximum)`, and `waterfall_step=width` to
+`prepare_mdhisto_waterfall` or `plot_mdhisto_waterfall`. A `None` bound uses the
+first or last native-bin center. Saved plots, exported scripts, copied settings,
+and held settings retain this configuration. CSV export contains the requested
+trace centers.
+
+The scripting default `waterfall_centered=False` preserves edge-anchored grouping
+and center-range filtering. Older saved plots retain that convention until their
+center or width controls are edited; new viewers use requested centers.
 
 ## Tiled 2D slices
 
