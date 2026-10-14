@@ -58,7 +58,8 @@ different Python.
 - `src/nfit/project_group_panels.py`, `project_dataset_panels.py`,
   `project_readonly_panels.py`, and `project_data_panels.py`: focused
   dataset/composite detail builders, read-only presentation, and compatibility
-  dispatch.
+  dispatch. `project_panel_contexts.py` defines explicit editable-panel
+  dependencies.
 - `src/nfit/project_window_builder.py`, `project_model_editor.py`,
   `project_lindhard_editor.py`, and `project_tight_binding_editor.py`: project
   window construction and focused model-editor presentation helpers.
@@ -75,15 +76,16 @@ different Python.
 - `src/nfit/project_data.py`: GUI-independent dataset preparation facade,
   derived-data coordination, and viewer-ready orchestration.
 - `src/nfit/project_composites.py`: hierarchical composite planning,
-  materialization, caching, and background alignment.
+  materialization, caching, and background alignment, with explicit dataset
+  orchestration callbacks supplied by `project_data.py`.
 - `src/nfit/project_background_cache.py`: persistence of background histograms
   owned by sample binnings.
 - `src/nfit/dataset_archive.py` and `project_dataset_io.py`: prepared dataset
   archive codecs and compatibility exports; `project_data.py` coordinates
   preparation before export.
 - `src/nfit/project_point_lists.py`, `project_masks.py`, and
-  `project_coordinates.py`: point-list preparation, masks, and coordinate
-  projection services.
+  `project_coordinates.py`: point-list preparation, masks and inherited mask
+  selection, and coordinate projection services.
 - `src/nfit/dataset_criteria.py` and `dataset_criterion_values.py`: whole-run
   selection rules and bounded scalar diagnostics. `dataset_criterion_gui.py`
   presents their preview; `docs/dataset_conditions.md` documents the workflow.
@@ -189,6 +191,8 @@ different Python.
 - `src/nfit/fitting.py`: optimizer-facing fitting framework.
 - `src/nfit/cross_section.py` and `spectral_conversion.py`: neutron cross-section
   factors and shared statistics-preserving spectral transformations.
+- `src/nfit/spectral_metadata.py`: shared spectral convention records and
+  normalization-unit formatting for analysis, paired channels, and GUI controls.
 - `src/nfit/sample_temperature.py` and `scientific_compatibility.py`: common
   temperature resolution and physical-identity checks before combination.
 - `src/nfit/analysis/`: non-destructive analysis operations; `bragg_regions.py`

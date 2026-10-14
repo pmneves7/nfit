@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from types import FunctionType
 from typing import Any
 
 from .project_dataset_panels import (
@@ -29,6 +28,20 @@ from .project_group_panels import (
     _group_composite_group_box,
     _group_dataset_weights_group_box,
 )
+from .project_panel_contexts import (
+    DatasetAxesPanelContext,
+    DatasetPointListPanelContext,
+    DatasetSignalSemanticsPanelContext,
+    DatasetSpectralChannelsPanelContext,
+    DatasetTypePanelContext,
+    GroupCompositePanelContext,
+    HeatCapacityPanelContext,
+    MagnetizationAbsolutePanelContext,
+    PointListScalePanelContext,
+    PointListSusceptibilityPanelContext,
+    PointListWavelengthPanelContext,
+    RebinPerformancePanelContext,
+)
 from .project_readonly_panels import (
     AnalysisTablePanelContext,
     DatasetMetadataPanelContext,
@@ -43,11 +56,11 @@ def invoke_panel_builder(
     helper_namespace: dict[str, Any],
     **kwargs: Any,
 ) -> Any:
-    """Invoke an extracted builder with the explorer module's live helpers.
+    """Invoke a compatibility builder through its explicit explorer context.
 
-    Migrated read-only panels use explicit explorer contexts. Legacy
-    builders receive a fresh function object whose nested callbacks keep the
-    original method's live global lookup without mutating shared module state.
+    ``helper_namespace`` is retained for callers of the former dispatch API.
+    Named live helpers now come from explorer context factories; the namespace
+    is not inspected or installed into the builder or its callbacks.
     """
 
     if builder is _group_dataset_weights_group_box:
@@ -56,25 +69,23 @@ def invoke_panel_builder(
             kwargs["context"] = explorer._group_inventory_panel_context(group)
         return builder(explorer, *args, **kwargs)
 
-    if builder is _details_group_box:
-        return builder(explorer, *args, **kwargs)
-
     context_factories = {
         _dataset_metadata_group_box: "_dataset_metadata_panel_context",
         _analysis_table_group_box: "_analysis_table_panel_context",
         _metadata_tree_group_box: "_metadata_tree_panel_context",
+        _dataset_point_list_group_box: "_dataset_point_list_panel_context",
+        _heat_capacity_box: "_heat_capacity_panel_context",
+        _magnetization_absolute_box: "_magnetization_absolute_panel_context",
+        _point_list_scale_box: "_point_list_scale_panel_context",
+        _point_list_susceptibility_box: "_point_list_susceptibility_panel_context",
+        _point_list_wavelength_box: "_point_list_wavelength_panel_context",
+        _dataset_type_group_box: "_dataset_type_panel_context",
+        _dataset_axes_group_box: "_dataset_axes_panel_context",
+        _add_rebin_performance_controls: "_rebin_performance_panel_context",
+        _dataset_signal_semantics_group_box: "_dataset_signal_semantics_panel_context",
+        _dataset_spectral_channels_group_box: "_dataset_spectral_channels_panel_context",
+        _group_composite_group_box: "_group_composite_panel_context",
     }
-    if builder in context_factories:
-        if "context" not in kwargs:
-            kwargs["context"] = getattr(explorer, context_factories[builder])()
-        return builder(explorer, *args, **kwargs)
-
-    rebound = FunctionType(
-        builder.__code__,
-        helper_namespace,
-        builder.__name__,
-        builder.__defaults__,
-        builder.__closure__,
-    )
-    rebound.__kwdefaults__ = builder.__kwdefaults__
-    return rebound(explorer, *args, **kwargs)
+    if builder in context_factories and "context" not in kwargs:
+        kwargs["context"] = getattr(explorer, context_factories[builder])()
+    return builder(explorer, *args, **kwargs)

@@ -14,7 +14,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 import numpy as np
@@ -82,9 +82,42 @@ from .project_imports import (
     _unique_dataset_name,
     data_type_container,
 )
-from .project_masks import _mdhisto_with_nfit_masks, _point_data_with_nfit_masks
+from .project_masks import (
+    _mask_signature,
+    _mdhisto_with_nfit_masks,
+    _point_data_with_nfit_masks,
+    effective_dataset_masks,
+)
 from .project_point_lists import prepared_point_list_data
-from .project_rebinning import _rebin_axis_bound_is_auto
+from .project_rebinning import (
+    DEFAULT_REBIN_MAX_BATCH_MB,
+    REBIN_RESOLUTION_MODE_KEY,
+    _composite_rebin_bin_edges,
+    _composite_rebin_step_sizes,
+    _default_rebin_axes,
+    _finite_coordinate_bounds,
+    _migrate_rebin_axis_modes,
+    _point_data_histogram,
+    _rebin_axis_bound_is_auto,
+    _rebin_axis_mode,
+    _rebin_axis_vector,
+    _rebin_fractional_axes,
+    _rebin_grid_kwargs,
+    _rebin_max_batch_bytes,
+    _rebin_max_batch_mb,
+    _rebin_mdhisto_coverage,
+    _rebin_mean_weighting,
+    _rebin_minimum_coverage,
+    _rebin_minimum_samples,
+    _rebin_point_data,
+    _rebin_symmetry_matrices,
+    _resolve_auto_rebin_axes,
+    _resolve_data_driven_rebin_axes,
+    _sanitize_rebin_axis_config,
+    _symmetry_projected_coordinate_bounds,
+    _validate_mdhisto_rebin_basis,
+)
+from .project_view_data import _apply_dataset_scale, _mdhisto_without_nfit_masks
 from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group
 from .raw_dgs_cache import RAW_DGS_REDUCTION_VERSION, reduction_convention_signature
 from .rebin import REBIN_NUMERICAL_VERSION, rebin_nd
@@ -98,121 +131,95 @@ from .source_lineage import source_lineage_metadata
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
 from .symmetry import SymmetrySpec, symmetry_config
 
-# Standalone defaults.  A configured project's live facade values remain
-# authoritative so existing runtime configuration and monkeypatch seams work.
+# Composite policy defaults have one owner; project_data re-exports them.
 GROUP_COMPOSITE_NAME = "Composite"
-DEFAULT_REBIN_MAX_BATCH_MB = 192
 REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
 REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
-REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
 GROUP_COMPOSITE_BINNINGS_KEY = "composite_binnings"
 FIT_BINNING_ID = "fit"
 CORELLI_ASSIGNMENT_VERSION = 1
 
-_BACKEND_NAMESPACE: Mapping[str, Any] | None = None
+
+@dataclass(frozen=True)
+class CompositePolicy:
+    """Live facade preferences used when normalizing a composite recipe."""
+
+    name: str = GROUP_COMPOSITE_NAME
+    max_batch_mb: int = DEFAULT_REBIN_MAX_BATCH_MB
+    max_contributions: int = REBIN_AUTO_MAX_CONTRIBUTIONS
+    max_output_bins: int = REBIN_AUTO_MAX_OUTPUT_BINS
+    resolution_mode_key: str = REBIN_RESOLUTION_MODE_KEY
 
 
-def configure_composite_backend(namespace: Mapping[str, Any]) -> None:
-    """Bind live lower-level dataset/rebin helpers without an import cycle."""
-
-    global _BACKEND_NAMESPACE
-    missing = sorted(name for name in _BACKEND_NAMES if name not in namespace)
-    if missing:
-        raise ValueError(f"composite backend is missing helpers: {', '.join(missing)}")
-    _BACKEND_NAMESPACE = namespace
+class DatasetLoader(Protocol):
+    def __call__(
+        self, dataset: DatasetEntry, *, progress_callback: Any | None = None
+    ) -> Any: ...
 
 
-def _backend_function(name: str) -> Callable[..., Any]:
-    def delegated(*args: Any, **kwargs: Any) -> Any:
-        if _BACKEND_NAMESPACE is None:
-            raise RuntimeError("composite backend has not been configured")
-        return _BACKEND_NAMESPACE[name](*args, **kwargs)
-
-    return delegated
+class DatasetViewSignature(Protocol):
+    def __call__(
+        self, dataset: DatasetEntry, extra_masks: list[MaskSpec] | None
+    ) -> str: ...
 
 
-def _backend_value(name: str, default: Any) -> Any:
-    if _BACKEND_NAMESPACE is None:
-        return default
-    return _BACKEND_NAMESPACE.get(name, default)
+class CompositeBuilder(Protocol):
+    def __call__(
+        self,
+        group: DataGroup | _CompositeScope,
+        *,
+        progress_callback: Any | None = None,
+        config_override: Mapping[str, Any] | None = None,
+        include_source_masks: bool = True,
+        metadata_dimensions_override: Sequence[dict[str, Any]] | None = None,
+        apply_backgrounds: bool = True,
+    ) -> MDHistoData | PointListData | PointData4D: ...
 
 
-_BACKEND_NAMES = (
-    "DEFAULT_REBIN_MAX_BATCH_MB",
-    "GROUP_COMPOSITE_NAME",
-    "REBIN_AUTO_MAX_CONTRIBUTIONS",
-    "REBIN_AUTO_MAX_OUTPUT_BINS",
-    "REBIN_RESOLUTION_MODE_KEY",
-    "_apply_dataset_backgrounds",
-    "_apply_dataset_scale",
-    "_composite_rebin_bin_edges",
-    "_composite_rebin_step_sizes",
-    "_dataset_data_point_count",
-    "_dataset_rebin_source_points",
-    "_default_rebin_axes",
-    "_ensure_dataset_data_loaded",
-    "_finite_coordinate_bounds",
-    "_mask_signature",
-    "_mdhisto_without_nfit_masks",
-    "_migrate_rebin_axis_modes",
-    "_point_data_histogram",
-    "_rebin_axis_mode",
-    "_rebin_axis_fractional",
-    "_rebin_axis_vector",
-    "_rebin_fractional_axes",
-    "_rebin_grid_kwargs",
-    "_rebin_max_batch_bytes",
-    "_rebin_max_batch_mb",
-    "_rebin_mdhisto_coverage",
-    "_rebin_mean_weighting",
-    "_rebin_minimum_coverage",
-    "_rebin_minimum_samples",
-    "_rebin_point_data",
-    "_rebin_symmetry_matrices",
-    "_resolve_auto_rebin_axes",
-    "_resolve_data_driven_rebin_axes",
-    "_sanitize_rebin_axis_config",
-    "_symmetry_projected_coordinate_bounds",
-    "_validate_mdhisto_rebin_basis",
-    "_viewer_view_signature",
-    "effective_dataset_masks",
-)
+@dataclass(frozen=True)
+class CompositeOperations:
+    """Dataset orchestration supplied by the facade, without reverse imports.
 
-_apply_dataset_backgrounds = _backend_function("_apply_dataset_backgrounds")
-_apply_dataset_scale = _backend_function("_apply_dataset_scale")
-_composite_rebin_bin_edges = _backend_function("_composite_rebin_bin_edges")
-_composite_rebin_step_sizes = _backend_function("_composite_rebin_step_sizes")
-_dataset_data_point_count = _backend_function("_dataset_data_point_count")
-_dataset_rebin_source_points = _backend_function("_dataset_rebin_source_points")
-_default_rebin_axes = _backend_function("_default_rebin_axes")
-_ensure_dataset_data_loaded = _backend_function("_ensure_dataset_data_loaded")
-_finite_coordinate_bounds = _backend_function("_finite_coordinate_bounds")
-_mask_signature = _backend_function("_mask_signature")
-_mdhisto_without_nfit_masks = _backend_function("_mdhisto_without_nfit_masks")
-_migrate_rebin_axis_modes = _backend_function("_migrate_rebin_axis_modes")
-_point_data_histogram = _backend_function("_point_data_histogram")
-_rebin_axis_mode = _backend_function("_rebin_axis_mode")
-_rebin_axis_fractional = _backend_function("_rebin_axis_fractional")
-_rebin_axis_vector = _backend_function("_rebin_axis_vector")
-_rebin_fractional_axes = _backend_function("_rebin_fractional_axes")
-_rebin_grid_kwargs = _backend_function("_rebin_grid_kwargs")
-_rebin_max_batch_bytes = _backend_function("_rebin_max_batch_bytes")
-_rebin_max_batch_mb = _backend_function("_rebin_max_batch_mb")
-_rebin_mdhisto_coverage = _backend_function("_rebin_mdhisto_coverage")
-_rebin_mean_weighting = _backend_function("_rebin_mean_weighting")
-_rebin_minimum_coverage = _backend_function("_rebin_minimum_coverage")
-_rebin_minimum_samples = _backend_function("_rebin_minimum_samples")
-_rebin_point_data = _backend_function("_rebin_point_data")
-_rebin_symmetry_matrices = _backend_function("_rebin_symmetry_matrices")
-_resolve_auto_rebin_axes = _backend_function("_resolve_auto_rebin_axes")
-_resolve_data_driven_rebin_axes = _backend_function("_resolve_data_driven_rebin_axes")
-_sanitize_rebin_axis_config = _backend_function("_sanitize_rebin_axis_config")
-_symmetry_projected_coordinate_bounds = _backend_function(
-    "_symmetry_projected_coordinate_bounds"
-)
-_validate_mdhisto_rebin_basis = _backend_function("_validate_mdhisto_rebin_basis")
-_viewer_view_signature = _backend_function("_viewer_view_signature")
-effective_dataset_masks = _backend_function("effective_dataset_masks")
+    Each callback has one domain responsibility. Pure mask, view-transform and
+    rebin helpers are imported directly from their owning services instead.
+    The builder provider preserves the existing live facade override seam.
+    """
+
+    load_dataset: DatasetLoader
+    apply_dataset_backgrounds: Callable[[DatasetEntry, MDHistoData], MDHistoData]
+    dataset_point_count: Callable[[DatasetEntry], int]
+    dataset_rebin_source_points: Callable[[DatasetEntry], int]
+    viewer_signature: DatasetViewSignature
+    composite_builder: Callable[[], CompositeBuilder]
+    policy: Callable[[], CompositePolicy]
+
+
+_COMPOSITE_OPERATIONS: CompositeOperations | None = None
+
+
+def configure_composite_backend(operations: CompositeOperations) -> None:
+    """Wire the facade's internal dataset coordination into this service.
+
+    This accepts a bounded operations contract, never a module namespace or
+    arbitrary pure-helper overrides. Pure helpers belong to focused services.
+    """
+    global _COMPOSITE_OPERATIONS
+    if not isinstance(operations, CompositeOperations):
+        raise TypeError("composite backend requires CompositeOperations")
+    _COMPOSITE_OPERATIONS = operations
+
+
+def _composite_operations() -> CompositeOperations:
+    if _COMPOSITE_OPERATIONS is None:
+        raise RuntimeError("composite dataset operations have not been configured")
+    return _COMPOSITE_OPERATIONS
+
+
+def _composite_policy() -> CompositePolicy:
+    if _COMPOSITE_OPERATIONS is None:
+        return CompositePolicy()
+    return _COMPOSITE_OPERATIONS.policy()
+
 
 _COMPOSITE_DATA_CACHE: OrderedDict[Any, tuple[str, Any]] = RebinCache(
     SHARED_REBIN_CACHE_BUDGET
@@ -461,9 +468,7 @@ def data_group_composite_config(
     config.setdefault("enabled", False)
     if not isinstance(config.get("symmetry"), dict):
         config["symmetry"] = symmetry_config(SymmetrySpec())
-    resolution_mode_key = _backend_value(
-        "REBIN_RESOLUTION_MODE_KEY", REBIN_RESOLUTION_MODE_KEY
-    )
+    resolution_mode_key = _composite_policy().resolution_mode_key
     if config.get(resolution_mode_key) not in {"step", "bins"}:
         config[resolution_mode_key] = "step"
     if config.get("mean_weighting") == "normalization":
@@ -473,16 +478,12 @@ def data_group_composite_config(
     config["minimum_coverage"] = _rebin_minimum_coverage(config)
     config["minimum_samples"] = _rebin_minimum_samples(config)
     try:
-        default_max_batch_mb = _backend_value(
-            "DEFAULT_REBIN_MAX_BATCH_MB", DEFAULT_REBIN_MAX_BATCH_MB
-        )
+        default_max_batch_mb = _composite_policy().max_batch_mb
         config["max_batch_mb"] = max(
             int(config.get("max_batch_mb", default_max_batch_mb)), 1
         )
     except (TypeError, ValueError):
-        config["max_batch_mb"] = _backend_value(
-            "DEFAULT_REBIN_MAX_BATCH_MB", DEFAULT_REBIN_MAX_BATCH_MB
-        )
+        config["max_batch_mb"] = _composite_policy().max_batch_mb
     config["normalize"] = True
     mdevent = group.metadata.get("mdevent") if isinstance(group.metadata, dict) else None
     raw_dgs = group.metadata.get("raw_dgs") if isinstance(group.metadata, dict) else None
@@ -664,7 +665,10 @@ def _composite_source_points(group: DataGroup) -> int:
     raw_dgs = group.metadata.get("raw_dgs") if isinstance(group.metadata, dict) else None
     if isinstance(raw_dgs, dict):
         return int(raw_dgs.get("event_count", 0) or 0)
-    return sum(_dataset_rebin_source_points(dataset) for dataset in _composite_candidates(group))
+    return sum(
+        _composite_operations().dataset_rebin_source_points(dataset)
+        for dataset in _composite_candidates(group)
+    )
 
 
 def _dataset_collection_point_count(node: DataGroup | DatasetGroup) -> int:
@@ -674,7 +678,10 @@ def _dataset_collection_point_count(node: DataGroup | DatasetGroup) -> int:
     raw_dgs = node.metadata.get("raw_dgs") if isinstance(node.metadata, dict) else None
     if isinstance(raw_dgs, dict):
         return int(raw_dgs.get("event_count", 0) or 0)
-    return sum(_dataset_data_point_count(dataset) for dataset in node.iter_datasets())
+    return sum(
+        _composite_operations().dataset_point_count(dataset)
+        for dataset in node.iter_datasets()
+    )
 
 
 def _composite_output_bins(config: dict[str, Any]) -> int:
@@ -711,11 +718,9 @@ def _composite_rebin_is_large(group: DataGroup, config: dict[str, Any]) -> bool:
     effective = {**config, "axes": _composite_rebin_axes(group, config)}
     return (
         _composite_estimated_contributions(group, config)
-        > _backend_value(
-            "REBIN_AUTO_MAX_CONTRIBUTIONS", REBIN_AUTO_MAX_CONTRIBUTIONS
-        )
+        > _composite_policy().max_contributions
         or _composite_output_bins(effective)
-        > _backend_value("REBIN_AUTO_MAX_OUTPUT_BINS", REBIN_AUTO_MAX_OUTPUT_BINS)
+        > _composite_policy().max_output_bins
     )
 
 
@@ -759,8 +764,8 @@ def _composite_dataset_name(group: DataGroup) -> str:
         paths = _dataset_group_paths(group.root)
         if sum(node.name == group.name for _path, node in paths) > 1:
             path = next((path for path, node in paths if node is group.node), group.name)
-            return f"{path} {_backend_value('GROUP_COMPOSITE_NAME', GROUP_COMPOSITE_NAME)}"
-    return f"{group.name} {_backend_value('GROUP_COMPOSITE_NAME', GROUP_COMPOSITE_NAME)}"
+            return f"{path} {_composite_policy().name}"
+    return f"{group.name} {_composite_policy().name}"
 
 
 def _composite_candidates(
@@ -914,7 +919,7 @@ def _source_data_for_group_composite(
     *,
     include_source_masks: bool = True,
 ) -> Any:
-    data = _ensure_dataset_data_loaded(dataset)
+    data = _composite_operations().load_dataset(dataset)
     node = group.node if isinstance(group, _CompositeScope) else group
     _adopt_imported_crystal(
         _composite_root(group),
@@ -929,7 +934,10 @@ def _source_data_for_group_composite(
             data = _mdhisto_with_nfit_masks(dataset, data=data, extra_masks=extra_masks)
         else:
             data = _mdhisto_without_nfit_masks(data)
-        return _apply_dataset_backgrounds(dataset, data) if dataset.backgrounds else data
+        return (
+            _composite_operations().apply_dataset_backgrounds(dataset, data)
+            if dataset.backgrounds else data
+        )
     if isinstance(data, PointData4D):
         if include_source_masks:
             return _point_data_with_nfit_masks(dataset, data, extra_masks=extra_masks)
@@ -1067,7 +1075,7 @@ def _composite_cache_signature(
                     (dataset.data is None or dataset.data_matches_source) else dataset.data,
                     dataset,
                 ),
-                _viewer_view_signature(dataset, None)
+                _composite_operations().viewer_signature(dataset, None)
                 if any(background.enabled and float(background.scale) != 0.
                        for background in dataset.backgrounds) else None,
                 dataset.data_type,
@@ -1097,13 +1105,22 @@ def _composite_cache_signature(
                 background.projection,
                 (
                     (
-                        _viewer_view_signature(
+                        _composite_operations().viewer_signature(
                             background.source_entry,
-                            effective_dataset_masks(_background_owner_root(group, background), background.source_entry),
+                            effective_dataset_masks(
+                                _background_owner_root(group, background),
+                                background.source_entry,
+                            ),
                         )
                         if background.source_entry.scale_factor == 1.0 else
                         json.dumps([
-                            _viewer_view_signature(background.source_entry, effective_dataset_masks(_background_owner_root(group, background), background.source_entry)),
+                            _composite_operations().viewer_signature(
+                                background.source_entry,
+                                effective_dataset_masks(
+                                    _background_owner_root(group, background),
+                                    background.source_entry,
+                                ),
+                            ),
                             background.source_entry.scale_factor,
                         ], default=str)
                     )
@@ -1153,9 +1170,7 @@ def composite_dataset_data(
     prepare_dataset_criteria(_composite_root(group), datasets=list(selection_node.iter_datasets()),
                               progress_callback=progress_callback)
     config = config_override if config_override is not None else data_group_composite_config(group)
-    composite_builder = _backend_value(
-        "_composite_dataset_data", _composite_dataset_data
-    )
+    composite_builder = _composite_operations().composite_builder()
     builder_options = {} if apply_backgrounds else {"apply_backgrounds": False}
     result = composite_builder(
         group,
@@ -1253,7 +1268,7 @@ def metadata_dimension_preview(group, dimensions=None) -> list[dict[str, Any]]:
     ]
     rows = []
     for dataset in _composite_candidates(group, include_backgrounds=True):
-        _ensure_dataset_data_loaded(dataset)
+        _composite_operations().load_dataset(dataset)
         for spec in specs:
             values = metadata_dimension_coordinates(dataset, spec)
 
@@ -2010,7 +2025,9 @@ def _composite_background_data(group, background, data, *, config, progress_call
             )
             source_data = source_data.with_updates(metadata={**source_data.metadata, **scientific_metadata})
             if source.backgrounds:
-                source_data = _apply_dataset_backgrounds(source, source_data)
+                source_data = _composite_operations().apply_dataset_backgrounds(
+                    source, source_data,
+                )
     if not isinstance(source_data, MDHistoData):
         raise TypeError(f"background {background.name!r} must refer to gridded histogram data")
     if background.projection not in {"center", "sample_trajectories"}:
@@ -2150,7 +2167,7 @@ def _incremental_raw_dgs_base(group, config, progress_callback):
             or any(_rebin_axis_bound_is_auto(axis, bound) for axis in config.get("axes", []) for bound in ("lower", "upper"))
             or _hierarchical_composite_scopes(group)
             or resolved_dgs_reduction_policies(raw)["symmetry_variance_policy"] != "independent_copies"
-            or _backend_value("_composite_dataset_data", _composite_dataset_data) is not _composite_dataset_data):
+            or _composite_operations().composite_builder() is not _composite_dataset_data):
         return None
 
     grid_cells = 1

@@ -9,6 +9,7 @@ from nfit import (
     MaskSpec,
     add_data_group_composite_binning,
     composite_dataset_data,
+    project_data,
     raw_dgs_dataset_group,
     refresh_composite_dataset,
 )
@@ -150,7 +151,7 @@ def test_custom_backend_and_mde_keep_full_replay(case, monkeypatch):
     root, group, config, source = case
     scope = composites._composite_scope(root, group)
     with monkeypatch.context() as context:
-        context.setattr(composites, "_backend_value", lambda *args: lambda *args, **kwargs: None)
+        context.setattr(project_data, "_composite_dataset_data", lambda *args, **kwargs: None)
         assert composites._incremental_raw_dgs_base(scope, config, None) is None
     group.metadata["raw_dgs"]["format"] = "corelli-correlation-nexus"
     assert composites._incremental_raw_dgs_base(scope, config, None) is None

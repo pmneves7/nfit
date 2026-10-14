@@ -15,6 +15,7 @@ import numpy as np
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData
 from .quantities import normalize_unit
+from .spectral_metadata import unit_without_normalization_basis
 
 SCIENTIFIC_IDENTITY_KEY = "combined_scientific_identity"
 
@@ -208,22 +209,10 @@ def validate_spectral_source_settings(data: Any, settings: Mapping[str, Any]) ->
     if basis != _known(settings.get("normalization_basis")):
         mismatches.append("normalization basis")
 
-    def base_unit(unit):
-        unit = normalize_unit(str(unit))
-        suffixes = {
-            "per_formula_unit": ("/f.u.",),
-            "per_unit_cell": ("/unit cell",),
-            "per_magnetic_ion": ("/magnetic ion",),
-        }.get(basis, ())
-        label = actual.get("normalization_label")
-        if basis == "per_magnetic_ion" and label:
-            suffixes = (*suffixes, f"/{label}")
-        for suffix in suffixes:
-            if unit.endswith(suffix):
-                return unit[:-len(suffix)]
-        return unit
-
-    if base_unit(actual["unit"]) != base_unit(settings.get("source_unit")):
+    label = actual.get("normalization_label")
+    actual_base_unit = unit_without_normalization_basis(actual["unit"], basis, label)
+    source_base_unit = unit_without_normalization_basis(settings.get("source_unit"), basis, label)
+    if actual_base_unit != source_base_unit:
         mismatches.append("source unit")
     if representation == "chi_double_prime":
         if actual.get("moment_unit") is not None and actual["moment_unit"] != settings.get("moment_unit"):

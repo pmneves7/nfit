@@ -11,6 +11,7 @@ from ..cross_section import (
 )
 from ..dataset import PointListData
 from ..mdhisto import MDHistoChannel, MDHistoData
+from ..spectral_metadata import target_spectral_record
 from .coordinates import (
     bin_edges,
     bin_widths,
@@ -118,18 +119,10 @@ def convert_spectral_representation(
         else "mu_B^2/meV" if convention.moment_unit == "mu_B_squared"
         else "spin^2/meV"
     )
-    target = SpectralConvention(
-        representation=target_representation, unit=unit,
-        normalization_basis=convention.normalization_basis,
-        magnetic_ions_per_basis=convention.magnetic_ions_per_basis,
-        moment_unit=convention.moment_unit, g_factor=convention.g_factor,
-        form_factor_state="included" if target_representation == "cross_section" else "removed",
-        polarization_state="included" if target_representation == "cross_section" else "removed",
-        bose_state="included" if target_representation == "cross_section" else "removed",
-        kf_ki_state=convention.kf_ki_state, absolute_scale=True,
-        incident_energy_meV=convention.incident_energy_meV,
-        final_energy_meV=convention.final_energy_meV,
-    )
+    target = SpectralConvention(**target_spectral_record(
+        convention.to_dict(), representation=target_representation,
+        unit=unit, absolute_scale=True,
+    ))
     quantity_type = (
         "differential_cross_section" if target_representation == "cross_section"
         else "dynamic_susceptibility"

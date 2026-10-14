@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import numpy as np
@@ -9,7 +10,7 @@ import numpy as np
 from .dataset import PointData4D
 from .dataset_criteria import DATASET_CRITERION_TYPE
 from .mdhisto import MDHistoData
-from .pipeline import DatasetEntry, MaskSpec
+from .pipeline import DataGroup, DatasetEntry, MaskSpec
 from .project_coordinates import (
     COORDINATE_RANGE_PARAMETER_NAMES,
     _mdhisto_coordinate_grids,
@@ -565,3 +566,36 @@ def _matrix_includes_2pi(metadata: dict[str, Any], key: str) -> bool:
             return bool(metadata[flag_key])
     lattice = metadata.get("lattice_parameters")
     return bool(isinstance(lattice, dict) and lattice.get("include_2pi"))
+
+
+def effective_dataset_masks(group: DataGroup, dataset: DatasetEntry) -> list[MaskSpec]:
+    """Return masks inherited from the ancestor group chain of ``dataset``.
+
+    Walks from the data group down through nested dataset groups to the
+    dataset's parent, collecting each level's shared masks (outer to inner).
+    Returns an empty list when the dataset is not found.
+    """
+
+    def search(node: Any) -> list[MaskSpec] | None:
+        if any(item.id == dataset.id for item in getattr(node, "datasets", [])):
+            return list(node.masks)
+        for subgroup in getattr(node, "subgroups", []):
+            below = search(subgroup)
+            if below is not None:
+                return list(node.masks) + below
+        return None
+
+    return search(group) or []
+
+
+def _mask_signature(masks: list[MaskSpec] | None) -> list[Any]:
+    return [
+        [
+            m.type,
+            bool(m.enabled),
+            bool(m.invert),
+            bool(m.additive),
+            json.dumps(m.parameters, sort_keys=True, default=str),
+        ]
+        for m in (masks or [])
+    ]

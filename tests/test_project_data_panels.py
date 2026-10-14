@@ -59,17 +59,14 @@ def test_explorer_panel_methods_are_thin_compatibility_delegates() -> None:
         assert isinstance(returned, ast.Return)
         assert isinstance(returned.value, ast.Call)
         assert isinstance(returned.value.func, ast.Attribute)
-        if name == "_group_dataset_weights_group_box" or PANEL_BUILDERS[name] == "project_readonly_panels.py":
-            assert returned.value.func.attr == name
-            keywords = [keyword.arg for keyword in returned.value.keywords]
-            if name != "_details_group_box":
-                assert "context" in keywords
-            assert not any(
-                isinstance(node, ast.Name) and node.id == "globals"
-                for node in ast.walk(returned.value)
-            )
-        else:
-            assert returned.value.func.attr == "invoke_panel_builder"
+        assert returned.value.func.attr == name
+        keywords = [keyword.arg for keyword in returned.value.keywords]
+        if name != "_details_group_box":
+            assert "context" in keywords
+        assert not any(
+            isinstance(node, ast.Name) and node.id == "globals"
+            for node in ast.walk(returned.value)
+        )
         assert any(
             isinstance(node, ast.Attribute) and node.attr == name
             for node in ast.walk(returned.value)
@@ -313,9 +310,7 @@ def test_legacy_inventory_dispatch_builds_explicit_context_without_rebinding(
 ):
     group = DataGroup("Workspace", datasets=[DatasetEntry("run", None)])
     explorer = NfitProjectExplorer(NfitProject([group]))
-    monkeypatch.setattr(data_panels, "FunctionType", lambda *args, **kwargs: (
-        pytest.fail("Inventory compatibility dispatch used namespace rebinding")
-    ))
+    assert not hasattr(data_panels, "FunctionType")
     monkeypatch.setattr(project_gui, "data_type_label", lambda _kind: "Compatibility label")
     panel = data_panels.invoke_panel_builder(
         data_panels._group_dataset_weights_group_box,
@@ -476,7 +471,7 @@ def test_readonly_explorer_and_legacy_dispatch_bypass_rebinding(
         "_metadata_tree_group_box": {"title": "Metadata", "mapping": {"key": 1}},
     }[builder_name]
     kwargs = {"object_name": "legacy_tree", "empty_text": "Empty"} if builder_name == "_metadata_tree_group_box" else {}
-    monkeypatch.setattr(data_panels, "FunctionType", lambda *args, **kwargs: pytest.fail("Read-only panel used namespace rebinding"))
+    assert not hasattr(data_panels, "FunctionType")
     panels = []
     try:
         panels.append(data_panels.invoke_panel_builder(
@@ -496,7 +491,7 @@ def test_readonly_explorer_and_legacy_dispatch_bypass_rebinding(
 
 
 def test_legacy_readonly_dispatch_accepts_explicit_context_without_explorer(monkeypatch, inventory_qt):
-    monkeypatch.setattr(data_panels, "FunctionType", lambda *args, **kwargs: pytest.fail("Explicit context used namespace rebinding"))
+    assert not hasattr(data_panels, "FunctionType")
     sentinel = object()
     dataset = DatasetEntry("Unloaded", None)
     assert data_panels.invoke_panel_builder(
@@ -525,3 +520,218 @@ def test_legacy_readonly_dispatch_accepts_explicit_context_without_explorer(monk
     finally:
         table_panel.close()
         tree_panel.close()
+
+
+def test_all_panel_dependencies_are_explicit_and_facades_keep_identity():
+    for filename in (
+        "project_dataset_panels.py", "project_group_panels.py",
+        "project_panel_contexts.py", "project_data_panels.py",
+    ):
+        tree = ast.parse((PACKAGE_ROOT / filename).read_text(encoding="utf-8"))
+        assert not any(
+            isinstance(node, ast.Name) and node.id in {"FunctionType", "globals"}
+            for node in ast.walk(tree)
+        )
+        assert not any(
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.value, ast.Constant) and node.value.value is None
+            for node in tree.body
+        )
+        assert not any(
+            isinstance(node, ast.ImportFrom)
+            and (node.module or "").endswith("project_gui")
+            for node in ast.walk(tree)
+        )
+        if filename in {"project_dataset_panels.py", "project_group_panels.py"}:
+            # The compatibility self argument is never read or passed onward.
+            assert not any(
+                isinstance(node, ast.Name) and node.id == "self"
+                and isinstance(node.ctx, ast.Load)
+                for node in ast.walk(tree)
+            )
+    for name, owner in PANEL_BUILDERS.items():
+        module = {
+            "project_dataset_panels.py": dataset_panels,
+            "project_group_panels.py": group_panels,
+            "project_readonly_panels.py": readonly_panels,
+        }[owner]
+        assert getattr(data_panels, name) is getattr(module, name)
+
+
+def _isolated_context(context_class, **capabilities):
+    """Fail if a standalone panel unexpectedly reaches another capability."""
+    from dataclasses import MISSING, fields
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Panel used an unprovided capability")
+
+    required = {
+        field.name: unexpected for field in fields(context_class)
+        if field.default is MISSING and field.default_factory is MISSING
+    }
+    return context_class(**{**required, **capabilities})
+
+
+def test_editable_point_list_controls_use_isolated_contexts(inventory_qt):
+    QtWidgets = inventory_qt
+    dataset = DatasetEntry("Values", PointListData({"X": [1], "Y": [2]}))
+    calls = []
+    panels = []
+    try:
+        for prefix in ("first", "second"):
+            context = _isolated_context(
+                data_panels.PointListScalePanelContext,
+                set_point_list_scale=lambda *args, prefix=prefix: calls.append((prefix, args)),
+            )
+            panels.append(dataset_panels._point_list_scale_box(
+                None, dataset, None, {"scale": {"factor": 1}}, ["X", "Y"], context=context,
+            ))
+        for value, panel in enumerate(panels, start=2):
+            spin = panel.findChild(QtWidgets.QDoubleSpinBox)
+            assert spin.toolTip()
+            spin.setValue(value)
+            spin.editingFinished.emit()
+        assert calls == [
+            ("first", (dataset, None, "factor", 2.0)),
+            ("second", (dataset, None, "factor", 3.0)),
+        ]
+        assert dataset.data.column("Y").tolist() == [2]
+    finally:
+        for panel in panels:
+            panel.close()
+
+
+def test_point_list_parent_and_type_panel_preserve_callbacks(inventory_qt):
+    QtWidgets = inventory_qt
+    dataset = DatasetEntry("Values", PointListData({"X": [1], "Y": [2]}), data_type="custom")
+    calls = []
+    context = _isolated_context(
+        data_panels.DatasetPointListPanelContext,
+        point_list_config=lambda candidate: {"coordinate_names": ["X"], "channels": []},
+        bold_label=lambda widgets, text: widgets.QLabel(text),
+        set_point_list_coordinates=lambda *args: calls.append(args),
+    )
+    panel = dataset_panels._dataset_point_list_group_box(None, dataset, None, context=context)
+    type_panel = dataset_panels._dataset_type_group_box(
+        None, dataset, None, ["Description"],
+        context=data_panels.DatasetTypePanelContext(
+            available_data_types=lambda: [("custom", "Custom"), ("magnetization", "Moment")],
+            set_selected_data_type=lambda *args: calls.append(args),
+        ),
+    )
+    try:
+        coordinates = panel.findChild(QtWidgets.QLineEdit, "point_list_coordinates")
+        coordinates.setText("Y")
+        coordinates.editingFinished.emit()
+        type_panel.findChild(QtWidgets.QComboBox, "dataset_data_type").setCurrentIndex(1)
+        assert calls == [(dataset, None, "Y"), (dataset, None, "magnetization")]
+        assert dataset.data_type == "custom"
+    finally:
+        panel.close()
+        type_panel.close()
+
+
+def test_dataset_rebin_panel_constructs_without_an_explorer(inventory_qt):
+    from nfit.dataset import PointData4D
+    from nfit.project_data import dataset_rebin_binnings
+
+    QtWidgets = inventory_qt
+    data = PointData4D([0], [0], [0], [1], [2], [1])
+    dataset = DatasetEntry("Points", data)
+    binning = dataset_rebin_binnings(dataset)[0]
+    binning["config"]["enabled"] = True
+    calls = []
+    context = _isolated_context(
+        data_panels.DatasetAxesPanelContext,
+        dataset_can_rebin=lambda candidate: True,
+        selected_dataset_binning=lambda candidate: binning,
+        dataset_rebin_symmetry_preview=lambda *args: "Preview",
+        format_number=lambda value: str(value),
+        add_rebin_performance_controls=lambda *args, **kwargs: None,
+        set_dataset_rebin_enabled=lambda *args: calls.append(args),
+        rebin_dataset_now=lambda *args: calls.append(args),
+    )
+    panel = dataset_panels._dataset_axes_group_box(None, dataset, None, [], context=context)
+    try:
+        enabled = panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_enabled")
+        assert enabled.isChecked() and enabled.toolTip()
+        enabled.setChecked(False)
+        panel.findChild(QtWidgets.QPushButton, "dataset_rebin_now").click()
+        assert calls == [(dataset, None, False), (dataset, None)]
+        assert dataset.data is data
+    finally:
+        panel.close()
+
+
+def test_composite_panel_constructs_with_explicit_nested_builders_and_state(inventory_qt):
+    from nfit.project_composites import data_group_composite_binnings, data_group_composite_config
+
+    QtWidgets = inventory_qt
+    group = DataGroup("Composite")
+    data_group_composite_config(group)["enabled"] = True
+    binning = data_group_composite_binnings(group)[0]
+    calls = []
+    context = _isolated_context(
+        data_panels.GroupCompositePanelContext,
+        selected_composite_binning=lambda candidate: binning,
+        data_group_composite_status=lambda candidate: (True, "Standalone status"),
+        expanded_inactive_composite_ids=lambda: set(),
+        project=lambda: NfitProject([group]),
+        format_number=lambda value: str(value),
+        saved_binning_compressed_size=lambda *args, **kwargs: None,
+        metadata_rebin_rows=lambda candidate, layout, row: (calls.append("rows"), 0)[1],
+        metadata_dimensions_panel=lambda candidate, **kwargs: QtWidgets.QLabel("Metadata override"),
+        composite_physics_panel=lambda candidate, config: QtWidgets.QLabel("Physics override"),
+        add_rebin_performance_controls=lambda *args, **kwargs: None,
+        rebin_composite_now=lambda candidate: calls.append(candidate),
+    )
+    panel = group_panels._group_composite_group_box(None, group, context=context)
+    try:
+        tabs = panel.findChild(QtWidgets.QTabWidget, "group_composite_tabs")
+        assert [tabs.tabText(index) for index in range(tabs.count())] == [
+            "Rebin settings", "Metadata dimensions", "Physics", "Bin information",
+        ]
+        panel.findChild(QtWidgets.QPushButton, "group_composite_rebin_now").click()
+        assert calls == ["rows", group]
+        assert not group.datasets
+    finally:
+        panel.close()
+
+
+def test_editable_context_helpers_and_callbacks_remain_live_after_construction(monkeypatch, inventory_qt):
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("Workspace")]))
+    context = explorer._point_list_scale_panel_context()
+    rebin_context = explorer._dataset_axes_panel_context()
+    calls = []
+    monkeypatch.setattr(explorer, "_set_point_list_scale", lambda *args: calls.append(args))
+    monkeypatch.setattr(project_gui, "_format_number", lambda value: f"live:{value}")
+    monkeypatch.setattr(explorer, "materialize_rebin_for_selection", lambda: calls.append("materialize"))
+    try:
+        context.set_point_list_scale("dataset", "group", "factor", 2)
+        rebin_context.materialize_rebin_for_selection()
+        assert calls == [("dataset", "group", "factor", 2), "materialize"]
+        assert rebin_context.format_number(7) == "live:7"
+    finally:
+        explorer.has_unsaved_changes = False
+        explorer.window.close()
+
+
+def test_compatibility_dispatch_ignores_namespace_and_accepts_standalone_editable_context(inventory_qt):
+    class UnreadableNamespace(dict):
+        def __getitem__(self, key):
+            pytest.fail("Compatibility dispatcher read helper_namespace")
+
+    dataset = DatasetEntry("Unloaded", None)
+    context = data_panels.DatasetTypePanelContext(
+        available_data_types=lambda: [("custom", "Custom")],
+        set_selected_data_type=lambda *args: None,
+    )
+    panel = data_panels.invoke_panel_builder(
+        data_panels._dataset_type_group_box, None, dataset=dataset, group=None, lines=[],
+        context=context, helper_namespace=UnreadableNamespace(),
+    )
+    try:
+        assert panel.findChild(inventory_qt.QComboBox, "dataset_data_type").currentText() == "Custom"
+        assert dataset.data is None
+    finally:
+        panel.close()

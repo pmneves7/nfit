@@ -68,9 +68,9 @@ The implementation follows the same boundary. `project_imports` owns importer
 selection, source mutation, lazy loading, reloads, and creation of project
 dataset entries without importing Qt. Its source-handler registry gives project
 artifacts, raw DGS, registered importers, point lists, nfit archives, MDEvent,
-and MDHisto files one loading and availability contract. `project_data` owns
-dataset preparation, masks, rebinning, composites, derived data, and
-viewer-ready representations. `project_io`, `project_history`, and
+and MDHisto files one loading and availability contract. `project_data`
+coordinates dataset preparation and derived data through focused mask,
+rebinning, composite, and viewer services. `project_io`, `project_history`, and
 `project_models` own serialized project state, fit-history snapshots, and model
 parameter reconciliation. The project explorer keeps compatibility wrappers
 for public APIs; widgets and plotting windows remain presentation modules
@@ -81,6 +81,19 @@ the project preparation facade. `project_data.save_dataset_file` chooses the
 prepared view or original data and passes it to the archive writer. Existing
 `project_dataset_io` imports remain available as compatibility exports, with
 the same archive formats and save defaults.
+
+`project_composites` owns composite planning, caching, and background alignment.
+It imports numerical helpers from their owning services and receives typed
+callbacks from `project_data` for dataset loading, background preparation,
+counts, view signatures, and runtime overrides. `project_masks` owns inherited
+mask selection and mask signatures; existing `project_data` imports remain
+available.
+
+`spectral_metadata` defines shared spectral convention records and normalization
+unit formatting. Analysis conversions, paired dataset channels, compatibility
+checks, and GUI controls use these helpers while retaining their entry-point
+validation and output-unit conventions. Numerical conversion factors remain in
+`cross_section` and `spectral_conversion`.
 
 Shared direct-geometry grid planning and validation live in `dgs_binning`;
 Python detector-trajectory accumulation lives in `dgs_trajectory_accumulation`.
@@ -99,12 +112,12 @@ and GUI entry points retain compatibility exports of the same implementation.
 preparation. Dataset and composite editors call its shared mutation functions;
 the GUI handles refreshes and validation feedback. The numeric edit functions
 retain the distinct dataset and composite validation policies.
-The group inventory panel receives a `GroupInventoryPanelContext` with explicit
-row-formatting and pagination callbacks. It queries only visible dataset rows;
-the explorer supplies callbacks that retain live helper lookup.
-`project_readonly_panels` owns details, dataset metadata, analysis tables, and
-metadata trees. These builders receive their formatting and metadata callbacks
-explicitly, preserving explorer overrides without rebinding GUI globals.
+Dataset, composite, and read-only panel builders receive typed contexts with
+explicit formatting, state, and callback dependencies. The explorer supplies
+callbacks that retain live helper lookup and subclass overrides. The group
+inventory panel queries only visible rows through its formatting and pagination
+callbacks. `project_data_panels` retains compatibility dispatch without rebinding
+function globals.
 
 `data_workspace` carries temporary-directory preferences through runtime
 project, group, and dataset ownership. Project-aware allocations pass that

@@ -13,6 +13,11 @@ from .cross_section import (
 )
 from .form_factors import form_factor_sq
 from .mdhisto import MDHistoChannel, MDHistoData
+from .spectral_metadata import (
+    normalization_basis_suffix,
+    spectral_unit_with_basis,
+    target_spectral_record,
+)
 
 SPECTRAL_CHANNEL_CONFIG_KEY = "spectral_channels"
 CROSS_SECTION_CHANNEL = "scattering_cross_section"
@@ -148,15 +153,9 @@ def _kinematic_factor(
 
 
 def _basis_suffix(config: dict[str, Any]) -> str:
-    normalization_basis = str(config["normalization_basis"])
-    if normalization_basis == "per_magnetic_ion":
-        label = str(config.get("normalization_label", "") or "").strip()
-        return f"/{label}" if label else "/magnetic ion"
-    return {
-        "per_formula_unit": "/f.u.",
-        "per_unit_cell": "/unit cell",
-        "unknown": "",
-    }[normalization_basis]
+    return normalization_basis_suffix(
+        str(config["normalization_basis"]), config.get("normalization_label", ""),
+    )
 
 
 def _output_units(
@@ -356,22 +355,17 @@ def with_paired_spectral_channels(
     ions = convention.get("magnetic_ions_per_basis")
     if ions is None and isinstance(previous, dict) and previous.get("normalization_basis") == convention["normalization_basis"]:
         ions = previous.get("magnetic_ions_per_basis")
-    state = "removed" if selected_chipp else "included"
-    target = {
-        "representation": "chi_double_prime" if selected_chipp else "cross_section",
-        "unit": unit,
-        "normalization_basis": convention["normalization_basis"],
-        "magnetic_ions_per_basis": ions,
-        "moment_unit": moment_unit,
-        "g_factor": g_factor,
-        "form_factor_state": state,
-        "polarization_state": state,
-        "bose_state": state,
-        "kf_ki_state": convention["kf_ki_state"],
-        "absolute_scale": absolute_chipp if selected_chipp else absolute_cross_section,
-        "incident_energy_meV": convention.get("incident_energy_meV"),
-        "final_energy_meV": convention.get("final_energy_meV"),
-    }
+    target = target_spectral_record(
+        {
+            **convention,
+            "magnetic_ions_per_basis": ions,
+            "moment_unit": moment_unit,
+            "g_factor": g_factor,
+        },
+        representation="chi_double_prime" if selected_chipp else "cross_section",
+        unit=unit,
+        absolute_scale=absolute_chipp if selected_chipp else absolute_cross_section,
+    )
     metadata["spectral_convention"] = target
     if temperature_K is not None:
         temperature = np.asarray(temperature_K, dtype=float)
@@ -418,41 +412,13 @@ def updated_spectral_channel_config(config, key, value):
         elif str(value).startswith("mu_B^2/"):
             config["moment_unit"] = "mu_B_squared"
     if key == "normalization_basis" and config["source_unit"] != "arbitrary":
-        if value == "per_magnetic_ion":
-            label = str(config.get("normalization_label", "") or "").strip()
-            suffix = f"/{label}" if label else "/magnetic ion"
-        else:
-            suffix = {
-                "per_formula_unit": "/f.u.",
-                "per_unit_cell": "/unit cell",
-                "unknown": "",
-            }[str(value)]
-        if config["source_representation"] == "cross_section":
-            source_unit = str(config["source_unit"])
-            if source_unit.startswith("1/meV"):
-                prefix = "1/meV"
-            elif source_unit.startswith("mbarn/"):
-                prefix = "mbarn/sr/meV"
-            else:
-                prefix = "barn/sr/meV"
-        else:
-            prefix = (
-                "spin^2/meV"
-                if str(config["source_unit"]).startswith("spin^2/")
-                else "mu_B^2/meV"
-            )
-        config["source_unit"] = prefix + suffix
+        config["source_unit"] = spectral_unit_with_basis(
+            str(config["source_unit"]), str(value), config.get("normalization_label", ""),
+            representation=str(config["source_representation"]),
+        )
     if key == "normalization_label" and config["source_unit"] != "arbitrary":
-        suffix = f"/{str(value).strip()}" if str(value).strip() else "/magnetic ion"
-        for prefix in (
-            "mbarn/sr/meV",
-            "barn/sr/meV",
-            "mu_B^2/meV",
-            "spin^2/meV",
-            "1/meV",
-        ):
-            if str(config["source_unit"]).startswith(prefix):
-                config["source_unit"] = prefix + suffix
-                break
+        config["source_unit"] = spectral_unit_with_basis(
+            str(config["source_unit"]), "per_magnetic_ion", str(value).strip(),
+        )
     config[key] = value
     return normalized_spectral_channel_config(config)

@@ -20,6 +20,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from . import project_composites as _project_composites
 from . import project_rebinning as _project_rebinning
 from .analysis.artifacts import dataset_artifact_bytes  # noqa: F401
 from .analysis.coordinates import signal_semantics  # noqa: F401
@@ -174,6 +175,9 @@ from .project_masks import (
     _mask_axis_names as _mask_axis_names,
 )
 from .project_masks import (
+    _mask_signature as _mask_signature,
+)
+from .project_masks import (
     _matrix_includes_2pi as _matrix_includes_2pi,
 )
 from .project_masks import (
@@ -259,6 +263,9 @@ from .project_masks import (
 )
 from .project_masks import (
     _values_in_range as _values_in_range,
+)
+from .project_masks import (
+    effective_dataset_masks as effective_dataset_masks,
 )
 from .project_point_lists import (
     _PREPARED_POINT_LIST_CACHE as _PREPARED_POINT_LIST_CACHE,
@@ -530,7 +537,7 @@ from .symmetry import (  # noqa: F401
 DATASET_REBIN_KEY = "rebin"
 FIT_BINNING_ID = "fit"
 DATASET_MASK_APPLICATION_KEY = "mask_application"
-GROUP_COMPOSITE_NAME = "Composite"
+GROUP_COMPOSITE_NAME = _project_composites.GROUP_COMPOSITE_NAME
 DERIVED_RECIPE_KEY = "derived_recipe"
 VIRTUAL_DERIVED_ANALYSIS_TYPES = {"dataset_clone", "histogram_arithmetic"}
 REBIN_COORDINATE_BASIS_VERSION = 2
@@ -551,8 +558,8 @@ REBIN_SETTINGS_KEYS = (
     "coordinate_mode",
     "metadata_dimensions",
 )
-REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
-REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
+REBIN_AUTO_MAX_CONTRIBUTIONS = _project_composites.REBIN_AUTO_MAX_CONTRIBUTIONS
+REBIN_AUTO_MAX_OUTPUT_BINS = _project_composites.REBIN_AUTO_MAX_OUTPUT_BINS
 MASK_AUTO_MAX_POINTS = 5_000_000
 
 _project_rebinning.configure_rebinning_compatibility(globals())
@@ -567,26 +574,6 @@ _VIEWER_VIEW_CACHE_LIMIT = None
 # Viewer-ready and composite bin results use the same machine-level allowance;
 # this snapshots that preference when the application starts.
 _VIEWER_VIEW_CACHE_MAX_BYTES = scientific_cache_budget_bytes()
-
-
-def effective_dataset_masks(group: DataGroup, dataset: DatasetEntry) -> list[MaskSpec]:
-    """Return masks inherited from the ancestor group chain of ``dataset``.
-
-    Walks from the data group down through nested dataset groups to the
-    dataset's parent, collecting each level's shared masks (outer to inner).
-    Returns an empty list when the dataset is not found.
-    """
-
-    def search(node: Any) -> list[MaskSpec] | None:
-        if any(item.id == dataset.id for item in getattr(node, "datasets", [])):
-            return list(node.masks)
-        for subgroup in getattr(node, "subgroups", []):
-            below = search(subgroup)
-            if below is not None:
-                return list(node.masks) + below
-        return None
-
-    return search(group) or []
 
 
 def _ensure_dataset_data_loaded(
@@ -1083,19 +1070,6 @@ def _viewer_preparation_cache(dataset: DatasetEntry, cache_id: str | None = None
         return _COMPOSITE_DATA_CACHE, (owner, "viewer-source", str(binning))
     key = dataset.id if cache_id is None else f"{dataset.id}:{cache_id}"
     return _VIEWER_VIEW_CACHE, key
-
-
-def _mask_signature(masks: list[MaskSpec] | None) -> list[Any]:
-    return [
-        [
-            m.type,
-            bool(m.enabled),
-            bool(m.invert),
-            bool(m.additive),
-            json.dumps(m.parameters, sort_keys=True, default=str),
-        ]
-        for m in (masks or [])
-    ]
 
 
 def _viewer_view_signature(
@@ -2049,11 +2023,29 @@ def _dataset_data_point_count(dataset: DatasetEntry) -> int:
         return _dataset_rebin_output_bins(dataset_rebin_config(dataset))
     return 0
 
-# Imported after the dataset/view backend is defined: project_composites uses
-# those lower-level operations while this module preserves the public API.
-from . import project_composites as _project_composites  # noqa: E402
-
-_project_composites.configure_composite_backend(globals())
+# Callbacks resolve the facade's current functions at invocation, preserving
+# established runtime overrides while keeping service dependencies bounded.
+_project_composites.configure_composite_backend(
+    _project_composites.CompositeOperations(
+        load_dataset=lambda dataset, **kwargs: _ensure_dataset_data_loaded(
+            dataset, **kwargs,
+        ),
+        apply_dataset_backgrounds=lambda dataset, data: _apply_dataset_backgrounds(
+            dataset, data,
+        ),
+        dataset_point_count=lambda dataset: _dataset_data_point_count(dataset),
+        dataset_rebin_source_points=lambda dataset: _dataset_rebin_source_points(dataset),
+        viewer_signature=lambda dataset, masks: _viewer_view_signature(dataset, masks),
+        composite_builder=lambda: _composite_dataset_data,
+        policy=lambda: _project_composites.CompositePolicy(
+            name=GROUP_COMPOSITE_NAME,
+            max_batch_mb=DEFAULT_REBIN_MAX_BATCH_MB,
+            max_contributions=REBIN_AUTO_MAX_CONTRIBUTIONS,
+            max_output_bins=REBIN_AUTO_MAX_OUTPUT_BINS,
+            resolution_mode_key=REBIN_RESOLUTION_MODE_KEY,
+        ),
+    )
+)
 
 _CompositeScope = _project_composites._CompositeScope
 _composite_scope = _project_composites._composite_scope

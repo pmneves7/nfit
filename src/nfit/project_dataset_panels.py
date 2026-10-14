@@ -4,6 +4,25 @@ from __future__ import annotations
 
 from typing import Any
 
+from .dataset import PointData4D
+from .mdhisto import MDHistoData
+from .pipeline import DataGroup, DatasetEntry
+from .project_composites import _CompositeScope
+from .project_imports import DATA_TYPE_DEFINITIONS, DEFAULT_DATA_TYPE
+from .project_panel_contexts import (
+    DatasetAxesPanelContext,
+    DatasetPointListPanelContext,
+    DatasetSignalSemanticsPanelContext,
+    DatasetSpectralChannelsPanelContext,
+    DatasetTypePanelContext,
+    HeatCapacityPanelContext,
+    MagnetizationAbsolutePanelContext,
+    PointListScalePanelContext,
+    PointListSusceptibilityPanelContext,
+    PointListWavelengthPanelContext,
+    RebinPerformancePanelContext,
+)
+from .project_point_lists import HEAT_CAPACITY_CHANNEL_LABEL, HEAT_CAPACITY_OVER_T_CHANNEL_LABEL
 from .project_readonly_panels import (
     _analysis_table_group_box as _analysis_table_group_box,
 )
@@ -22,58 +41,19 @@ from .qt_controls import (
     COMPACT_SHORT_TEXT_FIELD_WIDTH,
     constrain_input_width,
 )
-
-# The compatibility dispatcher supplies these established project_gui globals
-# at invocation time. Keeping the contract explicit avoids a reverse import.
-DATA_TYPE_DEFINITIONS: Any = None
-DEFAULT_DATA_TYPE: Any = None
-DataGroup: Any = None
-DatasetEntry: Any = None
-HEAT_CAPACITY_CHANNEL_LABEL: Any = None
-HEAT_CAPACITY_OVER_T_CHANNEL_LABEL: Any = None
-MDHistoData: Any = None
-PPMS_HEAT_CAPACITY_UNITS: Any = None
-PointData4D: Any = None
-PointListData: Any = None
-QUANTITY_TYPES: Any = None
-_CompositeScope: Any = None
-_bold_label: Any = None
-_compact_point_list_form: Any = None
-_composite_root: Any = None
-_dataset_can_rebin: Any = None
-_dataset_lattice_parameters: Any = None
-_dataset_rebin_status_text: Any = None
-_format_number: Any = None
-_momentum_rebin_matrix: Any = None
-_momentum_rebin_vector_text: Any = None
-_parameter_to_text: Any = None
-_parse_parameter_text: Any = None
-_peek_cached_dataset_view: Any = None
-_rebin_axis_bound_is_auto: Any = None
-_rebin_axis_mode: Any = None
-_rebin_axis_fractional: Any = None
-_rebin_max_batch_mb: Any = None
-_rebin_mean_weighting: Any = None
-_rebin_minimum_coverage: Any = None
-_rebin_minimum_samples: Any = None
-_sanitize_rebin_axis_config: Any = None
-_saved_binning_compressed_size: Any = None
-available_data_types: Any = None
-available_ions: Any = None
-data_group_composite_config: Any = None
-dataset_rebin_config: Any = None
-dataset_rebin_binnings: Any = None
-np: Any = None
-point_list_config: Any = None
-signal_semantics: Any = None
-symmetry_spec_from_config: Any = None
-effective_dataset_masks: Any = None
+from .spectral_metadata import normalization_basis_suffix
 
 
-def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup | None) -> Any:
+def _dataset_point_list_group_box(
+    self,
+    dataset: DatasetEntry,
+    group: DataGroup | None,
+    *,
+    context: DatasetPointListPanelContext,
+) -> Any:
     from PySide6 import QtWidgets
 
-    config = point_list_config(dataset)
+    config = context.point_list_config(dataset)
     data = dataset.data
     columns = list(data.column_names)
     definition = DATA_TYPE_DEFINITIONS.get(dataset.data_type, {})
@@ -89,7 +69,7 @@ def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup 
     coord_edit.setObjectName("point_list_coordinates")
     coord_edit.setToolTip("Comma-separated column names to use as independent coordinates.")
     coord_edit.editingFinished.connect(
-        lambda editor=coord_edit: self._set_point_list_coordinates(dataset, group, editor.text())
+        lambda editor=coord_edit: context.set_point_list_coordinates(dataset, group, editor.text())
     )
     coord_row.addWidget(coord_edit, 1)
     layout.addLayout(coord_row)
@@ -98,24 +78,24 @@ def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup 
     channels_box = QtWidgets.QGroupBox("Channels")
     channels_layout = QtWidgets.QGridLayout(channels_box)
     channels_layout.setContentsMargins(8, 6, 8, 6)
-    channels_layout.addWidget(_bold_label(QtWidgets, "Value"), 0, 0)
-    channels_layout.addWidget(_bold_label(QtWidgets, "Error"), 0, 1)
-    channels_layout.addWidget(_bold_label(QtWidgets, "Quantity"), 0, 2)
-    channels_layout.addWidget(_bold_label(QtWidgets, "Units"), 0, 3)
+    channels_layout.addWidget(context.bold_label(QtWidgets, "Value"), 0, 0)
+    channels_layout.addWidget(context.bold_label(QtWidgets, "Error"), 0, 1)
+    channels_layout.addWidget(context.bold_label(QtWidgets, "Quantity"), 0, 2)
+    channels_layout.addWidget(context.bold_label(QtWidgets, "Units"), 0, 3)
     for row, channel in enumerate(config.get("channels", []), start=1):
         value_combo = QtWidgets.QComboBox()
         value_combo.addItems(columns)
         value_combo.setCurrentText(str(channel.get("value", "")))
         value_combo.setToolTip("Column used as the signal values for this plotted or fitted channel.")
         value_combo.currentTextChanged.connect(
-            lambda text, index=row - 1: self._set_point_list_channel(dataset, group, index, "value", text)
+            lambda text, index=row - 1: context.set_point_list_channel(dataset, group, index, "value", text)
         )
         error_combo = QtWidgets.QComboBox()
         error_combo.addItems(["(none)", *columns])
         error_combo.setCurrentText(str(channel.get("error") or "(none)"))
         error_combo.setToolTip("Optional column containing one-sigma uncertainties for this channel.")
         error_combo.currentTextChanged.connect(
-            lambda text, index=row - 1: self._set_point_list_channel(dataset, group, index, "error", text)
+            lambda text, index=row - 1: context.set_point_list_channel(dataset, group, index, "error", text)
         )
         channels_layout.addWidget(value_combo, row, 0)
         channels_layout.addWidget(error_combo, row, 1)
@@ -129,7 +109,7 @@ def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup 
             "to validate that their output is comparable to the data."
         )
         quantity_combo.currentTextChanged.connect(
-            lambda text, index=row - 1: self._set_point_list_channel(
+            lambda text, index=row - 1: context.set_point_list_channel(
                 dataset, group, index, "quantity_type", text
             )
         )
@@ -141,7 +121,7 @@ def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup 
             "is normalized and checked when a model predicts this channel."
         )
         unit_edit.editingFinished.connect(
-            lambda editor=unit_edit, index=row - 1: self._set_point_list_channel(
+            lambda editor=unit_edit, index=row - 1: context.set_point_list_channel(
                 dataset, group, index, "unit", editor.text()
             )
         )
@@ -149,30 +129,37 @@ def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup 
         remove_button = QtWidgets.QPushButton("Remove")
         remove_button.setToolTip("Remove this channel definition from the dataset configuration.")
         remove_button.clicked.connect(
-            lambda _checked=False, index=row - 1: self._remove_point_list_channel(dataset, group, index)
+            lambda _checked=False, index=row - 1: context.remove_point_list_channel(dataset, group, index)
         )
         channels_layout.addWidget(remove_button, row, 4)
     add_button = QtWidgets.QPushButton("Add channel")
     add_button.setToolTip("Add another signal channel using columns from this point-list dataset.")
-    add_button.clicked.connect(lambda: self._add_point_list_channel(dataset, group))
+    add_button.clicked.connect(lambda: context.add_point_list_channel(dataset, group))
     channels_layout.addWidget(add_button, len(config.get("channels", [])) + 1, 0)
     layout.addWidget(channels_box)
 
     # Magnetization already has dedicated physical-unit and normalization
     # controls, so the generic scale/unit transform would be redundant.
     if definition.get("scale") and not definition.get("susceptibility"):
-        layout.addWidget(self._point_list_scale_box(dataset, group, config, columns))
+        layout.addWidget(context.point_list_scale_box(dataset, group, config, columns))
     if definition.get("susceptibility"):
-        layout.addWidget(self._point_list_susceptibility_box(dataset, group, config))
-        layout.addWidget(self._magnetization_absolute_box(dataset, group))
+        layout.addWidget(context.point_list_susceptibility_box(dataset, group, config))
+        layout.addWidget(context.magnetization_absolute_box(dataset, group))
     if definition.get("heat_capacity"):
-        layout.addWidget(self._heat_capacity_box(dataset, group, config))
+        layout.addWidget(context.heat_capacity_box(dataset, group, config))
     if definition.get("wavelength"):
-        layout.addWidget(self._point_list_wavelength_box(dataset, group, config))
+        layout.addWidget(context.point_list_wavelength_box(dataset, group, config))
     return group_box
 
 
-def _heat_capacity_box(self, dataset, group, config) -> Any:
+def _heat_capacity_box(
+    self,
+    dataset,
+    group,
+    config,
+    *,
+    context: HeatCapacityPanelContext,
+) -> Any:
     from PySide6 import QtWidgets
 
     box = QtWidgets.QGroupBox("Heat-capacity normalization")
@@ -187,7 +174,7 @@ def _heat_capacity_box(self, dataset, group, config) -> Any:
         "to mJ/(mol K). Required by the Debye and low-temperature models."
     )
     enabled.toggled.connect(
-        lambda checked: self._set_heat_capacity_setting(dataset, group, "absolute_units", bool(checked))
+        lambda checked: context.set_heat_capacity_setting(dataset, group, "absolute_units", bool(checked))
     )
     grid.addWidget(enabled, 0, 0, 1, 2)
     for row, (key, label, object_name, tooltip) in enumerate((
@@ -198,13 +185,13 @@ def _heat_capacity_box(self, dataset, group, config) -> Any:
     ), start=1):
         widget_label = QtWidgets.QLabel(label)
         widget_label.setToolTip(tooltip)
-        editor = QtWidgets.QLineEdit(_parameter_to_text(dataset.parameters.get(key, "")))
+        editor = QtWidgets.QLineEdit(context.parameter_to_text(dataset.parameters.get(key, "")))
         constrain_input_width(editor, COMPACT_SCALAR_FIELD_WIDTH)
         editor.setObjectName(object_name)
         editor.setToolTip(tooltip)
         editor.editingFinished.connect(
-            lambda ed=editor, setting=key: self._set_heat_capacity_setting(
-                dataset, group, setting, _parse_parameter_text(ed.text())
+            lambda ed=editor, setting=key: context.set_heat_capacity_setting(
+                dataset, group, setting, context.parse_parameter_text(ed.text())
             )
         )
         grid.addWidget(widget_label, row, 0)
@@ -221,7 +208,7 @@ def _heat_capacity_box(self, dataset, group, config) -> Any:
         "evaluate consistently in either representation."
     )
     channel_combo.currentTextChanged.connect(
-        lambda text: self._set_heat_capacity_fit_channel(dataset, group, text)
+        lambda text: context.set_heat_capacity_fit_channel(dataset, group, text)
     )
     grid.addWidget(channel_combo, 3, 1)
     grid.addWidget(QtWidgets.QLabel("PPMS source units"), 4, 0)
@@ -238,7 +225,7 @@ def _heat_capacity_box(self, dataset, group, config) -> Any:
         "seeds this value when possible; change it here if the header is ambiguous."
     )
     unit_combo.currentIndexChanged.connect(
-        lambda _index, combo=unit_combo: self._set_heat_capacity_source_unit(
+        lambda _index, combo=unit_combo: context.set_heat_capacity_source_unit(
             dataset, group, str(combo.currentData())
         )
     )
@@ -250,14 +237,14 @@ def _heat_capacity_box(self, dataset, group, config) -> Any:
     )
     atoms_label.setToolTip(atoms_tooltip)
     atoms_edit = QtWidgets.QLineEdit(
-        _parameter_to_text(dataset.parameters.get("atoms_per_formula_unit", ""))
+        context.parameter_to_text(dataset.parameters.get("atoms_per_formula_unit", ""))
     )
     constrain_input_width(atoms_edit, COMPACT_SCALAR_FIELD_WIDTH)
     atoms_edit.setObjectName("heat_capacity_atoms_per_formula_unit")
     atoms_edit.setToolTip(atoms_tooltip)
     atoms_edit.editingFinished.connect(
-        lambda ed=atoms_edit: self._set_heat_capacity_setting(
-            dataset, group, "atoms_per_formula_unit", _parse_parameter_text(ed.text())
+        lambda ed=atoms_edit: context.set_heat_capacity_setting(
+            dataset, group, "atoms_per_formula_unit", context.parse_parameter_text(ed.text())
         )
     )
     grid.addWidget(atoms_label, 5, 0)
@@ -269,11 +256,17 @@ def _heat_capacity_box(self, dataset, group, config) -> Any:
         "without adding another permanent toolbar control."
     )
     grid.addWidget(hint, 6, 0, 1, 2)
-    _compact_point_list_form(box, QtWidgets)
+    context.compact_point_list_form(box, QtWidgets)
     return box
 
 
-def _magnetization_absolute_box(self, dataset, group) -> Any:
+def _magnetization_absolute_box(
+    self,
+    dataset,
+    group,
+    *,
+    context: MagnetizationAbsolutePanelContext,
+) -> Any:
     """Absolute-unit normalization controls for a magnetization dataset.
 
     When enabled the model predicts the moment in absolute emu using the
@@ -297,7 +290,7 @@ def _magnetization_absolute_box(self, dataset, group) -> Any:
     )
     enable.setChecked(bool(dataset.parameters.get("absolute_units", False)))
     enable.toggled.connect(
-        lambda checked: self._set_magnetization_absolute(
+        lambda checked: context.set_magnetization_absolute(
             dataset, group, "absolute_units", bool(checked)
         )
     )
@@ -318,7 +311,7 @@ def _magnetization_absolute_box(self, dataset, group) -> Any:
         "is normalized using the sample mass and the formula-unit molar mass."
     )
     output_combo.currentIndexChanged.connect(
-        lambda _index, combo=output_combo: self._set_magnetization_absolute(
+        lambda _index, combo=output_combo: context.set_magnetization_absolute(
             dataset, group, "magnetization_output_unit", combo.currentData()
         )
     )
@@ -328,14 +321,14 @@ def _magnetization_absolute_box(self, dataset, group) -> Any:
     mass_label.setToolTip(mass_tooltip)
     grid.addWidget(mass_label, 2, 0)
     mass_edit = QtWidgets.QLineEdit(
-        _parameter_to_text(dataset.parameters.get("sample_mass_mg", ""))
+        context.parameter_to_text(dataset.parameters.get("sample_mass_mg", ""))
     )
     constrain_input_width(mass_edit, COMPACT_SCALAR_FIELD_WIDTH)
     mass_edit.setObjectName("magnetization_sample_mass_mg")
     mass_edit.setToolTip(mass_tooltip)
     mass_edit.editingFinished.connect(
-        lambda ed=mass_edit: self._set_magnetization_absolute(
-            dataset, group, "sample_mass_mg", _parse_parameter_text(ed.text())
+        lambda ed=mass_edit: context.set_magnetization_absolute(
+            dataset, group, "sample_mass_mg", context.parse_parameter_text(ed.text())
         )
     )
     grid.addWidget(mass_edit, 2, 1)
@@ -344,22 +337,30 @@ def _magnetization_absolute_box(self, dataset, group) -> Any:
     molar_label.setToolTip(molar_tooltip)
     grid.addWidget(molar_label, 3, 0)
     molar_edit = QtWidgets.QLineEdit(
-        _parameter_to_text(dataset.parameters.get("molar_mass_g_mol", ""))
+        context.parameter_to_text(dataset.parameters.get("molar_mass_g_mol", ""))
     )
     constrain_input_width(molar_edit, COMPACT_SCALAR_FIELD_WIDTH)
     molar_edit.setObjectName("magnetization_molar_mass_g_mol")
     molar_edit.setToolTip(molar_tooltip)
     molar_edit.editingFinished.connect(
-        lambda ed=molar_edit: self._set_magnetization_absolute(
-            dataset, group, "molar_mass_g_mol", _parse_parameter_text(ed.text())
+        lambda ed=molar_edit: context.set_magnetization_absolute(
+            dataset, group, "molar_mass_g_mol", context.parse_parameter_text(ed.text())
         )
     )
     grid.addWidget(molar_edit, 3, 1)
-    _compact_point_list_form(box, QtWidgets)
+    context.compact_point_list_form(box, QtWidgets)
     return box
 
 
-def _point_list_scale_box(self, dataset, group, config, columns) -> Any:
+def _point_list_scale_box(
+    self,
+    dataset,
+    group,
+    config,
+    columns,
+    *,
+    context: PointListScalePanelContext,
+) -> Any:
     from PySide6 import QtWidgets
 
     scale = config["scale"]
@@ -372,7 +373,7 @@ def _point_list_scale_box(self, dataset, group, config, columns) -> Any:
     channel_combo.setCurrentText(str(scale.get("channel", "")))
     channel_combo.setToolTip("Signal channel to scale and assign units for viewing and fitting.")
     channel_combo.currentTextChanged.connect(
-        lambda text: self._set_point_list_scale(dataset, group, "channel", text)
+        lambda text: context.set_point_list_scale(dataset, group, "channel", text)
     )
     grid.addWidget(channel_combo, 0, 1)
     grid.addWidget(QtWidgets.QLabel("Factor"), 1, 0)
@@ -386,7 +387,7 @@ def _point_list_scale_box(self, dataset, group, config, columns) -> Any:
         "Press Enter or leave the field to apply."
     )
     factor_spin.editingFinished.connect(
-        lambda editor=factor_spin: self._set_point_list_scale(
+        lambda editor=factor_spin: context.set_point_list_scale(
             dataset, group, "factor", editor.value()
         )
     )
@@ -396,13 +397,20 @@ def _point_list_scale_box(self, dataset, group, config, columns) -> Any:
     constrain_input_width(units_edit, COMPACT_SHORT_TEXT_FIELD_WIDTH)
     units_edit.setToolTip("Display and export units for the scaled signal channel.")
     units_edit.editingFinished.connect(
-        lambda editor=units_edit: self._set_point_list_scale(dataset, group, "units", editor.text())
+        lambda editor=units_edit: context.set_point_list_scale(dataset, group, "units", editor.text())
     )
     grid.addWidget(units_edit, 2, 1)
     return box
 
 
-def _point_list_susceptibility_box(self, dataset, group, config) -> Any:
+def _point_list_susceptibility_box(
+    self,
+    dataset,
+    group,
+    config,
+    *,
+    context: PointListSusceptibilityPanelContext,
+) -> Any:
     from PySide6 import QtWidgets
 
     susc = config["susceptibility"]
@@ -417,7 +425,7 @@ def _point_list_susceptibility_box(self, dataset, group, config) -> Any:
         "Use susceptibility rather than magnetic moment for viewing and fitting. "
         "The selected moment is divided by the selected applied-field column."
     )
-    enable.toggled.connect(lambda checked: self._set_point_list_susceptibility(dataset, group, "enabled", checked))
+    enable.toggled.connect(lambda checked: context.set_point_list_susceptibility(dataset, group, "enabled", checked))
     grid.addWidget(enable, 0, 0, 1, 2)
     grid.addWidget(QtWidgets.QLabel("Moment"), 1, 0)
     moment_combo = QtWidgets.QComboBox()
@@ -425,7 +433,7 @@ def _point_list_susceptibility_box(self, dataset, group, config) -> Any:
     moment_combo.setCurrentText(str(susc.get("moment", "")))
     moment_combo.setToolTip("Signal channel containing the measured moment.")
     moment_combo.currentTextChanged.connect(
-        lambda text: self._set_point_list_susceptibility(dataset, group, "moment", text)
+        lambda text: context.set_point_list_susceptibility(dataset, group, "moment", text)
     )
     grid.addWidget(moment_combo, 1, 1)
     grid.addWidget(QtWidgets.QLabel("Field"), 2, 0)
@@ -434,7 +442,7 @@ def _point_list_susceptibility_box(self, dataset, group, config) -> Any:
     field_combo.setCurrentText(str(susc.get("field", "")))
     field_combo.setToolTip("Column containing the applied field used to compute susceptibility.")
     field_combo.currentTextChanged.connect(
-        lambda text: self._set_point_list_susceptibility(dataset, group, "field", text)
+        lambda text: context.set_point_list_susceptibility(dataset, group, "field", text)
     )
     grid.addWidget(field_combo, 2, 1)
     grid.addWidget(QtWidgets.QLabel("Moment input unit"), 3, 0)
@@ -449,7 +457,7 @@ def _point_list_susceptibility_box(self, dataset, group, config) -> Any:
         "Unit in which the selected raw moment column is recorded. MPMS moment data are normally emu."
     )
     moment_unit_combo.currentIndexChanged.connect(
-        lambda _index, combo=moment_unit_combo: self._set_point_list_susceptibility(
+        lambda _index, combo=moment_unit_combo: context.set_point_list_susceptibility(
             dataset, group, "moment_unit", combo.currentData()
         )
     )
@@ -467,7 +475,7 @@ def _point_list_susceptibility_box(self, dataset, group, config) -> Any:
         "Unit in which the selected raw applied-field column is recorded. MPMS field data are normally Oe."
     )
     field_unit_combo.currentIndexChanged.connect(
-        lambda _index, combo=field_unit_combo: self._set_point_list_susceptibility(
+        lambda _index, combo=field_unit_combo: context.set_point_list_susceptibility(
             dataset, group, "field_unit", combo.currentData()
         )
     )
@@ -485,16 +493,23 @@ def _point_list_susceptibility_box(self, dataset, group, config) -> Any:
         "SI m^3/mol includes the 4 pi factor."
     )
     unit_combo.currentIndexChanged.connect(
-        lambda _index, combo=unit_combo: self._set_point_list_susceptibility(
+        lambda _index, combo=unit_combo: context.set_point_list_susceptibility(
             dataset, group, "output_unit", combo.currentData()
         )
     )
     grid.addWidget(unit_combo, 5, 1)
-    _compact_point_list_form(box, QtWidgets)
+    context.compact_point_list_form(box, QtWidgets)
     return box
 
 
-def _point_list_wavelength_box(self, dataset, group, config) -> Any:
+def _point_list_wavelength_box(
+    self,
+    dataset,
+    group,
+    config,
+    *,
+    context: PointListWavelengthPanelContext,
+) -> Any:
     from PySide6 import QtWidgets
 
     wavelength = config["wavelength"]
@@ -507,7 +522,7 @@ def _point_list_wavelength_box(self, dataset, group, config) -> Any:
     two_theta_combo.setCurrentText(str(wavelength.get("two_theta", "")))
     two_theta_combo.setToolTip("Column containing scattering angle 2theta, used with wavelength to compute |Q|.")
     two_theta_combo.currentTextChanged.connect(
-        lambda text: self._set_point_list_wavelength(dataset, group, "two_theta", text)
+        lambda text: context.set_point_list_wavelength(dataset, group, "two_theta", text)
     )
     grid.addWidget(two_theta_combo, 0, 1)
     grid.addWidget(QtWidgets.QLabel("Wavelength (A)"), 1, 0)
@@ -521,7 +536,7 @@ def _point_list_wavelength_box(self, dataset, group, config) -> Any:
         "Press Enter or leave the field to apply."
     )
     wavelength_spin.editingFinished.connect(
-        lambda editor=wavelength_spin: self._set_point_list_wavelength(
+        lambda editor=wavelength_spin: context.set_point_list_wavelength(
             dataset, group, "value", editor.value()
         )
     )
@@ -534,6 +549,8 @@ def _dataset_type_group_box(
     dataset: DatasetEntry,
     group: DataGroup | None,
     lines: list[str],
+    *,
+    context: DatasetTypePanelContext,
 ) -> Any:
     from PySide6 import QtCore, QtWidgets
 
@@ -554,13 +571,13 @@ def _dataset_type_group_box(
         "Interpret this dataset as a specific experimental data type. "
         "This controls metadata handling, viewer readouts, and fitting compatibility."
     )
-    for name, type_label in available_data_types():
+    for name, type_label in context.available_data_types():
         type_combo.addItem(type_label, name)
     current = dataset.data_type or DEFAULT_DATA_TYPE
     index = type_combo.findData(current)
     type_combo.setCurrentIndex(max(index, 0))
     type_combo.currentIndexChanged.connect(
-        lambda _index, combo=type_combo: self._set_selected_data_type(dataset, group, combo.currentData())
+        lambda _index, combo=type_combo: context.set_selected_data_type(dataset, group, combo.currentData())
     )
     type_row.addWidget(type_combo, 1)
     layout.addLayout(type_row)
@@ -572,6 +589,8 @@ def _dataset_axes_group_box(
     dataset: DatasetEntry,
     group: DataGroup | None,
     lines: list[str],
+    *,
+    context: DatasetAxesPanelContext,
 ) -> Any:
     from PySide6 import QtCore, QtWidgets
 
@@ -634,14 +653,14 @@ def _dataset_axes_group_box(
                 "Select the collection that owns the binning recipe used for this dataset."
             )
             navigate_button.clicked.connect(
-                lambda _checked=False, owner=policy.owner: self._navigate_to_binning_owner(
+                lambda _checked=False, owner=policy.owner: context.navigate_to_binning_owner(
                     group, owner
                 )
             )
             ownership_actions.addWidget(navigate_button)
             independent_button = None
-            if policy.allow_independent_recipe and _dataset_can_rebin(dataset):
-                expanded_ids = getattr(self, "_expanded_independent_rebin_ids", set())
+            if policy.allow_independent_recipe and context.dataset_can_rebin(dataset):
+                expanded_ids = context.expanded_independent_rebin_ids()
                 show_independent_editor = dataset.id in expanded_ids
                 independent_button = QtWidgets.QPushButton(
                     "Hide separate dataset binning"
@@ -660,13 +679,13 @@ def _dataset_axes_group_box(
                     group=group,
                     expanded=show_independent_editor,
                 ):
-                    ids = set(getattr(self, "_expanded_independent_rebin_ids", set()))
+                    ids = set(context.expanded_independent_rebin_ids())
                     if expanded:
                         ids.discard(dataset.id)
                     else:
                         ids.add(dataset.id)
-                    self._expanded_independent_rebin_ids = ids
-                    self._set_dataset_details_preserving_scroll(dataset, group)
+                    context.set_expanded_independent_rebin_ids(ids)
+                    context.set_dataset_details_preserving_scroll(dataset, group)
 
                 independent_button.clicked.connect(toggle_independent_editor)
                 ownership_actions.addWidget(independent_button)
@@ -674,7 +693,7 @@ def _dataset_axes_group_box(
             ownership_layout.addLayout(ownership_actions)
             layout.addWidget(ownership_box)
 
-    if not _dataset_can_rebin(dataset):
+    if not context.dataset_can_rebin(dataset):
         return group_box
     if policy is not None and policy.linked and not show_independent_editor:
         return group_box
@@ -684,8 +703,8 @@ def _dataset_axes_group_box(
     rebin_layout = QtWidgets.QVBoxLayout(rebin_box)
     rebin_layout.setContentsMargins(10, 8, 10, 8)
 
-    binnings = dataset_rebin_binnings(dataset)
-    selected_binning = self._selected_dataset_binning(dataset)
+    binnings = context.dataset_rebin_binnings(dataset)
+    selected_binning = context.selected_dataset_binning(dataset)
     config = selected_binning["config"]
     binning_row = QtWidgets.QHBoxLayout()
     binning_row.addWidget(QtWidgets.QLabel("Binning"))
@@ -698,34 +717,34 @@ def _dataset_axes_group_box(
     binning_combo.setCurrentIndex(max(binning_combo.findData(selected_binning["id"]), 0))
     binning_combo.setToolTip("Choose the named binning configuration edited below.")
     binning_combo.currentIndexChanged.connect(
-        lambda _index, combo=binning_combo: self._select_dataset_binning(
+        lambda _index, combo=binning_combo: context.select_dataset_binning(
             dataset, str(combo.currentData())
         )
     )
     add_binning = QtWidgets.QPushButton("Add…")
     add_binning.setObjectName("dataset_rebin_add_binning")
     add_binning.setToolTip("Create a visualization binning from the fit binning.")
-    add_binning.clicked.connect(lambda: self._add_dataset_binning(dataset, duplicate=False))
+    add_binning.clicked.connect(lambda: context.add_dataset_binning(dataset, duplicate=False))
     duplicate_binning = QtWidgets.QPushButton("Duplicate")
     duplicate_binning.setObjectName("dataset_rebin_duplicate_binning")
     duplicate_binning.setToolTip("Duplicate the selected binning.")
-    duplicate_binning.clicked.connect(lambda: self._add_dataset_binning(dataset, duplicate=True))
+    duplicate_binning.clicked.connect(lambda: context.add_dataset_binning(dataset, duplicate=True))
     rename_binning = QtWidgets.QPushButton("Rename…")
     rename_binning.setObjectName("dataset_rebin_rename_binning")
     rename_binning.setToolTip("Rename the selected binning.")
-    rename_binning.clicked.connect(lambda: self._rename_dataset_binning(dataset))
+    rename_binning.clicked.connect(lambda: context.rename_dataset_binning(dataset))
     remove_binning = QtWidgets.QPushButton("Remove")
     remove_binning.setObjectName("dataset_rebin_remove_binning")
     remove_binning.setEnabled(not selected_binning["fit"])
     remove_binning.setToolTip("Remove the selected visualization binning and its cache.")
-    remove_binning.clicked.connect(lambda: self._remove_dataset_binning(dataset))
+    remove_binning.clicked.connect(lambda: context.remove_dataset_binning(dataset))
     fit_binning = QtWidgets.QCheckBox("Use for fitting")
     fit_binning.setObjectName("dataset_rebin_fit_binning")
     fit_binning.setChecked(bool(selected_binning["fit"]))
     fit_binning.setEnabled(not selected_binning["fit"])
     fit_binning.setToolTip("Make this the sole binning used during fit iterations.")
     fit_binning.toggled.connect(
-        lambda checked: checked and self._make_dataset_fit_binning(dataset)
+        lambda checked: checked and context.make_dataset_fit_binning(dataset)
     )
     binning_row.addWidget(binning_combo, 1)
     binning_row.addWidget(add_binning)
@@ -742,7 +761,7 @@ def _dataset_axes_group_box(
         if selected_binning["fit"]
         else "Make this visualization-only rebin available in the data viewer."
     )
-    enable_check.toggled.connect(lambda checked: self._set_dataset_rebin_enabled(dataset, group, checked))
+    enable_check.toggled.connect(lambda checked: context.set_dataset_rebin_enabled(dataset, group, checked))
     settings_row = QtWidgets.QHBoxLayout()
     settings_row.addWidget(enable_check)
     settings_row.addStretch(1)
@@ -753,7 +772,7 @@ def _dataset_axes_group_box(
         "pasted into a compatible dataset or dataset-group rebin panel."
     )
     copy_settings_button.clicked.connect(
-        lambda _checked=False: self._copy_rebin_settings(config)
+        lambda _checked=False: context.copy_rebin_settings(config)
     )
     paste_settings_button = QtWidgets.QPushButton("Paste settings")
     paste_settings_button.setObjectName("dataset_rebin_paste_settings")
@@ -762,7 +781,7 @@ def _dataset_axes_group_box(
         "system clipboard."
     )
     paste_settings_button.clicked.connect(
-        lambda _checked=False: self._paste_dataset_rebin_settings(dataset, group)
+        lambda _checked=False: context.paste_dataset_rebin_settings(dataset, group)
     )
     settings_row.addWidget(copy_settings_button)
     settings_row.addWidget(paste_settings_button)
@@ -786,7 +805,7 @@ def _dataset_axes_group_box(
     if show_momentum_matrix:
         matrix_label = QtWidgets.QLabel("Momentum coordinates")
         matrix_edit = QtWidgets.QLineEdit(
-            _parameter_to_text(_momentum_rebin_matrix(config["axes"]))
+            context.parameter_to_text(context.momentum_rebin_matrix(config["axes"]))
         )
         matrix_edit.setObjectName("dataset_rebin_momentum_matrix")
         matrix_tooltip = (
@@ -797,7 +816,7 @@ def _dataset_axes_group_box(
         matrix_label.setToolTip(matrix_tooltip)
         matrix_edit.setToolTip(matrix_tooltip)
         matrix_edit.editingFinished.connect(
-            lambda editor=matrix_edit: self._set_dataset_rebin_momentum_matrix(
+            lambda editor=matrix_edit: context.set_dataset_rebin_momentum_matrix(
                 dataset, group, editor.text()
             )
         )
@@ -819,8 +838,8 @@ def _dataset_axes_group_box(
         controls_layout.addWidget(header, header_row, column)
     for row, axis_config in enumerate(config.get("axes", []), start=header_row + 1):
         axis_index = row - header_row - 1
-        axis_config = _sanitize_rebin_axis_config(axis_config)
-        axis_mode = _rebin_axis_mode(config, axis_config)
+        axis_config = context.sanitize_rebin_axis_config(axis_config)
+        axis_mode = context.rebin_axis_mode(config, axis_config)
         resolution_key = (
             "num_bins"
             if axis_mode == "bins"
@@ -838,13 +857,13 @@ def _dataset_axes_group_box(
         )
         lower_edit = QtWidgets.QLineEdit(
             ""
-            if _rebin_axis_bound_is_auto(axis_config, "lower")
-            else _format_number(axis_config["lower"])
+            if context.rebin_axis_bound_is_auto(axis_config, "lower")
+            else context.format_number(axis_config["lower"])
         )
         upper_edit = QtWidgets.QLineEdit(
             ""
-            if _rebin_axis_bound_is_auto(axis_config, "upper")
-            else _format_number(axis_config["upper"])
+            if context.rebin_axis_bound_is_auto(axis_config, "upper")
+            else context.format_number(axis_config["upper"])
         )
         lower_edit.setObjectName(f"dataset_rebin_axis_lower_{axis_index}")
         upper_edit.setObjectName(f"dataset_rebin_axis_upper_{axis_index}")
@@ -854,12 +873,12 @@ def _dataset_axes_group_box(
             else
             str(int(axis_config["num_bins"]))
             if resolution_key == "num_bins"
-            else _format_number(axis_config[resolution_key])
+            else context.format_number(axis_config[resolution_key])
         )
         resolution_edit = QtWidgets.QLineEdit(resolution_text)
         resolution_edit.setObjectName(f"dataset_rebin_resolution_value_{axis_index}")
         edges_edit = QtWidgets.QLineEdit(
-            _parameter_to_text(axis_config.get("bin_edges", ""))
+            context.parameter_to_text(axis_config.get("bin_edges", ""))
         )
         edges_edit.setObjectName(f"dataset_rebin_axis_edges_{axis_index}")
         edges_edit.setPlaceholderText("uniform")
@@ -889,18 +908,18 @@ def _dataset_axes_group_box(
         for editor in (lower_edit, upper_edit, resolution_edit, edges_edit):
             editor.setMinimumWidth(72)
         lower_edit.editingFinished.connect(
-            lambda index=axis_index, editor=lower_edit: self._set_dataset_rebin_axis_value(dataset, group, index, "lower", editor.text())
+            lambda index=axis_index, editor=lower_edit: context.set_dataset_rebin_axis_value(dataset, group, index, "lower", editor.text())
         )
         upper_edit.editingFinished.connect(
-            lambda index=axis_index, editor=upper_edit: self._set_dataset_rebin_axis_value(dataset, group, index, "upper", editor.text())
+            lambda index=axis_index, editor=upper_edit: context.set_dataset_rebin_axis_value(dataset, group, index, "upper", editor.text())
         )
         resolution_edit.editingFinished.connect(
-            lambda index=axis_index, key=resolution_key, editor=resolution_edit: self._set_dataset_rebin_axis_value(
+            lambda index=axis_index, key=resolution_key, editor=resolution_edit: context.set_dataset_rebin_axis_value(
                 dataset, group, index, key, editor.text()
             )
         )
         edges_edit.editingFinished.connect(
-            lambda index=axis_index, editor=edges_edit: self._set_dataset_rebin_axis_edges(
+            lambda index=axis_index, editor=edges_edit: context.set_dataset_rebin_axis_edges(
                 dataset, group, index, editor.text()
             )
         )
@@ -918,7 +937,7 @@ def _dataset_axes_group_box(
                 controls_layout.addWidget(energy_label, row, column)
             else:
                 vector_edit = QtWidgets.QLineEdit(
-                    _momentum_rebin_vector_text(axis_config, row - 1)
+                    context.momentum_rebin_vector_text(axis_config, row - 1)
                 )
                 vector_edit.setObjectName(f"dataset_rebin_axis_vector_{row - 1}")
                 vector_edit.setMinimumWidth(110)
@@ -929,7 +948,7 @@ def _dataset_axes_group_box(
                     "resolution. Energy remains a separate fixed coordinate."
                 )
                 vector_edit.editingFinished.connect(
-                    lambda row=row - 1, editor=vector_edit: self._set_dataset_rebin_axis_vector(dataset, group, row, editor.text())
+                    lambda row=row - 1, editor=vector_edit: context.set_dataset_rebin_axis_vector(dataset, group, row, editor.text())
                 )
                 controls_layout.addWidget(vector_edit, row, column)
             column += 1
@@ -946,7 +965,7 @@ def _dataset_axes_group_box(
             "controlled separately; Discrete and Tolerance grids require discrete assignment."
         )
         mode_combo.currentIndexChanged.connect(
-            lambda _index, index=axis_index, combo=mode_combo: self._set_dataset_rebin_axis_mode(
+            lambda _index, index=axis_index, combo=mode_combo: context.set_dataset_rebin_axis_mode(
                 dataset, group, index, str(combo.currentData() or "step")
             )
         )
@@ -955,7 +974,7 @@ def _dataset_axes_group_box(
         assignment_combo.setObjectName(f"dataset_rebin_axis_assignment_{axis_index}")
         add_rebin_assignment_items(assignment_combo)
         assignment_combo.setCurrentIndex(
-            max(assignment_combo.findData(_rebin_axis_fractional(config, axis_config)), 0)
+            max(assignment_combo.findData(context.rebin_axis_fractional(config, axis_config)), 0)
         )
         assignment_combo.setEnabled(axis_mode not in {"discrete", "tolerance"})
         assignment_combo.setToolTip(
@@ -963,7 +982,7 @@ def _dataset_axes_group_box(
             "assigns it wholly to one bin. Tolerance always uses discrete assignment."
         )
         assignment_combo.currentIndexChanged.connect(
-            lambda _index, index=axis_index, combo=assignment_combo: self._set_dataset_rebin_axis_fractional(
+            lambda _index, index=axis_index, combo=assignment_combo: context.set_dataset_rebin_axis_fractional(
                 dataset, group, index, bool(combo.currentData())
             )
         )
@@ -979,7 +998,7 @@ def _dataset_axes_group_box(
         "With automatic rebinning off, edits are marked pending until Rebin now is pressed or an operation such as fitting, opening the data viewer, "
         "or saving a rebinned dataset requires an up-to-date rebin."
     )
-    auto_check.toggled.connect(lambda checked: self._set_dataset_rebin_auto(dataset, group, checked))
+    auto_check.toggled.connect(lambda checked: context.set_dataset_rebin_auto(dataset, group, checked))
     from .project_rebin_panels import measurement_average_choices
 
     mean_label = QtWidgets.QLabel("Measurement target")
@@ -987,16 +1006,16 @@ def _dataset_axes_group_box(
     mean_combo.setObjectName("dataset_rebin_mean_weighting")
     measurement_average_choices(mean_combo, counting=dataset.metadata.get("importer") == "macs_nexus")
     mean_label.setToolTip(mean_combo.toolTip())
-    mean_index = mean_combo.findData(_rebin_mean_weighting(config))
+    mean_index = mean_combo.findData(context.rebin_mean_weighting(config))
     mean_combo.setCurrentIndex(max(mean_index, 0))
     mean_combo.currentIndexChanged.connect(
-        lambda _index, combo=mean_combo: self._set_dataset_rebin_mean_weighting(
+        lambda _index, combo=mean_combo: context.set_dataset_rebin_mean_weighting(
             dataset,
             group,
             str(combo.currentData() or "uniform"),
         )
     )
-    symmetry = symmetry_spec_from_config(config.get("symmetry"))
+    symmetry = context.symmetry_spec_from_config(config.get("symmetry"))
     symmetry_check = QtWidgets.QCheckBox("Apply symmetry")
     symmetry_check.setObjectName("dataset_rebin_symmetry_enabled")
     symmetry_check.setChecked(symmetry.enabled)
@@ -1005,7 +1024,7 @@ def _dataset_axes_group_box(
         "Energy is unchanged and space-group translations are ignored."
     )
     symmetry_check.toggled.connect(
-        lambda checked: self._set_dataset_rebin_symmetry_enabled(dataset, group, checked)
+        lambda checked: context.set_dataset_rebin_symmetry_enabled(dataset, group, checked)
     )
     symmetry_mode = QtWidgets.QComboBox()
     symmetry_mode.setObjectName("dataset_rebin_symmetry_mode")
@@ -1025,7 +1044,7 @@ def _dataset_axes_group_box(
         "Choose a space group, point group, semicolon-separated Jones-faithful operations, or geometric generators."
     )
     symmetry_mode.currentIndexChanged.connect(
-        lambda _index, combo=symmetry_mode: self._set_dataset_rebin_symmetry_mode(dataset, group, str(combo.currentData()))
+        lambda _index, combo=symmetry_mode: context.set_dataset_rebin_symmetry_mode(dataset, group, str(combo.currentData()))
     )
     symmetry_expression = QtWidgets.QLineEdit(symmetry.expression)
     symmetry_expression.setObjectName("dataset_rebin_symmetry_expression")
@@ -1038,42 +1057,42 @@ def _dataset_axes_group_box(
         "Examples: P -1; -1; x,y,z;-x,-y,-z; rotate(order=3, axis=[1,1,1]); mirror(plane=(0,0,1))."
     )
     symmetry_expression.editingFinished.connect(
-        lambda editor=symmetry_expression: self._set_dataset_rebin_symmetry_expression(dataset, group, editor.text())
+        lambda editor=symmetry_expression: context.set_dataset_rebin_symmetry_expression(dataset, group, editor.text())
     )
-    symmetry_preview = QtWidgets.QLabel(self._dataset_rebin_symmetry_preview(dataset, group))
+    symmetry_preview = QtWidgets.QLabel(context.dataset_rebin_symmetry_preview(dataset, group))
     symmetry_preview.setObjectName("dataset_rebin_symmetry_preview")
     symmetry_preview.setToolTip("Resolved reciprocal-HKL operation count and any syntax error.")
     create_button = QtWidgets.QPushButton("Create dataset from rebin")
     create_button.setObjectName("dataset_rebin_create")
-    create_button.setEnabled(_dataset_can_rebin(dataset))
+    create_button.setEnabled(context.dataset_can_rebin(dataset))
     create_button.setToolTip("Materialize the current rebinned data as a new independent dataset.")
-    create_button.clicked.connect(self.materialize_rebin_for_selection)
+    create_button.clicked.connect(context.materialize_rebin_for_selection)
     rebin_now_button = QtWidgets.QPushButton("Rebin now")
     rebin_now_button.setObjectName("dataset_rebin_now")
-    rebin_now_button.setEnabled(_dataset_can_rebin(dataset))
+    rebin_now_button.setEnabled(context.dataset_can_rebin(dataset))
     rebin_now_button.setToolTip(
         "Compute the current rebin immediately and update the cached viewer/fit data. Use this when automatic rebinning is off."
     )
     rebin_now_button.clicked.connect(
-        lambda _checked=False: self.rebin_dataset_now(dataset, group)
+        lambda _checked=False: context.rebin_dataset_now(dataset, group)
     )
     rebin_all_button = QtWidgets.QPushButton("Rebin all now")
     rebin_all_button.setObjectName("dataset_rebin_all_now")
-    rebin_all_button.setEnabled(_dataset_can_rebin(dataset))
+    rebin_all_button.setEnabled(context.dataset_can_rebin(dataset))
     rebin_all_button.setVisible(len(binnings) > 1)
     rebin_all_button.setToolTip(
         "Compute every enabled named binning for this dataset and update open data viewers."
     )
     rebin_all_button.clicked.connect(
-        lambda _checked=False: self.rebin_all_dataset_binnings_now(dataset, group)
+        lambda _checked=False: context.rebin_all_dataset_binnings_now(dataset, group)
     )
     save_rebin_button = QtWidgets.QPushButton("Save rebin to disk")
     save_rebin_button.setObjectName("dataset_rebin_save")
-    save_rebin_button.setEnabled(_dataset_can_rebin(dataset))
+    save_rebin_button.setEnabled(context.dataset_can_rebin(dataset))
     save_rebin_button.setToolTip("Export the current rebinned dataset directly to a NumPy archive.")
-    save_rebin_button.clicked.connect(self.save_rebin_for_selection)
+    save_rebin_button.clicked.connect(context.save_rebin_for_selection)
     coverage_label = QtWidgets.QLabel("Minimum coverage")
-    coverage_edit = QtWidgets.QLineEdit(_format_number(_rebin_minimum_coverage(config)))
+    coverage_edit = QtWidgets.QLineEdit(context.format_number(context.rebin_minimum_coverage(config)))
     coverage_edit.setObjectName("dataset_rebin_minimum_coverage")
     coverage_edit.setMaximumWidth(70)
     coverage_tooltip = (
@@ -1083,13 +1102,13 @@ def _dataset_axes_group_box(
     coverage_label.setToolTip(coverage_tooltip)
     coverage_edit.setToolTip(coverage_tooltip)
     coverage_edit.editingFinished.connect(
-        lambda editor=coverage_edit: self._set_dataset_rebin_minimum_coverage(
+        lambda editor=coverage_edit: context.set_dataset_rebin_minimum_coverage(
             dataset, group, editor
         )
     )
     samples_label = QtWidgets.QLabel("Minimum samples")
     samples_edit = QtWidgets.QLineEdit(
-        _format_number(_rebin_minimum_samples(config))
+        context.format_number(context.rebin_minimum_samples(config))
     )
     samples_edit.setObjectName("dataset_rebin_minimum_samples")
     samples_edit.setMaximumWidth(70)
@@ -1100,7 +1119,7 @@ def _dataset_axes_group_box(
     samples_label.setToolTip(samples_tooltip)
     samples_edit.setToolTip(samples_tooltip)
     samples_edit.editingFinished.connect(
-        lambda editor=samples_edit: self._set_dataset_rebin_minimum_samples(
+        lambda editor=samples_edit: context.set_dataset_rebin_minimum_samples(
             dataset, group, editor
         )
     )
@@ -1117,7 +1136,7 @@ def _dataset_axes_group_box(
     quality_row.addWidget(samples_label)
     quality_row.addWidget(samples_edit)
     quality_row.addSpacing(12)
-    self._add_rebin_performance_controls(quality_row, dataset=dataset, group=group)
+    context.add_rebin_performance_controls(quality_row, dataset=dataset, group=group)
     quality_row.addStretch(1)
     controls_layout.addLayout(quality_row, footer_row + 1, 0, 1, last_column + 1)
     symmetry_row = QtWidgets.QHBoxLayout()
@@ -1129,7 +1148,7 @@ def _dataset_axes_group_box(
     from .project_rebin_panels import rebin_symmetry_operations_widget
 
     resolved_symmetry = rebin_symmetry_operations_widget(
-        config, object_prefix="dataset_rebin", lattice_parameters=_dataset_lattice_parameters(dataset) or (group.lattice_parameters if group is not None else None)
+        config, object_prefix="dataset_rebin", lattice_parameters=context.dataset_lattice_parameters(dataset) or (group.lattice_parameters if group is not None else None)
     )
     symmetry_check.toggled.connect(resolved_symmetry.refresh_operations)
     symmetry_mode.currentIndexChanged.connect(resolved_symmetry.refresh_operations)
@@ -1137,16 +1156,16 @@ def _dataset_axes_group_box(
     controls_layout.addWidget(resolved_symmetry, footer_row + 3, 0, 1, last_column + 1)
     from .project_rebin_panels import rebin_memory_estimate_label
 
-    cached_rebin_data = _peek_cached_dataset_view(
+    cached_rebin_data = context.peek_cached_dataset_view(
         dataset,
-        extra_masks=(effective_dataset_masks(group, dataset) if group is not None else None),
+        extra_masks=(context.effective_dataset_masks(group, dataset) if group is not None else None),
         rebin_config=config,
         cache_id=None if selected_binning["fit"] else selected_binning["id"],
         resident_only=True,
     )
     compressed_disk_bytes = (
-        _saved_binning_compressed_size(
-            self.project,
+        context.saved_binning_compressed_size(
+            context.project(),
             kind="dataset",
             group=group,
             target=dataset,
@@ -1163,7 +1182,7 @@ def _dataset_axes_group_box(
         compressed_disk_bytes=compressed_disk_bytes,
     )
     controls_layout.addWidget(memory_label, footer_row + 4, 0, 1, last_column + 1)
-    status_label = QtWidgets.QLabel(_dataset_rebin_status_text(dataset, config))
+    status_label = QtWidgets.QLabel(context.dataset_rebin_status_text(dataset, config))
     status_label.setObjectName("dataset_rebin_status")
     status_label.setWordWrap(True)
     status_label.setToolTip(
@@ -1196,7 +1215,15 @@ def _dataset_axes_group_box(
     return group_box
 
 
-def _add_rebin_performance_controls(self, row, *, dataset=None, group=None, composite=False):
+def _add_rebin_performance_controls(
+    self,
+    row,
+    *,
+    context: RebinPerformancePanelContext,
+    dataset = None,
+    group = None,
+    composite = False,
+):
     from PySide6 import QtWidgets
 
     from .performance_gui import BenchmarkDialog
@@ -1206,18 +1233,22 @@ def _add_rebin_performance_controls(self, row, *, dataset=None, group=None, comp
     benchmark.setObjectName(prefix + "_benchmark")
     benchmark.setToolTip("Benchmark the full current rebin using the CPU and RAM limits in Preferences.")
     if composite:
-        target = dict(group_name=_composite_root(group).name,
+        target = dict(group_name=context.composite_root(group).name,
                       node_id=group.node.id if isinstance(group, _CompositeScope) else None)
     else:
         target = dict(dataset_id=dataset.id)
     benchmark.clicked.connect(lambda: BenchmarkDialog(
-        self.window, project=self.project, target=target,
+        context.window(), project=context.project(), target=target,
     ).exec())
     row.addWidget(benchmark)
 
 
 def _dataset_signal_semantics_group_box(
-    self, dataset: DatasetEntry, group: DataGroup | None
+    self,
+    dataset: DatasetEntry,
+    group: DataGroup | None,
+    *,
+    context: DatasetSignalSemanticsPanelContext,
 ) -> Any:
     """Build the explicit signal-value convention control for histogram data."""
 
@@ -1233,7 +1264,7 @@ def _dataset_signal_semantics_group_box(
     combo.addItem("Unspecified", "unknown")
     data = dataset.data
     semantics = (
-        signal_semantics(data)
+        context.signal_semantics(data)
         if isinstance(data, MDHistoData)
         else "density"
     )
@@ -1245,7 +1276,7 @@ def _dataset_signal_semantics_group_box(
         "Use Bin-integral only when each stored value is already the total for its bin."
     )
     combo.currentIndexChanged.connect(
-        lambda _index, selector=combo: self._set_dataset_signal_semantics(
+        lambda _index, selector=combo: context.set_dataset_signal_semantics(
             dataset, group, str(selector.currentData())
         )
     )
@@ -1258,6 +1289,7 @@ def _dataset_spectral_channels_group_box(
     dataset: DatasetEntry,
     group: DataGroup | None,
     *,
+    context: DatasetSpectralChannelsPanelContext | None = None,
     config_override=None,
     setting_changed=None,
     status_override=None,
@@ -1270,8 +1302,8 @@ def _dataset_spectral_channels_group_box(
     from .project_coordinates import _parse_parameter_text
     from .project_rebinning import _parameter_to_text
 
-    config = config_override if config_override is not None else self._dataset_spectral_channel_config(dataset)
-    set_setting = setting_changed or self._set_dataset_spectral_channel_setting
+    config = config_override if config_override is not None else context.dataset_spectral_channel_config(dataset)
+    set_setting = setting_changed or context.set_dataset_spectral_channel_setting
     box = QtWidgets.QGroupBox("INS representations")
     form = QtWidgets.QFormLayout(box)
     form.setContentsMargins(10, 8, 10, 8)
@@ -1312,18 +1344,14 @@ def _dataset_spectral_channels_group_box(
 
     units = QtWidgets.QComboBox()
     units.setObjectName("ins_source_unit")
-    if config["normalization_basis"] == "per_magnetic_ion":
-        label = str(config.get("normalization_label", "") or "").strip()
-        basis_suffix = (
-            f" / {label}" if label else " / magnetic ion",
-            f"/{label}" if label else "/magnetic ion",
-        )
-    else:
-        basis_suffix = {
-            "per_formula_unit": (" / f.u.", "/f.u."),
-            "per_unit_cell": (" / unit cell", "/unit cell"),
-            "unknown": ("", ""),
-        }[config["normalization_basis"]]
+    basis_suffix = (
+        normalization_basis_suffix(
+            config["normalization_basis"], config.get("normalization_label", ""), spaced=True,
+        ),
+        normalization_basis_suffix(
+            config["normalization_basis"], config.get("normalization_label", ""),
+        ),
+    )
     if config["source_representation"] == "cross_section":
         units.addItem("Arbitrary units", "arbitrary")
         units.addItem(

@@ -256,6 +256,7 @@ from .spectral_channels import (
     default_spectral_channel_config,  # noqa: F401 - compatibility re-export
     normalized_spectral_channel_config,
 )
+from .spectral_metadata import spectral_unit_with_basis
 from .symmetry import symmetry_spec_from_config
 from .viewer_data import (
     DeferredViewerDatasets,
@@ -14598,12 +14599,72 @@ class NfitProjectExplorer:
             context=self._group_inventory_panel_context(group),
         )
 
+    def _group_composite_panel_context(self) -> _project_data_panels.GroupCompositePanelContext:
+        from .metadata_dimensions_gui import metadata_dimensions_panel, metadata_rebin_rows
+        from .project_composite_physics import composite_physics_panel
+
+        return _project_data_panels.GroupCompositePanelContext(
+            metadata_rebin_rows=lambda group, layout, row: metadata_rebin_rows(self, group, layout, row),
+            metadata_dimensions_panel=lambda group, **kwargs: metadata_dimensions_panel(self, group, **kwargs),
+            composite_physics_panel=lambda group, config: composite_physics_panel(self, group, config),
+            add_composite_binning=lambda *args, **kwargs: self._add_composite_binning(*args, **kwargs),
+            add_rebin_performance_controls=lambda *args, **kwargs: self._add_rebin_performance_controls(*args, **kwargs),
+            copy_rebin_settings=lambda *args, **kwargs: self._copy_rebin_settings(*args, **kwargs),
+            make_composite_fit_binning=lambda *args, **kwargs: self._make_composite_fit_binning(*args, **kwargs),
+            navigate_to_binning_owner=lambda *args, **kwargs: self._navigate_to_binning_owner(*args, **kwargs),
+            paste_group_composite_settings=lambda *args, **kwargs: self._paste_group_composite_settings(*args, **kwargs),
+            remove_composite_binning=lambda *args, **kwargs: self._remove_composite_binning(*args, **kwargs),
+            rename_composite_binning=lambda *args, **kwargs: self._rename_composite_binning(*args, **kwargs),
+            select_composite_binning=lambda *args, **kwargs: self._select_composite_binning(*args, **kwargs),
+            selected_composite_binning=lambda *args, **kwargs: self._selected_composite_binning(*args, **kwargs),
+            set_dataset_collection_details=lambda *args, **kwargs: self._set_dataset_collection_details(*args, **kwargs),
+            set_group_composite_auto=lambda *args, **kwargs: self._set_group_composite_auto(*args, **kwargs),
+            set_group_composite_axis_edges=lambda *args, **kwargs: self._set_group_composite_axis_edges(*args, **kwargs),
+            set_group_composite_axis_fractional=lambda *args, **kwargs: self._set_group_composite_axis_fractional(*args, **kwargs),
+            set_group_composite_axis_mode=lambda *args, **kwargs: self._set_group_composite_axis_mode(*args, **kwargs),
+            set_group_composite_axis_value=lambda *args, **kwargs: self._set_group_composite_axis_value(*args, **kwargs),
+            set_group_composite_axis_vector=lambda *args, **kwargs: self._set_group_composite_axis_vector(*args, **kwargs),
+            set_group_composite_coordinate_mode=lambda *args, **kwargs: self._set_group_composite_coordinate_mode(*args, **kwargs),
+            set_group_composite_enabled=lambda *args, **kwargs: self._set_group_composite_enabled(*args, **kwargs),
+            set_group_composite_mean_weighting=lambda *args, **kwargs: self._set_group_composite_mean_weighting(*args, **kwargs),
+            set_group_composite_minimum_coverage=lambda *args, **kwargs: self._set_group_composite_minimum_coverage(*args, **kwargs),
+            set_group_composite_minimum_samples=lambda *args, **kwargs: self._set_group_composite_minimum_samples(*args, **kwargs),
+            set_group_composite_momentum_matrix=lambda *args, **kwargs: self._set_group_composite_momentum_matrix(*args, **kwargs),
+            set_group_composite_symmetry_enabled=lambda *args, **kwargs: self._set_group_composite_symmetry_enabled(*args, **kwargs),
+            set_group_composite_symmetry_expression=lambda *args, **kwargs: self._set_group_composite_symmetry_expression(*args, **kwargs),
+            set_group_composite_symmetry_mode=lambda *args, **kwargs: self._set_group_composite_symmetry_mode(*args, **kwargs),
+            materialize_composite_for_group=lambda *args, **kwargs: self.materialize_composite_for_group(*args, **kwargs),
+            rebin_all_composite_binnings_now=lambda *args, **kwargs: self.rebin_all_composite_binnings_now(*args, **kwargs),
+            rebin_composite_now=lambda *args, **kwargs: self.rebin_composite_now(*args, **kwargs),
+            expanded_inactive_composite_ids=lambda: getattr(self, "_expanded_inactive_composite_ids", set()),
+            set_expanded_inactive_composite_ids=lambda value: setattr(self, "_expanded_inactive_composite_ids", value),
+            selected_composite_binning_ids=lambda: self._selected_composite_binning_ids,
+            project=lambda: self.project,
+            composite_rebin_status_text=lambda *args, **kwargs: _composite_rebin_status_text(*args, **kwargs),
+            composite_root=lambda *args, **kwargs: _composite_root(*args, **kwargs),
+            format_number=lambda *args, **kwargs: _format_number(*args, **kwargs),
+            momentum_rebin_matrix=lambda *args, **kwargs: _momentum_rebin_matrix(*args, **kwargs),
+            momentum_rebin_vector_text=lambda *args, **kwargs: _momentum_rebin_vector_text(*args, **kwargs),
+            parameter_to_text=lambda *args, **kwargs: _parameter_to_text(*args, **kwargs),
+            peek_cached_composite_dataset_data=lambda *args, **kwargs: _peek_cached_composite_dataset_data(*args, **kwargs),
+            rebin_axis_bound_is_auto=lambda *args, **kwargs: _rebin_axis_bound_is_auto(*args, **kwargs),
+            rebin_axis_fractional=lambda *args, **kwargs: _rebin_axis_fractional(*args, **kwargs),
+            rebin_axis_mode=lambda *args, **kwargs: _rebin_axis_mode(*args, **kwargs),
+            rebin_mean_weighting=lambda *args, **kwargs: _rebin_mean_weighting(*args, **kwargs),
+            rebin_minimum_coverage=lambda *args, **kwargs: _rebin_minimum_coverage(*args, **kwargs),
+            rebin_minimum_samples=lambda *args, **kwargs: _rebin_minimum_samples(*args, **kwargs),
+            sanitize_rebin_axis_config=lambda *args, **kwargs: _sanitize_rebin_axis_config(*args, **kwargs),
+            saved_binning_compressed_size=lambda *args, **kwargs: _saved_binning_compressed_size(*args, **kwargs),
+            data_group_composite_binnings=lambda *args, **kwargs: data_group_composite_binnings(*args, **kwargs),
+            data_group_composite_status=lambda *args, **kwargs: data_group_composite_status(*args, **kwargs),
+            symmetry_spec_from_config=lambda *args, **kwargs: symmetry_spec_from_config(*args, **kwargs),
+        )
+
     def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._group_composite_group_box,
+        return _project_data_panels._group_composite_group_box(
             self,
             group,
-            helper_namespace=globals(),
+            context=self._group_composite_panel_context(),
         )
 
     def _set_dataset_details(self, dataset: DatasetEntry, group: DataGroup | None) -> None:
@@ -15484,23 +15545,46 @@ class NfitProjectExplorer:
         layout.addWidget(table)
         return group_box
 
+    def _dataset_point_list_panel_context(self) -> _project_data_panels.DatasetPointListPanelContext:
+        return _project_data_panels.DatasetPointListPanelContext(
+            add_point_list_channel=lambda *args, **kwargs: self._add_point_list_channel(*args, **kwargs),
+            heat_capacity_box=lambda *args, **kwargs: self._heat_capacity_box(*args, **kwargs),
+            magnetization_absolute_box=lambda *args, **kwargs: self._magnetization_absolute_box(*args, **kwargs),
+            point_list_scale_box=lambda *args, **kwargs: self._point_list_scale_box(*args, **kwargs),
+            point_list_susceptibility_box=lambda *args, **kwargs: self._point_list_susceptibility_box(*args, **kwargs),
+            point_list_wavelength_box=lambda *args, **kwargs: self._point_list_wavelength_box(*args, **kwargs),
+            remove_point_list_channel=lambda *args, **kwargs: self._remove_point_list_channel(*args, **kwargs),
+            set_point_list_channel=lambda *args, **kwargs: self._set_point_list_channel(*args, **kwargs),
+            set_point_list_coordinates=lambda *args, **kwargs: self._set_point_list_coordinates(*args, **kwargs),
+            bold_label=lambda *args, **kwargs: _bold_label(*args, **kwargs),
+            point_list_config=lambda *args, **kwargs: point_list_config(*args, **kwargs),
+        )
+
     def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup | None) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._dataset_point_list_group_box,
+        return _project_data_panels._dataset_point_list_group_box(
             self,
             dataset,
             group,
-            helper_namespace=globals(),
+            context=self._dataset_point_list_panel_context(),
+        )
+
+    def _heat_capacity_panel_context(self) -> _project_data_panels.HeatCapacityPanelContext:
+        return _project_data_panels.HeatCapacityPanelContext(
+            set_heat_capacity_fit_channel=lambda *args, **kwargs: self._set_heat_capacity_fit_channel(*args, **kwargs),
+            set_heat_capacity_setting=lambda *args, **kwargs: self._set_heat_capacity_setting(*args, **kwargs),
+            set_heat_capacity_source_unit=lambda *args, **kwargs: self._set_heat_capacity_source_unit(*args, **kwargs),
+            compact_point_list_form=lambda *args, **kwargs: _compact_point_list_form(*args, **kwargs),
+            parameter_to_text=lambda *args, **kwargs: _parameter_to_text(*args, **kwargs),
+            parse_parameter_text=lambda *args, **kwargs: _parse_parameter_text(*args, **kwargs),
         )
 
     def _heat_capacity_box(self, dataset, group, config) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._heat_capacity_box,
+        return _project_data_panels._heat_capacity_box(
             self,
             dataset,
             group,
             config,
-            helper_namespace=globals(),
+            context=self._heat_capacity_panel_context(),
         )
 
     def _set_heat_capacity_setting(self, dataset, group, key: str, value) -> None:
@@ -15525,13 +15609,20 @@ class NfitProjectExplorer:
         hc["source_unit"] = value
         self._after_point_list_changed(dataset, group)
 
+    def _magnetization_absolute_panel_context(self) -> _project_data_panels.MagnetizationAbsolutePanelContext:
+        return _project_data_panels.MagnetizationAbsolutePanelContext(
+            set_magnetization_absolute=lambda *args, **kwargs: self._set_magnetization_absolute(*args, **kwargs),
+            compact_point_list_form=lambda *args, **kwargs: _compact_point_list_form(*args, **kwargs),
+            parameter_to_text=lambda *args, **kwargs: _parameter_to_text(*args, **kwargs),
+            parse_parameter_text=lambda *args, **kwargs: _parse_parameter_text(*args, **kwargs),
+        )
+
     def _magnetization_absolute_box(self, dataset, group) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._magnetization_absolute_box,
+        return _project_data_panels._magnetization_absolute_box(
             self,
             dataset,
             group,
-            helper_namespace=globals(),
+            context=self._magnetization_absolute_panel_context(),
         )
 
     def _set_magnetization_absolute(self, dataset, group, key: str, value) -> None:
@@ -15540,35 +15631,48 @@ class NfitProjectExplorer:
         dataset.parameters[key] = value
         self._after_point_list_changed(dataset, group)
 
+    def _point_list_scale_panel_context(self) -> _project_data_panels.PointListScalePanelContext:
+        return _project_data_panels.PointListScalePanelContext(
+            set_point_list_scale=lambda *args, **kwargs: self._set_point_list_scale(*args, **kwargs),
+        )
+
     def _point_list_scale_box(self, dataset, group, config, columns) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._point_list_scale_box,
+        return _project_data_panels._point_list_scale_box(
             self,
             dataset,
             group,
             config,
             columns,
-            helper_namespace=globals(),
+            context=self._point_list_scale_panel_context(),
+        )
+
+    def _point_list_susceptibility_panel_context(self) -> _project_data_panels.PointListSusceptibilityPanelContext:
+        return _project_data_panels.PointListSusceptibilityPanelContext(
+            set_point_list_susceptibility=lambda *args, **kwargs: self._set_point_list_susceptibility(*args, **kwargs),
+            compact_point_list_form=lambda *args, **kwargs: _compact_point_list_form(*args, **kwargs),
         )
 
     def _point_list_susceptibility_box(self, dataset, group, config) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._point_list_susceptibility_box,
+        return _project_data_panels._point_list_susceptibility_box(
             self,
             dataset,
             group,
             config,
-            helper_namespace=globals(),
+            context=self._point_list_susceptibility_panel_context(),
+        )
+
+    def _point_list_wavelength_panel_context(self) -> _project_data_panels.PointListWavelengthPanelContext:
+        return _project_data_panels.PointListWavelengthPanelContext(
+            set_point_list_wavelength=lambda *args, **kwargs: self._set_point_list_wavelength(*args, **kwargs),
         )
 
     def _point_list_wavelength_box(self, dataset, group, config) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._point_list_wavelength_box,
+        return _project_data_panels._point_list_wavelength_box(
             self,
             dataset,
             group,
             config,
-            helper_namespace=globals(),
+            context=self._point_list_wavelength_panel_context(),
         )
 
     def _set_point_list_coordinates(self, dataset, group, text: str) -> None:
@@ -15650,19 +15754,24 @@ class NfitProjectExplorer:
         self._refresh_cache_badges()
         self._set_dataset_details_preserving_scroll(dataset, group)
 
+    def _dataset_type_panel_context(self) -> _project_data_panels.DatasetTypePanelContext:
+        return _project_data_panels.DatasetTypePanelContext(
+            set_selected_data_type=lambda *args, **kwargs: self._set_selected_data_type(*args, **kwargs),
+            available_data_types=lambda *args, **kwargs: available_data_types(*args, **kwargs),
+        )
+
     def _dataset_type_group_box(
         self,
         dataset: DatasetEntry,
         group: DataGroup | None,
         lines: list[str],
     ) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._dataset_type_group_box,
+        return _project_data_panels._dataset_type_group_box(
             self,
             dataset,
             group,
             lines,
-            helper_namespace=globals(),
+            context=self._dataset_type_panel_context(),
         )
 
     def _set_selected_data_type(
@@ -15682,30 +15791,91 @@ class NfitProjectExplorer:
         self._refresh_cache_badges()
         self._set_dataset_details_preserving_scroll(dataset, group)
 
+    def _dataset_axes_panel_context(self) -> _project_data_panels.DatasetAxesPanelContext:
+        return _project_data_panels.DatasetAxesPanelContext(
+            add_dataset_binning=lambda *args, **kwargs: self._add_dataset_binning(*args, **kwargs),
+            add_rebin_performance_controls=lambda *args, **kwargs: self._add_rebin_performance_controls(*args, **kwargs),
+            copy_rebin_settings=lambda *args, **kwargs: self._copy_rebin_settings(*args, **kwargs),
+            dataset_rebin_symmetry_preview=lambda *args, **kwargs: self._dataset_rebin_symmetry_preview(*args, **kwargs),
+            make_dataset_fit_binning=lambda *args, **kwargs: self._make_dataset_fit_binning(*args, **kwargs),
+            navigate_to_binning_owner=lambda *args, **kwargs: self._navigate_to_binning_owner(*args, **kwargs),
+            paste_dataset_rebin_settings=lambda *args, **kwargs: self._paste_dataset_rebin_settings(*args, **kwargs),
+            remove_dataset_binning=lambda *args, **kwargs: self._remove_dataset_binning(*args, **kwargs),
+            rename_dataset_binning=lambda *args, **kwargs: self._rename_dataset_binning(*args, **kwargs),
+            select_dataset_binning=lambda *args, **kwargs: self._select_dataset_binning(*args, **kwargs),
+            selected_dataset_binning=lambda *args, **kwargs: self._selected_dataset_binning(*args, **kwargs),
+            set_dataset_details_preserving_scroll=lambda *args, **kwargs: self._set_dataset_details_preserving_scroll(*args, **kwargs),
+            set_dataset_rebin_auto=lambda *args, **kwargs: self._set_dataset_rebin_auto(*args, **kwargs),
+            set_dataset_rebin_axis_edges=lambda *args, **kwargs: self._set_dataset_rebin_axis_edges(*args, **kwargs),
+            set_dataset_rebin_axis_fractional=lambda *args, **kwargs: self._set_dataset_rebin_axis_fractional(*args, **kwargs),
+            set_dataset_rebin_axis_mode=lambda *args, **kwargs: self._set_dataset_rebin_axis_mode(*args, **kwargs),
+            set_dataset_rebin_axis_value=lambda *args, **kwargs: self._set_dataset_rebin_axis_value(*args, **kwargs),
+            set_dataset_rebin_axis_vector=lambda *args, **kwargs: self._set_dataset_rebin_axis_vector(*args, **kwargs),
+            set_dataset_rebin_enabled=lambda *args, **kwargs: self._set_dataset_rebin_enabled(*args, **kwargs),
+            set_dataset_rebin_mean_weighting=lambda *args, **kwargs: self._set_dataset_rebin_mean_weighting(*args, **kwargs),
+            set_dataset_rebin_minimum_coverage=lambda *args, **kwargs: self._set_dataset_rebin_minimum_coverage(*args, **kwargs),
+            set_dataset_rebin_minimum_samples=lambda *args, **kwargs: self._set_dataset_rebin_minimum_samples(*args, **kwargs),
+            set_dataset_rebin_momentum_matrix=lambda *args, **kwargs: self._set_dataset_rebin_momentum_matrix(*args, **kwargs),
+            set_dataset_rebin_symmetry_enabled=lambda *args, **kwargs: self._set_dataset_rebin_symmetry_enabled(*args, **kwargs),
+            set_dataset_rebin_symmetry_expression=lambda *args, **kwargs: self._set_dataset_rebin_symmetry_expression(*args, **kwargs),
+            set_dataset_rebin_symmetry_mode=lambda *args, **kwargs: self._set_dataset_rebin_symmetry_mode(*args, **kwargs),
+            materialize_rebin_for_selection=lambda: self.materialize_rebin_for_selection(),
+            rebin_all_dataset_binnings_now=lambda *args, **kwargs: self.rebin_all_dataset_binnings_now(*args, **kwargs),
+            rebin_dataset_now=lambda *args, **kwargs: self.rebin_dataset_now(*args, **kwargs),
+            save_rebin_for_selection=lambda: self.save_rebin_for_selection(),
+            expanded_independent_rebin_ids=lambda: getattr(self, "_expanded_independent_rebin_ids", set()),
+            set_expanded_independent_rebin_ids=lambda value: setattr(self, "_expanded_independent_rebin_ids", value),
+            project=lambda: self.project,
+            dataset_can_rebin=lambda *args, **kwargs: _dataset_can_rebin(*args, **kwargs),
+            dataset_lattice_parameters=lambda *args, **kwargs: _dataset_lattice_parameters(*args, **kwargs),
+            dataset_rebin_status_text=lambda *args, **kwargs: _dataset_rebin_status_text(*args, **kwargs),
+            format_number=lambda *args, **kwargs: _format_number(*args, **kwargs),
+            momentum_rebin_matrix=lambda *args, **kwargs: _momentum_rebin_matrix(*args, **kwargs),
+            momentum_rebin_vector_text=lambda *args, **kwargs: _momentum_rebin_vector_text(*args, **kwargs),
+            parameter_to_text=lambda *args, **kwargs: _parameter_to_text(*args, **kwargs),
+            peek_cached_dataset_view=lambda *args, **kwargs: _peek_cached_dataset_view(*args, **kwargs),
+            rebin_axis_bound_is_auto=lambda *args, **kwargs: _rebin_axis_bound_is_auto(*args, **kwargs),
+            rebin_axis_fractional=lambda *args, **kwargs: _rebin_axis_fractional(*args, **kwargs),
+            rebin_axis_mode=lambda *args, **kwargs: _rebin_axis_mode(*args, **kwargs),
+            rebin_mean_weighting=lambda *args, **kwargs: _rebin_mean_weighting(*args, **kwargs),
+            rebin_minimum_coverage=lambda *args, **kwargs: _rebin_minimum_coverage(*args, **kwargs),
+            rebin_minimum_samples=lambda *args, **kwargs: _rebin_minimum_samples(*args, **kwargs),
+            sanitize_rebin_axis_config=lambda *args, **kwargs: _sanitize_rebin_axis_config(*args, **kwargs),
+            saved_binning_compressed_size=lambda *args, **kwargs: _saved_binning_compressed_size(*args, **kwargs),
+            dataset_rebin_binnings=lambda *args, **kwargs: dataset_rebin_binnings(*args, **kwargs),
+            effective_dataset_masks=lambda *args, **kwargs: effective_dataset_masks(*args, **kwargs),
+            symmetry_spec_from_config=lambda *args, **kwargs: symmetry_spec_from_config(*args, **kwargs),
+        )
+
     def _dataset_axes_group_box(
         self,
         dataset: DatasetEntry,
         group: DataGroup | None,
         lines: list[str],
     ) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._dataset_axes_group_box,
+        return _project_data_panels._dataset_axes_group_box(
             self,
             dataset,
             group,
             lines,
-            helper_namespace=globals(),
+            context=self._dataset_axes_panel_context(),
+        )
+
+    def _rebin_performance_panel_context(self) -> _project_data_panels.RebinPerformancePanelContext:
+        return _project_data_panels.RebinPerformancePanelContext(
+            project=lambda: self.project,
+            window=lambda: self.window,
+            composite_root=lambda *args, **kwargs: _composite_root(*args, **kwargs),
         )
 
     def _add_rebin_performance_controls(self, row, *, dataset=None, group=None, composite=False):
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._add_rebin_performance_controls,
+        return _project_data_panels._add_rebin_performance_controls(
             self,
             row,
             dataset=dataset,
             group=group,
             composite=composite,
-            helper_namespace=globals(),
+            context=self._rebin_performance_panel_context(),
         )
 
     def _details_group_box(self, title: str, lines: list[str]) -> Any:
@@ -15781,15 +15951,20 @@ class NfitProjectExplorer:
             context=self._analysis_table_panel_context(),
         )
 
+    def _dataset_signal_semantics_panel_context(self) -> _project_data_panels.DatasetSignalSemanticsPanelContext:
+        return _project_data_panels.DatasetSignalSemanticsPanelContext(
+            set_dataset_signal_semantics=lambda *args, **kwargs: self._set_dataset_signal_semantics(*args, **kwargs),
+            signal_semantics=lambda *args, **kwargs: signal_semantics(*args, **kwargs),
+        )
+
     def _dataset_signal_semantics_group_box(
         self, dataset: DatasetEntry, group: DataGroup | None
     ) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._dataset_signal_semantics_group_box,
+        return _project_data_panels._dataset_signal_semantics_group_box(
             self,
             dataset,
             group,
-            helper_namespace=globals(),
+            context=self._dataset_signal_semantics_panel_context(),
         )
 
     def _dataset_spectral_channel_config(
@@ -15801,31 +15976,11 @@ class NfitProjectExplorer:
             dataset.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY)
         )
         if config["source_unit"] != "arbitrary":
-            if config["normalization_basis"] == "per_magnetic_ion":
-                label = str(config.get("normalization_label", "") or "").strip()
-                suffix = f"/{label}" if label else "/magnetic ion"
-            else:
-                suffix = {
-                    "per_formula_unit": "/f.u.",
-                    "per_unit_cell": "/unit cell",
-                    "unknown": "",
-                }[config["normalization_basis"]]
-            unit = str(config["source_unit"])
-            prefix = next(
-                (
-                    candidate
-                    for candidate in (
-                        "mbarn/sr/meV",
-                        "barn/sr/meV",
-                        "mu_B^2/meV",
-                        "spin^2/meV",
-                        "1/meV",
-                    )
-                    if unit.startswith(candidate)
-                ),
-                unit,
+            config["source_unit"] = spectral_unit_with_basis(
+                str(config["source_unit"]),
+                config["normalization_basis"],
+                config.get("normalization_label", ""),
             )
-            config["source_unit"] = prefix + suffix
         for target, names in (
             ("incident_energy_meV", ("incident_energy_meV", "incident_energy", "Ei", "ei")),
             ("final_energy_meV", ("final_energy_meV", "final_energy", "Ef", "ef")),
@@ -15867,17 +16022,22 @@ class NfitProjectExplorer:
         self._mark_dirty()
         self._set_dataset_details_preserving_scroll(dataset, group)
 
+    def _dataset_spectral_channels_panel_context(self) -> _project_data_panels.DatasetSpectralChannelsPanelContext:
+        return _project_data_panels.DatasetSpectralChannelsPanelContext(
+            dataset_spectral_channel_config=lambda *args, **kwargs: self._dataset_spectral_channel_config(*args, **kwargs),
+            set_dataset_spectral_channel_setting=lambda *args, **kwargs: self._set_dataset_spectral_channel_setting(*args, **kwargs),
+        )
+
     def _dataset_spectral_channels_group_box(
         self,
         dataset: DatasetEntry,
         group: DataGroup | None,
     ) -> Any:
-        return _project_data_panels.invoke_panel_builder(
-            _project_data_panels._dataset_spectral_channels_group_box,
+        return _project_data_panels._dataset_spectral_channels_group_box(
             self,
             dataset,
             group,
-            helper_namespace=globals(),
+            context=self._dataset_spectral_channels_panel_context(),
         )
 
     def _set_dataset_signal_semantics(

@@ -8,35 +8,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup
+from .project_composites import _CompositeScope
+from .project_panel_contexts import (
+    GroupCompositePanelContext,
+)
 from .project_rebin_panels import rebin_symmetry_expression_width
 from .qt_controls import constrain_input_width
-
-# The compatibility dispatcher supplies these established project_gui globals
-# at invocation time. Keeping the contract explicit avoids a reverse import.
-_CompositeScope: Any = None
-_composite_rebin_status_text: Any = None
-_composite_root: Any = None
-_composite_scope: Any = None
-_format_number: Any = None
-_momentum_rebin_matrix: Any = None
-_momentum_rebin_vector_text: Any = None
-_parameter_to_text: Any = None
-_peek_cached_composite_dataset_data: Any = None
-_rebin_axis_bound_is_auto: Any = None
-_rebin_axis_mode: Any = None
-_rebin_axis_fractional: Any = None
-_rebin_max_batch_mb: Any = None
-_rebin_mean_weighting: Any = None
-_rebin_minimum_coverage: Any = None
-_rebin_minimum_samples: Any = None
-_sanitize_rebin_axis_config: Any = None
-_saved_binning_compressed_size: Any = None
-data_group_composite_config: Any = None
-data_group_composite_binnings: Any = None
-data_group_composite_enabled: Any = None
-data_group_composite_status: Any = None
-metadata_rebin_rows: Any = None
-symmetry_spec_from_config: Any = None
 
 
 @dataclass(frozen=True)
@@ -168,10 +145,14 @@ def _group_dataset_weights_group_box(
     return box
 
 
-def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
+def _group_composite_group_box(
+    self,
+    group: DataGroup | _CompositeScope,
+    *,
+    context: GroupCompositePanelContext,
+) -> Any:
     from PySide6 import QtWidgets
 
-    from .metadata_dimensions_gui import metadata_dimensions_panel, metadata_rebin_rows
     from .project_binning_policy import (
         background_source_explanations,
         rebin_presentation_policy,
@@ -179,7 +160,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     from .project_rebin_panels import add_rebin_assignment_items, add_rebin_mode_items
     from .reduction_recipes import reduction_family
 
-    root = _composite_root(group)
+    root = context.composite_root(group)
     selection = group.node if isinstance(group, _CompositeScope) else group
     policy = rebin_presentation_policy(root, selection)
     source_notes = background_source_explanations(root, selection)
@@ -197,12 +178,12 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         navigate.setObjectName("group_rebin_navigate_owner")
         navigate.setToolTip("Select the parent collection that controls this output grid.")
         navigate.clicked.connect(
-            lambda _checked=False: self._navigate_to_binning_owner(root, policy.owner)
+            lambda _checked=False: context.navigate_to_binning_owner(root, policy.owner)
         )
         layout.addWidget(navigate)
         return box
     selection_key = getattr(selection, "id", f"root:{id(selection)}")
-    expanded_ids = getattr(self, "_expanded_inactive_composite_ids", set())
+    expanded_ids = context.expanded_inactive_composite_ids()
     show_inactive_editor = selection_key in expanded_ids
     if not policy.show_editor and not show_inactive_editor:
         ownership_box = QtWidgets.QGroupBox("Binning output")
@@ -221,14 +202,14 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             binning_row.addWidget(QtWidgets.QLabel("Visualization binning"))
             binning_combo = QtWidgets.QComboBox()
             binning_combo.setObjectName("group_composite_binning")
-            binnings = data_group_composite_binnings(group)
-            selected_binning = self._selected_composite_binning(group)
+            binnings = context.data_group_composite_binnings(group)
+            selected_binning = context.selected_composite_binning(group)
             enabled_binnings = [
                 item for item in binnings if item["config"].get("enabled")
             ]
             if enabled_binnings and selected_binning not in enabled_binnings:
                 selected_binning = enabled_binnings[0]
-                self._selected_composite_binning_ids[selection_key] = selected_binning[
+                context.selected_composite_binning_ids()[selection_key] = selected_binning[
                     "id"
                 ]
                 selection._nfit_selected_binning_id = selected_binning["id"]
@@ -242,7 +223,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
                 "Choose an enabled visualization recipe retained for this collection."
             )
             binning_combo.currentIndexChanged.connect(
-                lambda _index, combo=binning_combo: self._select_composite_binning(
+                lambda _index, combo=binning_combo: context.select_composite_binning(
                     group, str(combo.currentData())
                 )
             )
@@ -254,15 +235,15 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             )
 
             def show_visualization_editor(_checked=False):
-                ids = set(getattr(self, "_expanded_inactive_composite_ids", set()))
+                ids = set(context.expanded_inactive_composite_ids())
                 ids.add(selection_key)
-                self._expanded_inactive_composite_ids = ids
-                self._set_dataset_collection_details(root, selection)
+                context.set_expanded_inactive_composite_ids(ids)
+                context.set_dataset_collection_details(root, selection)
 
             edit_binning.clicked.connect(show_visualization_editor)
             binning_row.addWidget(edit_binning)
             ownership_layout.addLayout(binning_row)
-        can_combine, status_message = data_group_composite_status(group)
+        can_combine, status_message = context.data_group_composite_status(group)
         if status_message:
             status = QtWidgets.QLabel(status_message)
             status.setObjectName("group_composite_ownership_status")
@@ -284,11 +265,11 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             if not checked:
                 return
             fit_binning = next(
-                item for item in data_group_composite_binnings(group) if item["fit"]
+                item for item in context.data_group_composite_binnings(group) if item["fit"]
             )
-            self._selected_composite_binning_ids[selection_key] = fit_binning["id"]
+            context.selected_composite_binning_ids()[selection_key] = fit_binning["id"]
             selection._nfit_selected_binning_id = fit_binning["id"]
-            self._set_group_composite_enabled(group, True)
+            context.set_group_composite_enabled(group, True)
 
         enable_button.toggled.connect(
             enable_fit_composite
@@ -332,8 +313,8 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             source_label.setToolTip(sources.toolTip())
             sources_layout.addWidget(source_label)
         layout.addWidget(sources)
-    binnings = data_group_composite_binnings(group)
-    selected_binning = self._selected_composite_binning(group)
+    binnings = context.data_group_composite_binnings(group)
+    selected_binning = context.selected_composite_binning(group)
     config = selected_binning["config"]
     binning_row = QtWidgets.QHBoxLayout()
     binning_row.addWidget(QtWidgets.QLabel("Binning"))
@@ -346,34 +327,34 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     binning_combo.setCurrentIndex(max(binning_combo.findData(selected_binning["id"]), 0))
     binning_combo.setToolTip("Choose the named composite binning edited below.")
     binning_combo.currentIndexChanged.connect(
-        lambda _index, combo=binning_combo: self._select_composite_binning(
+        lambda _index, combo=binning_combo: context.select_composite_binning(
             group, str(combo.currentData())
         )
     )
     add_binning = QtWidgets.QPushButton("Add…")
     add_binning.setObjectName("group_composite_add_binning")
     add_binning.setToolTip("Create a visualization binning from the fit binning.")
-    add_binning.clicked.connect(lambda: self._add_composite_binning(group, duplicate=False))
+    add_binning.clicked.connect(lambda: context.add_composite_binning(group, duplicate=False))
     duplicate_binning = QtWidgets.QPushButton("Duplicate")
     duplicate_binning.setObjectName("group_composite_duplicate_binning")
     duplicate_binning.setToolTip("Duplicate the selected composite binning.")
-    duplicate_binning.clicked.connect(lambda: self._add_composite_binning(group, duplicate=True))
+    duplicate_binning.clicked.connect(lambda: context.add_composite_binning(group, duplicate=True))
     rename_binning = QtWidgets.QPushButton("Rename…")
     rename_binning.setObjectName("group_composite_rename_binning")
     rename_binning.setToolTip("Rename the selected composite binning.")
-    rename_binning.clicked.connect(lambda: self._rename_composite_binning(group))
+    rename_binning.clicked.connect(lambda: context.rename_composite_binning(group))
     remove_binning = QtWidgets.QPushButton("Remove")
     remove_binning.setObjectName("group_composite_remove_binning")
     remove_binning.setEnabled(not selected_binning["fit"])
     remove_binning.setToolTip("Remove the selected visualization binning and its cache.")
-    remove_binning.clicked.connect(lambda: self._remove_composite_binning(group))
+    remove_binning.clicked.connect(lambda: context.remove_composite_binning(group))
     fit_binning = QtWidgets.QCheckBox("Use for fitting")
     fit_binning.setObjectName("group_composite_fit_binning")
     fit_binning.setChecked(bool(selected_binning["fit"]))
     fit_binning.setEnabled(not selected_binning["fit"])
     fit_binning.setToolTip("Make this the sole composite binning used during fit iterations.")
     fit_binning.toggled.connect(
-        lambda checked: checked and self._make_composite_fit_binning(group)
+        lambda checked: checked and context.make_composite_fit_binning(group)
     )
     binning_row.addWidget(binning_combo, 1)
     binning_row.addWidget(add_binning)
@@ -382,7 +363,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     binning_row.addWidget(remove_binning)
     binning_row.addWidget(fit_binning)
     layout.addLayout(binning_row)
-    can_combine, message = data_group_composite_status(group)
+    can_combine, message = context.data_group_composite_status(group)
     enable_check = QtWidgets.QCheckBox("Combine enabled datasets into one effective dataset")
     enable_check.setObjectName("group_composite_enabled")
     enable_check.setChecked(bool(config.get("enabled", False)))
@@ -397,7 +378,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         + "All enabled datasets must have the same data kind. "
         "Negative dataset scale factors subtract data."
     )
-    enable_check.toggled.connect(lambda checked: self._set_group_composite_enabled(group, checked))
+    enable_check.toggled.connect(lambda checked: context.set_group_composite_enabled(group, checked))
     settings_row = QtWidgets.QHBoxLayout()
     settings_row.addWidget(enable_check)
     settings_row.addStretch(1)
@@ -408,7 +389,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         "The copied JSON can be pasted into a compatible dataset or dataset-group rebin panel."
     )
     copy_settings_button.clicked.connect(
-        lambda _checked=False: self._copy_rebin_settings({
+        lambda _checked=False: context.copy_rebin_settings({
             **config, "metadata_dimensions": group.metadata.get("metadata_dimensions", [])
         })
     )
@@ -419,7 +400,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         "from the system clipboard."
     )
     paste_settings_button.clicked.connect(
-        lambda _checked=False: self._paste_group_composite_settings(group)
+        lambda _checked=False: context.paste_group_composite_settings(group)
     )
     settings_row.addWidget(copy_settings_button)
     settings_row.addWidget(paste_settings_button)
@@ -460,7 +441,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         coordinate_label.setToolTip(coordinate_tooltip)
         coordinate_combo.setToolTip(coordinate_tooltip)
         coordinate_combo.currentIndexChanged.connect(
-            lambda _index, combo=coordinate_combo: self._set_group_composite_coordinate_mode(
+            lambda _index, combo=coordinate_combo: context.set_group_composite_coordinate_mode(
                 group, str(combo.currentData() or "hkle")
             )
         )
@@ -486,7 +467,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     if show_momentum_matrix:
         matrix_label = QtWidgets.QLabel("Momentum coordinates")
         matrix_edit = QtWidgets.QLineEdit(
-            _parameter_to_text(_momentum_rebin_matrix(axes))
+            context.parameter_to_text(context.momentum_rebin_matrix(axes))
         )
         matrix_edit.setObjectName("group_composite_momentum_matrix")
         matrix_tooltip = (
@@ -497,7 +478,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         matrix_label.setToolTip(matrix_tooltip)
         matrix_edit.setToolTip(matrix_tooltip)
         matrix_edit.editingFinished.connect(
-            lambda editor=matrix_edit: self._set_group_composite_momentum_matrix(
+            lambda editor=matrix_edit: context.set_group_composite_momentum_matrix(
                 group, editor.text()
             )
         )
@@ -515,8 +496,8 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         controls_layout.addWidget(QtWidgets.QLabel(label), header_row, column)
     for row, axis_config in enumerate(axes, start=header_row + 1):
         axis_index = row - header_row - 1
-        axis = _sanitize_rebin_axis_config(axis_config)
-        axis_mode = _rebin_axis_mode(config, axis)
+        axis = context.sanitize_rebin_axis_config(axis_config)
+        axis_mode = context.rebin_axis_mode(config, axis)
         resolution_key = (
             "num_bins"
             if axis_mode == "bins"
@@ -542,7 +523,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
                 controls_layout.addWidget(energy_label, row, column_offset)
             else:
                 vector_edit = QtWidgets.QLineEdit(
-                    _momentum_rebin_vector_text(axis, axis_index)
+                    context.momentum_rebin_vector_text(axis, axis_index)
                 )
                 vector_edit.setObjectName(f"group_composite_axis_vector_{axis_index}")
                 vector_edit.setMinimumWidth(110)
@@ -552,7 +533,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
                     "separate fixed coordinate. Examples include [1, 1, 0], [0, 0, 1], and [1, -1, 0]."
                 )
                 vector_edit.editingFinished.connect(
-                    lambda index=axis_index, editor=vector_edit: self._set_group_composite_axis_vector(group, index, editor.text())
+                    lambda index=axis_index, editor=vector_edit: context.set_group_composite_axis_vector(group, index, editor.text())
                 )
                 controls_layout.addWidget(vector_edit, row, column_offset)
             column_offset += 1
@@ -563,8 +544,8 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
                 else
                 ""
                 if key in {"lower", "upper"}
-                and _rebin_axis_bound_is_auto(axis, key)
-                else _parameter_to_text(axis.get(key))
+                and context.rebin_axis_bound_is_auto(axis, key)
+                else context.parameter_to_text(axis.get(key))
             )
             edit = QtWidgets.QLineEdit(display_value)
             if key in {"lower", "upper"}:
@@ -585,11 +566,11 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
                     "These bounds and bins are applied after all enabled datasets are scaled, weighted, and collected."
                 )
             edit.editingFinished.connect(
-                lambda index=axis_index, key=key, editor=edit: self._set_group_composite_axis_value(group, index, key, editor.text())
+                lambda index=axis_index, key=key, editor=edit: context.set_group_composite_axis_value(group, index, key, editor.text())
             )
             controls_layout.addWidget(edit, row, column)
         edges_edit = QtWidgets.QLineEdit(
-            _parameter_to_text(axis.get("bin_edges", ""))
+            context.parameter_to_text(axis.get("bin_edges", ""))
         )
         edges_edit.setObjectName(f"group_composite_axis_edges_{axis_index}")
         edges_edit.setMinimumWidth(150)
@@ -600,7 +581,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             "[-2, -1, 0, 0.5, 2]. Leave blank to use the uniform Resolution setting."
         )
         edges_edit.editingFinished.connect(
-            lambda index=axis_index, editor=edges_edit: self._set_group_composite_axis_edges(
+            lambda index=axis_index, editor=edges_edit: context.set_group_composite_axis_edges(
                 group, index, editor.text()
             )
         )
@@ -614,7 +595,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             "controlled separately; Discrete and Tolerance grids require discrete assignment."
         )
         mode_combo.currentIndexChanged.connect(
-            lambda _index, index=axis_index, combo=mode_combo: self._set_group_composite_axis_mode(
+            lambda _index, index=axis_index, combo=mode_combo: context.set_group_composite_axis_mode(
                 group, index, str(combo.currentData() or "step")
             )
         )
@@ -623,7 +604,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         assignment_combo.setObjectName(f"group_composite_axis_assignment_{axis_index}")
         add_rebin_assignment_items(assignment_combo)
         assignment_combo.setCurrentIndex(
-            max(assignment_combo.findData(False if discrete_dgs_events else _rebin_axis_fractional(config, axis)), 0)
+            max(assignment_combo.findData(False if discrete_dgs_events else context.rebin_axis_fractional(config, axis)), 0)
         )
         corelli_energy = is_corelli and axis_index == len(axes) - 1
         assignment_combo.setEnabled(
@@ -643,13 +624,12 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             "assignment."
         )
         assignment_combo.currentIndexChanged.connect(
-            lambda _index, index=axis_index, combo=assignment_combo: self._set_group_composite_axis_fractional(
+            lambda _index, index=axis_index, combo=assignment_combo: context.set_group_composite_axis_fractional(
                 group, index, bool(combo.currentData())
             )
         )
         controls_layout.addWidget(assignment_combo, row, column_offset + 5)
-    metadata_axis_count = metadata_rebin_rows(
-        self,
+    metadata_axis_count = context.metadata_rebin_rows(
         group,
         controls_layout,
         header_row + len(axes) + 1,
@@ -664,24 +644,24 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         "With automatic rebinning off, edits are marked pending until Rebin now is pressed or an operation such as fitting or opening the data viewer "
         "requires an up-to-date composite."
     )
-    auto_check.toggled.connect(lambda checked: self._set_group_composite_auto(group, checked))
+    auto_check.toggled.connect(lambda checked: context.set_group_composite_auto(group, checked))
     from .project_rebin_panels import measurement_average_choices
 
     mean_label = QtWidgets.QLabel("Measurement target")
     mean_combo = QtWidgets.QComboBox()
     mean_combo.setObjectName("group_composite_mean_weighting")
-    measurement_average_choices(mean_combo, pooled_events=native_events, weighting=_rebin_mean_weighting(config), counting=macs_counting)
+    measurement_average_choices(mean_combo, pooled_events=native_events, weighting=context.rebin_mean_weighting(config), counting=macs_counting)
     mean_label.setToolTip(mean_combo.toolTip())
-    mean_combo.setCurrentIndex(max(mean_combo.findData(_rebin_mean_weighting(config)), 0))
+    mean_combo.setCurrentIndex(max(mean_combo.findData(context.rebin_mean_weighting(config)), 0))
     mean_combo.currentIndexChanged.connect(
-        lambda _index, combo=mean_combo: self._set_group_composite_mean_weighting(group, str(combo.currentData() or "uniform"))
+        lambda _index, combo=mean_combo: context.set_group_composite_mean_weighting(group, str(combo.currentData() or "uniform"))
     )
-    symmetry = symmetry_spec_from_config(config.get("symmetry"))
+    symmetry = context.symmetry_spec_from_config(config.get("symmetry"))
     symmetry_check = QtWidgets.QCheckBox("Apply symmetry")
     symmetry_check.setObjectName("group_composite_symmetry_enabled")
     symmetry_check.setChecked(symmetry.enabled)
     symmetry_check.setToolTip("Apply reciprocal-HKL point-group operations before composite binning; energy is unchanged.")
-    symmetry_check.toggled.connect(lambda checked: self._set_group_composite_symmetry_enabled(group, checked))
+    symmetry_check.toggled.connect(lambda checked: context.set_group_composite_symmetry_enabled(group, checked))
     symmetry_mode = QtWidgets.QComboBox()
     symmetry_mode.setObjectName("group_composite_symmetry_mode")
     for label, value in (("Space group", "space_group"), ("Point group", "point_group"), ("Operations", "operations"), ("Generators", "generators")):
@@ -695,7 +675,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         max(symmetry_mode.findData(displayed_symmetry_mode), 0)
     )
     symmetry_mode.setToolTip("Select the notation used by the symmetry expression.")
-    symmetry_mode.currentIndexChanged.connect(lambda _index, combo=symmetry_mode: self._set_group_composite_symmetry_mode(group, str(combo.currentData())))
+    symmetry_mode.currentIndexChanged.connect(lambda _index, combo=symmetry_mode: context.set_group_composite_symmetry_mode(group, str(combo.currentData())))
     symmetry_expression = QtWidgets.QLineEdit(symmetry.expression)
     symmetry_expression.setObjectName("group_composite_symmetry_expression")
     constrain_input_width(
@@ -704,9 +684,9 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     )
     symmetry_expression.setPlaceholderText("P -1")
     symmetry_expression.setToolTip("Examples: P -1; -1; x,y,z;-x,-y,-z; rotate(order=3, axis=[1,1,1]).")
-    symmetry_expression.editingFinished.connect(lambda editor=symmetry_expression: self._set_group_composite_symmetry_expression(group, editor.text()))
+    symmetry_expression.editingFinished.connect(lambda editor=symmetry_expression: context.set_group_composite_symmetry_expression(group, editor.text()))
     coverage_label = QtWidgets.QLabel("Minimum coverage")
-    coverage_edit = QtWidgets.QLineEdit(_format_number(_rebin_minimum_coverage(config)))
+    coverage_edit = QtWidgets.QLineEdit(context.format_number(context.rebin_minimum_coverage(config)))
     coverage_edit.setObjectName("group_composite_minimum_coverage")
     coverage_edit.setMaximumWidth(70)
     coverage_tooltip = (
@@ -726,13 +706,13 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     coverage_label.setToolTip(coverage_tooltip)
     coverage_edit.setToolTip(coverage_tooltip)
     coverage_edit.editingFinished.connect(
-        lambda editor=coverage_edit: self._set_group_composite_minimum_coverage(
+        lambda editor=coverage_edit: context.set_group_composite_minimum_coverage(
             group, editor
         )
     )
     samples_label = QtWidgets.QLabel("Minimum samples")
     samples_edit = QtWidgets.QLineEdit(
-        _format_number(_rebin_minimum_samples(config))
+        context.format_number(context.rebin_minimum_samples(config))
     )
     samples_edit.setObjectName("group_composite_minimum_samples")
     samples_edit.setMaximumWidth(70)
@@ -753,7 +733,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     samples_label.setToolTip(samples_tooltip)
     samples_edit.setToolTip(samples_tooltip)
     samples_edit.editingFinished.connect(
-        lambda editor=samples_edit: self._set_group_composite_minimum_samples(
+        lambda editor=samples_edit: context.set_group_composite_minimum_samples(
             group, editor
         )
     )
@@ -770,7 +750,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     quality_row.addWidget(samples_label)
     quality_row.addWidget(samples_edit)
     quality_row.addSpacing(12)
-    self._add_rebin_performance_controls(quality_row, group=group, composite=True)
+    context.add_rebin_performance_controls(quality_row, group=group, composite=True)
     quality_row.addStretch(1)
     controls_layout.addLayout(quality_row, footer_row + 1, 0, 1, len(headers))
     symmetry_row = QtWidgets.QHBoxLayout()
@@ -790,7 +770,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     from .metadata_dimensions import MetadataDimension, metadata_rebin_axis_config
     from .project_rebin_panels import rebin_memory_estimate_label
 
-    cached_rebin_data = _peek_cached_composite_dataset_data(
+    cached_rebin_data = context.peek_cached_composite_dataset_data(
         group,
         config_override=None if selected_binning["fit"] else config,
         binning_id=None if selected_binning["fit"] else selected_binning["id"],
@@ -806,10 +786,10 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             ),
         ],
     }
-    compressed_disk_bytes = _saved_binning_compressed_size(
-        self.project,
+    compressed_disk_bytes = context.saved_binning_compressed_size(
+        context.project(),
         kind="dataset group",
-        group=_composite_root(group),
+        group=context.composite_root(group),
         target=group,
         binning_id=selected_binning["id"],
         config=config,
@@ -821,7 +801,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         compressed_disk_bytes=compressed_disk_bytes,
     )
     controls_layout.addWidget(memory_label, footer_row + 4, 0, 1, len(headers))
-    status_label = QtWidgets.QLabel(_composite_rebin_status_text(group, config))
+    status_label = QtWidgets.QLabel(context.composite_rebin_status_text(group, config))
     status_label.setObjectName("group_composite_status")
     status_label.setWordWrap(True)
     status_label.setToolTip(
@@ -835,7 +815,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     rebin_now_button.setToolTip(
         "Compute the current composite rebin immediately and update the cached viewer/fit data. Use this when automatic rebinning is off."
     )
-    rebin_now_button.clicked.connect(lambda: self.rebin_composite_now(group))
+    rebin_now_button.clicked.connect(lambda: context.rebin_composite_now(group))
     action_row.addWidget(rebin_now_button)
     rebin_all_button = QtWidgets.QPushButton("Rebin all now")
     rebin_all_button.setObjectName("group_composite_rebin_all_now")
@@ -845,7 +825,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         "Compute every enabled named composite binning for this collection and update open data viewers."
     )
     rebin_all_button.clicked.connect(
-        lambda: self.rebin_all_composite_binnings_now(group)
+        lambda: context.rebin_all_composite_binnings_now(group)
     )
     action_row.addWidget(rebin_all_button)
     materialize_button = QtWidgets.QPushButton("Create dataset from composite")
@@ -856,7 +836,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         "The materialized result can be used as a background or as an input to a later composite."
     )
     materialize_button.clicked.connect(
-        lambda: self.materialize_composite_for_group(group)
+        lambda: context.materialize_composite_for_group(group)
     )
     action_row.addStretch(1)
     action_row.addWidget(materialize_button)
@@ -866,13 +846,11 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     metadata_tab = QtWidgets.QWidget()
     metadata_tab.setObjectName("group_composite_metadata_tab")
     metadata_layout = QtWidgets.QVBoxLayout(metadata_tab)
-    metadata_layout.addWidget(metadata_dimensions_panel(self, group, embedded=True))
+    metadata_layout.addWidget(context.metadata_dimensions_panel(group, embedded=True))
     metadata_layout.addStretch(1)
     controls.addTab(metadata_tab, "Metadata dimensions")
 
-    from .project_composite_physics import composite_physics_panel
-
-    physics_panel = composite_physics_panel(self, group, config)
+    physics_panel = context.composite_physics_panel(group, config)
     if physics_panel is not None:
         controls.addTab(physics_panel, "Physics")
 
