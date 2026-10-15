@@ -20,6 +20,7 @@ from .pipeline import DatasetEntry
 from .resource_budget import reserve_memory
 from .sample_temperature import dataset_temperature
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY, with_paired_spectral_channels
+from .ub_orientation import with_ub_setup_metadata
 
 KINEMATIC_KF_KI_INCLUDED_KEY = "kf_ki_included"
 _VIEW_PREPARATION_LOCK = RLock()
@@ -110,6 +111,7 @@ def _with_viewer_dataset_metadata(
     dataset: DatasetEntry,
     data: MDHistoData | PointListData | PointData4D,
 ) -> MDHistoData | PointListData | PointData4D:
+    data = with_ub_setup_metadata(data, dataset.metadata)
     metadata = dict(getattr(data, "metadata", {}) or {})
     metadata["nfit_data_type"] = dataset.data_type
     metadata["nfit_dataset_kind"] = dataset.kind

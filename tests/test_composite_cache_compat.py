@@ -4,6 +4,7 @@ import copy
 import json
 import zipfile
 
+import numpy as np
 import pytest
 
 from nfit.project_cache_compat import (
@@ -40,6 +41,49 @@ def test_safe_legacy_event_signature_is_accepted_by_project_io():
     saved, current = _pair(_payload())
     assert composite_cache_signatures_match(saved, current)
     assert _binning_signatures_match(saved, current)
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_scope_ub_changes_preserve_serialized_composite_signature_layout(tmp_path, native):
+    from nfit.mdevent import mdevent_dataset_group
+    from nfit.pipeline import DataGroup, DatasetEntry
+    from nfit.project_composites import _composite_cache_signature, _composite_scope
+    from nfit.project_ub_setup import set_ub_setup
+    from tests.project_gui_test_support import _tiny_mdhisto_data
+    from tests.test_mdevent import _write_mdevent
+
+    if native:
+        path = tmp_path / "events.nxs"
+        _write_mdevent(path)
+        target = mdevent_dataset_group(path)
+        root = DataGroup("workspace", subgroups=[target])
+        scope = _composite_scope(root, target)
+    else:
+        root = DataGroup("workspace", datasets=[DatasetEntry("source", _tiny_mdhisto_data(1))])
+        target = root
+        scope = root
+
+    baseline = json.loads(_composite_cache_signature(scope))
+    assert len(baseline) == 12
+    assert "ub_setup" not in json.loads(baseline[4])
+    matrix = np.diag([0.2, 0.25, 0.4])
+    first_setup = set_ub_setup(root, target, ub=matrix)
+    first_signature = _composite_cache_signature(scope)
+    first = json.loads(first_signature)
+    second_setup = set_ub_setup(root, target, ub=np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]]) @ matrix)
+    second_signature = _composite_cache_signature(scope)
+    second = json.loads(second_signature)
+
+    assert len(first) == len(second) == len(baseline)
+    assert isinstance(first[4], str) and isinstance(second[4], str)
+    assert json.loads(first[4])["ub_setup"] == first_setup
+    assert json.loads(second[4])["ub_setup"] == second_setup
+    assert first_signature != second_signature
+    if native:
+        assert first[1]["format"] == second[1]["format"] == "mantid-mdevent"
+        assert first[2] is second[2] is None
+    else:
+        assert first[1] is second[1] is None
 
 
 def test_legacy_event_signature_recurses_through_children_and_group_backgrounds():

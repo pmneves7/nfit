@@ -46,6 +46,8 @@ A few of its main capabilities are:
   collections, recipes, viewer settings and lazy scientific caches between them;
 - editable MACS Sources/Reduction recipes with equal-sensitivity defaults and
   calibrated count/exposure pooling through histograms and cuts;
+- a shared crystal-orientation editor with lattice parameters, Mantid-compatible
+  U/V vectors, and NeXus or ISAW UB import;
 - compiled fractional N-dimensional point binning on uniform and nonuniform grids,
   with consistent exposure weights and diagonal uncertainty propagation;
 - compiled DGS HKLE event projection and accumulation in Mantid-compatible and double precision modes;

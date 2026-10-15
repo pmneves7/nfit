@@ -121,6 +121,8 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "project_derived_grid.py",
     PACKAGE_ROOT / "project_history.py",
     PACKAGE_ROOT / "project_imports.py",
+    PACKAGE_ROOT / "project_ub_setup.py",
+    PACKAGE_ROOT / "ub_orientation.py",
     PACKAGE_ROOT / "project_io.py",
     PACKAGE_ROOT / "project_models.py",
     PACKAGE_ROOT / "project_summary.py",
@@ -203,6 +205,7 @@ def test_measurement_workflow_public_exports_are_authoritative():
 
 
 PROJECT_GUI_CLIENT_MODULES = (
+    PACKAGE_ROOT / "qt_ub_setup.py",
     PACKAGE_ROOT / "qt_figure_export.py",
     PACKAGE_ROOT / "qt_resource_monitor.py",
     PACKAGE_ROOT / "qt_box_cut_viewers.py",

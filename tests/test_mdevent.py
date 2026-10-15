@@ -1303,7 +1303,7 @@ def test_mdevent_group_gui_exposes_shared_setup_and_defaults_manual(tmp_path, mo
     t0 = explorer.details_widget.findChild(QtWidgets.QDoubleSpinBox, "mdevent_t0_override")
     resolved = explorer.details_widget.findChild(QtWidgets.QLabel, "mdevent_resolved_reduction_values")
     automatic = explorer.details_widget.findChild(QtWidgets.QCheckBox, "mdevent_incident_energy_override_automatic")
-    ub = explorer.details_widget.findChild(QtWidgets.QLineEdit, "mdevent_ub_matrix")
+    ub = explorer.details_widget.findChild(QtWidgets.QWidget, "mdevent_ub_matrix")
     assert all(widget is not None and widget.toolTip() for widget in (norm, mask, ei, ub, resolved, automatic))
     assert t0 is None  # Time zero cannot change coordinates already stored in MDEvent.
     assert "t0_override" in resolved.text()

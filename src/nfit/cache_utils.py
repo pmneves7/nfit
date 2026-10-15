@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
@@ -21,6 +22,19 @@ def dataset_content_signature(dataset: Any) -> tuple[Any, ...]:
     """
 
     metadata = getattr(dataset, "metadata", None)
+    orientation_keys = (
+        "ub_setup", "ub_matrix", "orientation_matrix", "rlu_to_inv_angstrom_matrix",
+        "oriented_lattice", "lattice_parameters", "orientation_u", "orientation_v",
+        "ub_matrix_includes_2pi", "orientation_matrix_includes_2pi", "q_matrix_includes_2pi",
+        "include_2pi", "includes_2pi",
+    )
+    orientation_metadata = {
+        key: metadata[key] for key in orientation_keys if key in metadata
+    } if isinstance(metadata, Mapping) else {}
+    orientation = (
+        (("crystal_orientation", json.dumps(orientation_metadata, sort_keys=True, default=str)),)
+        if orientation_metadata else ()
+    )
     source = metadata.get("source_file") if isinstance(metadata, Mapping) else None
     if source and (
         getattr(dataset, "data", None) is None
@@ -28,8 +42,6 @@ def dataset_content_signature(dataset: Any) -> tuple[Any, ...]:
     ):
         reduction = ()
         if metadata.get("importer") == "macs_nexus":
-            import json
-
             from .macs_reduction import MACS_REDUCTION_VERSION
 
             reduction = ("macs", MACS_REDUCTION_VERSION,
@@ -37,10 +49,10 @@ def dataset_content_signature(dataset: Any) -> tuple[Any, ...]:
         path = Path(str(source)).expanduser()
         try:
             stat = path.stat()
-            return "source", str(path), int(stat.st_size), int(stat.st_mtime_ns), *reduction
+            return "source", str(path), int(stat.st_size), int(stat.st_mtime_ns), *reduction, *orientation
         except OSError:
-            return "source-missing", str(path), *reduction
-    return "memory", *tuple(dataset.data_cache_token)
+            return "source-missing", str(path), *reduction, *orientation
+    return "memory", *tuple(dataset.data_cache_token), *orientation
 
 
 def scientific_cache_budget_bytes() -> int:

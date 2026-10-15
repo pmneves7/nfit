@@ -130,6 +130,7 @@ from .scientific_compatibility import (
 from .source_lineage import source_lineage_metadata
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
 from .symmetry import SymmetrySpec, symmetry_config
+from .ub_orientation import lattice_orientation_from_ub, with_ub_setup_metadata
 
 # Composite policy defaults have one owner; project_data re-exports them.
 GROUP_COMPOSITE_NAME = "Composite"
@@ -277,6 +278,31 @@ def _composite_scope(
 
 def _composite_root(group: DataGroup | _CompositeScope) -> DataGroup:
     return group.root if isinstance(group, _CompositeScope) else group
+
+
+def _composite_lattice_parameters(group):
+    """Resolve the active scope's metric without inheriting another source UB."""
+    from .reduction_recipes import effective_reduction_config, reduction_family
+
+    node = group.node if isinstance(group, _CompositeScope) else group
+    root = _composite_root(group)
+    if isinstance(node, DatasetGroup) and reduction_family(node):
+        native = effective_reduction_config(node)
+        if native.get("ub_matrix") is not None:
+            # A rotation between instrument frames leaves the metric intact.
+            return lattice_orientation_from_ub(native["ub_matrix"])[0]
+        configured = native.get("lattice_parameters")
+        if isinstance(configured, dict):
+            return configured
+    own_lattice = node.metadata.get("lattice_parameters")
+    if isinstance(own_lattice, dict):
+        return own_lattice
+    if node is not root:
+        for dataset in node.datasets:
+            for metadata in (dataset.metadata, getattr(dataset.data, "metadata", {}) or {}):
+                if isinstance(metadata.get("lattice_parameters"), dict):
+                    return metadata["lattice_parameters"]
+    return getattr(root, "lattice_parameters", None)
 
 
 def _background_group_scope(group, background):
@@ -1010,6 +1036,11 @@ def _composite_cache_signature(
         )
     )
     numerical = _composite_numerical_config(group, config)
+    if node.metadata.get("ub_setup") is not None:
+        # The serialized payload is positional. Keep scope orientation in the
+        # existing numerical record so event/numerical fields retain their
+        # persisted indices and older cache layouts remain recognizable.
+        numerical["ub_setup"] = node.metadata["ub_setup"]
     selected = _composite_candidates(group)
     native_event_rebin = (
         isinstance(node, DatasetGroup) and not child_scopes and bool(selected)
@@ -1048,7 +1079,7 @@ def _composite_cache_signature(
         }
         if raw_config.get("format") == "raw-direct-geometry-nexus"
         else node.metadata.get("raw_dgs"),
-        getattr(_composite_root(group), "lattice_parameters", {}),
+        _composite_lattice_parameters(group),
         json.dumps(numerical, sort_keys=True, default=str),
         _event_reduction_dependency_signature(node),
         dimensions,
@@ -1180,6 +1211,10 @@ def composite_dataset_data(
         metadata_dimensions_override=metadata_dimensions_override,
         **builder_options,
     )
+    from .reduction_recipes import reduction_family
+
+    if not isinstance(selection_node, DatasetGroup) or reduction_family(selection_node) is None:
+        result = with_ub_setup_metadata(result, selection_node.metadata)
     if apply_backgrounds:
         settings = composite_scaling(group)
         result = _scale_composite_with_replay(result, settings["result_scale"])
@@ -1365,7 +1400,7 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
             max_batch_bytes=_rebin_max_batch_bytes(unified_config),
             progress_callback=progress_callback,
             symmetry_operations=_rebin_symmetry_matrices(
-                config, _composite_root(group).lattice_parameters
+                config, _composite_lattice_parameters(group)
             ),
             fractional_axes=_rebin_fractional_axes(config, config.get("axes", [])),
             metadata_dimensions=specs,
@@ -1461,7 +1496,7 @@ def _raw_dgs_composite_histogram(group, config, progress_callback, *, symmetry_o
                 for index, axis in enumerate(config.get("axes", []))
             ],
             symmetry_operations=(symmetry_operations if symmetry_operations is not None else _rebin_symmetry_matrices(
-                config, _composite_root(group).lattice_parameters
+                config, _composite_lattice_parameters(group)
             )),
             **common,
         )
@@ -1563,7 +1598,7 @@ def _composite_dataset_data(
         config = copy.deepcopy(config)
         event_axes = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
         is_powder = config.get("coordinate_mode") == "powder"
-        event_symmetry = _rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters)
+        event_symmetry = _rebin_symmetry_matrices(config, _composite_lattice_parameters(group))
         event_basis = (
             _validate_mdhisto_rebin_basis(event_axes, 4)
             if not is_powder and len(event_axes) == 4 else None
@@ -1649,7 +1684,7 @@ def _composite_dataset_data(
                 enforce_memory_limit=not allow_overcommit,
                 progress_callback=progress_callback,
                 symmetry_operations=_rebin_symmetry_matrices(
-                    config, _composite_root(group).lattice_parameters
+                    config, _composite_lattice_parameters(group)
                 ),
             )
     elif kind == "raw_dgs_nexus":
@@ -2068,10 +2103,10 @@ def _apply_composite_backgrounds(
         return data
     if not isinstance(data, MDHistoData):
         raise TypeError("group backgrounds require a gridded composite")
-    root = _composite_root(group)
+    lattice = _composite_lattice_parameters(group)
     metadata = dict(data.metadata)
-    if root.lattice_parameters and not isinstance(metadata.get("lattice_parameters"), dict):
-        metadata["lattice_parameters"] = dict(root.lattice_parameters)
+    if lattice and not isinstance(metadata.get("lattice_parameters"), dict):
+        metadata["lattice_parameters"] = dict(lattice)
     result = replace(data, metadata=metadata)
     for background in backgrounds:
         if not background.enabled or float(background.scale) == 0.0:
@@ -2197,7 +2232,7 @@ def _incremental_raw_dgs_base(group, config, progress_callback):
 
     return try_expand_raw_dgs_symmetry(
         config, candidates=candidates(), signature=signature,
-        operations=lambda recipe: (_rebin_symmetry_matrices(recipe, _composite_root(group).lattice_parameters)
+        operations=lambda recipe: (_rebin_symmetry_matrices(recipe, _composite_lattice_parameters(group))
                                    or (np.eye(3),)),
         reduce_missing=lambda matrices: _raw_dgs_composite_histogram(
             group, config, progress_callback, symmetry_operations=matrices),
@@ -2913,9 +2948,9 @@ def _composite_mdhisto_data(
     ):
         if key in first_data.metadata:
             metadata[key] = copy.deepcopy(first_data.metadata[key])
-    root = _composite_root(group)
-    if root.lattice_parameters and "lattice_parameters" not in metadata:
-        metadata["lattice_parameters"] = dict(root.lattice_parameters)
+    lattice = _composite_lattice_parameters(group)
+    if lattice and "lattice_parameters" not in metadata:
+        metadata["lattice_parameters"] = dict(lattice)
     auxiliary_channels = {
         "coverage_fraction": MDHistoChannel(
             coverage,

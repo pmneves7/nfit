@@ -1705,6 +1705,43 @@ def test_overlay_cache_invalidates_when_dataset_data_is_replaced():
     assert project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"] is not compiled_first
 
 
+
+def test_overlay_cache_rebuilds_after_each_explicit_dataset_orientation_edit():
+    from nfit.project_ub_setup import set_ub_setup
+
+    project_gui._MODEL_OVERLAY_CACHE.clear()
+    group, dataset, _model = _rpa_overlay_group()
+    data_token = dataset.data_cache_token
+    assert "scan" in project_gui.current_model_channels(group)
+    previous = project_gui._MODEL_OVERLAY_CACHE[id(group)]
+    for scale in (0.2, 0.4):
+        set_ub_setup(group, dataset, ub=scale * np.eye(3))
+        assert "scan" in project_gui.current_model_channels(group)
+        current = project_gui._MODEL_OVERLAY_CACHE[id(group)]
+        assert current["signature"] != previous["signature"]
+        assert current["compiled"] is not previous["compiled"]
+        assert dataset.data_cache_token == data_token
+        previous = current
+
+
+def test_overlay_signature_tracks_scope_rotation_and_native_matrix_only_edits(tmp_path):
+    from nfit.project_ub_setup import set_ub_setup
+    from nfit.reduction_recipes import set_reduction_settings
+    from tests.test_reduction_recipes import _group
+
+    generic = DatasetGroup("histograms")
+    native = _group(tmp_path, "raw-direct-geometry-nexus")
+    root = DataGroup("sample", subgroups=[generic, native])
+    rotation = np.asarray([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+    for scope in (root, generic):
+        set_ub_setup(root, scope, ub=0.2 * np.eye(3))
+        before = project_gui._overlay_cache_signature(root)
+        set_ub_setup(root, scope, ub=0.2 * rotation)
+        assert project_gui._overlay_cache_signature(root) != before
+    before = project_gui._overlay_cache_signature(root)
+    set_reduction_settings(native, {"ub_matrix": (0.4 * rotation).tolist()})
+    assert project_gui._overlay_cache_signature(root) != before
+
 def test_dataset_activation_evaluation_creates_current_state_with_channels(
     monkeypatch,
 ):

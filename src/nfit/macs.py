@@ -498,6 +498,9 @@ def import_macs_nexus(
         ub = _oriented_ub(lattice, u, v)
         if settings["ub_matrix"] is not None:
             ub = np.asarray(settings["ub_matrix"], dtype=float)
+            from .ub_orientation import lattice_orientation_from_ub, mantid_ub_from_ipns
+
+            lattice, u, v = lattice_orientation_from_ub(mantid_ub_from_ipns(ub))
 
         file_a3_offset = _dataset(entry, "DAS_logs/sampleState/a3Zero", required=False)
         if settings["a3_offset_deg"] in (None, ""):

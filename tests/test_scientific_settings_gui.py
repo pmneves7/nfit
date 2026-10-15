@@ -3,6 +3,7 @@
 import copy
 import json
 
+import numpy as np
 import pytest
 
 from nfit import DataGroup, NfitProject, NfitProjectExplorer
@@ -72,9 +73,10 @@ def test_native_estimator_and_assignment_match_executed_adapter(native_explorer)
     assert all(dataset.data is None for dataset in group.datasets)
 
 
-def test_all_native_schema_settings_are_visible_and_scriptable(native_explorer):
+def test_all_native_schema_settings_are_visible_and_scriptable(native_explorer, monkeypatch):
     from PySide6 import QtCore, QtWidgets
 
+    from nfit.qt_ub_setup import UB_TOOLTIP, UBSetupDialog
     from nfit.reduction_recipes import effective_reduction_config, reduction_settings_schema
 
     explorer, group, family = native_explorer
@@ -88,10 +90,27 @@ def test_all_native_schema_settings_are_visible_and_scriptable(native_explorer):
         assert editor is not None and editor.toolTip() == field.tooltip
         override = explorer.details_widget.findChild(QtWidgets.QWidget, f"{prefix}_run_{field.key}")
         assert (override is not None) == field.per_run
+        if field.key == "ub_matrix":
+            assert not editor.findChildren(QtWidgets.QLineEdit)
+            display = editor.findChild(QtWidgets.QLabel, f"{prefix}_ub_matrix_display")
+            assert display is not None and display.toolTip() == UB_TOOLTIP
+            setup = editor.findChild(QtWidgets.QPushButton, f"{prefix}_ub_matrix_setup")
+            assert setup is not None and setup.toolTip()
         if field.kind == "choice":
             assert isinstance(editor, QtWidgets.QComboBox)
             assert {editor.itemData(index) for index in range(editor.count())} == {value for value, _ in field.choices}
             assert all(editor.itemData(index, QtCore.Qt.ItemDataRole.ToolTipRole) for index in range(editor.count()))
+    matrix = [[0.0, 0.2, 0.0], [0.0, 0.0, 0.125], [0.25, 0.0, 0.0]]
+
+    def apply_setup(self):
+        self._set_matrix(matrix)
+        self._accept()
+        return QtWidgets.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(UBSetupDialog, "exec", apply_setup)
+    explorer.details_widget.findChild(QtWidgets.QPushButton, f"{prefix}_ub_matrix_setup").click()
+    np.testing.assert_array_equal(effective_reduction_config(group)["ub_matrix"], matrix)
+    QtWidgets.QApplication.processEvents()
     if family != "corelli":
         symmetry = explorer.details_widget.findChild(QtWidgets.QComboBox, f"{prefix}_symmetry_variance_policy")
         assert "Neither choice retains covariance between different bins" in symmetry.toolTip()

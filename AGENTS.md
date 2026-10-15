@@ -67,6 +67,9 @@ different Python.
   preservation during panel rebuilds.
 - `src/nfit/qt_operation_guard.py`: shared operation input and popup-lifetime
   guards for Qt workflows.
+- `src/nfit/ub_orientation.py`, `project_ub_setup.py`, and `qt_ub_setup.py`:
+  Mantid-compatible orientation math and file I/O, project UB ownership, and
+  the shared matrix display and setup dialog.
 - `src/nfit/project_imports.py`: GUI-independent import, source, and reload orchestration.
 - `src/nfit/source_selection.py`, `source_selection_imports.py`, and
   `source_selection_gui.py`: bounded run expressions, resolved previews, atomic

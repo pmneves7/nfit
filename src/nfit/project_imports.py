@@ -452,6 +452,8 @@ def _dataset_group_import_stream(group: DatasetGroup) -> tuple[str, str] | None:
 def _adopt_imported_lattice(group: DataGroup, entry: DatasetEntry) -> None:
     """Adopt and validate lattice metadata supplied by a registered importer."""
 
+    if group.metadata.get("ub_setup_override"):
+        return
     if entry.data is None or not isinstance(
         getattr(entry.data, "metadata", None), dict
     ):
@@ -486,14 +488,36 @@ def _adopt_imported_crystal(
 ) -> None:
     """Promote compatible imported crystal metadata to its composite scope."""
 
+    # An explicit scope edit describes its current physical interpretation;
+    # source payloads remain immutable and can still contain the original cell.
+    if target is not None and target.metadata.get("ub_setup_override"):
+        return
+    if target is not None:
+        macs = target.metadata.get("macs")
+        if isinstance(macs, dict) and macs.get("ub_matrix") is not None:
+            # An explicit native reduction transform also takes precedence
+            # when edited directly through the public recipe API.
+            return
     _adopt_imported_lattice(group, entry)
     metadata = getattr(entry.data, "metadata", None)
     if target is None or not isinstance(metadata, dict):
         return
+    imported_ub = _dataset_ub_for_editor(metadata)
+    existing_ub = _dataset_ub_for_editor(target.metadata)
+    if imported_ub is not None and existing_ub is not None and not np.allclose(
+        imported_ub, existing_ub, rtol=1e-10, atol=1e-12,
+    ):
+        raise ValueError(f"{entry.name!r} has UB matrix that differs from dataset group {target.name!r}")
     keys = (
         "lattice_parameters",
         "ub_matrix",
+        "orientation_matrix",
         "rlu_to_inv_angstrom_matrix",
+        "ub_matrix_includes_2pi",
+        "orientation_matrix_includes_2pi",
+        "q_matrix_includes_2pi",
+        "include_2pi",
+        "includes_2pi",
         "orientation_u",
         "orientation_v",
     )
@@ -519,42 +543,27 @@ def _adopt_imported_crystal(
                 f"{entry.name!r} has {key.replace('_', ' ')} that differs from "
                 f"dataset group {target.name!r}"
             )
-    lattice = target.metadata.get("lattice_parameters")
     ub = _dataset_ub_for_editor(target.metadata)
-    if isinstance(lattice, dict) and ub is not None:
-        target.metadata["ub_setup"] = {
-            "ub_matrix": ub.tolist(),
-            "lattice_parameters": copy.deepcopy(lattice),
-            "u": copy.deepcopy(
-                target.metadata.get("orientation_u", [1.0, 0.0, 0.0])
-            ),
-            "v": copy.deepcopy(
-                target.metadata.get("orientation_v", [0.0, 1.0, 0.0])
-            ),
-        }
+    if ub is None:
+        ub = imported_ub
+    if ub is not None:
+        from .ub_orientation import ub_setup_from_matrix
+
+        if metadata.get("importer") == "macs_nexus":
+            # MACS source metadata remain in IPNS axes. Its editor converts
+            # at the native collection boundary rather than storing a second
+            # sample-frame interpretation during source adoption.
+            target.metadata.pop("ub_setup", None)
+        else:
+            target.metadata["ub_setup"] = ub_setup_from_matrix(ub)
 
 
 def _dataset_ub_for_editor(metadata: dict[str, Any]) -> np.ndarray | None:
     """Return UB without 2pi, converting full RLU-to-Q matrices when needed."""
 
-    containers = [metadata]
-    oriented = metadata.get("oriented_lattice")
-    if isinstance(oriented, dict):
-        containers.append(oriented)
-    for container in containers:
-        for key in ("ub_matrix", "orientation_matrix"):
-            if key in container:
-                matrix = np.asarray(container[key], dtype=float)
-                if matrix.shape == (3, 3):
-                    return matrix
-    for container in containers:
-        if "rlu_to_inv_angstrom_matrix" in container:
-            matrix = np.asarray(
-                container["rlu_to_inv_angstrom_matrix"], dtype=float
-            )
-            if matrix.shape == (3, 3):
-                return matrix / (2.0 * np.pi)
-    return None
+    from .ub_orientation import ub_matrix_from_metadata
+
+    return ub_matrix_from_metadata(metadata)
 
 
 def parse_dataset_numors(text: str) -> list[int]:

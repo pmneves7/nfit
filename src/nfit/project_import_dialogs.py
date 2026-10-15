@@ -204,7 +204,8 @@ def prompt_macs_nexus_options(
         label = QtWidgets.QLabel(f"{field.label} ({field.units})" if field.units else field.label)
         label.setToolTip(field.tooltip)
         editor = _field_editor(field, scientific_options[field.key], object_name=f"macs_{field.key}",
-            on_changed=lambda value, key=field.key: scientific_options.__setitem__(key, value))
+            on_changed=lambda value, key=field.key: scientific_options.__setitem__(key, value),
+            ub_frame="ipns")
         form.addRow(label, editor)
     content = QtWidgets.QWidget()
     content.setLayout(form)

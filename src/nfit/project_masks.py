@@ -18,6 +18,7 @@ from .project_coordinates import (
     _parse_parameter_text,
     _resolve_projected_axis_grid,
 )
+from .ub_orientation import with_ub_setup_metadata
 
 
 def _point_data_with_nfit_masks(
@@ -26,6 +27,7 @@ def _point_data_with_nfit_masks(
     *,
     extra_masks: list[MaskSpec] | None = None,
 ) -> PointData4D:
+    data = with_ub_setup_metadata(data, dataset.metadata)
     reject = ~np.asarray(data.mask, dtype=bool)
     nfit_mask = _nfit_mask_for_point_data(dataset, data, extra_masks=extra_masks)
     combined_reject = reject | nfit_mask
@@ -197,6 +199,7 @@ def _mdhisto_with_nfit_masks(
     data = dataset.data if data is None else data
     if not isinstance(data, MDHistoData):
         raise TypeError("dataset does not contain MDHistoData")
+    data = with_ub_setup_metadata(data, dataset.metadata)
     masks = tuple([*(extra_masks or []), *dataset.masks])
     if not any(mask.enabled and mask.type != DATASET_CRITERION_TYPE for mask in masks):
         return _mdhisto_with_file_mask_only(data)

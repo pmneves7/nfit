@@ -857,24 +857,35 @@ invalidate reduced-event caches through their reduction-version signature.
 
 ## UB matrices
 
-**Crystal orientation** displays the active UB matrix directly. **UB setup**
-edits lattice parameters, orientation vectors `u` and `v`, and the full
-$3\times3$ UB matrix. **Calculate from lattice
-and u/v** places `u` along the incident beam and uses `u` and `v` to define the
-horizontal scattering plane.
+Crystal panels, native reduction settings, and MACS import options show a compact
+UB matrix with a **UB setup…** button. The popup edits the matrix, cell lengths
+in Å, cell angles in degrees, and reciprocal-lattice orientation vectors `u`
+and `v`. Opening or importing a matrix derives the cell and vectors from it.
+After editing the cell or vectors, choose **Calculate UB** to preview the
+matrix, or **Apply** to calculate and install it. **Cancel** leaves the project
+unchanged. Display rounding does not alter untouched matrix values.
 
-UB maps `[h,k,l]` to reciprocal momentum in inverse angstrom, with
-$\mathbf Q'=UB(H,K,L)^T$ and $|\mathbf Q'|=1/d$ for a reflection of
-plane spacing $d$ in Å. Physical scattering wavevector is
-$\mathbf Q=2\pi\mathbf Q'$; $U$ is the orientation rotation and $B$ here
-is the crystallographic reciprocal basis without $2\pi$. **UB from NeXus** reads embedded orientation metadata.
-**UB from ISAW** and **Save ISAW** use the conventional transposed three-row
-ISAW representation. They also apply Mantid's coordinate permutation between
-the file's IPNS frame (beam $+x$, vertical $+z$) and nfit's SNS instrument frame
-(beam $+z$, vertical $+y$).
+The vectors follow Shiver/Mantid: `u` points along the incident beam and the
+perpendicular part of `v` defines the horizontal transverse direction. Their
+displayed HKL components retain Mantid's magnitude. UB excludes $2\pi$; see
+[Physics conventions](physics_conventions.md) for the coordinate and unit definitions.
 
-Apply the dialog to a dataset for a dataset-specific orientation or to a group
-for shared orientation and composite HKL conversion.
+**UB from NeXus** reads processed Mantid oriented-lattice metadata or unprocessed
+SNS UB logs without loading event or histogram arrays. Processed orientation
+metadata takes precedence over acquisition logs. Conflicting matrices produce an
+error; scripts can select a specific HDF5 path with `read_nexus_ub(matrix_path=...)`.
+**UB from ISAW** and **Save ISAW** convert between the transposed IPNS file
+representation and Mantid/SNS coordinates.
+
+For a native run, Apply changes its owning collection's shared reduction UB and
+invalidates coordinate-dependent histograms. Reusable raw laboratory events are
+retained; MACS data are reimported with the new transform. **Use source UB** in
+MACS reduction settings restores the source-file orientation. For an ordinary
+dataset already in HKL, Apply changes the crystal metadata used by masks and
+viewers while preserving stored coordinates and intensities. A workspace or
+ordinary collection edit describes its own composite and does not replace
+independent child reduction settings.
+
 The **Space group / centering** field in the same area records the
 Hermann--Mauguin symbol, or only its centering letter when that is all that is
 known. The data viewer combines this centering with the reciprocal metric to

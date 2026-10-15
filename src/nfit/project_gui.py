@@ -105,7 +105,7 @@ from .importers import (
     importers_for_data_type,
 )
 from .mdevent import (
-    inspect_mdevent_workspace,
+    inspect_mdevent_workspace,  # noqa: F401 - compatibility re-export
 )
 from .mdhisto import (
     MDHistoData,
@@ -174,7 +174,7 @@ from .project_imports import (
     _dataset_can_load,
     _dataset_can_reload,
     _dataset_group_import_stream,
-    _dataset_ub_for_editor,
+    _dataset_ub_for_editor,  # noqa: F401 - compatibility re-export
     available_data_types,
     data_type_container,  # noqa: F401 - compatibility re-export
     data_type_label,
@@ -250,6 +250,7 @@ from .qt_operation_guard import (
     guarded_gui_operation,
     gui_operation_active,
 )
+from .qt_ub_setup import UBSetupDialog, ub_matrix_widget
 from .qt_widget_state import preserve_widget_state
 from .spectral_channels import (
     SPECTRAL_CHANNEL_CONFIG_KEY,
@@ -258,6 +259,15 @@ from .spectral_channels import (
 )
 from .spectral_metadata import spectral_unit_with_basis
 from .symmetry import symmetry_spec_from_config
+from .ub_orientation import (
+    read_isaw_ub as read_isaw_ub,
+)
+from .ub_orientation import (
+    ub_from_lattice_orientation as ub_from_lattice_orientation,
+)
+from .ub_orientation import (
+    write_isaw_ub as write_isaw_ub,
+)
 from .viewer_data import (
     DeferredViewerDatasets,
     RebinCancellationRequested,
@@ -3237,211 +3247,6 @@ def _optional_int(value: Any) -> int | None:
     return int(value)
 
 
-_ISAW_TO_MANTID_COORDINATES = np.asarray(
-    [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], dtype=float
-)
-
-
-def read_isaw_ub(path: str | Path) -> tuple[np.ndarray, dict[str, float]]:
-    """Read an ISAW ``.mat`` file into Mantid/SNS instrument coordinates."""
-
-    rows = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        values = line.split()
-        if values:
-            rows.append([float(value) for value in values])
-    if len(rows) < 4 or any(len(row) < 3 for row in rows[:3]) or len(rows[3]) < 6:
-        raise ValueError("ISAW UB files require three matrix rows and one six-value lattice row")
-    ub_ipns = np.asarray([row[:3] for row in rows[:3]], dtype=float).T
-    ub = _ISAW_TO_MANTID_COORDINATES @ ub_ipns
-    lattice = dict(zip(("a", "b", "c", "alpha", "beta", "gamma"), rows[3][:6], strict=True))
-    if not np.all(np.isfinite(ub)) or abs(np.linalg.det(ub)) < 1e-14:
-        raise ValueError("ISAW UB matrix must be finite and invertible")
-    return ub, lattice
-
-
-def write_isaw_ub(path: str | Path, ub: Any, lattice: dict[str, Any]) -> None:
-    """Write a Mantid/SNS-frame UB in transposed IPNS/ISAW convention."""
-
-    matrix = np.asarray(ub, dtype=float)
-    if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
-        raise ValueError("UB must be a finite 3 x 3 matrix")
-    names = ("a", "b", "c", "alpha", "beta", "gamma")
-    values = [float(lattice[name]) for name in names]
-    matrix_ipns = _ISAW_TO_MANTID_COORDINATES.T @ matrix
-    lines = [" ".join(f"{value: .8f}" for value in row) for row in matrix_ipns.T]
-    alpha, beta, gamma = np.deg2rad(values[3:6])
-    volume = values[0] * values[1] * values[2] * np.sqrt(
-        max(1.0 + 2.0 * np.cos(alpha) * np.cos(beta) * np.cos(gamma)
-            - np.cos(alpha) ** 2 - np.cos(beta) ** 2 - np.cos(gamma) ** 2, 0.0)
-    )
-    lines.append(" ".join(f"{value:11.4f}" for value in [*values, volume]))
-    lines.append(" ".join(f"{0.0:11.4f}" for _ in range(7)))
-    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def ub_from_lattice_orientation(lattice: dict[str, Any], u: Any, v: Any) -> np.ndarray:
-    """Build a Mantid/SNS-frame UB with ``u`` along the incident beam."""
-
-    basis = reciprocal_basis_from_lattice_parameters(
-        *(float(lattice[name]) for name in ("a", "b", "c", "alpha", "beta", "gamma"))
-    ) / (2.0 * np.pi)
-    q_u = basis @ np.asarray(u, dtype=float)
-    q_v = basis @ np.asarray(v, dtype=float)
-    if np.linalg.norm(q_u) <= 1e-14 or np.linalg.norm(np.cross(q_u, q_v)) <= 1e-14:
-        raise ValueError("u must be nonzero and u/v must define a plane")
-    x_axis = q_u / np.linalg.norm(q_u)
-    z_axis = np.cross(q_u, q_v)
-    z_axis /= np.linalg.norm(z_axis)
-    y_axis = np.cross(z_axis, x_axis)
-    ub_ipns = np.vstack((x_axis, y_axis, z_axis)) @ basis
-    return _ISAW_TO_MANTID_COORDINATES @ ub_ipns
-
-
-class UBSetupDialog:
-    """Reusable lattice/orientation editor for single-crystal data scopes."""
-
-    def __init__(self, parent: Any, *, ub: Any, lattice: dict[str, Any] | None, u: Any, v: Any):
-        from PySide6 import QtWidgets
-
-        self.dialog = QtWidgets.QDialog(parent)
-        self.dialog.setWindowTitle("UB setup")
-        self.dialog.setMinimumWidth(620)
-        outer = QtWidgets.QVBoxLayout(self.dialog)
-        form = QtWidgets.QGridLayout()
-        self.lattice_edits = {}
-        defaults = {"a": 1.0, "b": 1.0, "c": 1.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0}
-        values = {**defaults, **(lattice or {})}
-        for index, name in enumerate(("a", "b", "c", "alpha", "beta", "gamma")):
-            row, column = divmod(index, 3)
-            form.addWidget(QtWidgets.QLabel(name), row, column * 2)
-            edit = QtWidgets.QLineEdit(_format_number(values[name]))
-            constrain_input_width(edit, COMPACT_SCALAR_FIELD_WIDTH)
-            edit.setObjectName(f"ub_lattice_{name}")
-            edit.setToolTip("Unit-cell length in angstrom." if index < 3 else "Unit-cell angle in degrees.")
-            form.addWidget(edit, row, column * 2 + 1)
-            self.lattice_edits[name] = edit
-        self.orientation_edits = {}
-        for vector_row, (name, vector) in enumerate((("u", u), ("v", v)), start=2):
-            for component, value in enumerate(np.asarray(vector, dtype=float).reshape(3)):
-                label = f"{name}{'xyz'[component]}"
-                form.addWidget(QtWidgets.QLabel(label), vector_row, component * 2)
-                edit = QtWidgets.QLineEdit(_format_number(value))
-                constrain_input_width(edit, COMPACT_SCALAR_FIELD_WIDTH)
-                edit.setObjectName(f"ub_orientation_{name}_{component}")
-                edit.setToolTip("Reciprocal-lattice orientation vector. u points along the incident beam (+z); u and v define the horizontal plane, with +y vertical.")
-                form.addWidget(edit, vector_row, component * 2 + 1)
-                self.orientation_edits[(name, component)] = edit
-        outer.addLayout(form)
-        source_row = QtWidgets.QHBoxLayout()
-        for text, slot in (("UB from NeXus", self._load_nexus), ("UB from ISAW", self._load_isaw), ("Calculate from lattice and u/v", self._calculate)):
-            button = QtWidgets.QPushButton(text)
-            button.setToolTip("Load orientation metadata directly from a NeXus file." if "NeXus" in text else "Read or calculate the UB matrix using the displayed convention.")
-            button.clicked.connect(slot)
-            source_row.addWidget(button)
-        outer.addLayout(source_row)
-        outer.addWidget(QtWidgets.QLabel("UB matrix (maps column [h,k,l] to Q' in inverse angstrom)"))
-        self.matrix_table = QtWidgets.QTableWidget(3, 3)
-        self.matrix_table.setObjectName("ub_matrix_table")
-        self.matrix_table.horizontalHeader().setVisible(False)
-        self.matrix_table.verticalHeader().setVisible(False)
-        self.matrix_table.setFixedHeight(132)
-        outer.addWidget(self.matrix_table)
-        self._set_matrix(np.asarray(ub, dtype=float))
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Apply | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
-        save = buttons.addButton("Save ISAW", QtWidgets.QDialogButtonBox.ButtonRole.ActionRole)
-        save.setToolTip("Save a .mat file with UB transposed and converted to the IPNS x-beam/z-vertical convention.")
-        save.clicked.connect(self._save_isaw)
-        buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Apply).clicked.connect(self._accept)
-        buttons.rejected.connect(self.dialog.reject)
-        outer.addWidget(buttons)
-        self.result = None
-
-    def exec(self):
-        return self.dialog.exec()
-
-    def _lattice(self):
-        return {name: float(edit.text()) for name, edit in self.lattice_edits.items()}
-
-    def _vector(self, name):
-        return np.asarray([float(self.orientation_edits[(name, index)].text()) for index in range(3)])
-
-    def _matrix(self):
-        return np.asarray([[float(self.matrix_table.item(row, column).text()) for column in range(3)] for row in range(3)])
-
-    def _set_matrix(self, matrix):
-        from PySide6 import QtWidgets
-        for row in range(3):
-            for column in range(3):
-                self.matrix_table.setItem(row, column, QtWidgets.QTableWidgetItem(f"{matrix[row, column]:.8g}"))
-
-    def _calculate(self):
-        from PySide6 import QtWidgets
-        try:
-            self._set_matrix(ub_from_lattice_orientation(self._lattice(), self._vector("u"), self._vector("v")))
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self.dialog, "UB setup", f"Could not calculate UB:\n{exc}")
-
-    def _load_isaw(self):
-        from PySide6 import QtWidgets
-        path, _ = get_open_file_name(self.dialog, "Load ISAW UB", "", "ISAW matrix (*.mat);;All files (*)")
-        if not path:
-            return
-        try:
-            matrix, lattice = read_isaw_ub(path)
-            self._set_matrix(matrix)
-            for name, value in lattice.items():
-                self.lattice_edits[name].setText(_format_number(value))
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self.dialog, "UB setup", f"Could not read ISAW file:\n{exc}")
-
-    def _load_nexus(self):
-        from PySide6 import QtWidgets
-        path, _ = get_open_file_name(self.dialog, "Load UB from NeXus", "", "NeXus/HDF5 (*.nxs *.h5 *.hdf5);;All files (*)")
-        if not path:
-            return
-        try:
-            try:
-                info = inspect_mdevent_workspace(path)
-                matrix = info.ub_matrix
-                lattice = info.lattice_parameters
-            except Exception as mdevent_error:
-                imported = load_mantid_mdhisto_nxs(path, copy_metadata=True)
-                matrix = _dataset_ub_for_editor(imported.metadata)
-                lattice = imported.metadata.get("lattice_parameters")
-                if matrix is None:
-                    raise ValueError(
-                        "NeXus file does not contain a UB/orientation matrix"
-                    ) from mdevent_error
-            self._set_matrix(np.asarray(matrix, dtype=float))
-            for name, value in (lattice or {}).items():
-                if name not in self.lattice_edits:
-                    continue
-                self.lattice_edits[name].setText(_format_number(value))
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self.dialog, "UB setup", f"Could not read NeXus orientation:\n{exc}")
-
-    def _save_isaw(self):
-        from PySide6 import QtWidgets
-        path, _ = get_save_file_name(self.dialog, "Save ISAW UB", "UB.mat", "ISAW matrix (*.mat)")
-        if path:
-            try:
-                write_isaw_ub(path, self._matrix(), self._lattice())
-            except Exception as exc:
-                QtWidgets.QMessageBox.warning(self.dialog, "UB setup", f"Could not save ISAW file:\n{exc}")
-
-    def _accept(self):
-        from PySide6 import QtWidgets
-        try:
-            matrix = self._matrix()
-            if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)) or abs(np.linalg.det(matrix)) < 1e-14:
-                raise ValueError("UB matrix must be finite and invertible")
-            self.result = {"ub_matrix": matrix.tolist(), "lattice_parameters": self._lattice(), "u": self._vector("u").tolist(), "v": self._vector("v").tolist()}
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(self.dialog, "UB setup", f"Invalid UB setup:\n{exc}")
-            return
-        self.dialog.accept()
-
 
 def perform_group_fit(
     group: DataGroup,
@@ -3666,6 +3471,13 @@ def _overlay_cache_signature(group: DataGroup) -> str:
     editing e.g. ``J2`` reuses the cached bundles and geometry.
     """
 
+    from .cache_utils import dataset_content_signature
+    from .project_ub_setup import get_ub_setup
+
+    def scope_orientation(scope):
+        setup = get_ub_setup(group, scope)
+        return None if setup is None else setup["ub_matrix"]
+
     datasets: list[Any] = []
     for dataset in group.iter_datasets():
         data_metadata = getattr(dataset.data, "metadata", {})
@@ -3677,7 +3489,7 @@ def _overlay_cache_signature(group: DataGroup) -> str:
                 dataset.data_type,
                 dataset.kind,
                 dataset.id,
-                dataset.data_cache_token,
+                dataset_content_signature(dataset),
                 float(dataset.fit_weight),
                 float(dataset.scale_factor),
                 bool(dataset.scale_factor_vary),
@@ -3714,12 +3526,13 @@ def _overlay_cache_signature(group: DataGroup) -> str:
     payload = [
         datasets,
         [
-            [path, bool(subgroup.enabled)]
+            [path, bool(subgroup.enabled), scope_orientation(subgroup)]
             for path, subgroup in _dataset_group_paths(group)
         ],
         models,
         json.dumps(group.lattice_parameters, sort_keys=True, default=str),
         group.spacegroup,
+        scope_orientation(group),
     ]
     return json.dumps(payload, sort_keys=True, default=str)
 
@@ -14326,8 +14139,15 @@ class NfitProjectExplorer:
         return self._reduction_recipe_group_box(node)
 
     def _reduction_recipe_group_box(self, node: DatasetGroup, *, scopes=None, export=True) -> Any:
+        from .project_ub_setup import get_ub_setup
         from .reduction_recipe_gui import build_reduction_recipe_panel
 
+        root = next(
+            (root for root in self.project.data_groups
+             if any(candidate is node for _path, candidate in _dataset_group_paths(root))),
+            None,
+        )
+        setup = None if root is None else get_ub_setup(root, node)
         return build_reduction_recipe_panel(
             node,
             on_shared_changed=lambda key, value: self._set_reduction_recipe_value(
@@ -14337,6 +14157,7 @@ class NfitProjectExplorer:
                 node, key, value, dataset=dataset, inherit=inherit
             ),
             parent=self.window, scopes=scopes, export=export,
+            source_ub=None if setup is None else setup["ub_matrix"],
         )
 
     def _ub_setup_group_box(
@@ -14344,29 +14165,15 @@ class NfitProjectExplorer:
         root: DataGroup,
         target: DataGroup | DatasetGroup | DatasetEntry,
     ) -> Any:
-        from PySide6 import QtCore, QtWidgets
+        from PySide6 import QtWidgets
+
+        from .project_ub_setup import get_ub_setup
+        from .qt_ub_setup import UB_TOOLTIP
 
         box = QtWidgets.QGroupBox("Crystal orientation")
-        box.setToolTip(
-            "Edit the unit cell, orientation vectors, and UB matrix for this single-crystal scope. "
-            "UB maps column [h,k,l] to Q' in inverse angstrom with beam +x and vertical +z."
-        )
-        if isinstance(target, DatasetEntry):
-            orientation_metadata = _merged_dataset_metadata(target)
-        else:
-            orientation_metadata = dict(target.metadata)
-            if isinstance(target, DatasetGroup):
-                for key in ("mdevent", "raw_dgs"):
-                    shared = target.metadata.get(key)
-                    if isinstance(shared, dict):
-                        orientation_metadata = {
-                            **shared,
-                            **orientation_metadata,
-                        }
-        setup = orientation_metadata.get("ub_setup")
-        ub = _dataset_ub_for_editor(orientation_metadata)
-        if ub is None and isinstance(setup, dict):
-            ub = _dataset_ub_for_editor(setup)
+        box.setToolTip(UB_TOOLTIP)
+        setup = get_ub_setup(root, target)
+        ub = None if setup is None else setup["ub_matrix"]
 
         layout = QtWidgets.QVBoxLayout(box)
         spacegroup_row = QtWidgets.QHBoxLayout()
@@ -14385,31 +14192,9 @@ class NfitProjectExplorer:
         spacegroup_row.addWidget(spacegroup_edit)
         spacegroup_row.addStretch(1)
         layout.addLayout(spacegroup_row)
-        if ub is None:
-            matrix_text = "UB matrix: not set"
-        else:
-            matrix_text = "UB matrix (Å⁻¹):\n" + "\n".join(_matrix_lines(ub))
-        matrix_display = QtWidgets.QLabel(matrix_text)
-        matrix_display.setObjectName("ub_matrix_display")
-        matrix_display.setTextInteractionFlags(
-            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        matrix_display.setToolTip(
-            "Current UB matrix without the 2π factor. It maps column [h, k, l] "
-            "to the sample-frame scattering vector Q′ in inverse angstrom."
-        )
-        layout.addWidget(matrix_display)
-        button_row = QtWidgets.QHBoxLayout()
-        button = QtWidgets.QPushButton("UB setup...")
-        button.setObjectName("open_ub_setup")
-        button.setToolTip(
-            "Open the UB editor. It can calculate UB from lattice and u/v vectors, load NeXus or ISAW .mat files, "
-            "and convert between the internal Mantid/SNS frame and the transposed IPNS/ISAW convention on disk."
-        )
-        button.clicked.connect(lambda: self._open_ub_setup(root, target))
-        button_row.addWidget(button)
-        button_row.addStretch(1)
-        layout.addLayout(button_row)
+        layout.addWidget(ub_matrix_widget(
+            ub, on_open=lambda: self._open_ub_setup(root, target),
+        ))
         return box
 
     def _open_ub_setup(
@@ -14419,65 +14204,17 @@ class NfitProjectExplorer:
     ) -> bool:
         from PySide6 import QtWidgets
 
-        if isinstance(target, DatasetGroup):
-            reference = next(iter(target.iter_datasets()), None)
-            if reference is not None:
-                _ensure_dataset_data_loaded(reference)
-                _adopt_imported_crystal(root, reference, target)
-        metadata = target.metadata if isinstance(target.metadata, dict) else {}
-        setup = metadata.get("ub_setup") if isinstance(metadata.get("ub_setup"), dict) else {}
-        if isinstance(target, DatasetGroup) and isinstance(metadata.get("mdevent"), dict):
-            shared = metadata["mdevent"]
-            ub = shared.get("ub_matrix", np.eye(3))
-            lattice = shared.get("lattice_parameters") or root.lattice_parameters
-        elif isinstance(target, DatasetGroup) and isinstance(metadata.get("raw_dgs"), dict):
-            shared = metadata["raw_dgs"]
-            ub = shared.get("ub_matrix", np.eye(3))
-            lattice = shared.get("lattice_parameters") or root.lattice_parameters
-        elif isinstance(target, DatasetEntry):
-            merged = _merged_dataset_metadata(target)
-            imported = _dataset_ub_for_editor(merged)
-            ub = setup.get("ub_matrix", imported if imported is not None else np.eye(3))
-            lattice = setup.get("lattice_parameters") or merged.get("lattice_parameters") or root.lattice_parameters
-        elif isinstance(target, DatasetGroup):
-            imported = _dataset_ub_for_editor(metadata)
-            ub = setup.get("ub_matrix", imported if imported is not None else np.eye(3))
-            lattice = (
-                setup.get("lattice_parameters")
-                or metadata.get("lattice_parameters")
-                or root.lattice_parameters
-            )
-        else:
-            ub = setup.get("ub_matrix", metadata.get("ub_matrix", np.eye(3)))
-            lattice = setup.get("lattice_parameters") or root.lattice_parameters
+        from .project_ub_setup import get_ub_setup, set_ub_setup
+
+        setup = get_ub_setup(root, target)
+        metadata = _merged_dataset_metadata(target) if isinstance(target, DatasetEntry) else target.metadata
+        lattice = metadata.get("lattice_parameters") or root.lattice_parameters
         dialog = UBSetupDialog(
-            self.window,
-            ub=ub,
-            lattice=lattice,
-            u=setup.get("u", [1.0, 0.0, 0.0]),
-            v=setup.get("v", [0.0, 1.0, 0.0]),
+            self.window, ub=None if setup is None else setup["ub_matrix"], lattice=lattice,
         )
         if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted or dialog.result is None:
             return False
-        result = dialog.result
-        target.metadata["ub_setup"] = copy.deepcopy(result)
-        target.metadata["ub_matrix"] = copy.deepcopy(result["ub_matrix"])
-        if isinstance(target, DatasetEntry):
-            target.metadata["lattice_parameters"] = copy.deepcopy(result["lattice_parameters"])
-        else:
-            root.lattice_parameters = copy.deepcopy(result["lattice_parameters"])
-        if isinstance(target, DatasetGroup) and isinstance(target.metadata.get("mdevent"), dict):
-            from .reduction_recipes import set_reduction_settings
-
-            set_reduction_settings(target, {"ub_matrix": result["ub_matrix"]})
-            target.metadata["mdevent"]["lattice_parameters"] = copy.deepcopy(result["lattice_parameters"])
-            data_group_composite_config(_composite_scope(root, target))["stale"] = True
-        if isinstance(target, DatasetGroup) and isinstance(target.metadata.get("raw_dgs"), dict):
-            from .reduction_recipes import set_reduction_settings
-
-            set_reduction_settings(target, {"ub_matrix": result["ub_matrix"]})
-            target.metadata["raw_dgs"]["lattice_parameters"] = copy.deepcopy(result["lattice_parameters"])
-            data_group_composite_config(_composite_scope(root, target))["stale"] = True
+        set_ub_setup(root, target, dialog.result)
         self._record_data_group_state_change(root)
         self._mark_dirty()
         self._refresh_cache_badges()
@@ -14543,6 +14280,38 @@ class NfitProjectExplorer:
         from PySide6 import QtWidgets
 
         from .reduction_recipes import set_reduction_settings
+
+        if key == "ub_matrix" and dataset is None:
+            from PySide6 import QtCore
+
+            from .project_ub_setup import set_ub_setup
+
+            root = next(
+                (root for root in self.project.data_groups
+                 if any(candidate is node for _path, candidate in _dataset_group_paths(root))),
+                None,
+            )
+            if root is None:
+                return False
+            try:
+                from .reduction_recipes import reduction_family
+                from .ub_orientation import mantid_ub_from_ipns
+
+                editor_ub = (
+                    mantid_ub_from_ipns(value)
+                    if value is not None and reduction_family(node) == "macs-step-nexus"
+                    else value
+                )
+                set_ub_setup(root, node, ub=editor_ub)
+            except (TypeError, ValueError) as error:
+                QtWidgets.QMessageBox.warning(self.window, "Invalid UB setup", str(error))
+                return False
+            self._record_data_group_state_change(root)
+            self._mark_dirty()
+            self._refresh_cache_badges()
+            # Let the originating widget finish its callback before rebuilding it.
+            QtCore.QTimer.singleShot(0, self._sync_details)
+            return True
 
         try:
             edit = set_reduction_settings(
@@ -14744,13 +14513,12 @@ class NfitProjectExplorer:
             self._details_group_box("Source", section_lines.get("Source", []))
         )
 
-        crystal_row = QtWidgets.QHBoxLayout()
         if group is not None and dataset.data_type.startswith("single_crystal"):
-            crystal_row.addWidget(self._ub_setup_group_box(group, dataset), 1)
-        crystal_row.addWidget(
-            self._details_group_box("Crystal", section_lines.get("Crystal", [])), 1
-        )
-        physics_layout.addLayout(crystal_row)
+            physics_layout.addWidget(self._ub_setup_group_box(group, dataset))
+        else:
+            physics_layout.addWidget(
+                self._details_group_box("Crystal", section_lines.get("Crystal", []))
+            )
         if dataset.data_type in {"single_crystal_inelastic", "powder_inelastic"}:
             physics_layout.addWidget(
                 self._dataset_spectral_channels_group_box(dataset, group)

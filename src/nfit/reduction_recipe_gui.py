@@ -21,10 +21,28 @@ def _applicable_fields(fields, datasets):
     return tuple(field for field in fields if not field.key.startswith("hyspec_") or hyspec)
 
 
-def _field_editor(field, value, *, object_name, on_changed, browse=None, resolved_value=None):
+def _field_editor(
+    field, value, *, object_name, on_changed, browse=None, resolved_value=None,
+    ub_frame="mantid", source_editor_ub=None,
+):
     """Build one editor; automatic values use an explicit checkbox, never a sentinel."""
     from PySide6 import QtCore, QtWidgets
 
+    if field.kind == "matrix" and field.key == "ub_matrix":
+        from .qt_ub_setup import ub_matrix_widget
+        from .ub_orientation import ipns_ub_from_mantid, mantid_ub_from_ipns
+
+        adapters = {}
+        if ub_frame == "ipns":
+            adapters = {"to_editor": mantid_ub_from_ipns, "from_editor": ipns_ub_from_mantid}
+        elif ub_frame != "mantid":
+            raise ValueError(f"Unsupported UB editor frame {ub_frame!r}")
+        editor = ub_matrix_widget(
+            value, object_name=object_name, on_changed=on_changed,
+            allow_source=field.automatic, source_editor_ub=source_editor_ub, **adapters,
+        )
+        editor.setToolTip(field.tooltip)
+        return editor
     if field.kind == "bool":
         editor = QtWidgets.QCheckBox()
         editor.setChecked(bool(value))
@@ -102,12 +120,15 @@ def _field_editor(field, value, *, object_name, on_changed, browse=None, resolve
 
 
 def build_reduction_recipe_panel(
-    group, *, on_shared_changed, on_run_changed, parent=None, scopes=None, export=True
+    group, *, on_shared_changed, on_run_changed, parent=None, scopes=None, export=True,
+    source_ub=None,
 ):
     """Present shared settings, explicit run overrides, and resolved provenance.
 
     Callbacks use the public reduction API through the explorer coordinator.
     Constructing this panel never reads event arrays or source files.
+    ``source_ub`` is the canonical Mantid matrix resolved by the owning project
+    service; it initializes an automatic UB without inventing a source frame.
     """
     from PySide6 import QtCore, QtWidgets
 
@@ -153,8 +174,10 @@ def build_reduction_recipe_panel(
             apply(path)
 
     def shared_changed(key, value):
-        if on_shared_changed(key, value) is not False:
-            refresh_resolved()
+        if on_shared_changed(key, value) is False:
+            return False
+        refresh_resolved()
+        return True
 
     mixed = QtWidgets.QLabel()
     mixed.setObjectName(f"{prefix}_mixed_histogram_values" if histogram_only else f"{prefix}_mixed_reduction_values")
@@ -188,6 +211,8 @@ def build_reduction_recipe_panel(
             on_changed=lambda value, key=field.key: shared_changed(key, value),
             browse=browse,
             resolved_value=_resolved_numeric(first_resolved, field.key),
+            ub_frame="ipns" if macs else "mantid",
+            source_editor_ub=source_ub if field.key == "ub_matrix" and config.get("ub_matrix") is None else None,
         )
         shared_layout.addRow(label, editor)
     layout.addWidget(shared)
@@ -291,6 +316,7 @@ def build_reduction_recipe_panel(
                     dataset, key, value, False
                 ), browse=browse,
                 resolved_value=_resolved_numeric(resolved_reduction_values(group, dataset), key),
+                ub_frame="ipns" if macs else "mantid",
             )
             editor.setEnabled(key in explicit)
             row_layout.addWidget(editor)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 
 MACS_REDUCTION_FORMAT = "macs-step-nexus"
-MACS_REDUCTION_VERSION = 1
+MACS_REDUCTION_VERSION = 2
 MACS_DEFAULTS = {
     "monitor_target": 1_000_000.0,
     "monitor_response": "inverse_velocity",

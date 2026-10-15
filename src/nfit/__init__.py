@@ -577,6 +577,7 @@ from .project_imports import (
     set_dataset_source,
 )
 from .project_io import NfitProject
+from .project_ub_setup import get_ub_setup, set_ub_setup
 from .quantities import (
     QUANTITY_TYPES,
     convert_quantity,
@@ -667,6 +668,17 @@ from .susceptibility import (
     coupled_scalar_susceptibility,
 )
 from .symmetry import ReciprocalSymmetryOperation, SymmetrySpec, resolve_symmetry
+from .ub_orientation import (
+    ipns_ub_from_mantid,
+    lattice_orientation_from_ub,
+    mantid_ub_from_ipns,
+    read_isaw_ub,
+    read_nexus_ub,
+    ub_from_lattice_orientation,
+    validate_lattice_parameters,
+    validate_ub_matrix,
+    write_isaw_ub,
+)
 from .viewer_data import (
     DeferredViewerDatasets,
     ViewerDatasetDescriptor,
@@ -1427,3 +1439,8 @@ __all__ += ["SourceAppearance", "SourceSelection", "SourceSelectionPlan",
 __all__ += ["measurement_diagnostics", "measurement_diagnostics_text",
             "poisson_interval_channels", "smooth_count_histogram",
             "export_composite_recipe", "replay_composite_recipe"]
+
+__all__ += ["lattice_orientation_from_ub", "read_isaw_ub", "read_nexus_ub",
+            "ub_from_lattice_orientation", "validate_lattice_parameters",
+            "validate_ub_matrix", "write_isaw_ub", "get_ub_setup", "set_ub_setup",
+            "mantid_ub_from_ipns", "ipns_ub_from_mantid"]

@@ -188,11 +188,32 @@ or the complete binning configuration. See
 [numerical reduction policies](data_import.md#numerical-reduction-policies) for
 the conventions and cross-bin covariance limitation.
 
-The GUI module also provides `read_isaw_ub`, `write_isaw_ub`, and
-`ub_from_lattice_orientation` for scripting the same UB workflow. ISAW matrices
-are transposed on disk in the IPNS frame with beam `+x` and vertical `+z`.
-Reading converts them to nfit's Mantid/SNS frame with beam `+z` and vertical
-`+y`; writing performs the inverse conversion.
+The UB editor uses the public `get_ub_setup` and `set_ub_setup` APIs. Reading a
+setup is metadata-only and returns `None` when the orientation is unknown.
+Native run targets use their owning collection's shared transform.
+Both setup APIs use the Mantid/SNS frame. The lower-level MACS importer and
+`set_reduction_settings` retain their existing DAVE/IPNS-frame `ub_matrix`
+convention; `set_ub_setup` handles that conversion automatically.
+
+```python
+from nfit import get_ub_setup, read_nexus_ub, set_ub_setup
+
+ub, lattice = read_nexus_ub("orientation.nxs")
+set_ub_setup(root, collection, ub=ub)
+setup = get_ub_setup(root, collection)  # ub_matrix, lattice_parameters, u, v
+```
+
+`read_nexus_ub(..., matrix_path="/entry/sample/oriented_lattice/orientation_matrix")`
+selects a specific matrix when a file contains distinct orientations.
+`read_isaw_ub` and `write_isaw_ub` convert the transposed IPNS file convention to
+and from Mantid/SNS coordinates. `ub_from_lattice_orientation` constructs UB;
+`lattice_orientation_from_ub` derives the cell and canonical Shiver/Mantid
+vectors. `mantid_ub_from_ipns` and `ipns_ub_from_mantid` explicitly convert the
+Cartesian frame without changing HKL columns or the $2\pi$ convention.
+All are available directly from `nfit`, without Qt. Existing
+`nfit.project_gui` imports of the ISAW and UB construction helpers remain valid.
+See [UB matrices](data_import.md#ub-matrices) for edit ownership and
+[Physics conventions](physics_conventions.md) for units and vector definitions.
 
 Use `slice_viewer(data)` for the PySide6 interactive viewer. It accepts one
 `MDHistoData` object or a sequence with optional `dataset_names` and supports

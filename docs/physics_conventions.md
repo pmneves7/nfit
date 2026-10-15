@@ -96,6 +96,28 @@ Internally, raw SNS instrument coordinates use beam $+z$ and vertical $+y$.
 ISAW UB files use the IPNS frame with beam $+x$ and vertical $+z$; nfit applies
 the same row permutation as Mantid's `LoadIsawUB` while reading and its inverse
 while writing.
+MACS reduction retains its DAVE/IPNS frame (beam $+x$, vertical $+z$).
+The shared UB editor and project setup API convert to Mantid/SNS coordinates
+for presentation and back to the MACS frame when applying reduction settings.
+
+The UB editor's lowercase $\mathbf u$ and $\mathbf v$ are dimensionless HKL
+triples, distinct from the rotation matrix $U$. At zero goniometer angle,
+$\mathbf u$ points along the incident beam ($+z$), and the part of
+$\mathbf v$ perpendicular to it points along $+x$; their cross product in
+Cartesian reciprocal space points vertically ($+y$). The displayed vectors
+use Mantid's inverse mapping,
+
+$$
+UB\,\mathbf u=(0,0,1)^T\,\mathrm{\AA}^{-1},\qquad
+UB\,\mathbf v=(1,0,0)^T\,\mathrm{\AA}^{-1},
+$$
+
+without normalizing their HKL components. The cell metric is derived from UB,
+so imported matrices, cell parameters, and vectors remain consistent. Calculating
+UB from a cell and two nonparallel directions produces a right-handed
+orientation; directly applying an imported matrix preserves its handedness.
+These definitions follow Mantid's
+[`OrientedLattice` implementation](https://github.com/mantidproject/mantid/blob/main/Framework/Geometry/src/Crystal/OrientedLattice.cpp).
 
 ## Spin operators and equilibrium averages
 
