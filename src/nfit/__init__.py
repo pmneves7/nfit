@@ -292,6 +292,11 @@ from .fit_config import (
     qualified_parameter_name,
     sharing_mode,
 )
+from .fit_exploration import (
+    ExplorationConfig,
+    best_exploration_candidate,
+    explore_problem_parameters,
+)
 from .fitting import (
     DerivedParameter,
     FitCancellationRequested,
@@ -310,6 +315,7 @@ from .fitting import (
     attach_ub_matrix,
     direct_basis_from_lattice_parameters,
     evaluate_problem_model,
+    evaluate_problem_objective,
     fit_least_squares,
     fit_problem_least_squares,
     identity_resolution,
@@ -647,13 +653,16 @@ from .spin_fluctuations import (
     damped_mode_susceptibility,
     generalized_paramagnon_chipp,
     generalized_paramagnon_susceptibility,
+    generalized_paramagnon_zero_energy_slope,
     heisenberg_rpa_chipp,
     heisenberg_rpa_chipp_and_gradients,
     heisenberg_rpa_susceptibility,
     local_relaxational_chipp,
     local_relaxational_susceptibility,
+    local_relaxational_zero_energy_slope,
     mmp_chipp,
     mmp_susceptibility,
+    mmp_zero_energy_slope,
     num_threads,
     paramagnon_spatial_kernel,
     reduce_site_network,
@@ -703,6 +712,7 @@ from .workflow import (
     composite_workflow_script,
     dataset_workflow_plan,
     dataset_workflow_script,
+    exploration_workflow_script,
     fit_workflow_plan,
     fit_workflow_script,
     project_cache_clear_script,
@@ -799,6 +809,14 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "exploration_workflow_script",
+    "local_relaxational_zero_energy_slope",
+    "mmp_zero_energy_slope",
+    "generalized_paramagnon_zero_energy_slope",
+    "ExplorationConfig",
+    "best_exploration_candidate",
+    "explore_problem_parameters",
+    "evaluate_problem_objective",
     "dataset_criterion_mask", "dataset_criterion_preview",
     "filter_dataset_criteria", "prepare_dataset_criteria",
     "CachedBackgroundSliceSelection",

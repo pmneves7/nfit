@@ -58,6 +58,7 @@ from .fit_config_heisenberg_rpa import (
 from .fit_config_heisenberg_rpa import (
     configure_fit_helpers as _configure_heisenberg_rpa_fit_helpers,
 )
+from .fit_provenance import model_configuration_for_target
 from .fitting import (
     DerivedParameter,
     FitDataset,
@@ -77,10 +78,13 @@ from .spin_fluctuations import (
     conserved_ferromagnetic_susceptibility,
     generalized_paramagnon_chipp,
     generalized_paramagnon_susceptibility,
+    generalized_paramagnon_zero_energy_slope,
     local_relaxational_chipp,
     local_relaxational_susceptibility,
+    local_relaxational_zero_energy_slope,
     mmp_chipp,
     mmp_susceptibility,
+    mmp_zero_energy_slope,
     paramagnon_spatial_kernel,
 )
 from .susceptibility import (
@@ -900,6 +904,18 @@ def _spectral_model_observable(
     """
 
     convention = data.metadata.get("spectral_observable")
+    response_only = (
+        convention.get("fit_representation") == "chi_double_prime"
+        if isinstance(convention, dict)
+        else legacy == "chipp"
+    )
+    if not response_only and zero_energy_slope is None and np.any(np.asarray(data.E) == 0.0):
+        raise ValueError(
+            "This inelastic model does not supply a regular zero-energy "
+            "dissipative slope for Bose conversion. Exclude exactly zero "
+            "energy from the fit selection; a quasistatic elastic dataset "
+            "uses a separate static-response approximation."
+        )
     if not isinstance(convention, dict):
         if legacy == "chipp":
             return np.asarray(chipp, dtype=float)
@@ -1211,15 +1227,14 @@ def _q_offset_sq_inv_angstrom(
 ) -> np.ndarray:
     """Return ``|q - Q0|^2`` in inverse square angstrom with ``Q0`` in RLU."""
 
-    delta = np.column_stack(
-        [
-            np.asarray(data.H, dtype=float) - q0[0],
-            np.asarray(data.K, dtype=float) - q0[1],
-            np.asarray(data.L, dtype=float) - q0[2],
-        ]
-    )
-    if not _metadata_coordinate_units_are_inv_angstrom(data.metadata):
-        delta = delta @ _resolve_q_transform(data).T
+    coordinates = np.column_stack([data.H, data.K, data.L]).astype(float)
+    center = np.asarray(q0, dtype=float)
+    if _metadata_coordinate_units_are_inv_angstrom(data.metadata):
+        # The origin is common to both frames and needs no lattice metadata.
+        center_cartesian = center @ _resolve_q_transform(data).T if np.any(center) else center
+        delta = coordinates - center_cartesian
+    else:
+        delta = (coordinates - center) @ _resolve_q_transform(data).T
     return np.einsum("ij,ij->i", delta, delta)
 
 
@@ -1411,6 +1426,7 @@ def _generalized_paramagnon_factory(component: Any) -> ModelFunction:
         if combination == "nearest":
             kernels = np.min(kernels, axis=1, keepdims=True)
 
+        zero_energy_slope = None
         if bulk or _is_elastic_dataset(data):
             response = np.sum(float(params[keys["chi_peak"]]) / kernels, axis=1)
         else:
@@ -1427,8 +1443,20 @@ def _generalized_paramagnon_factory(component: Any) -> ModelFunction:
                 ),
                 axis=1,
             )
+            if np.any(np.asarray(data.E) == 0.0):
+                zero_energy_slope = np.sum(
+                    generalized_paramagnon_zero_energy_slope(
+                        kernels, chi_peak=float(params[keys["chi_peak"]]),
+                        gamma0=float(params[keys["gamma0"]]),
+                        relaxation_power=float(params[keys["relaxation_power"]]),
+                        inverse_mode_energy_sq=float(params[keys["inverse_mode_energy_sq"]]),
+                    ),
+                    axis=1,
+                )
         if powder:
             response = response.reshape(data.size, orientation_count).mean(axis=1)
+            if zero_energy_slope is not None:
+                zero_energy_slope = zero_energy_slope.reshape(data.size, orientation_count).mean(axis=1)
         if bulk:
             return _scalar_bulk_observable(
                 data,
@@ -1450,6 +1478,7 @@ def _generalized_paramagnon_factory(component: Any) -> ModelFunction:
             response,
             form_factor_sq=_form_factor_sq_from_config(component, data),
             polarization=ISOTROPIC_POLARIZATION,
+            zero_energy_slope=zero_energy_slope,
         )
 
     return model
@@ -1726,6 +1755,9 @@ def _local_relaxational_factory(component: Any) -> ModelFunction:
             chipp,
             form_factor_sq=_form_factor_sq_from_config(component, data),
             polarization=ISOTROPIC_POLARIZATION,
+            zero_energy_slope=local_relaxational_zero_energy_slope(
+                chi_loc=float(params[chi_key]), gamma=float(params[gamma_key]),
+            ) if np.any(np.asarray(data.E) == 0.0) else None,
         )
 
     return model
@@ -1777,6 +1809,10 @@ def _mmp_relaxational_factory(component: Any) -> ModelFunction:
             chipp,
             form_factor_sq=_form_factor_sq_from_config(component, data),
             polarization=ISOTROPIC_POLARIZATION,
+            zero_energy_slope=mmp_zero_energy_slope(
+                q_offset_sq, chi_pk=float(params[keys["chi_pk"]]),
+                xi=float(params[keys["xi"]]), omega_sf=float(params[keys["omega_sf"]]),
+            ) if np.any(np.asarray(data.E) == 0.0) else None,
         )
 
     return model
@@ -2841,6 +2877,20 @@ def compile_fit_problem(
         parameter_specs=tuple(specs),
         derived_parameters=tuple(derived),
         description=description,
+        metadata={"fit_model_configuration": [
+            {
+                "name": component.name,
+                "type": component.type,
+                "config": model_configuration_for_target(component.config),
+                "applies_to": copy.deepcopy(component.applies_to),
+                "metadata": {
+                    key: copy.deepcopy(value)
+                    for key, value in component.metadata.items()
+                    if key != "fitted_values"
+                },
+            }
+            for component in plan.active_components
+        ]},
     )
     return CompiledFitProblem(
         problem=problem,

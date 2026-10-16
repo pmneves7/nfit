@@ -192,6 +192,10 @@ different Python.
 - `src/nfit/fit_config.py`, `fit_config_electronic.py`, and
   `fit_config_heisenberg_rpa.py`: model-component compilation and parameter mapping.
 - `src/nfit/fitting.py`: optimizer-facing fitting framework.
+- `src/nfit/fit_sampling.py`, `fit_exploration.py`, `fit_provenance.py`, and
+  `fit_settings.py`: scientific chain storage, posterior windows, separate
+  tempered searches, target identity, and shared optimizer configuration.
+  `fit_exploration_gui.py` owns exploration controls and worker coordination.
 - `src/nfit/cross_section.py` and `spectral_conversion.py`: neutron cross-section
   factors and shared statistics-preserving spectral transformations.
 - `src/nfit/spectral_metadata.py`: shared spectral convention records and

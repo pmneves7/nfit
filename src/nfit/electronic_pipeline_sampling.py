@@ -463,11 +463,13 @@ def electronic_pipeline_components(
 
 
 def _component_state_payload(component: Any, *, selected_lindhard: str) -> dict[str, Any]:
+    from .fit_provenance import model_configuration_for_target
+
     payload = copy.deepcopy(serialize_model_component(component, purpose="workflow"))
     config = payload.get("config", {})
     if isinstance(config, dict):
-        config.pop("response_sampling_certificate", None)
-        config.pop("response_q_interpolation_certificates", None)
+        config = model_configuration_for_target(config)
+        payload["config"] = config
         if str(payload.get("name")) == selected_lindhard:
             config.pop("response_mesh", None)
     return payload

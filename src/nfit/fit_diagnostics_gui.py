@@ -12,6 +12,7 @@ from .fit_results import (
     _posterior_correlation_matrix,
     _posterior_display_options,
     _sampling_result_from_dict,
+    sampling_payload_info,
 )
 from .fitting import SamplingResult
 from .pipeline import FitTimelineEntry
@@ -43,13 +44,16 @@ class _FitDiagnosticsPlotWindow:
         from PySide6 import QtCore, QtGui, QtWidgets
 
         self.fit_entry = fit_entry
+        self._mark_dirty = getattr(parent, "_mark_dirty", lambda: None)
         self.window = QtWidgets.QMainWindow(parent.window if hasattr(parent, "window") else parent)
+        self.window.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
         self.window.setWindowTitle("Fit diagnostics")
         self.close_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Close, self.window)
         self.close_shortcut.activated.connect(self.window.close)
         central = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(central)
         self.tabs = QtWidgets.QTabWidget()
+        self.tabs.currentChanged.connect(self._ensure_current_plot)
         self.tabs.setToolTip("Fit diagnostics from covariance estimates and stored emcee samples.")
         self.label_table = self._make_label_table()
         self.plot_label_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
@@ -109,32 +113,93 @@ class _FitDiagnosticsPlotWindow:
         full_name = full_name_item.text()
         labels[full_name] = item.text().strip() or _compact_diagnostic_labels([full_name])[0]
         self.fit_entry.metadata["parameter_labels"] = labels
+        self._mark_dirty()
         self._redraw_plots()
 
     def _redraw_plots(self) -> None:
+        from PySide6 import QtWidgets
+
+        active_tab = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else ""
+        self.tabs.blockSignals(True)
+        while self.tabs.count():
+            page = self.tabs.widget(0)
+            self.tabs.removeTab(0)
+            page.deleteLater()
+        covariance = _covariance_matrix_from_fit_entry(self.fit_entry)
+        if covariance is not None:
+            self.tabs.addTab(QtWidgets.QWidget(), covariance[2])
+        if sampling_payload_info(self.fit_entry.metadata.get("posterior_samples")):
+            self.tabs.addTab(QtWidgets.QWidget(), "Trace")
+            self.tabs.addTab(QtWidgets.QWidget(), "Corner")
+        self._restore_active_tab(active_tab)
+        self.tabs.blockSignals(False)
+        self._ensure_current_plot(self.tabs.currentIndex())
+
+    def _ensure_current_plot(self, index: int) -> None:
+        if index < 0 or hasattr(self.tabs.widget(index), "figure"):
+            return
+        title = self.tabs.tabText(index)
+        canvas = self._build_plot(title)
+        if canvas is None:
+            return
+        self.tabs.blockSignals(True)
+        old = self.tabs.widget(index)
+        self.tabs.removeTab(index)
+        self.tabs.insertTab(index, canvas, title)
+        self.tabs.setCurrentIndex(index)
+        old.deleteLater()
+        self.tabs.blockSignals(False)
+
+    def _build_plot(self, title: str) -> Any:
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
         from matplotlib.figure import Figure
 
-        active_tab = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else ""
-        self.tabs.clear()
-
         covariance = _covariance_matrix_from_fit_entry(self.fit_entry)
-        if covariance is not None:
-            matrix, names, title = covariance
+        if covariance is not None and title == covariance[2]:
+            matrix, names, matrix_title = covariance
             labels = _fit_parameter_plot_labels(self.fit_entry, names)
             cov_fig = Figure(figsize=(max(7, 1.0 * len(names) + 4), max(5, 0.75 * len(names) + 3)))
-            _draw_centered_matrix_heatmap(cov_fig, matrix, names, labels=labels, title=title)
-            self.tabs.addTab(FigureCanvas(cov_fig), title)
+            _draw_centered_matrix_heatmap(cov_fig, matrix, names, labels=labels, title=matrix_title)
+            return FigureCanvas(cov_fig)
 
         result = _sampling_result_from_dict(self.fit_entry.metadata.get("posterior_samples"))
         if result is None:
-            self._restore_active_tab(active_tab)
-            return
+            return None
 
         samples = np.asarray(result.samples, dtype=float)
         names = list(result.variable_names)
         labels = _fit_parameter_plot_labels(self.fit_entry, names)
         summaries = _fit_parameter_summaries(self.fit_entry)
+
+        if title == "Trace":
+            return self._trace_canvas(result, names, labels, summaries)
+
+        n = len(names)
+        corner_fig = Figure(figsize=(max(6, 2.45 * max(1, n)), max(6, 2.45 * max(1, n))))
+        axes = corner_fig.subplots(max(1, n), max(1, n), squeeze=False)
+        for row in range(n):
+            for col in range(n):
+                ax = axes[row, col]
+                if row == col:
+                    _draw_corner_histogram_panel(ax, samples[:, col], labels.get(names[col], f"p{col + 1}"), summaries.get(names[col], {}))
+                elif row > col:
+                    _draw_corner_density_panel(ax, samples[:, col], samples[:, row])
+                    _draw_corner_reference_lines(ax, summaries.get(names[col], {}), summaries.get(names[row], {}))
+                else:
+                    ax.axis("off")
+                _disable_axis_offset_text(ax)
+                if row == n - 1:
+                    ax.set_xlabel(labels.get(names[col], f"p{col + 1}"))
+                if col == 0 and row > 0:
+                    ax.set_ylabel(labels.get(names[row], f"p{row + 1}"))
+                elif row == col and col == 0:
+                    ax.set_ylabel("Count")
+        corner_fig.subplots_adjust(left=0.18, right=0.98, bottom=0.18, top=0.9, hspace=0.48, wspace=0.48)
+        return FigureCanvas(corner_fig)
+
+    def _trace_canvas(self, result: SamplingResult, names: list[str], labels: dict[str, str], summaries: dict[str, Any]) -> Any:
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+        from matplotlib.figure import Figure
 
         trace_fig = Figure(figsize=(8, max(3, 1.4 * max(1, len(names)))))
         trace_axes = trace_fig.subplots(max(1, len(names)), 1, squeeze=False)
@@ -149,47 +214,7 @@ class _FitDiagnosticsPlotWindow:
             ax.set_ylabel(labels.get(name, f"p{index + 1}"))
         trace_axes[-1, 0].set_xlabel("MCMC step" if result.chain is not None else "sample")
         trace_fig.subplots_adjust(left=0.18, right=0.98, bottom=0.1, top=0.95, hspace=0.28)
-        self.tabs.addTab(FigureCanvas(trace_fig), "Trace")
-
-        n = len(names)
-        corner_fig = Figure(figsize=(max(6, 2.45 * max(1, n)), max(6, 2.45 * max(1, n))))
-        axes = corner_fig.subplots(max(1, n), max(1, n), squeeze=False)
-        for row in range(n):
-            for col in range(n):
-                ax = axes[row, col]
-                if row == col:
-                    _draw_corner_histogram_panel(
-                        ax,
-                        samples[:, col],
-                        labels.get(names[col], f"p{col + 1}"),
-                        summaries.get(names[col], {}),
-                    )
-                elif row > col:
-                    _draw_corner_density_panel(ax, samples[:, col], samples[:, row])
-                    _draw_corner_reference_lines(
-                        ax,
-                        summaries.get(names[col], {}),
-                        summaries.get(names[row], {}),
-                    )
-                else:
-                    ax.axis("off")
-                _disable_axis_offset_text(ax)
-                if row == n - 1:
-                    ax.set_xlabel(labels.get(names[col], f"p{col + 1}"))
-                if col == 0 and row > 0:
-                    ax.set_ylabel(labels.get(names[row], f"p{row + 1}"))
-                elif row == col and col == 0:
-                    ax.set_ylabel("Count")
-        corner_fig.subplots_adjust(
-            left=0.18,
-            right=0.98,
-            bottom=0.18,
-            top=0.9,
-            hspace=0.48,
-            wspace=0.48,
-        )
-        self.tabs.addTab(FigureCanvas(corner_fig), "Corner")
-        self._restore_active_tab(active_tab)
+        return FigureCanvas(trace_fig)
 
     def _restore_active_tab(self, tab_text: str) -> None:
         if not tab_text:
@@ -333,9 +358,8 @@ def _fit_entry_diagnostic_parameter_names(fit_entry: FitTimelineEntry) -> list[s
     if covariance is not None:
         _matrix, cov_names, _title = covariance
         names.extend(cov_names)
-    samples = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
-    if samples is not None:
-        names.extend(samples.variable_names)
+    sampling = sampling_payload_info(fit_entry.metadata.get("posterior_samples"))
+    names.extend(sampling.get("variable_names", []))
     goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
     params = goodness.get("parameters") if isinstance(goodness.get("parameters"), dict) else {}
     names.extend(str(name) for name in params)
@@ -502,7 +526,7 @@ def _fit_entry_has_diagnostic_plots(fit_entry: FitTimelineEntry | None) -> bool:
         return False
     if _covariance_matrix_from_fit_entry(fit_entry) is not None:
         return True
-    return _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples")) is not None
+    return bool(sampling_payload_info(fit_entry.metadata.get("posterior_samples")))
 
 
 def _draw_corner_density_panel(ax: Any, x: Any, y: Any) -> None:

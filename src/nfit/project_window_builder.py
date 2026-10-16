@@ -469,6 +469,7 @@ def _build_work_area(
     self.details_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
     self.details_widget = QtWidgets.QWidget()
     self.details_layout = QtWidgets.QVBoxLayout(self.details_widget)
+    self.details_layout.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
     self.details_layout.setContentsMargins(0, 0, 0, 0)
     self.details_layout.setSpacing(8)
     self.details_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
@@ -733,15 +734,13 @@ def _build_fit_controls(self: Any, QtWidgets: Any) -> None:
     self.fit_copy_script_button = QtWidgets.QPushButton("Copy fit script")
     self.fit_copy_script_button.setObjectName("fit_copy_script_button")
     self.fit_copy_script_button.setToolTip(
-        "Copy a GUI-free Python script that restores this saved fit state. "
-        "Set RUN_FIT=True in the script to rerun the optimizer."
+        "Copy an editable GUI-free Python script that rebuilds the live workspace and runs its fit configuration."
     )
     self.fit_copy_script_button.clicked.connect(self.copy_fit_script_for_selection)
     self.fit_save_script_button = QtWidgets.QPushButton("Save fit script...")
     self.fit_save_script_button.setObjectName("fit_save_script_button")
     self.fit_save_script_button.setToolTip(
-        "Save a GUI-free Python script that restores this saved fit state. "
-        "The project must be saved so the script has a portable project path."
+        "Save an editable GUI-free Python script that rebuilds the live workspace and runs its fit configuration."
     )
     self.fit_save_script_button.clicked.connect(self.save_fit_script_for_selection)
     self.plot_open_button = QtWidgets.QPushButton("Open plot")

@@ -107,6 +107,8 @@ A few of its main capabilities are:
   waterfall grids with requested trace centers, and statistical CSV exports;
 - fit with explicit independent Gaussian, tracked GLS, or audited integer-count
   objectives while retaining each objective's assumptions;
+- search for other minima with a separate tempered parameter explorer, then
+  refine an improving candidate without mixing search samples into posterior errors;
 - inspect the subtracted signal, retained background, and on-demand unsubtracted
   slices through a grouped channel menu without adding visualization channels to fits;
 - open viewers on demand, with an optional preference to preload all datasets

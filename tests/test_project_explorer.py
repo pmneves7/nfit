@@ -2658,9 +2658,12 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     assert diagnostics.close_shortcut.key() in QtGui.QKeySequence.keyBindings(
         QtGui.QKeySequence.StandardKey.Close
     )
+    destroyed = []
+    diagnostics.window.destroyed.connect(lambda *_args: destroyed.append(True))
     diagnostics.close_shortcut.activated.emit()
     QtWidgets.QApplication.processEvents()
-    assert not diagnostics.window.isVisible()
+    # Closing diagnostics now releases its canvases and their Qt owner.
+    assert destroyed == [True]
 
 
 def test_rebin_progress_dialog_grows_for_wrapped_aggregate_status(monkeypatch):

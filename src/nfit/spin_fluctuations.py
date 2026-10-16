@@ -416,6 +416,13 @@ def local_relaxational_chipp(
     )
 
 
+def local_relaxational_zero_energy_slope(*, chi_loc: float, gamma: float) -> float:
+    """Return ``lim(E -> 0) chi''/E`` in spin-response units per meV."""
+
+    static = local_relaxational_susceptibility(0.0, chi_loc=chi_loc, gamma=gamma)
+    return float(static.real / float(gamma))
+
+
 def mmp_susceptibility(
     q_minus_q0_sq_inv_angstrom2: ArrayLike,
     E: ArrayLike,
@@ -475,6 +482,23 @@ def mmp_chipp(
         ).imag,
         dtype=float,
     )
+
+
+def mmp_zero_energy_slope(
+    q_minus_q0_sq_inv_angstrom2: ArrayLike,
+    *,
+    chi_pk: float,
+    xi: float,
+    omega_sf: float,
+) -> FloatArray:
+    """Return the MMP dissipative slope at fixed physical momentum."""
+
+    static = mmp_susceptibility(
+        q_minus_q0_sq_inv_angstrom2, 0.0,
+        chi_pk=chi_pk, xi=xi, omega_sf=omega_sf,
+    ).real
+    kernel = 1.0 + float(xi)**2 * np.asarray(q_minus_q0_sq_inv_angstrom2, dtype=float)
+    return np.asarray(static / (float(omega_sf) * kernel), dtype=float)
 
 
 def paramagnon_spatial_kernel(
@@ -579,6 +603,25 @@ def generalized_paramagnon_chipp(
         ).imag,
         dtype=float,
     )
+
+
+def generalized_paramagnon_zero_energy_slope(
+    spatial_kernel: ArrayLike,
+    *,
+    chi_peak: float,
+    gamma0: float,
+    relaxation_power: float = 1.0,
+    inverse_mode_energy_sq: float = 0.0,
+) -> FloatArray:
+    """Return the regular dissipative slope, independent of mode inertia."""
+
+    static = generalized_paramagnon_susceptibility(
+        spatial_kernel, 0.0, chi_peak=chi_peak, gamma0=gamma0,
+        relaxation_power=relaxation_power,
+        inverse_mode_energy_sq=inverse_mode_energy_sq,
+    ).real
+    relaxation = float(gamma0) * np.asarray(spatial_kernel, dtype=float)**float(relaxation_power)
+    return np.asarray(static / relaxation, dtype=float)
 
 
 def conserved_ferromagnetic_susceptibility(

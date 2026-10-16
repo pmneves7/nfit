@@ -260,6 +260,10 @@ electronic-response implementation.
   MDEvent reductions, portable standalone expansion of live project-composite
   analysis dependencies, plots, and complete active project state. Composite-backed
   analysis scripts currently rerun the saved project recipe directly.
+- Extend standalone fit and parameter-exploration script exports to native
+  reduction groups, workspace composites and group backgrounds. Both currently
+  use the ordinary source-backed fit graph; public exploration of prepared
+  `FitProblem` inputs is available independently.
 - Add target-specific export from plots, workspaces, and whole
   projects. Each export should contain the dependency closure needed for that
   target, while fit history remains an interactive convenience.

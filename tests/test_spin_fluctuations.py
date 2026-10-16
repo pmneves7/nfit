@@ -12,12 +12,15 @@ from nfit.spin_fluctuations import (
     conserved_ferromagnetic_susceptibility,
     damped_mode_susceptibility,
     generalized_paramagnon_susceptibility,
+    generalized_paramagnon_zero_energy_slope,
     heisenberg_rpa_chipp,
     heisenberg_rpa_susceptibility,
     local_relaxational_chipp,
     local_relaxational_susceptibility,
+    local_relaxational_zero_energy_slope,
     mmp_chipp,
     mmp_susceptibility,
+    mmp_zero_energy_slope,
     paramagnon_spatial_kernel,
     reduce_site_network,
     rpa_exchange_matrix,
@@ -93,6 +96,31 @@ def test_local_relaxational_is_odd_and_peaks_at_gamma():
     assert peak == pytest.approx(3.0, abs=0.11)
     np.testing.assert_allclose(
         local_relaxational_chipp(3.0, chi_loc=2.0, gamma=3.0), 2.0 * 0.5 * 3.0 / 3.0
+    )
+
+
+def test_regular_response_zero_energy_slopes_match_dynamic_derivatives():
+    epsilon = 1e-7
+    np.testing.assert_allclose(
+        local_relaxational_zero_energy_slope(chi_loc=2.3, gamma=1.4),
+        local_relaxational_susceptibility(epsilon, chi_loc=2.3, gamma=1.4).imag / epsilon,
+        rtol=1e-13,
+    )
+    q_sq = np.asarray([0.0, 0.2, 1.3])
+    np.testing.assert_allclose(
+        mmp_zero_energy_slope(q_sq, chi_pk=2.1, xi=3.4, omega_sf=1.2),
+        mmp_susceptibility(q_sq, epsilon, chi_pk=2.1, xi=3.4, omega_sf=1.2).imag / epsilon,
+        rtol=1e-13,
+    )
+    kernel = np.asarray([1.0, 1.7, 3.2])
+    np.testing.assert_allclose(
+        generalized_paramagnon_zero_energy_slope(
+            kernel, chi_peak=3.4, gamma0=2.1, relaxation_power=0.6, inverse_mode_energy_sq=0.3,
+        ),
+        generalized_paramagnon_susceptibility(
+            kernel, epsilon, chi_peak=3.4, gamma0=2.1, relaxation_power=0.6, inverse_mode_energy_sq=0.3,
+        ).imag / epsilon,
+        rtol=1e-13,
     )
 
 

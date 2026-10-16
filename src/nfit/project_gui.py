@@ -83,6 +83,22 @@ from .fit_results import (
     _posterior_correlation_matrix,  # noqa: F401 - compatibility re-export
     _posterior_display_options,
     _sampling_result_from_dict,
+    sampling_payload_info,
+)
+from .fit_sampling import (
+    combined_sampling_result as _combined_sampling_result,
+)
+from .fit_sampling import (
+    sampling_result_to_dict as _sampling_result_to_dict,
+)
+from .fit_sampling import (
+    sampling_result_with_window as _sampling_result_with_window,
+)
+from .fit_settings import (
+    covariance_mode as _covariance_mode,
+)
+from .fit_settings import (
+    optimizer_kwargs as _optimizer_kwargs,
 )
 from .fitting import (
     FitCancellationRequested,
@@ -208,7 +224,7 @@ from .project_io import (
     _analysis_from_dict,  # noqa: F401 - compatibility re-export
     _analysis_to_dict,  # noqa: F401 - compatibility re-export
     _binning_signatures_match,
-    _encode_float_array,
+    _encode_float_array,  # noqa: F401 - compatibility re-export
     _fit_channel_array,
     _fit_channels_from_dict,  # noqa: F401 - compatibility re-export
     _fit_channels_to_dict,  # noqa: F401 - compatibility re-export
@@ -3156,64 +3172,6 @@ def certify_group_lindhard_sampling(
     )
 
 
-_OPTIMIZER_KWARG_NAMES = (
-    "max_nfev",
-    "xtol",
-    "ftol",
-    "gtol",
-    "loss",
-    "f_scale",
-)
-
-
-def _optimizer_kwargs(optimizer_config: dict[str, Any] | None) -> dict[str, Any]:
-    config = optimizer_config if isinstance(optimizer_config, dict) else {}
-    kwargs: dict[str, Any] = {"finite_difference_workers": -1}
-    for name in _OPTIMIZER_KWARG_NAMES:
-        value = config.get(name)
-        if value in (None, ""):
-            continue
-        if name == "max_nfev":
-            kwargs[name] = int(value)
-        elif name == "loss":
-            kwargs[name] = str(value)
-        else:
-            kwargs[name] = float(value)
-    init_config = config.get("initialization")
-    if isinstance(init_config, dict) and init_config.get("enabled", False):
-        legacy_workers = init_config.get("workers", 1)
-        kwargs["initialization"] = {
-            key: value
-            for key, value in init_config.items()
-            if key not in {"enabled", "workers"}
-        }
-        kwargs["initialization"].setdefault("method", "differential_evolution")
-        # Preserve differential evolution's deferred-update algorithm when an
-        # older project explicitly requested parallel evaluation, but resolve
-        # its worker count from the central CPU policy at execution time.
-        try:
-            legacy_parallel = int(legacy_workers or 1) != 1
-        except (TypeError, ValueError):
-            legacy_parallel = False
-        uses_deferred_updates = (
-            str(kwargs["initialization"].get("updating", "")).lower() == "deferred"
-        )
-        if legacy_parallel or uses_deferred_updates:
-            kwargs["initialization"]["workers"] = -1
-        if legacy_parallel:
-            kwargs["initialization"].setdefault("updating", "deferred")
-    return kwargs
-
-
-def _covariance_mode(optimizer_config: dict[str, Any] | None) -> str:
-    if not isinstance(optimizer_config, dict):
-        return "absolute"
-    mode = str(optimizer_config.get("covariance_mode", "absolute"))
-    if mode not in {"absolute", "residual"}:
-        raise ValueError("covariance_mode must be 'absolute' or 'residual'")
-    return mode
-
-
 def _sampler_config(optimizer_config: dict[str, Any] | None) -> SamplerConfig | None:
     if not isinstance(optimizer_config, dict):
         return None
@@ -3285,6 +3243,9 @@ def perform_group_fit(
         raise ValueError("no enabled positive-weight dataset could be prepared for fitting")
 
     compiled = compile_fit_problem(components, inputs, description=group.name)
+    from .fit_provenance import fit_problem_fingerprint
+
+    target_fingerprint = fit_problem_fingerprint(compiled.problem)
     config = OptimizationConfig(
         covariance_mode=_covariance_mode(optimizer_config),
         kwargs=_optimizer_kwargs(optimizer_config),
@@ -3368,6 +3329,7 @@ def perform_group_fit(
     if limit_hits:
         goodness["parameters_at_limits"] = limit_hits
     metadata: dict[str, Any] = {}
+    metadata["fit_target_fingerprint"] = target_fingerprint
     if visualization_names:
         metadata["visualization_only_datasets"] = visualization_names
     if visualization_error:
@@ -3381,6 +3343,7 @@ def perform_group_fit(
     if progress_events:
         metadata["progress_log"] = progress_events
     if sampler_result is not None:
+        sampler_result.metadata["fit_target_fingerprint"] = target_fingerprint
         posterior = _posterior_summary(sampler_result)
         goodness["posterior"] = posterior
         metadata["posterior_samples"] = _sampling_result_to_dict(sampler_result)
@@ -3831,9 +3794,12 @@ def _compiled_problem_for_fit_entry(
     try:
         if fit_entry.snapshot:
             restore_data_group_state(group, fit_entry.snapshot)
-        components = [
-            model for model in group.models.values() if isinstance(model, ModelComponentSpec)
-        ]
+        # Factories may retain their component to read configuration during
+        # evaluation. Own recorded settings before restoring the live group;
+        # replace excludes transient model caches attached outside dataclass fields.
+        components = copy.deepcopy([
+            replace(model) for model in group.models.values() if isinstance(model, ModelComponentSpec)
+        ])
         inputs, _bundles = fit_dataset_inputs(group, purpose="fit")
         if not inputs:
             raise ValueError("no enabled dataset could be prepared for posterior sampling")
@@ -3883,6 +3849,10 @@ def _progress_event_summary(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def _posterior_summary(result: SamplingResult) -> dict[str, Any]:
+    from .fit_sampling import sampling_result_is_posterior
+
+    if not sampling_result_is_posterior(result):
+        raise ValueError("Exploration samples cannot supply posterior summaries.")
     samples = np.asarray(result.samples, dtype=float)
     summary: dict[str, Any] = dict(result.metadata)
     if samples.size == 0:
@@ -3908,21 +3878,6 @@ def _posterior_summary(result: SamplingResult) -> dict[str, Any]:
             for i, name in enumerate(result.variable_names)
         }
     return summary
-
-
-def _sampling_result_to_dict(result: SamplingResult) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "variable_names": list(result.variable_names),
-        "samples": _encode_float_array(result.samples),
-        "metadata": dict(result.metadata),
-    }
-    if result.log_probability is not None:
-        payload["log_probability"] = _encode_float_array(result.log_probability)
-    if result.chain is not None:
-        payload["chain"] = _encode_float_array(result.chain)
-    if result.log_probability_chain is not None:
-        payload["log_probability_chain"] = _encode_float_array(result.log_probability_chain)
-    return payload
 
 
 def _autocorrelation_progress_summary(result: SamplingResult | None) -> list[str]:
@@ -3958,82 +3913,11 @@ def _autocorrelation_progress_summary(result: SamplingResult | None) -> list[str
     return [summary + "."]
 
 
-def _sampling_result_with_window(result: SamplingResult, burn_in: int, thin: int) -> SamplingResult:
-    """Return a copy flattened with a different burn-in/thinning window."""
-
-    if result.chain is None:
-        raise ValueError("stored posterior does not include a raw emcee chain")
-    chain = np.asarray(result.chain, dtype=float)
-    if chain.ndim != 3 or chain.shape[0] == 0:
-        raise ValueError("stored posterior chain is empty or malformed")
-    burn = min(max(0, int(burn_in)), max(0, chain.shape[0] - 1))
-    step = max(1, int(thin))
-    sliced = chain[burn::step]
-    samples = sliced.reshape((-1, chain.shape[2]))
-    log_probability = None
-    if result.log_probability_chain is not None:
-        log_chain = np.asarray(result.log_probability_chain, dtype=float)
-        if log_chain.shape[:2] == chain.shape[:2]:
-            log_probability = log_chain[burn::step].reshape(-1)
-    metadata = dict(result.metadata)
-    metadata["burn_in"] = burn
-    metadata["thin"] = step
-    metadata["samples"] = int(samples.shape[0])
-    metadata["n_steps"] = int(chain.shape[0])
-    metadata["n_walkers"] = int(chain.shape[1])
-    return SamplingResult(
-        samples=samples,
-        variable_names=list(result.variable_names),
-        log_probability=log_probability,
-        metadata=metadata,
-        chain=chain,
-        log_probability_chain=result.log_probability_chain,
-    )
-
-
-def _combined_sampling_result(
-    original: SamplingResult,
-    appended: SamplingResult,
-    *,
-    burn_in: int,
-    thin: int,
-) -> SamplingResult:
-    """Concatenate two emcee chains and re-flatten them with the requested window."""
-
-    if original.chain is None or appended.chain is None:
-        raise ValueError("appending posterior samples requires raw emcee chains")
-    if list(original.variable_names) != list(appended.variable_names):
-        raise ValueError("appended posterior variables do not match the stored chain")
-    chain = np.concatenate(
-        [np.asarray(original.chain, dtype=float), np.asarray(appended.chain, dtype=float)],
-        axis=0,
-    )
-    log_probability_chain = None
-    if original.log_probability_chain is not None and appended.log_probability_chain is not None:
-        log_probability_chain = np.concatenate(
-            [
-                np.asarray(original.log_probability_chain, dtype=float),
-                np.asarray(appended.log_probability_chain, dtype=float),
-            ],
-            axis=0,
-        )
-    metadata = dict(original.metadata)
-    metadata.update(dict(appended.metadata))
-    metadata["n_steps"] = int(chain.shape[0])
-    metadata["n_walkers"] = int(chain.shape[1])
-    metadata["appended_steps"] = int(appended.chain.shape[0])
-    result = SamplingResult(
-        samples=np.empty((0, chain.shape[2]), dtype=float),
-        variable_names=list(original.variable_names),
-        log_probability=None,
-        metadata=metadata,
-        chain=chain,
-        log_probability_chain=log_probability_chain,
-    )
-    return _sampling_result_with_window(result, burn_in=burn_in, thin=thin)
-
-
 def _store_sampling_result_on_fit_entry(fit_entry: FitTimelineEntry, result: SamplingResult) -> None:
+    from .fit_sampling import sampling_result_is_posterior
+
+    if not sampling_result_is_posterior(result):
+        raise ValueError("Exploration samples must be stored separately from the posterior.")
     fit_entry.metadata["posterior_samples"] = _sampling_result_to_dict(result)
     fit_entry.goodness["posterior"] = _posterior_summary(result)
     display = fit_entry.metadata.get(POSTERIOR_DISPLAY_KEY)
@@ -4074,46 +3958,11 @@ def _posterior_interval_errors(
     return max(0.0, center - lower), max(0.0, upper - center)
 
 
-def _best_posterior_sample(
-    result: SamplingResult,
-) -> tuple[dict[str, float], float, dict[str, int]] | None:
-    """Return the stored sample with the highest finite emcee log probability."""
+def _best_posterior_sample(result: SamplingResult) -> tuple[dict[str, float], float, dict[str, int]] | None:
+    """Return the best retained posterior draw, excluding exploration runs."""
+    from .fit_sampling import best_sampling_sample, sampling_result_is_posterior
 
-    names = list(result.variable_names)
-    if not names:
-        return None
-    if result.chain is not None and result.log_probability_chain is not None:
-        chain = np.asarray(result.chain, dtype=float)
-        log_probability = np.asarray(result.log_probability_chain, dtype=float)
-        if chain.ndim == 3 and log_probability.shape == chain.shape[:2]:
-            finite = np.isfinite(log_probability)
-            if np.any(finite):
-                masked = np.where(finite, log_probability, -np.inf)
-                flat_index = int(np.argmax(masked))
-                step, walker = np.unravel_index(flat_index, log_probability.shape)
-                sample = chain[int(step), int(walker)]
-                if sample.shape[0] == len(names):
-                    return (
-                        {name: float(sample[index]) for index, name in enumerate(names)},
-                        float(log_probability[int(step), int(walker)]),
-                        {"step": int(step), "walker": int(walker)},
-                    )
-    if result.log_probability is None:
-        return None
-    samples = np.asarray(result.samples, dtype=float)
-    log_probability = np.asarray(result.log_probability, dtype=float)
-    if samples.ndim != 2 or samples.shape[1] != len(names) or log_probability.shape != (samples.shape[0],):
-        return None
-    finite = np.isfinite(log_probability)
-    if not np.any(finite):
-        return None
-    sample_index = int(np.argmax(np.where(finite, log_probability, -np.inf)))
-    sample = samples[sample_index]
-    return (
-        {name: float(sample[index]) for index, name in enumerate(names)},
-        float(log_probability[sample_index]),
-        {"sample": int(sample_index)},
-    )
+    return best_sampling_sample(result) if sampling_result_is_posterior(result) else None
 
 
 def _log_probability_for_params(
@@ -4146,6 +3995,24 @@ def _best_posterior_promotion_candidate(
     if best is None:
         return None
     sample_params, sample_log_probability, location = best
+    if compiled is not None:
+        from .fit_settings import optimization_config_from_settings
+        from .fitting import evaluate_problem_objective
+
+        names = {spec.name for spec in compiled.problem.parameter_specs if spec.vary}
+        if set(stored.variable_names) != names or set(sample_params) != names:
+            raise ValueError("Stored posterior parameters do not match the original fit problem.")
+        config = optimization_config_from_settings(fit_entry.optimizer_config)
+        def objective(params: dict[str, float]) -> float:
+            trial = {spec.name: float(spec.value) for spec in compiled.problem.parameter_specs}
+            trial.update(params)
+            return evaluate_problem_objective(compiled.problem, trial, config=config)
+        sample_log_probability = -objective(sample_params)
+        baseline_log_probability = -objective(dict(fit_entry.goodness.get("parameters", {})))
+        tolerance = 1e-10 * max(1.0, abs(baseline_log_probability))
+        if np.isfinite(sample_log_probability) and sample_log_probability > baseline_log_probability + tolerance:
+            return sample_params, sample_log_probability, baseline_log_probability, location
+        return None
     try:
         baseline_log_probability = -0.5 * float(fit_entry.goodness["chi2"])
     except (KeyError, TypeError, ValueError):
@@ -9639,6 +9506,7 @@ class NfitProjectExplorer:
         completion_summary: Any | None = None,
         progress_window_title: str | None = None,
         finishing_progress_event: dict[str, Any] | None = None,
+        cancelled_message: str = "emcee posterior sampling cancelled; partial samples saved.",
     ) -> bool:
         from PySide6 import QtCore, QtWidgets
 
@@ -9731,7 +9599,7 @@ class NfitProjectExplorer:
                     on_success(result)
                     lines = completion_summary(result) if completion_summary is not None else None
                     progress.finish(
-                        "emcee posterior sampling cancelled; partial samples saved.",
+                        cancelled_message,
                         summary_lines=lines,
                     )
                 except Exception as exc:
@@ -9909,6 +9777,8 @@ class NfitProjectExplorer:
         window = _FitDiagnosticsPlotWindow(fit_entry, self)
         window.show()
         self._auxiliary_windows[id(window)] = window
+        window_key = id(window)
+        window.window.destroyed.connect(lambda _object=None: self._auxiliary_windows.pop(window_key, None))
         return window
 
     def apply_posterior_sampling_window(
@@ -9941,80 +9811,112 @@ class NfitProjectExplorer:
         self._set_fit_details(fit_entry)
         return True
 
-    def promote_best_posterior_sample_for_fit(
-        self,
-        group: DataGroup,
-        fit_entry: FitTimelineEntry,
+    def _exploration_context(self) -> Any:
+        from .fit_exploration_gui import ExplorationContext
+
+        return ExplorationContext(
+            compile_entry=_compiled_problem_for_fit_entry,
+            start_task=self._start_background_task,
+            mark_dirty=self._mark_dirty,
+            refresh_details=self._set_fit_details,
+            apply_candidate=lambda group, entry, candidate: self._apply_sampling_candidate(
+                group, entry, candidate, optimize=True,
+            ),
+            task_active=lambda: self._fit_worker_thread is not None,
+        )
+
+    def _start_exploration_for_fit(self, group: DataGroup, entry: FitTimelineEntry, config: Any) -> bool:
+        from .fit_exploration_gui import start_exploration
+
+        if not self._confirm_rebin_cache_memory(
+            self._pending_project_rebin_cache_bytes(group=group), operation="Exploring parameter space",
+        ):
+            return False
+        return start_exploration(self._exploration_context(), group, entry, config)
+
+    def _promote_exploration_for_fit(self, group: DataGroup, entry: FitTimelineEntry) -> bool:
+        from .fit_exploration_gui import promote_exploration
+
+        return promote_exploration(self._exploration_context(), group, entry)
+
+    def _copy_exploration_script(self, group: DataGroup, entry: FitTimelineEntry, config: Any) -> bool:
+        from PySide6 import QtWidgets
+
+        from .workflow import exploration_workflow_script
+
+        current = snapshot_data_group_state(group)
+        try:
+            if entry.snapshot:
+                restore_data_group_state(group, entry.snapshot)
+            script = exploration_workflow_script(
+                self.project, group.name, config, optimizer_config=entry.optimizer_config,
+            )
+            self.app.clipboard().setText(script)
+            return True
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self.window, "Exploration script", str(exc))
+            return False
+        finally:
+            restore_data_group_state(group, current)
+
+    def _apply_sampling_candidate(
+        self, group: DataGroup, fit_entry: FitTimelineEntry,
+        candidate: dict[str, Any], *, optimize: bool = False,
+        compiled: CompiledFitProblem | None = None,
     ) -> bool:
         from PySide6 import QtWidgets
 
-        try:
-            candidate = _best_posterior_promotion_candidate(fit_entry)
-            if candidate is None and "chi2" not in fit_entry.goodness:
-                compiled = _compiled_problem_for_fit_entry(group, fit_entry)
-                candidate = _best_posterior_promotion_candidate(fit_entry, compiled)
-        except Exception as exc:
-            QtWidgets.QMessageBox.warning(
-                self.window,
-                "Posterior sampler",
-                f"Could not inspect the posterior samples:\n{exc}",
-            )
-            return False
-        if candidate is None:
-            QtWidgets.QMessageBox.information(
-                self.window,
-                "Posterior sampler",
-                "The stored emcee chain does not contain a finite sample with a better likelihood than this fit result.",
-            )
-            return False
-        sample_params, sample_log_probability, baseline_log_probability, location = candidate
         current_snapshot = snapshot_data_group_state(group)
-        self._set_active_fit_state(group, fit_entry)
         try:
+            compiled = compiled or _compiled_problem_for_fit_entry(group, fit_entry)
             if fit_entry.snapshot:
                 restore_data_group_state(group, fit_entry.snapshot)
-            components = [
-                model for model in group.models.values() if isinstance(model, ModelComponentSpec)
-            ]
-            inputs, _bundles = fit_dataset_inputs(group, purpose="fit")
-            compiled_for_state = compile_fit_problem(components, inputs, description=group.name)
-            promoted_params = {
-                spec.name: float(spec.value)
-                for spec in compiled_for_state.problem.parameter_specs
-            }
-            promoted_params.update(sample_params)
-            promoted_params = compiled_for_state.problem.resolve_parameters(promoted_params)
-            _write_back_parameter_values(
-                group,
-                components,
-                compiled_for_state,
-                promoted_params,
-            )
+            components = [model for model in group.models.values() if isinstance(model, ModelComponentSpec)]
+            params = {spec.name: float(spec.value) for spec in compiled.problem.parameter_specs}
+            params.update(candidate["parameters"])
+            resolved = compiled.problem.resolve_parameters(params)
+            _write_back_parameter_values(group, components, compiled, resolved)
+            _write_back_dataset_scale_factors(group, compiled, resolved)
         except Exception as exc:
             restore_data_group_state(group, current_snapshot)
-            QtWidgets.QMessageBox.warning(
-                self.window,
-                "Posterior sampler",
-                f"Could not promote the posterior sample:\n{exc}",
-            )
+            QtWidgets.QMessageBox.warning(self.window, "Promote sampling candidate", str(exc))
             return False
-        branch_created = self._record_data_group_state_change(group)
+        self._set_active_fit_state(group, fit_entry)
+        self._record_data_group_state_change(group)
         promoted = self._active_fit_entry(group)
         if promoted is not None and promoted.kind == "current":
-            promoted.metadata.setdefault("promoted_posterior_sample", {})
-            promoted.metadata["promoted_posterior_sample"] = {
-                "source_fit": fit_entry.name,
-                "log_probability": float(sample_log_probability),
-                "previous_log_probability": float(baseline_log_probability),
-                **location,
-            }
+            key = "promoted_exploration_candidate" if optimize else "promoted_posterior_sample"
+            promoted.metadata[key] = {"source_fit": fit_entry.name, **candidate}
+            if optimize:
+                promoted.optimizer_config = copy.deepcopy(fit_entry.optimizer_config)
+                promoted.optimizer_config.pop("sampler", None)
+                promoted.optimizer_config.pop("initialization", None)
         self._mark_dirty()
         self.refresh_slice_viewer(group)
-        if branch_created:
-            self._refresh_tree(select_group=group, select_fit=promoted)
-        else:
-            self._refresh_tree(select_group=group, select_fit=promoted or fit_entry)
-        return True
+        self._refresh_tree(select_group=group, select_fit=promoted or fit_entry)
+        return self.start_fit_for_selection() if optimize else True
+
+    def promote_best_posterior_sample_for_fit(self, group: DataGroup, fit_entry: FitTimelineEntry) -> bool:
+        from PySide6 import QtWidgets
+
+        from .fit_provenance import fit_problem_fingerprint
+
+        try:
+            compiled = _compiled_problem_for_fit_entry(group, fit_entry)
+            stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+            if stored is None or stored.metadata.get("fit_target_fingerprint") != fit_problem_fingerprint(compiled.problem):
+                raise ValueError("Run a fresh posterior for the current fit target before promoting a sample.")
+            candidate = _best_posterior_promotion_candidate(fit_entry, compiled)
+            if candidate is None:
+                raise ValueError("No retained posterior sample improves the original fit objective.")
+            params, logp, baseline, location = candidate
+            return self._apply_sampling_candidate(group, fit_entry, {
+                "parameters": params, "log_probability": logp,
+                "previous_log_probability": baseline, **location,
+            }, compiled=compiled)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self.window, "Posterior sampler", str(exc))
+            return False
 
     def run_posterior_sampler_for_fit(
         self,
@@ -10189,17 +10091,25 @@ class NfitProjectExplorer:
         append: bool,
         progress_callback: Any | None,
     ) -> SamplingResult:
+        from .fit_provenance import fit_problem_fingerprint
+
         compiled = _compiled_problem_for_fit_entry(group, fit_entry)
+        target_fingerprint = fit_problem_fingerprint(compiled.problem)
+        saved_target = fit_entry.metadata.get("fit_target_fingerprint")
+        if saved_target is not None and saved_target != target_fingerprint:
+            raise ValueError("The prepared fit target has changed. Run a new fit before sampling this result.")
         initial_params = {
             str(name): float(value)
             for name, value in dict(fit_entry.goodness.get("parameters", {})).items()
         }
         initial_walkers = None
-        stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+        stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples")) if append else None
         walkers = None if n_walkers <= 0 else int(n_walkers)
         if append:
             if stored is None or stored.chain is None:
                 raise ValueError("append requires an existing raw emcee chain")
+            if stored.metadata.get("fit_target_fingerprint") != target_fingerprint:
+                raise ValueError("The stored chain has no matching fit target. Run a fresh posterior before appending.")
             compiled_names = [
                 spec.name for spec in compiled.problem.parameter_specs if spec.vary
             ]
@@ -10226,15 +10136,18 @@ class NfitProjectExplorer:
                 config,
                 initial_params=initial_params if initial_walkers is None else None,
                 initial_walkers=initial_walkers,
+                initial_random_state=stored.metadata.get("random_state") if append and stored is not None else None,
                 progress_callback=progress_callback,
             )
         except SamplingCancelled as exc:
+            exc.result.metadata["fit_target_fingerprint"] = target_fingerprint
             partial = (
                 _combined_sampling_result(stored, exc.result, burn_in=burn_in, thin=thin)
                 if append and stored is not None
                 else exc.result
             )
             raise SamplingCancelled(str(exc), partial) from exc
+        sampled.metadata["fit_target_fingerprint"] = target_fingerprint
         return (
             _combined_sampling_result(stored, sampled, burn_in=burn_in, thin=thin)
             if append and stored is not None
@@ -14819,6 +14732,15 @@ class NfitProjectExplorer:
         ]
         if self.fit_settings_panel is not None:
             self.details_layout.addWidget(self.fit_settings_panel)
+        if group is not None and fit_entry.kind == "result" and _fit_results_rows(fit_entry):
+            from .fit_exploration_gui import exploration_panel
+
+            self.details_layout.addWidget(exploration_panel(
+                fit_entry,
+                start=lambda config: self._start_exploration_for_fit(group, fit_entry, config),
+                promote=lambda: self._promote_exploration_for_fit(group, fit_entry),
+                copy_script=lambda config: self._copy_exploration_script(group, fit_entry, config),
+            ))
         self.details_layout.addWidget(
             self._details_group_box(
                 "Fit",
@@ -15116,23 +15038,22 @@ class NfitProjectExplorer:
         """Return result-only actions for the shared Posterior settings panel."""
         from PySide6 import QtWidgets
 
-        stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
-        chain_steps = 0
-        chain_walkers = 0
-        if stored is not None and stored.chain is not None:
-            chain = np.asarray(stored.chain, dtype=float)
-            if chain.ndim == 3:
-                chain_steps = int(chain.shape[0])
-                chain_walkers = int(chain.shape[1])
+        payload = fit_entry.metadata.get("posterior_samples")
+        info = sampling_payload_info(payload)
+        chain_steps = info.get("chain_steps", 0)
+        chain_walkers = info.get("chain_walkers", 0)
         display_options = _posterior_display_options(fit_entry)
-        best_sample = _best_posterior_sample(stored) if stored is not None else None
+        has_probabilities = isinstance(payload, dict) and (
+            isinstance(payload.get("log_probability"), dict)
+            or isinstance(payload.get("log_probability_chain"), dict)
+        )
         widget = QtWidgets.QWidget()
         widget.setObjectName("fit_posterior_result_actions")
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(0, 8, 0, 0)
 
         status = QtWidgets.QLabel(
-            f"Stored samples: {0 if stored is None else len(stored.samples):d}    "
+            f"Stored samples: {info.get('samples', 0):d}    "
             f"Raw chain: {chain_steps:d} steps x {chain_walkers:d} walkers"
         )
         status.setToolTip("Current posterior storage for this fit result.")
@@ -15141,7 +15062,7 @@ class NfitProjectExplorer:
         use_uncertainties = QtWidgets.QCheckBox("Use emcee uncertainties, correlations, and asymmetry")
         use_uncertainties.setObjectName("fit_posterior_use_uncertainties_check")
         use_uncertainties.setChecked(bool(display_options.get("use_posterior_uncertainties")))
-        use_uncertainties.setEnabled(stored is not None and len(stored.samples) > 1)
+        use_uncertainties.setEnabled(info.get("samples", 0) > 1)
         use_uncertainties.setToolTip(
             "Display 16%--84% emcee intervals instead of least-squares standard errors and use the emcee "
             "correlation matrix in Fit diagnostics. This affects displayed results and exported reports only."
@@ -15156,7 +15077,7 @@ class NfitProjectExplorer:
         use_best_sample = QtWidgets.QCheckBox("Use best sample")
         use_best_sample.setObjectName("fit_posterior_use_best_sample_check")
         use_best_sample.setChecked(bool(display_options.get("use_best_sample")))
-        use_best_sample.setEnabled(best_sample is not None)
+        use_best_sample.setEnabled(bool(info.get("samples", 0)) and has_probabilities)
         use_best_sample.setToolTip(
             "Apply the highest-log-probability stored emcee sample to the live model and data-viewer overlay. "
             "Uncheck to restore the saved least-squares fit values."
@@ -15171,7 +15092,7 @@ class NfitProjectExplorer:
         apply_button = QtWidgets.QPushButton("Apply burn-in/thin")
         apply_button.setObjectName("fit_posterior_apply_button")
         apply_button.setToolTip("Recompute posterior summaries and plots from the stored raw chain without rerunning emcee.")
-        apply_button.setEnabled(stored is not None and stored.chain is not None)
+        apply_button.setEnabled(bool(info.get("has_chain")))
         apply_button.clicked.connect(
             lambda _checked=False: self.apply_posterior_sampling_window(
                 fit_entry, self.fit_emcee_burn_spin.value(), self.fit_emcee_thin_spin.value()
@@ -15202,7 +15123,7 @@ class NfitProjectExplorer:
         append_button.setToolTip(
             "Continue the stored emcee chain from its last walker positions and then recompute summaries with the selected burn-in/thin."
         )
-        append_button.setEnabled(stored is not None and stored.chain is not None)
+        append_button.setEnabled(bool(info.get("has_chain")))
         append_button.clicked.connect(
             lambda _checked=False: self.start_posterior_sampler_for_fit(
                 group,
@@ -21232,9 +21153,9 @@ def _add_metadata_tree_item(parent: Any, key: str, value: Any, *, depth: int = 0
 
     item = QtWidgets.QTreeWidgetItem([str(key), _metadata_tree_value_summary(value)])
     item.setToolTip(0, str(key))
-    item.setToolTip(1, _metadata_value_text(value))
+    item.setToolTip(1, _metadata_tree_value_summary(value)[:2000])
     parent.addChild(item) if hasattr(parent, "addChild") else parent.addTopLevelItem(item)
-    if depth >= 6:
+    if depth >= 6 or (isinstance(value, dict) and value.get("__ndarray__")):
         return item
     if isinstance(value, dict):
         for child_key in sorted(value):
@@ -21403,6 +21324,9 @@ def _fit_result_limit_hits(
 
 def _metadata_tree_value_summary(value: Any) -> str:
     if isinstance(value, dict):
+        if value.get("__ndarray__"):
+            shape = "x".join(str(size) for size in value.get("shape", [])) or "scalar"
+            return f"array {shape}, {value.get('dtype', 'float32')} (stored)"
         return f"{len(value)} field(s)"
     if isinstance(value, np.ndarray):
         return _array_summary(value)

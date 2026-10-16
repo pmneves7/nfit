@@ -18,6 +18,13 @@ from numpy.typing import ArrayLike, NDArray
 
 from . import _parallel
 from .dataset import PointData4D
+from .fit_sampling import (
+    InvalidInitialEnsemble,
+    SamplerConfig,
+    SamplingResult,
+    sample_parameter_vectors,
+)
+from .fit_sampling import SamplingCancelled as SamplingCancelled
 from .measurement_likelihoods import (
     FIT_LIKELIHOODS,
     fit_measurement_residuals,
@@ -413,39 +420,6 @@ class OptimizationConfig:
     covariance_mode: str = "absolute"
 
 
-@dataclass(frozen=True)
-class SamplerConfig:
-    """Settings for posterior sampling with the optional emcee backend."""
-
-    method: str = "emcee"
-    n_walkers: int | None = None
-    n_steps: int | None = None
-    burn_in: int = 0
-    thin: int = 1
-    random_seed: int | None = None
-    kwargs: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class SamplingResult:
-    """Container for posterior/uncertainty samples."""
-
-    samples: FloatArray
-    variable_names: list[str]
-    log_probability: FloatArray | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
-    chain: FloatArray | None = None
-    log_probability_chain: FloatArray | None = None
-
-
-class SamplingCancelled(RuntimeError):
-    """Raised when posterior sampling is cancelled after producing samples."""
-
-    def __init__(self, message: str, result: SamplingResult) -> None:
-        super().__init__(message)
-        self.result = result
-
-
 class FitCancellationRequested(RuntimeError):
     """Request that an active deterministic optimizer return its best point."""
 
@@ -479,8 +453,8 @@ class FitProblem:
         if len(names) != len(set(names)):
             raise ValueError("FitProblem dataset names must be unique")
         for dataset in self.datasets:
-            if dataset.weight < 0.0:
-                raise ValueError("dataset weights must be nonnegative")
+            if not np.isfinite(dataset.weight) or dataset.weight < 0.0:
+                raise ValueError("dataset weights must be finite and nonnegative")
             if self.model is None and dataset.model is None:
                 raise ValueError(
                     f"dataset {dataset.name!r} has no model and the problem has no shared model"
@@ -1241,9 +1215,10 @@ def fit_problem_least_squares(
     deviance for those datasets), not a universal Gaussian goodness statistic.
     Count fits report asymptotic expected-Fisher parameter covariance.
 
-    The reported ``chi2`` is therefore the weighted objective contribution
-    minimized by the optimizer. Per-dataset values in ``dataset_chi2`` use the
-    same convention.
+    The reported ``chi2`` is the sum of squared weighted residuals. With
+    robust loss, ``cost`` instead records the transformed objective actually
+    minimized. Per-dataset ``dataset_chi2`` values retain the squared-residual
+    convention.
     """
 
     opt = OptimizationConfig() if config is None else config
@@ -1291,7 +1266,9 @@ def fit_problem_least_squares(
             params=params,
             success=True,
             message="no variable parameters",
-            cost=0.5 * chi2,
+            cost=_least_squares_objective_cost(residuals,
+                loss=opt.kwargs.get("loss", "linear"),
+                f_scale=opt.kwargs.get("f_scale", 1.0)),
             chi2=chi2,
             reduced_chi2=float(chi2 / dof) if dof > 0 else np.nan,
             residuals=residuals,
@@ -1318,6 +1295,7 @@ def fit_problem_least_squares(
             problem,
             config=init_config,
             require_positive_sigma=opt.require_positive_sigma,
+            optimization_config=opt,
             progress_callback=progress_callback,
         )
 
@@ -1363,12 +1341,20 @@ def fit_problem_least_squares(
             return np.concatenate(blocks)
         coordinates = fisher_coordinates(result.x)
         covariance_jacobian = None if coordinates is None else _finite_difference_jacobian(fisher_coordinates, result.x, coordinates, bounds)
+    covariance_diagnostics: dict[str, Any] = {}
     covariance = _covariance_from_jacobian(
         covariance_jacobian,
         chi2=chi2,
         dof=dof,
         covariance_mode=opt.covariance_mode,
+        diagnostics=covariance_diagnostics,
     )
+    covariance_warning = ""
+    covariance_interpretation = "expected_fisher_asymptotic" if has_poisson else "local_gaussian"
+    if covariance_diagnostics.get("reason") == "rank_deficient":
+        covariance_interpretation = "unidentifiable_rank_deficient"
+        covariance_warning = ("; local covariance unavailable: residual Jacobian is rank deficient "
+            f"(rank {covariance_diagnostics['rank']} of {len(names)} variable parameters)")
     covariance_scale_factor = (
         float(reduced_chi2)
         if opt.covariance_mode == "residual" and np.isfinite(reduced_chi2)
@@ -1385,7 +1371,7 @@ def fit_problem_least_squares(
     return FitResult(
         params=params,
         success=bool(result.success),
-        message=str(result.message),
+        message=str(result.message) + covariance_warning,
         cost=float(result.cost),
         chi2=chi2,
         reduced_chi2=float(reduced_chi2),
@@ -1397,7 +1383,7 @@ def fit_problem_least_squares(
         fixed_params=fixed,
         covariance_mode=opt.covariance_mode,
         covariance_scale_factor=covariance_scale_factor,
-        covariance_interpretation="expected_fisher_asymptotic" if has_poisson else "local_gaussian",
+        covariance_interpretation=covariance_interpretation,
         dataset_chi2=evaluation.dataset_chi2,
         dataset_reduced_chi2=evaluation.dataset_reduced_chi2,
         dataset_sizes=evaluation.dataset_sizes,
@@ -1439,12 +1425,42 @@ def evaluate_problem_model(
     return np.asarray(model(target, dataset_params), dtype=float)
 
 
+def evaluate_problem_objective(
+    problem: FitProblem,
+    params: Mapping[str, float],
+    *,
+    config: OptimizationConfig | None = None,
+) -> float:
+    """Evaluate the original bounded least-squares cost, including robust loss.
+
+    The returned cost is half chi-squared for linear loss. Missing parameters
+    use their specification values. This is the authoritative comparison for
+    exploration candidates, distinct from a tempered sampling score.
+    """
+    opt = OptimizationConfig() if config is None else config
+    if opt.method != "least_squares":
+        raise ValueError("only method='least_squares' is implemented")
+    trial = {spec.name: float(params.get(spec.name, spec.value)) if spec.vary else float(spec.value) for spec in problem.parameter_specs}
+    for spec in problem.parameter_specs:
+        value = trial[spec.name]
+        if (not np.isfinite(value) or (spec.min is not None and value < spec.min)
+                or (spec.max is not None and value > spec.max)):
+            raise ValueError(f"parameter {spec.name!r} is non-finite or outside bounds")
+    evaluation = _evaluate_problem(problem, trial, require_positive_sigma=opt.require_positive_sigma)
+    cost = _least_squares_objective_cost(evaluation.residuals,
+        loss=opt.kwargs.get("loss", "linear"), f_scale=opt.kwargs.get("f_scale", 1.0))
+    if not np.isfinite(cost):
+        raise ValueError("fit objective is non-finite")
+    return float(cost)
+
+
 def sample_problem_parameters(
     problem: FitProblem,
     config: SamplerConfig | None = None,
     *,
     initial_params: dict[str, float] | None = None,
     initial_walkers: FloatArray | None = None,
+    initial_random_state: dict[str, Any] | None = None,
     require_positive_sigma: bool = True,
     progress_callback: ProgressCallback | None = None,
 ) -> SamplingResult:
@@ -1464,14 +1480,6 @@ def sample_problem_parameters(
     x0, bounds, names, fixed = pack_parameters(problem.parameter_specs)
     if len(names) == 0:
         raise ValueError("emcee sampling requires at least one variable parameter")
-    try:
-        import emcee  # type: ignore[import-not-found]
-    except Exception as exc:  # pragma: no cover - depends on optional package.
-        raise ImportError(
-            "emcee posterior sampling requires the 'emcee' package. "
-            "Install or update the nfit environment before sampling."
-        ) from exc
-
     lower, upper = bounds
     if initial_params is not None:
         for index, name in enumerate(names):
@@ -1480,14 +1488,12 @@ def sample_problem_parameters(
     x0 = _nudge_inside_bounds(np.clip(x0, lower, upper), bounds)
 
     n_dim = len(names)
-    n_walkers = int(sampler.n_walkers or max(32, 2 * n_dim + 2))
+    n_walkers = int(max(32, 2 * n_dim + 2) if sampler.n_walkers is None else sampler.n_walkers)
     if n_walkers < 2 * n_dim:
         raise ValueError("emcee requires at least 2 * n_parameters walkers")
-    n_steps = int(sampler.n_steps or 1000)
+    n_steps = int(1000 if sampler.n_steps is None else sampler.n_steps)
     if n_steps <= 0:
         raise ValueError("emcee n_steps must be positive")
-    burn_in = int(max(0, sampler.burn_in))
-    thin = int(max(1, sampler.thin))
     rng = np.random.default_rng(sampler.random_seed)
     if initial_walkers is None:
         p0 = _initial_walker_positions(x0, bounds, n_walkers, rng)
@@ -1498,11 +1504,11 @@ def sample_problem_parameters(
                 "initial_walkers must have shape "
                 f"({n_walkers}, {n_dim}); got {tuple(p0.shape)}"
             )
-        if np.any(p0 < lower) or np.any(p0 > upper):
+        if np.any(~np.isfinite(p0)) or np.any(p0 < lower) or np.any(p0 > upper):
             raise ValueError("initial_walkers must lie inside finite parameter bounds")
 
     def log_probability(x: FloatArray) -> float:
-        if np.any(x < lower) or np.any(x > upper):
+        if np.any(~np.isfinite(x)) or np.any(x < lower) or np.any(x > upper):
             return -np.inf
         params = unpack_parameters(x, names, fixed)
         try:
@@ -1514,129 +1520,22 @@ def sample_problem_parameters(
         except Exception:
             return -np.inf
         chi2 = float(np.dot(evaluation.residuals, evaluation.residuals))
-        return -0.5 * chi2
+        return -0.5 * chi2 if np.isfinite(chi2) else -np.inf
 
     backend_kwargs = dict(sampler.kwargs)
     worker_request = backend_kwargs.pop("workers", backend_kwargs.pop("parallel_workers", 1))
     workers = _resolve_parallel_workers(worker_request)
-    pool = ThreadPool(workers) if workers > 1 else None
-    emcee_sampler: Any | None = None
-
-    def result_from_sampler(*, completed: bool) -> SamplingResult:
-        if emcee_sampler is None:
-            raise RuntimeError("emcee sampler has not been initialized")
-        chain = np.asarray(emcee_sampler.get_chain(), dtype=float)
-        log_prob_chain = np.asarray(emcee_sampler.get_log_prob(), dtype=float)
-        if chain.ndim != 3 or chain.shape[0] == 0:
-            raise RuntimeError("emcee sampling was cancelled before any samples were recorded")
-        actual_steps = int(chain.shape[0])
-        samples = np.asarray(
-            emcee_sampler.get_chain(discard=burn_in, thin=thin, flat=True), dtype=float
-        )
-        log_prob = np.asarray(
-            emcee_sampler.get_log_prob(discard=burn_in, thin=thin, flat=True),
-            dtype=float,
-        )
-        acceptance_fraction = np.asarray(emcee_sampler.acceptance_fraction, dtype=float)
-        try:
-            # ``quiet=False`` gives us AutocorrError.tau for chains that are
-            # still too short, so users can estimate a useful target length.
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", RuntimeWarning)
-                autocorrelation_time = [
-                    float(value) for value in emcee_sampler.get_autocorr_time(quiet=False)
-                ]
-        except Exception as exc:
-            tau = np.asarray(getattr(exc, "tau", []), dtype=float)
-            autocorrelation_time = [float(value) for value in tau]
-        finite_tau = [value for value in autocorrelation_time if np.isfinite(value) and value > 0.0]
-        recommended_steps = (
-            int(np.ceil(50.0 * max(finite_tau))) if finite_tau else None
-        )
-        recommended_additional_steps = (
-            max(0, recommended_steps - actual_steps)
-            if recommended_steps is not None
-            else None
-        )
-        metadata: dict[str, Any] = {
-            "method": "emcee",
-            "n_walkers": n_walkers,
-            "n_steps": actual_steps,
-            "requested_n_steps": n_steps,
-            "completed": bool(completed),
-            "cancelled": not bool(completed),
-            "burn_in": burn_in,
-            "thin": thin,
-            "random_seed": sampler.random_seed,
-            "workers": workers,
-            "worker_request": "auto" if int(worker_request or 1) == -1 else workers,
-            "acceptance_fraction_mean": float(np.mean(acceptance_fraction)),
-            "acceptance_fraction_min": float(np.min(acceptance_fraction)),
-            "acceptance_fraction_max": float(np.max(acceptance_fraction)),
-        }
-        metadata["autocorrelation_time"] = autocorrelation_time
-        metadata["autocorrelation_recommended_steps"] = recommended_steps
-        metadata["autocorrelation_recommended_additional_steps"] = recommended_additional_steps
-        if finite_tau:
-            tau_text = ", ".join(f"{value:.3g}" for value in autocorrelation_time)
-            autocorrelation_message = (
-                f"emcee integrated autocorrelation time (steps): [{tau_text}]; "
-                f"recommended total chain length: at least {recommended_steps:,} steps "
-                f"(50 x max tau = {max(finite_tau):.3g}); "
-                f"estimated additional steps: {recommended_additional_steps:,}."
-            )
-        else:
-            autocorrelation_message = (
-                "emcee integrated autocorrelation time is unavailable for this chain; "
-                "run more steps before using it to estimate a chain length."
-            )
-        print(autocorrelation_message)
-        return SamplingResult(
-            samples=samples,
-            variable_names=list(names),
-            log_probability=log_prob,
-            metadata=metadata,
-            chain=chain,
-            log_probability_chain=log_prob_chain,
-        )
-
     try:
-        if pool is not None:
-            backend_kwargs["pool"] = pool
-        emcee_sampler = emcee.EnsembleSampler(
-            n_walkers, n_dim, log_probability, **backend_kwargs
-        )
-        sampler_start = time.perf_counter()
-        for iteration, state in enumerate(emcee_sampler.sample(p0, iterations=n_steps), start=1):
-            if progress_callback is not None:
-                mean = np.mean(state.coords, axis=0)
-                elapsed = time.perf_counter() - sampler_start
-                try:
-                    progress_callback(
-                        {
-                            "stage": "emcee",
-                            "iteration": iteration,
-                            "total": n_steps,
-                            "elapsed_seconds": elapsed,
-                            "seconds_per_step": elapsed / max(iteration, 1),
-                            "parameters": {
-                                name: float(value)
-                                for name, value in zip(names, mean, strict=True)
-                            },
-                            "message": f"emcee step {iteration:,}/{n_steps:,}",
-                        }
-                    )
-                except Exception as exc:
-                    raise SamplingCancelled(
-                        "emcee posterior sampling cancelled; partial samples were saved.",
-                        result_from_sampler(completed=False),
-                    ) from exc
-        result = result_from_sampler(completed=True)
-    finally:
-        if pool is not None:
-            pool.close()
-            pool.join()
-    return result
+        return sample_parameter_vectors(log_probability, p0, list(names), sampler,
+            workers=workers, worker_request=worker_request,
+            initial_random_state=initial_random_state, progress_callback=progress_callback)
+    except InvalidInitialEnsemble as exc:
+        try:
+            _evaluate_problem(problem, unpack_parameters(p0[0], names, fixed),
+                              require_positive_sigma=require_positive_sigma)
+        except Exception as cause:
+            raise ValueError(f"Cannot initialize posterior sampling: {cause}") from cause
+        raise exc
 
 
 def initialize_problem_differential_evolution(
@@ -1644,9 +1543,10 @@ def initialize_problem_differential_evolution(
     *,
     config: dict[str, Any] | None = None,
     require_positive_sigma: bool = True,
+    optimization_config: OptimizationConfig | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> FloatArray:
-    """Return a least-squares start vector found by differential evolution."""
+    """Return a start vector using the original (optionally robust) fit cost."""
 
     if _scipy_differential_evolution is None:
         raise RuntimeError("differential evolution initialization requires SciPy")
@@ -1683,14 +1583,12 @@ def initialize_problem_differential_evolution(
     iteration = 0
     initialization_start = time.perf_counter()
 
+    objective_config = (OptimizationConfig(require_positive_sigma=require_positive_sigma)
+                        if optimization_config is None else optimization_config)
+
     def objective(x: FloatArray) -> float:
         params = unpack_parameters(x, names, fixed)
-        evaluation = _evaluate_problem(
-            problem,
-            params,
-            require_positive_sigma=require_positive_sigma,
-        )
-        return float(np.dot(evaluation.residuals, evaluation.residuals))
+        return evaluate_problem_objective(problem, params, config=objective_config)
 
     def callback(xk: FloatArray, convergence: float | None = None) -> bool:
         nonlocal iteration
@@ -2129,6 +2027,7 @@ def _covariance_from_jacobian(
     chi2: float,
     dof: int,
     covariance_mode: str,
+    diagnostics: dict[str, Any] | None = None,
 ) -> FloatArray | None:
     if jacobian is None or dof <= 0 or jacobian.size == 0:
         return None
@@ -2139,7 +2038,10 @@ def _covariance_from_jacobian(
     eps = np.finfo(float).eps
     threshold = eps * max(jacobian.shape) * singular_values[0]
     keep = singular_values > threshold
-    if not np.any(keep):
+    rank = int(np.count_nonzero(keep))
+    if rank < jacobian.shape[1]:
+        if diagnostics is not None:
+            diagnostics.update(reason="rank_deficient", rank=rank)
         return None
     vt = vt[keep]
     singular_values = singular_values[keep]

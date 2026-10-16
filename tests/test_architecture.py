@@ -36,6 +36,13 @@ def test_project_cache_facade_shares_authoritative_stores():
     assert project_gui.clear_project_caches is project_caches.clear_project_caches
 
 
+def test_project_optimizer_settings_use_the_scriptable_service():
+    from nfit import fit_settings, project_gui
+
+    assert project_gui._optimizer_kwargs is fit_settings.optimizer_kwargs
+    assert project_gui._covariance_mode is fit_settings.covariance_mode
+
+
 def test_raw_geometry_service_is_authoritative_and_has_no_reducer_dependencies():
     from nfit import raw_dgs, raw_dgs_geometry
 
@@ -49,6 +56,10 @@ def test_raw_geometry_service_is_authoritative_and_has_no_reducer_dependencies()
 
 
 GUI_INDEPENDENT_MODULES = (
+    PACKAGE_ROOT / "fit_sampling.py",
+    PACKAGE_ROOT / "fit_exploration.py",
+    PACKAGE_ROOT / "fit_provenance.py",
+    PACKAGE_ROOT / "fit_settings.py",
     PACKAGE_ROOT / "dataset_criteria.py",
     PACKAGE_ROOT / "dataset_criterion_values.py",
     PACKAGE_ROOT / "macs_reduction.py",

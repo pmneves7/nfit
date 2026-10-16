@@ -294,6 +294,10 @@ Analysis equivalents are `analysis_workflow_plan(...)` and
 `run_project_analysis(...)` use the same prepared data as the viewer.
 `fit_workflow_plan(...)` and `fit_workflow_script(...)` export the live
 workspace model and active optimizer configuration.
+`exploration_workflow_script(project, group_name, ExplorationConfig(...))`
+exports a separate tempered search with optional local refinement. The public
+`explore_problem_parameters(...)` and `best_exploration_candidate(...)` APIs
+operate on a `FitProblem`; search samples are excluded from posterior inference.
 
 Launch the project explorer with `nfit`. The explorer manages saved
 projects, workspaces, datasets, dataset groups, masks, models, rebinned dataset

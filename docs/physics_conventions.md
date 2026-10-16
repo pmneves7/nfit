@@ -282,8 +282,17 @@ In this convention, $1/\pi$ relates $S_s$ to $\chi''_s$ and is not included
 in the definition of $\chi''_s$. The Bose or detailed-balance denominator is
 evaluated stably near $E=0$. At exactly zero energy, a regular response with
 slope $A=\lim_{E\to0}\chi''_s/E$ has Bose-weighted limit $k_BT A$.
-The RPA fitting path uses its analytic slope; direct cross-section conversion
-accepts it through `zero_energy_slope` in susceptibility units per meV.
+The local, MMP, generalized-paramagnon, and Heisenberg-RPA fitting paths use
+their analytic slopes; direct cross-section conversion accepts a slope through
+`zero_energy_slope` in susceptibility units per meV. These limits also apply
+before powder averaging. Coupled, conserved-ferromagnetic, and electronic
+inelastic model comparisons currently require excluding exactly zero transfer
+when fitting a Bose-weighted cross section, because those evaluators do not
+provide a regular dynamic slope. This restriction does not apply to a direct
+$\chi''$ comparison. In particular, a conserved uniform mode has distinct
+static and finite-energy limits; the static susceptibility is not a substitute
+for its dynamic slope. Quasistatic elastic datasets use their separate
+static-response approximation.
 The value $\chi''_s(0)=0$ alone does not specify this limit.
 For reciprocal scalar channels the dissipative
 response is odd in energy at fixed $\mathbf Q$. In general detailed balance

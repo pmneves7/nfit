@@ -144,6 +144,21 @@ Dataset scale settings, including shared fitted scales, are part of that
 scientific configuration. Running the script performs one fit. Stored results
 and timeline branches are not replayed.
 
+`exploration_workflow_script(project, group_name, ExplorationConfig(...))`
+exports the current parameter values, search temperature, walker initialization,
+seed, bounds, constraints and original optimizer objective. It searches from
+that state without first rerunning the original fit. The script reevaluates an
+improving candidate with the original objective and, by default, refines it with
+local least squares. Set `polish=False` to inspect the candidate first.
+`build_workflow().fit_results` contains separate `exploration`, `candidate`, and
+`polished` results; these search samples are not posterior uncertainty estimates.
+
+Standalone fit and exploration scripts currently share the source graph's
+restrictions: grouped native reductions, workspace composites, and group
+backgrounds are not expanded by this exporter. These cases raise an actionable
+export error. The public fitting and exploration APIs can still operate on
+prepared inputs from those workflows.
+
 ## Python API
 
 Use `dataset_workflow_plan(project, dataset_id)` or

@@ -16,6 +16,7 @@ import numpy as np
 
 from .cross_section import bose_denominator
 from .dataset import PointData4D
+from .fitting import _metadata_coordinate_units_are_inv_angstrom
 from .spin_fluctuations import (
     build_rpa_geometry,
     heisenberg_rpa_chipp,
@@ -371,10 +372,14 @@ class _RpaComponentEvaluator:
                 ),
             )
         else:
+            hkl = np.column_stack([data.H, data.K, data.L]).astype(float)
+            if _metadata_coordinate_units_are_inv_angstrom(data.metadata):
+                reciprocal_matrix = _powder_reciprocal_matrix(data, self._lattice)
+                hkl = hkl @ np.linalg.inv(reciprocal_matrix).T
             geometry = build_rpa_geometry(
-                data.H,
-                data.K,
-                data.L,
+                hkl[:, 0],
+                hkl[:, 1],
+                hkl[:, 2],
                 self.site_positions,
                 self.orbits,
             )
@@ -583,6 +588,18 @@ class _RpaComponentEvaluator:
             self._closure_moment_cache.popitem(last=False)
         return model
 
+    @staticmethod
+    def _single_closure_temperature(temperature: Any) -> float:
+        """Validate the supported neutron closure domain before trial guards."""
+        unique_t = np.unique(np.atleast_1d(np.asarray(temperature, dtype=float)))
+        if unique_t.size != 1:
+            raise ValueError(
+                "sum-rule closures need a single temperature per dataset; "
+                "per-point temperatures are only supported for magnetization "
+                "datasets"
+            )
+        return float(unique_t[0])
+
     def _solve_closure(
         self,
         params: dict[str, float],
@@ -593,14 +610,7 @@ class _RpaComponentEvaluator:
 
         from .closures import solve_closure
 
-        unique_t = np.unique(np.atleast_1d(np.asarray(temperature, dtype=float)))
-        if unique_t.size != 1:
-            raise ValueError(
-                "sum-rule closures need a single temperature per dataset; "
-                "per-point temperatures are only supported for magnetization "
-                "datasets"
-            )
-        t = float(unique_t[0])
+        t = self._single_closure_temperature(temperature)
         key = self._closure_cache_key(params, t, field)
         cached = self._closure_result_cache.get(key)
         if cached is not None:
@@ -974,6 +984,10 @@ class _RpaComponentEvaluator:
         if isinstance(data.metadata, dict) and data.metadata.get("data_type") == "magnetization":
             return self._magnetization_value(data, params)
         temperature = _dataset_temperature(data)
+        if self.closure_spec is not None:
+            # This is an unsupported input configuration, not an unstable
+            # parameter trial: do not turn it into a flat penalty surface.
+            self._single_closure_temperature(temperature)
         # Validate the applied field before the instability guard below, so a
         # missing field raises its actionable error instead of being caught and
         # turned into the 1e6 sentinel.

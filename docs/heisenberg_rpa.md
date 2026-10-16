@@ -80,6 +80,12 @@ units, $\mathbf r_a$ and $\mathbf r_b$ are fractional site coordinates,
 $\mathbf n$ is an integer lattice translation, and $J_{\rm bond}$ is the
 exchange energy assigned to that bond orbit.
 
+Single-crystal fit points may also declare Cartesian inverse-angstrom
+coordinates. nfit converts them to HKL before constructing exchange phases,
+using the attached reciprocal matrix or the model's configured crystal
+lattice. Equivalent physical momenta therefore give the same response and
+parameter derivatives in either coordinate representation.
+
 ### Mode response
 
 Diagonalize
@@ -474,6 +480,12 @@ $\chi_0(T)$ is derived from a smaller set of global parameters.
 Temperature and field are read from each dataset. Keep dataset scale fixed at
 1 for normalized data; otherwise fit a dataset scale, independently or shared
 within a dataset group.
+
+For neutron fits, a sum-rule closure requires a single temperature per dataset.
+Keep a temperature series as separate datasets with shared model parameters.
+A mixed-temperature neutron composite is rejected before optimization; it is
+not represented by a constant instability penalty. The bulk magnetization
+closure path also supports pointwise temperature sweeps.
 
 ## Analytic derivatives
 

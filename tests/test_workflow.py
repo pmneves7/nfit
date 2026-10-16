@@ -713,6 +713,42 @@ def test_fit_workflow_rebuilds_and_fits_live_state(tmp_path):
     assert "load_project" not in script
 
 
+def test_exploration_workflow_matches_public_search_and_refines_candidate(tmp_path):
+    from nfit import ExplorationConfig, compile_fit_problem, explore_problem_parameters
+    from nfit.fit_settings import optimization_config_from_settings
+    from nfit.workflow import exploration_workflow_script
+
+    path = tmp_path / "exploration_data.npz"
+    save_dataset_file(DatasetEntry("raw", _grid(1.0)), path, use_view=False)
+    dataset = dataset_entry_from_path(path, data_type="powder_inelastic")
+    dataset.name = "scan"
+    group = DataGroup("Search", datasets=[dataset])
+    model = create_model_component(group, type="constant_background")
+    model.parameters["constant"] = 7.
+    model.fit_parameters["constant"] = True
+    model.limits["constant"] = [0., 10.]
+    group.fits = [FitTimelineEntry("Current state", kind="current", optimizer_config={"loss": "soft_l1", "f_scale": 2.})]
+    group.active_fit_path = [0]
+    config = ExplorationConfig(n_walkers=8, n_steps=20, temperature=5., random_seed=42)
+    script = exploration_workflow_script(NfitProject([group]), group.name, config)
+    namespace = {"__name__": "imported_workflow"}
+    exec(compile(script, "<nfit-exploration-workflow>", "exec"), namespace)
+    outcome = namespace["build_workflow"]().fit_results["fit:Search"]
+
+    inputs, _ = project_gui.fit_dataset_inputs(group, purpose="fit")
+    compiled = compile_fit_problem([model], inputs)
+    expected = explore_problem_parameters(
+        compiled.problem, config,
+        optimization_config=optimization_config_from_settings(group.fits[0].optimizer_config, local_only=True),
+    )
+    np.testing.assert_array_equal(outcome["exploration"].chain, expected.chain)
+    assert outcome["exploration"].metadata["purpose"] == "exploration"
+    assert outcome["candidate"] is not None
+    assert outcome["polished"].success
+    assert outcome["polished"].params["Model1.constant"] == pytest.approx(2.5, abs=1e-5)
+    assert model.parameters["constant"] == 7.
+
+
 def test_project_cache_clear_script_removes_saved_cache_artifacts(tmp_path):
     import zipfile
 

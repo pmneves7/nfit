@@ -12,7 +12,7 @@ import copy
 import json
 import os
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from pprint import pformat
@@ -770,6 +770,44 @@ def fit_workflow_script(
     )
 
 
+def exploration_workflow_script(
+    project: NfitProject,
+    group_name: str,
+    config: Any,
+    *,
+    source_root: str | Path | None = None,
+    polish: bool = True,
+    optimizer_config: dict[str, Any] | None = None,
+) -> str:
+    """Export an independent parameter search from the live workspace values.
+
+    ``config`` is an :class:`~nfit.fit_exploration.ExplorationConfig` or its
+    serializable settings dictionary. The script starts from the exported
+    parameter values, reevaluates candidates using the original objective,
+    and optionally refines an improvement by local least squares. It does not
+    produce posterior uncertainties or modify a saved project. Source coverage
+    is the same as :func:`fit_workflow_script`.
+    """
+    from .fit_exploration import ExplorationConfig
+
+    settings = asdict(config) if isinstance(config, ExplorationConfig) else dict(config)
+    # Validate field names before emitting an editable recipe.
+    ExplorationConfig(**settings)
+    plan = fit_workflow_plan(project, group_name)
+    nodes = []
+    for node in plan.nodes:
+        if node.kind == "fit":
+            node = replace(node, operation="explore_problem_parameters", config={
+                **node.config, "exploration_config": settings,
+                "polish_exploration_candidate": bool(polish),
+                "optimizer_config": copy.deepcopy(
+                    node.config["optimizer_config"] if optimizer_config is None else optimizer_config
+                ),
+            })
+        nodes.append(node)
+    return render_workflow_script(replace(plan, nodes=tuple(nodes)), source_root=source_root)
+
+
 def _source_node(group: DataGroup, dataset: DatasetEntry) -> WorkflowNode:
     if dataset.metadata.get("derived_from_analysis"):
         raise WorkflowValidationError(
@@ -1042,6 +1080,43 @@ def _dataset_script_text(
     )
     fits_text = pformat(fit_specs, sort_dicts=False, width=96)
     target_fits_text = pformat(target_fit_ids, sort_dicts=False, width=96)
+    exploration_helpers = ""
+    if any("exploration_config" in spec for spec in fit_specs.values()):
+        exploration_helpers = '''
+def run_exploration(group, spec):
+    """Search independently of posterior inference, then refine an improvement."""
+    from dataclasses import replace
+    from nfit import (
+        ExplorationConfig, best_exploration_candidate, compile_fit_problem,
+        explore_problem_parameters, fit_dataset_inputs, fit_problem_least_squares,
+    )
+    from nfit.fit_settings import optimization_config_from_settings
+
+    inputs, _ = fit_dataset_inputs(group, purpose="fit")
+    compiled = compile_fit_problem(list(group.models.values()), inputs)
+    problem = compiled.problem
+    initial = {parameter.name: parameter.value for parameter in problem.parameter_specs}
+    optimizer = optimization_config_from_settings(spec["optimizer_config"], local_only=True)
+    samples = explore_problem_parameters(
+        problem, ExplorationConfig(**spec["exploration_config"]),
+        initial_params=initial, optimization_config=optimizer,
+    )
+    candidate = best_exploration_candidate(
+        problem, samples, baseline_params=initial, optimization_config=optimizer,
+    )
+    polished = None
+    if candidate is not None and spec["polish_exploration_candidate"]:
+        candidate_problem = replace(problem, parameter_specs=[
+            replace(parameter, value=candidate["parameters"][parameter.name])
+            for parameter in problem.parameter_specs
+        ])
+        polished = fit_problem_least_squares(candidate_problem, config=optimizer)
+    return {
+        "exploration": samples, "candidate": candidate, "polished": polished,
+        "goodness": {"status": "exploration complete (not posterior inference)"},
+    }
+
+'''
     return f'''"""Rebuild an nfit workflow from its original source files.
 
 Generated configuration is ordinary Python: edit SOURCE_ROOT, paths, masks,
@@ -1256,10 +1331,11 @@ def build_groups(datasets):
     return groups
 
 
+{exploration_helpers}
 def run_fits(groups):
     """Fit the exported live state once; fit-history branches are not replayed."""
     return {{
-        fit_id: perform_group_fit(
+        fit_id: run_exploration(groups[fit_id], spec) if "exploration_config" in spec else perform_group_fit(
             groups[fit_id],
             optimizer_config=copy.deepcopy(spec["optimizer_config"]),
         )

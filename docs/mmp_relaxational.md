@@ -28,6 +28,10 @@ $$
 \frac{\chi_{\rm pk}}{A(\mathbf q)-iE/E_{\rm sf}},
 $$
 
+Fit points may carry either r.l.u. or Cartesian inverse-angstrom momentum.
+The configured center always remains in r.l.u.; nfit converts it with the
+attached reciprocal matrix before subtracting Cartesian coordinates.
+
 and
 
 $$

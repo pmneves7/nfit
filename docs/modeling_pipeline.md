@@ -184,6 +184,11 @@ chi-squared. Residual scaling estimates one missing global noise scale from all
 residuals; it cannot separate underestimated counting errors from systematics,
 correlations, outliers, or model inadequacy.
 
+If the local Jacobian is rank deficient, independently varied parameters are
+not locally identifiable. nfit retains the optimized result but omits covariance
+and standard errors and records `unidentifiable_rank_deficient`. Constrain or
+remove redundant parameters before interpreting individual uncertainties.
+
 ```python
 from nfit import (
     FitDataset,
@@ -329,10 +334,90 @@ interpolates the broadened result back to measured energies.
 General multidimensional resolution convolution is listed in
 [Planned features](planned_features.md).
 
+## Objective exploration
+
+`explore_problem_parameters` searches for alternative parameter basins without
+changing posterior samples or reported uncertainties. Its dimensionless
+sampling temperature $T \geq 1$ defines
+
+$$
+q_T(\theta) \propto \mathbf{1}_{\mathrm{bounds}}(\theta)
+\exp[-C(\theta)/T],
+$$
+
+where $\theta$ is the vector of varied parameters, the indicator is zero
+outside their hard bounds, and $C$ is the dimensionless least-squares cost.
+For `linear` loss, $C=\chi^2/2$. For robust losses, it is the same robust cost
+and `f_scale` used by the optimizer. Larger $T$ makes uphill moves easier; a
+Gaussian basin broadens by $\sqrt{T}$. This is objective exploration, with
+uniform hard-bound support, rather than a configurable Bayesian prior model.
+The mathematical temperature convention follows the
+[emcee tempering documentation](https://emcee.readthedocs.io/en/v2.2.1/user/pt/).
+
+```python
+from dataclasses import replace
+from nfit import (
+    ExplorationConfig,
+    OptimizationConfig,
+    best_exploration_candidate,
+    explore_problem_parameters,
+    fit_problem_least_squares,
+)
+
+optimizer = OptimizationConfig()  # Use the original fit's loss and f_scale.
+search = explore_problem_parameters(
+    problem,
+    ExplorationConfig(
+        temperature=10.0,
+        initialization="bounds",
+        n_walkers=48,
+        n_steps=1000,
+        random_seed=123,
+    ),
+    initial_params=result.params,
+    optimization_config=optimizer,
+)
+candidate = best_exploration_candidate(
+    problem, search, baseline_params=result.params,
+    optimization_config=optimizer,
+)
+if candidate is not None:
+    restarted = replace(
+        problem,
+        parameter_specs=[
+            replace(spec, value=candidate["parameters"][spec.name])
+            for spec in problem.parameter_specs
+        ],
+    )
+    refined = fit_problem_least_squares(restarted, config=optimizer)
+```
+
+Bounds initialization spreads walkers across finite bounds and retries invalid
+model locations. Choose `initialization="local"` for a small cloud around the
+saved fit, including problems with unbounded parameters. Heating a local cloud
+does not guarantee that it reaches a distant basin. For optimization alone,
+[differential evolution](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.differential_evolution.html)
+provides the existing bounded alternative; independently chosen starts followed
+by local optimization are another useful check. Parallel tempering would
+require interacting temperatures and correctly accepted swaps; a single heated
+run does not provide that algorithm.
+
+Candidate selection evaluates the original objective again at both the search
+point and the saved fit, checks parameter names and bounds, preserves fixed
+parameters, and requires an improvement above numerical tolerance. Tempered
+log probabilities are never compared directly with an untempered fit score.
+A search with robust loss uses that robust objective for promotion; ordinary
+posterior sampling continues to use the declared measurement likelihood.
+
 ## Posterior sampling
 
-`sample_problem_parameters` evaluates the same weighted residual vector as a
-Gaussian log likelihood and uses parameter bounds as uniform priors:
+`sample_problem_parameters` uses the selected Gaussian/GLS or Poisson-deviance
+residual objective with uniform parameter-bound support, at $T=1$. Fixed
+Gaussian covariance makes its log likelihood $-\chi^2/2$ up to a constant;
+Poisson deviance likewise differs from the count log likelihood by a constant.
+Dataset weights other than one weight those likelihood contributions. This
+sampler does not inherit a robust optimizer loss. Choose and validate the
+measurement likelihood before interpreting its intervals.
 
 ```python
 from nfit import SamplerConfig, sample_problem_parameters
@@ -350,12 +435,31 @@ posterior = sample_problem_parameters(
 ```
 
 An ensemble step evaluates the model once per walker. Analytic least-squares
-Jacobians do not accelerate those likelihood calls. Inspect acceptance,
-autocorrelation, walker traces, and parameter correlations before using
-credible intervals.
+Jacobians do not accelerate those likelihood calls. The random seed controls
+both initial walker positions and the sampler's transition proposals. Saved
+results retain a JSON-safe transition RNG state. When resuming from the final
+walkers, pass `initial_random_state=previous.metadata["random_state"]`; GUI
+append does this automatically. A resumed chain continues the random stream
+instead of reusing the initial seed.
 
-Raw chains may be reinterpreted with different burn-in and thinning or extended
-from their final walker positions. GUI behavior is described in
+An ensemble with no finite starting target fails before recording samples and
+reports the underlying model/configuration error.
+
+Raw chains use shape `(step, walker, parameter)`. Burn-in and thinning always
+select `chain[burn_in::thin]`; discarding the whole chain produces no retained
+samples. Appending recomputes correlation diagnostics on the combined raw
+chain after burn-in. Scientific samples and log probabilities are stored as
+float64; legacy float32 sample records remain readable but cannot recover
+precision lost when they were originally saved.
+
+Inspect acceptance, walker traces, and parameter correlations. Integrated
+autocorrelation estimates and effective sample counts are local diagnostics;
+even a chain longer than fifty estimated correlation times does not establish
+that remote modes were explored. See the
+[emcee convergence discussion](https://emcee.readthedocs.io/en/stable/tutorials/autocorr/).
+Only the untempered posterior sample store supplies posterior uncertainties.
+After promoting an exploration candidate and refining it, run a fresh posterior
+chain at the new solution. GUI controls are described in
 [Models and fitting](gui_fitting.md#posterior-sampling).
 
 ## Extension contract

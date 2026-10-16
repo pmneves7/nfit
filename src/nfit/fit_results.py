@@ -6,48 +6,36 @@ from typing import Any
 
 import numpy as np
 
-from .fitting import SamplingResult
+from .fit_sampling import sampling_result_from_dict, sampling_result_is_posterior
 from .pipeline import FitTimelineEntry
-from .project_io import _decode_float_array
 
 POSTERIOR_DISPLAY_KEY = "posterior_display"
 
 
-def sampling_result_from_dict(payload: Any) -> SamplingResult | None:
-    """Decode one serialized posterior sampling result."""
+def sampling_payload_info(payload: Any) -> dict[str, Any]:
+    """Inspect encoded sampling shapes without decompressing scientific arrays."""
 
     if not isinstance(payload, dict):
-        return None
-    try:
-        samples = _decode_float_array(payload["samples"])
-    except Exception:
-        return None
-    log_probability = None
-    if isinstance(payload.get("log_probability"), dict):
-        try:
-            log_probability = _decode_float_array(payload["log_probability"])
-        except Exception:
-            log_probability = None
-    chain = None
-    if isinstance(payload.get("chain"), dict):
-        try:
-            chain = _decode_float_array(payload["chain"])
-        except Exception:
-            chain = None
-    log_probability_chain = None
-    if isinstance(payload.get("log_probability_chain"), dict):
-        try:
-            log_probability_chain = _decode_float_array(payload["log_probability_chain"])
-        except Exception:
-            log_probability_chain = None
-    return SamplingResult(
-        samples=samples,
-        variable_names=[str(name) for name in payload.get("variable_names", [])],
-        log_probability=log_probability,
-        metadata=dict(payload.get("metadata", {})),
-        chain=chain,
-        log_probability_chain=log_probability_chain,
-    )
+        return {}
+    metadata = payload.get("metadata", {})
+    if isinstance(metadata, dict) and (
+        metadata.get("purpose", "posterior") != "posterior"
+        or metadata.get("temperature", 1.0) != 1.0
+    ):
+        return {}
+    samples = payload.get("samples")
+    shape = samples.get("shape", []) if isinstance(samples, dict) else []
+    chain = payload.get("chain")
+    chain_shape = chain.get("shape", []) if isinstance(chain, dict) else []
+    if len(shape) != 2:
+        return {}
+    return {
+        "samples": int(shape[0]),
+        "variable_names": [str(name) for name in payload.get("variable_names", [])],
+        "chain_steps": int(chain_shape[0]) if len(chain_shape) == 3 else 0,
+        "chain_walkers": int(chain_shape[1]) if len(chain_shape) == 3 else 0,
+        "has_chain": len(chain_shape) == 3 and chain_shape[0] > 0,
+    }
 
 
 def posterior_display_options(fit_entry: FitTimelineEntry) -> dict[str, Any]:
@@ -81,8 +69,21 @@ def posterior_correlation_matrix(
 ) -> tuple[np.ndarray, list[str]] | None:
     """Return the finite-sample emcee correlation matrix for display."""
 
+    info = sampling_payload_info(fit_entry.metadata.get("posterior_samples"))
+    if not info:
+        return None
+    names = info["variable_names"]
+    posterior = fit_entry.goodness.get("posterior", {})
+    correlation = posterior.get("correlation") if isinstance(posterior, dict) else None
+    if isinstance(correlation, dict) and names:
+        try:
+            matrix = np.asarray([[correlation[name][other] for other in names] for name in names], dtype=float)
+            if np.all(np.isfinite(matrix)):
+                return matrix, names
+        except (KeyError, TypeError, ValueError):
+            pass
     result = sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
-    if result is None:
+    if result is None or not sampling_result_is_posterior(result):
         return None
     samples = np.asarray(result.samples, dtype=float)
     names = list(result.variable_names)

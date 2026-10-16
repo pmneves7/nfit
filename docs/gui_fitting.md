@@ -195,6 +195,11 @@ bin centers. The composite remains one effective dataset, so per-dataset
 parameter sharing applies to the composite as a whole. Keep separate datasets
 when each temperature needs independently fitted parameters.
 
+Neutron Heisenberg-RPA sum-rule closures currently require one temperature per
+fit dataset. Keep the temperatures as separate datasets when using a closure;
+the magnetization closure path also supports temperature sweeps within one
+dataset.
+
 For a temperature series, keep crystal structure and other genuinely common
 parameters global. Use per-dataset or grouped sharing for quantities such as a
 static susceptibility or linewidth when their temperature dependence is to be
@@ -235,9 +240,13 @@ ordinary model configuration and is saved in the project.
 
 ## Fit timeline
 
-The **Fits** tree preserves the scientific state associated with each result.
-Selecting a state restores its datasets, masks, models, parameter settings,
-constraints, weights, and scales.
+The **Fits** tree records fitting settings associated with each result.
+Selecting a state restores recorded masks, model settings, parameters,
+constraints, weights, and scales for datasets and models still present in the
+workspace. It does not freeze underlying data or every group reduction setting,
+or fully recreate datasets and models added or removed since the fit.
+Prepared-target fingerprints protect newly recorded chains from continuation
+and candidate promotion after their scientific target changes.
 
 Opening a project does not count as selecting a historical state. The saved
 live workspace is loaded unchanged, and the remembered fit entry is highlighted
@@ -318,7 +327,14 @@ Each fit result stores:
 - covariance or correlation information;
 - model and residual channels;
 - optimizer and posterior settings; and
-- the complete scientific-state snapshot.
+- a snapshot of fit settings, model parameters, and dataset processing choices.
+
+Fit history does not freeze the underlying dataset arrays or source files.
+New sampling records fingerprint the prepared observations and model target.
+Appending samples or promoting an exploration candidate requires a matching
+target; changed data or model settings require a fresh fit and search. Legacy
+chains without this provenance remain inspectable but require a fresh posterior
+run before they can be appended.
 
 Parameters that end at a configured bound are named in the fit status and
 shown in red. Stored model and residual channels can be opened in the data
@@ -346,11 +362,49 @@ sample. Neither option changes the saved least-squares snapshot.
 If a terminated emcee run has produced samples, nfit keeps the partial raw
 chain so it can be inspected or extended.
 
+Burn-in discards raw steps before thinning selects every Nth remaining step.
+Discarding the whole chain produces an empty retained sample set. New sampling
+records preserve double precision, including walker positions used to continue
+a chain. Autocorrelation estimates are heuristic; a short chain or a favorable
+acceptance fraction does not demonstrate mixing between distant modes.
+
+## Parameter exploration
+
+**Parameter exploration (optimization only)** is a separate search attached to
+a saved fit result. Its dimensionless **Search temperature** $T>1$ flattens the
+optimizer objective $C(\boldsymbol\theta)$ to a target proportional to
+$\exp[-C(\boldsymbol\theta)/T]$. For ordinary least squares,
+$C=\chi^2/2$; robust fits retain their configured robust loss and loss scale.
+This temperature is unrelated to the sample temperature in kelvin. Exploration
+samples never supply posterior uncertainties, correlations, or result-table
+substitutions.
+
+**Across finite parameter bounds** initializes walkers throughout the configured
+bounds and requires finite bounds for every varied parameter. **Near the saved
+fit** permits a local initialization when broad bounds are unavailable; it may
+miss distant modes. Set walkers, steps, and a seed, then choose **Run exploration**.
+The latest search and its settings are stored separately from the official
+posterior; rerunning replaces only that exploration.
+
+**Promote and optimize** freshly evaluates the candidate and saved fit with the
+original optimizer objective. A candidate must improve that objective and match
+the prepared target before it creates an editable history state and starts a
+new least-squares fit. This also carries fitted dataset scale factors into the
+new starting state. The new fit does not automatically repeat exploration or
+posterior sampling. Inspect its result and run the ordinary untempered
+posterior sampler when uncertainty estimates are needed.
+
+**Copy exploration script** exports editable Python using the same public
+exploration and objective-evaluation APIs. The script reconstructs the selected
+fit settings, runs the search, and can optimize its improved candidate.
+
 ## Diagnostics
 
 **Fit diagnostics** displays covariance or correlation heatmaps. With emcee
 samples it also provides walker traces and corner-style posterior plots.
 Editable compact labels affect only these plots.
+Label edits mark the project as changed. Diagnostic tabs build their plots on
+demand, and closing the diagnostics window releases its figures.
 
 Trace plots mark the selected burn-in. Corner plots show distributions,
 best-fit references, and symmetric or asymmetric reported intervals. Inspect
