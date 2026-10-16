@@ -133,7 +133,11 @@ def is_mapped_array(value: Any) -> bool:
 
 
 def array_storage_nbytes(value: Any) -> ArrayStorageBytes:
-    """Count distinct ndarray bytes, separating heap and mapped storage."""
+    """Count retained numerical bytes, separating heap and mapped storage.
+
+    Compressed ``__ndarray__`` JSON records retain their base64 text on the
+    heap. Count that ASCII buffer without decoding its numerical contents.
+    """
 
     heap, mapped = _storage_nbytes(value, seen=set(), seen_storage=set())
     return ArrayStorageBytes(heap=heap, mapped=mapped)
@@ -144,6 +148,8 @@ def array_storage_owners(value: Any) -> tuple[np.ndarray, ...]:
 
     Following the actual storage owner lets weak accounting survive replacement
     of a data container while another container still holds an array view.
+    Encoded JSON strings are counted by the size/allocation APIs, but are not
+    ndarray owners and cannot participate in weak ndarray-lifetime tracking.
     """
 
     owners: dict[tuple[str, int], np.ndarray] = {}
@@ -156,8 +162,9 @@ def array_storage_allocations(value: Any) -> dict[tuple[str, int], int]:
 
     Identities are valid while the inspected payloads remain alive. Use this
     metadata within one inventory scan, not as a persistent content signature.
-    Array views share their heap owner or mapping identity, just as in
-    :func:`array_storage_nbytes`.
+    Array views share their heap owner or mapping identity. Encoded array
+    records share their base64 string identity, just as in
+    :func:`array_storage_nbytes`. Ordinary metadata strings are excluded.
     """
     allocations: dict[tuple[str, int], int] = {}
     _storage_nbytes(value, seen=set(), seen_storage=set(), allocations=allocations)
@@ -451,8 +458,19 @@ def _storage_nbytes(
         if allocations is not None:
             allocations[("buffer", identity)] = int(value.nbytes)
         return int(value.nbytes), 0
+    heap = mapped = 0
     children: Any = ()
     if isinstance(value, Mapping):
+        encoded = value.get("data") if value.get("__ndarray__") else None
+        if isinstance(encoded, str):
+            token = ("encoded", id(encoded))
+            if token not in seen_storage:
+                seen_storage.add(token)
+                # Base64 is ASCII, so its character count is its retained
+                # payload size. Do not allocate an encoded copy or inflate it.
+                heap = len(encoded)
+                if allocations is not None:
+                    allocations[token] = heap
         children = value.values()
     elif isinstance(value, (list, tuple, set, frozenset)):
         children = value
@@ -469,7 +487,6 @@ def _storage_nbytes(
                 and field.name == "dataset"
             )
         )
-    heap = mapped = 0
     for child in children:
         child_heap, child_mapped = _storage_nbytes(
             child, seen=seen, seen_storage=seen_storage, owners=owners, allocations=allocations

@@ -4392,7 +4392,15 @@ def latest_fit_channels(group: DataGroup, dataset_name: str) -> dict[str, Any] |
         payload = entry.channels.get(dataset_name)
         if payload:
             latest = payload
-    return latest
+    if latest is None:
+        return None
+    # Public callers historically receive arrays. Decode only this dataset's
+    # display channels while retaining runtime metadata and compressed history.
+    channels = dict(latest)
+    for channel_name in FIT_CHANNEL_NAMES:
+        if channel_name in channels:
+            channels[channel_name] = _fit_channel_array(channels[channel_name])
+    return channels
 
 
 def _group_has_fit_channels(group: DataGroup) -> bool:

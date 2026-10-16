@@ -19,6 +19,11 @@ release. It can be zero when another cache still owns the arrays. Select related
 rows together to release all those owners; individual freed amounts are not
 additive. The details panel lists parents, sharing resources and viewers.
 
+Fit-result RAM includes the retained compressed payloads for saved model and
+residual channels, posterior chains, and parameter explorations. The inventory
+counts shared payloads once without decompressing them. These records are
+project content and cannot be unloaded as disposable caches.
+
 **Project cache** reports compressed storage in the saved `.nfit` archive;
 **Temporary cache** reports session staging. Multiple rows can reference one
 saved member. Reduced events stay on disk and are streamed in bounded chunks,

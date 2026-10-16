@@ -339,11 +339,19 @@ run before they can be appended.
 Parameters that end at a configured bound are named in the fit status and
 shown in red. Stored model and residual channels can be opened in the data
 viewer while their coordinates remain compatible with the current dataset
-view.
+view. Opening a project keeps historical fit and residual arrays compressed;
+the viewer decodes the selected channels when needed.
 
 Fit reports and result tables round displayed uncertainties for readability;
 the project and generated scripts retain full floating-point values. See
 [Fit reports](fit_reports.md) for export details.
+
+Scripts should use `entry.channel_array(dataset_name, "fit")` or
+`entry.channel_array(dataset_name, "residual")` to read a `FitTimelineEntry`
+channel. Direct entries in `entry.channels` may now contain compressed records
+instead of arrays after project loading. The accessor accepts both
+representations, returns `None` for missing or invalid channels, and leaves the
+stored payload unchanged.
 
 ## Posterior sampling
 

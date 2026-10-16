@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from .analysis.core import AnalysisEntry
 
 
@@ -95,9 +97,11 @@ class FitTimelineEntry:
 
     ``channels`` stores per-dataset fitted-model channels computed when the
     fit ran, keyed by dataset name. Each entry holds ``"fit"`` and
-    ``"residual"`` float arrays aligned with the dataset's view (grid-shaped
-    for MDHisto data, one value per point for point lists) so viewers never
-    need to re-evaluate a potentially expensive model.
+    ``"residual"`` display arrays or compressed payloads aligned with the
+    dataset's view (grid-shaped for MDHisto data, one value per point for point
+    lists). Use :meth:`channel_array` to read either representation without
+    re-evaluating the model. Loaded histories retain their compressed payloads
+    until a channel is requested.
     """
 
     name: str
@@ -112,6 +116,15 @@ class FitTimelineEntry:
     children: list[FitTimelineEntry] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid4().hex)
+
+    def channel_array(self, dataset_name: str, channel_name: str) -> np.ndarray | None:
+        """Read one fit/residual array without changing its stored representation.
+
+        Return ``None`` when the channel is absent or cannot be decoded.
+        """
+        from .fit_channels import fit_channel_array
+
+        return fit_channel_array(self.channels.get(dataset_name, {}).get(channel_name))
 
 
 @dataclass

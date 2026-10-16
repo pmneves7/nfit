@@ -56,6 +56,8 @@ def test_raw_geometry_service_is_authoritative_and_has_no_reducer_dependencies()
 
 
 GUI_INDEPENDENT_MODULES = (
+    PACKAGE_ROOT / "fit_channels.py",
+    PACKAGE_ROOT / "fit_optimizers.py",
     PACKAGE_ROOT / "fit_sampling.py",
     PACKAGE_ROOT / "fit_exploration.py",
     PACKAGE_ROOT / "fit_provenance.py",

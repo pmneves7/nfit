@@ -1,8 +1,24 @@
 import copy
 
+import numpy as np
 import pytest
 
 from nfit import DataGroup, DatasetEntry, PointData4D
+
+
+def test_fit_history_channel_accessor_supports_loaded_and_live_results():
+    from nfit.fit_channels import _encode_float_array
+    from nfit.pipeline import FitTimelineEntry
+
+    values = np.array([1.0, 2.0, 3.0])
+    encoded = _encode_float_array(values)
+    entry = FitTimelineEntry("Fit", channels={"scan": {"fit": encoded, "residual": values}})
+
+    np.testing.assert_array_equal(entry.channel_array("scan", "fit"), values)
+    np.testing.assert_array_equal(entry.channel_array("scan", "residual"), values)
+    assert entry.channels["scan"]["fit"] is encoded
+    assert entry.channel_array("missing", "fit") is None
+    assert entry.channel_array("scan", "missing") is None
 
 
 def test_data_group_selects_raw_and_prepared_data():

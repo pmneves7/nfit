@@ -3,6 +3,8 @@
 A project keeps its settings, saved plots, analysis outputs, reduced events and
 optional cached histograms in one `.nfit` file. Numerical artifacts remain lazy:
 opening project metadata does not decode its event or histogram arrays.
+Saved fit and residual channels also remain compressed until a viewer requests
+them. Saving again reuses their encoded payloads without expanding the arrays.
 Storage changes do not alter reduction, binning, precision or uncertainty rules.
 
 ## Incremental storage prototype

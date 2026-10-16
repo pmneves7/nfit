@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-import base64
 import copy
 import json
-import zlib
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
-
 from .analysis.core import AnalysisEntry, AnalysisOutputRef, AnalysisResultRecord
+from .fit_channels import (  # noqa: F401 - compatibility re-exports
+    FIT_CHANNEL_NAMES,
+    _decode_float_array,
+    _encode_float_array,
+    _fit_channel_array,
+    _fit_channels_from_dict,
+    _fit_channels_to_dict,
+    fit_channel_array,
+)
 from .model_registry import (
     default_model_config,
     default_model_fit_parameters,
@@ -40,7 +45,6 @@ from .project_history import (
 )
 from .project_models import reconcile_model_orbit_parameters
 
-FIT_CHANNEL_NAMES = ("fit", "residual")
 _binning_signatures_match = binning_signatures_match
 
 
@@ -50,45 +54,6 @@ class NfitProject:
 
     data_groups: list[DataGroup] = field(default_factory=list)
     settings: dict[str, Any] = field(default_factory=dict)
-
-
-def _fit_channel_array(value: Any) -> np.ndarray | None:
-    """Return a stored fit channel as a float array, decoding if needed."""
-
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        try:
-            return _decode_float_array(value)
-        except (KeyError, ValueError, TypeError, zlib.error):
-            return None
-    return np.asarray(value, dtype=float)
-
-
-def _encode_float_array(value: Any) -> dict[str, Any]:
-    """Encode a float array as compressed base64 for project JSON.
-
-    Values are stored as float32: fit and residual channels are visualization
-    aids, and halving the payload matters more than the last digits.
-    """
-
-    if isinstance(value, dict) and value.get("__ndarray__"):
-        return value
-    array = np.asarray(value, dtype=np.float32)
-    return {
-        "__ndarray__": True,
-        "dtype": "float32",
-        "shape": [int(size) for size in array.shape],
-        "data": base64.b64encode(zlib.compress(array.tobytes())).decode("ascii"),
-    }
-
-
-def _decode_float_array(payload: dict[str, Any]) -> np.ndarray:
-    """Decode an array stored by :func:`_encode_float_array`."""
-
-    raw = zlib.decompress(base64.b64decode(payload["data"]))
-    array = np.frombuffer(raw, dtype=np.dtype(str(payload.get("dtype", "float32"))))
-    return array.reshape([int(size) for size in payload["shape"]]).astype(float)
 
 
 def _project_to_dict(project: NfitProject) -> dict[str, Any]:
@@ -422,41 +387,6 @@ def _fit_entry_to_dict(fit_entry: FitTimelineEntry) -> dict[str, Any]:
     }
 
 
-def _fit_channels_to_dict(channels: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    for dataset_name, entry in (channels or {}).items():
-        encoded: dict[str, Any] = {"kind": str(entry.get("kind", "points"))}
-        if entry.get("visualization_only"):
-            encoded["visualization_only"] = True
-        if entry.get("fit_channel"):
-            encoded["fit_channel"] = str(entry["fit_channel"])
-        for channel_name in FIT_CHANNEL_NAMES:
-            if entry.get(channel_name) is not None:
-                encoded[channel_name] = _encode_float_array(entry[channel_name])
-        payload[str(dataset_name)] = encoded
-    return payload
-
-
-def _fit_channels_from_dict(payload: Any) -> dict[str, dict[str, Any]]:
-    channels: dict[str, dict[str, Any]] = {}
-    if not isinstance(payload, dict):
-        return channels
-    for dataset_name, entry in payload.items():
-        if not isinstance(entry, dict):
-            continue
-        decoded: dict[str, Any] = {"kind": str(entry.get("kind", "points"))}
-        if entry.get("visualization_only"):
-            decoded["visualization_only"] = True
-        if entry.get("fit_channel"):
-            decoded["fit_channel"] = str(entry["fit_channel"])
-        for channel_name in FIT_CHANNEL_NAMES:
-            array = _fit_channel_array(entry.get(channel_name))
-            if array is not None:
-                decoded[channel_name] = array
-        channels[str(dataset_name)] = decoded
-    return channels
-
-
 def _fit_entry_from_dict(payload: dict[str, Any]) -> FitTimelineEntry:
     return FitTimelineEntry(
         name=str(payload.get("name", "Fit")),
@@ -467,7 +397,7 @@ def _fit_entry_from_dict(payload: dict[str, Any]) -> FitTimelineEntry:
         optimizer=str(payload.get("optimizer", "least_squares")),
         optimizer_config=dict(payload.get("optimizer_config", {})),
         goodness=dict(payload.get("goodness", {})),
-        channels=_fit_channels_from_dict(payload.get("channels")),
+        channels=_fit_channels_from_dict(payload.get("channels"), decode_arrays=False),
         children=[_fit_entry_from_dict(child) for child in payload.get("children", [])],
         metadata=dict(payload.get("metadata", {})),
         id=str(payload.get("id") or FitTimelineEntry("").id),

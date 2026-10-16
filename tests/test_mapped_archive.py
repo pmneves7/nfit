@@ -19,6 +19,7 @@ from nfit.mapped_archive import (
     MappedWorkspaceError,
     array_storage_allocations,
     array_storage_nbytes,
+    array_storage_owners,
     is_mapped_array,
     read_mapped_array_archive,
 )
@@ -134,6 +135,52 @@ def test_storage_allocation_identities_follow_shared_heap_and_mapping_owners(tmp
     assert sum(first.values()) == heap.nbytes + mapped.nbytes
     assert {kind for kind, _ in first} == {"heap", "mapped"}
     assert array_storage_allocations(np.empty(0)) == {}
+
+
+def test_encoded_array_storage_is_lazy_and_ignores_metadata_strings(monkeypatch):
+    from nfit.fit_sampling import SamplingResult, sampling_result_to_dict
+
+    result = SamplingResult(samples=np.arange(100.).reshape(-1, 1), variable_names=["a"])
+    encoded = sampling_result_to_dict(result)["samples"]
+    expected = len(encoded["data"])
+
+    def unexpected_decode(*args, **kwargs):
+        pytest.fail("storage accounting must not decode encoded arrays")
+
+    monkeypatch.setattr("base64.b64decode", unexpected_decode)
+    monkeypatch.setattr("zlib.decompress", unexpected_decode)
+    payload = {
+        "encoded": encoded,
+        "notes": "metadata" * 1000,
+        "unmarked": {"data": encoded["data"], "shape": [100, 1]},
+    }
+    storage = array_storage_nbytes(payload)
+    assert storage.heap == expected
+    assert storage.mapped == 0
+    assert array_storage_allocations(payload) == {
+        ("encoded", id(encoded["data"])): expected,
+    }
+    assert array_storage_owners(payload) == ()
+    assert array_storage_nbytes(payload["unmarked"]).total == 0
+
+
+def test_encoded_storage_deduplicates_backing_strings_and_preserves_array_owners():
+    from nfit.fit_sampling import SamplingResult, sampling_result_to_dict
+
+    heap = np.arange(100.)
+    encoded = sampling_result_to_dict(
+        SamplingResult(samples=heap[:, None], variable_names=["a"])
+    )["samples"]
+    shared = dict(encoded)
+    distinct = dict(encoded, data=(" " + encoded["data"])[1:])
+    assert distinct["data"] == encoded["data"]
+    assert distinct["data"] is not encoded["data"]
+    payload = (encoded, shared, distinct, heap[:10], heap[20:])
+    expected = heap.nbytes + 2 * len(encoded["data"])
+    assert array_storage_nbytes(payload).total == expected
+    assert sum(array_storage_allocations(payload).values()) == expected
+    owners = array_storage_owners(payload)
+    assert len(owners) == 1 and owners[0] is heap
 
 
 def test_disk_space_is_checked_before_any_member_is_inflated(tmp_path, monkeypatch):

@@ -403,6 +403,56 @@ def test_models_analysis_outputs_and_fit_channels_are_in_inventory(resources):
     assert snapshot.used_bytes == expected
 
 
+@pytest.mark.parametrize("purpose", ["posterior", "exploration"])
+def test_encoded_sampling_only_history_is_counted_without_decoding(resources, monkeypatch, purpose):
+    from nfit.fit_sampling import SamplingResult, sampling_result_to_dict
+
+    samples = np.arange(100.).reshape(50, 2)
+    encoded = sampling_result_to_dict(SamplingResult(
+        samples=samples, variable_names=["a", "b"],
+        log_probability=np.arange(50.), chain=samples.reshape(10, 5, 2),
+        log_probability_chain=np.arange(50.).reshape(10, 5),
+        metadata={"purpose": purpose},
+    ))
+    resources.group.fits.append(FitTimelineEntry(
+        "Sampled fit", metadata={f"{purpose}_samples": encoded, "notes": "text" * 1000},
+    ))
+    expected = sum(len(value["data"]) for value in encoded.values()
+                   if isinstance(value, dict) and value.get("__ndarray__"))
+
+    def unexpected_decode(*args, **kwargs):
+        pytest.fail("resource inventory must not inflate fit history")
+
+    monkeypatch.setattr("base64.b64decode", unexpected_decode)
+    monkeypatch.setattr("zlib.decompress", unexpected_decode)
+    snapshot = resources.manager.snapshot()
+    row = row_of(snapshot, kind="Fit results")
+    assert row.ram_bytes == expected
+    assert snapshot.used_bytes == expected
+    assert not row.can_unload and not row.can_delete
+
+
+def test_history_resources_deduplicate_shared_encoded_sampling_and_channels(resources):
+    from nfit.fit_sampling import SamplingResult, sampling_result_to_dict
+
+    encoded = sampling_result_to_dict(SamplingResult(
+        samples=np.arange(100.).reshape(-1, 1), variable_names=["a"],
+    ))
+    resources.group.fits.append(FitTimelineEntry(
+        "Sampled fit", metadata={"posterior_samples": encoded},
+        channels={"Sample": {"fit": dict(encoded["samples"])}},
+    ))
+    resources.project.data_groups.append(DataGroup("Copied history", fits=[FitTimelineEntry(
+        "Copied fit", metadata={"exploration_samples": encoded},
+    )]))
+    expected = len(encoded["samples"]["data"])
+    snapshot = resources.manager.snapshot()
+    rows = [row for row in snapshot.rows if row.kind == "Fit results"]
+    assert len(rows) == 2
+    assert all(row.ram_bytes == expected for row in rows)
+    assert snapshot.used_bytes == expected
+
+
 def test_unload_model_cache_releases_viewers_using_model_payload(resources):
     model = ModelComponentSpec("Mode")
     model._nfit_electronic_model_cache = {"evaluated": np.arange(6.0)}

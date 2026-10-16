@@ -76,6 +76,13 @@ parameter reconciliation. The project explorer keeps compatibility wrappers
 for public APIs; widgets and plotting windows remain presentation modules
 rather than owners of scientific state.
 
+`fitting` assembles fit problems and evaluates models and measurement objectives.
+`fit_optimizers` owns least-squares execution, numerical derivatives, and local
+covariance calculation. `fit_sampling` and `fit_exploration` own posterior
+sampling and separate tempered searches. `fit_channels` handles compressed
+visualization arrays; scientific chains retain their separate double-precision
+storage in `fit_sampling`.
+
 `dataset_archive` reads and writes prepared numerical payloads without importing
 the project preparation facade. `project_data.save_dataset_file` chooses the
 prepared view or original data and passes it to the archive writer. Existing

@@ -191,7 +191,10 @@ different Python.
   environments, document launching, and asynchronous launch-error presentation.
 - `src/nfit/fit_config.py`, `fit_config_electronic.py`, and
   `fit_config_heisenberg_rpa.py`: model-component compilation and parameter mapping.
-- `src/nfit/fitting.py`: optimizer-facing fitting framework.
+- `src/nfit/fitting.py`: optimizer-facing fitting framework;
+  `fit_optimizers.py` owns least-squares execution and numerical helpers.
+- `src/nfit/fit_channels.py`: fit/residual visualization codecs and lazy
+  historical channel loading, re-exported by `project_io.py` for compatibility.
 - `src/nfit/fit_sampling.py`, `fit_exploration.py`, `fit_provenance.py`, and
   `fit_settings.py`: scientific chain storage, posterior windows, separate
   tempered searches, target identity, and shared optimizer configuration.
