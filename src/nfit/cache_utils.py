@@ -43,9 +43,14 @@ def dataset_content_signature(dataset: Any) -> tuple[Any, ...]:
         reduction = ()
         if metadata.get("importer") == "macs_nexus":
             from .macs_reduction import MACS_REDUCTION_VERSION
+            from .macs_vanadium import vanadium_source_provenance
 
+            options = metadata.get("import_options", {})
             reduction = ("macs", MACS_REDUCTION_VERSION,
-                         json.dumps(metadata.get("import_options", {}), sort_keys=True, default=str))
+                         json.dumps(options, sort_keys=True, default=str))
+            if str(options.get("stream", "spec")).lower() == "spec" and options.get("vanadium_files"):
+                reduction += ("macs_vanadium", json.dumps(
+                    vanadium_source_provenance(options["vanadium_files"]), sort_keys=True))
         path = Path(str(source)).expanduser()
         try:
             stat = path.stat()

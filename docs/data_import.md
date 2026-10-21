@@ -260,6 +260,7 @@ The **Reduction** tab exposes the complete MACS importer configuration after
 import: monitor target/response/reference wavevector, ki/kf correction,
 optional higher-order monitor model and incident-filter state, incident/final
 energy policies and overrides, A3 offset, UB, recorded detector corrections,
+vanadium energy-scan files and their A4 exclusion angle,
 analyzer alignment and occupancy thresholds, and explicit channel masks.
 Shared settings can be overridden per run. Edits unload affected source arrays
 and mark dependent binnings stale; the next preparation reduces those sources
@@ -270,8 +271,56 @@ reproduce the same choices without Qt, DAVE or Mantid.
 Default detector sensitivity is equal across channels. Recorded
 `detectorEfficiency` factors are opt-in multiplicative corrections, intended
 only for validated calibration. Detector masks remain independent of this
-choice. An experiment-specific vanadium calibration is not inferred from
-unperformed measurements.
+choice.
+
+For a measured calibration, select **SPEC vanadium energy scans** in the
+**Reduction** tab and choose one or more MACS NeXus files. Complementary kidney
+positions supply channels obscured by the direct beam in another file. The
+**Vanadium A4 exclusion half-angle** defaults to 15 degrees: a calibration
+channel with mean scattering angle between -15 and +15 degrees, inclusive,
+is ignored for that file. This exclusion applies to the vanadium observations;
+sample channel masks are separate. Clear the file list to disable calibration.
+Recorded detector factors and vanadium factors are alternative calibrations
+and cannot both be enabled.
+
+All selected files must scan the same energy axis (Ei or Ef) with the same
+fixed energy to within 0.01 meV. Use scans with matching instrument conditions.
+As in DAVE, a Gaussian plus constant background is fitted to each channel's
+counts divided by monitor, using the scanned monochromator or analyzer Bragg
+angle in degrees. The peak center is free. The integrated Gaussian area
+excludes the constant background. Available areas are averaged equally across
+files before inversion; the resulting multiplicative correction factors have
+mean one over calibrated channels. No relative rescaling of individual scans
+or Debye-Waller correction is applied. See the
+[calibration convention](physics_conventions.md#macs-vanadium-energy-scan-calibration).
+
+Channels without a usable fit in any selected file are masked in SPEC, with
+the reason recorded. If no channels can be calibrated, reduction fails with
+an error. DIFF is unaffected. Counts and their standard deviations receive
+the same factor in the displayed intensity; the retained counting estimator
+preserves original counts and divides exposure by that factor. Calibration
+uncertainty is treated as negligible known exposure. Fit diagnostics, factors,
+excluded channels, and source identities are recorded in
+`data.metadata["macs_vanadium"]`. Changed calibration files invalidate cached
+fits, source arrays, and dependent histograms when next prepared.
+
+The same settings and calibration diagnostics are available without Qt:
+
+```python
+from nfit.macs_vanadium import calculate_macs_vanadium
+from nfit.reduction_recipes import set_reduction_settings
+
+files = ["/data/vanadium_kidney_1.nxs", "/data/vanadium_kidney_2.nxs"]
+calibration = calculate_macs_vanadium(files, a4_mask_deg=15.0)
+print(calibration["factors"], calibration["missing_channels"])
+set_reduction_settings(spec_group, {
+    "vanadium_files": files,
+    "vanadium_a4_mask_deg": 15.0,
+})
+```
+
+The **Copy reduction recipe script** action preserves the complete file list,
+A4 exclusion, and per-run overrides. Paths are portable project dependencies.
 
 MACS defaults apply ki/kf **and** the incident monitor's 1/v response correction.
 The reference wavevector is 1 Å$^{-1}$, an arbitrary intensity scale. The two

@@ -685,11 +685,13 @@ def _load_registered_importer_dataset(
     dataset.metadata["importer"] = importer_name
     dataset.metadata["import_status"] = "loaded"
     if importer_name == "macs_nexus":
+        if "macs_vanadium" not in data.metadata:
+            dataset.metadata.pop("macs_vanadium", None)
         dataset.metadata.update({key: copy.deepcopy(data.metadata[key]) for key in (
             "instrument", "detector_stream", "import_options", "macs_reduction_version",
             "incident_energy_source", "fixed_final_energy_source", "a3_offset_deg",
             "monitor_response", "ki_kf_corrected", "incident_filter_states", "incident_energy",
-            "fixed_final_energy_meV",
+            "fixed_final_energy_meV", "macs_vanadium", "vanadium_sensitivity_applied",
         ) if key in data.metadata})
         imported_spectral = data.metadata.get("dataset_parameters", {}).get(SPECTRAL_CHANNEL_CONFIG_KEY)
         current_spectral = dataset.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY)
@@ -853,6 +855,8 @@ def _artifact_source_load(
         transferred.member if transferred is not None else artifact_path,
         **({"expected_identity": identity} if identity is not None else {}),
     )
+    if _macs_reduction_is_stale(dataset, loaded):
+        return _SOURCE_NOT_HANDLED
     loaded = dataset.replace_data(loaded, source_backed=True)
     dataset.metadata["import_status"] = "loaded"
     dataset.metadata.pop("import_error", None)
@@ -1147,6 +1151,23 @@ def dataset_entry_from_path(
     return entry
 
 
+def _macs_reduction_is_stale(dataset: DatasetEntry, data: Any) -> bool:
+    """Reject source-backed MACS arrays with obsolete reduction dependencies."""
+    if dataset.metadata.get("importer") != "macs_nexus" or not isinstance(data, PointData4D):
+        return False
+    from .macs_reduction import MACS_REDUCTION_VERSION
+    from .macs_vanadium import vanadium_source_provenance
+
+    if data.metadata.get("macs_reduction_version") != MACS_REDUCTION_VERSION:
+        return True
+    options = dataset.metadata.get("import_options", {})
+    if not isinstance(options, dict) or str(options.get("stream", "spec")).lower() != "spec":
+        return False
+    files = options.get("vanadium_files", [])
+    calibration = data.metadata.get("macs_vanadium", {})
+    return bool(files) and calibration.get("source_files") != vanadium_source_provenance(files)
+
+
 def _ensure_dataset_data_loaded(
     dataset: DatasetEntry,
     *,
@@ -1156,11 +1177,12 @@ def _ensure_dataset_data_loaded(
 ) -> Any:
     """Return canonical loaded data, using one path for all lazy consumers."""
 
-    if dataset.metadata.get("importer") == "macs_nexus" and isinstance(dataset.data, PointData4D) and dataset.data_matches_source:
-        from .macs_reduction import MACS_REDUCTION_VERSION
-
-        if dataset.data.metadata.get("macs_reduction_version") != MACS_REDUCTION_VERSION:
-            dataset.unload_data()
+    if dataset.data_matches_source and _macs_reduction_is_stale(dataset, dataset.data):
+        dataset.unload_data()
+        return _load_dataset_source(
+            dataset, handler_names=("registered_importer",),
+            dataset_file_loader=dataset_file_loader, progress_callback=progress_callback,
+        )
     if dataset.data is not None:
         return dataset.data
     return _load_dataset_source(

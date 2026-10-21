@@ -31,6 +31,34 @@ def _tree(tmp_path, name):
     return experiment, source, calibration, project
 
 
+def test_macs_vanadium_files_relocate_in_settings_overrides_and_provenance(tmp_path):
+    experiment, source, calibration, project = _tree(tmp_path, "old")
+    payload = {"data_groups": [{"metadata": {
+        "macs": {"vanadium_files": [str(calibration), str(source)]},
+        "reduction_recipe": {"shared_defaults": {"vanadium_files": [str(calibration)]}},
+    }, "datasets": [{"metadata": {
+        "import_options": {"vanadium_files": [str(calibration)]},
+        "reduction_overrides": {"vanadium_files": [str(source)]},
+        "macs_vanadium": {"source_files": [{"path": str(calibration), "available": True}]},
+    }}]}]}
+    saved = portable_project_manifest(payload, project)
+    assert saved["data_groups"][0]["metadata"]["macs"]["vanadium_files"] == [
+        "../calibrations/vanadium.nxs", "../../nexus/run.nxs"]
+    relocated = tmp_path / "new" / "experiment"
+    shutil.copytree(experiment, relocated)
+    shutil.rmtree(experiment)
+    resolved, _ = resolve_project_manifest(saved, relocated / "shared" / "nfit" / project.name)
+    node = resolved["data_groups"][0]
+    new_calibration = str(relocated / "shared" / "calibrations" / calibration.name)
+    new_source = str(relocated / "nexus" / source.name)
+    assert node["metadata"]["macs"]["vanadium_files"] == [new_calibration, new_source]
+    assert node["metadata"]["reduction_recipe"]["shared_defaults"]["vanadium_files"] == [new_calibration]
+    metadata = node["datasets"][0]["metadata"]
+    assert metadata["import_options"]["vanadium_files"] == [new_calibration]
+    assert metadata["reduction_overrides"]["vanadium_files"] == [new_source]
+    assert metadata["macs_vanadium"]["source_files"][0]["path"] == new_calibration
+
+
 def _manifest(source, calibration, project):
     identity = str(source) + "#experiment=1"
     dataset = DatasetEntry("run", None, kind="raw_dgs_nexus", metadata={

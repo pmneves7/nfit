@@ -128,6 +128,8 @@ different Python.
   targeted edits, public replay, and focused Qt controls.
 - `src/nfit/macs.py`, `macs_reduction.py`, and `macs_normalization.py`: MACS
   stepped detector streams, public reduction settings, and CW monitor conventions.
+  `macs_vanadium.py` owns energy-scan detector calibration; `macs_geometry.py`
+  owns shared detector geometry and neutron conversion constants.
   `macs_background.py` owns monitor-normalized stepped-background angle replay.
   `macs_radial_background.py` owns radial pooling and isotropic dummy backgrounds.
   `point_counting.py` retains counting statistics in the shared point rebinner.

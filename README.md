@@ -44,7 +44,8 @@ A few of its main capabilities are:
   artifacts, with committed generations, recovery checks and explicit compaction;
 - open independent project windows through the Window menu and copy workspaces,
   collections, recipes, viewer settings and lazy scientific caches between them;
-- editable MACS Sources/Reduction recipes with equal-sensitivity defaults and
+- editable MACS Sources/Reduction recipes with multi-file vanadium energy-scan
+  detector calibration, equal-sensitivity defaults, and
   calibrated count/exposure pooling through histograms and cuts, plus measured
   dummy-background replay at sample A3 angles or radial isotropic subtraction
   with monitor normalization and per-link energy matching tolerances;

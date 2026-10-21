@@ -1372,6 +1372,53 @@ weighted estimator, without claiming independent integer Poisson bins or
 retaining neighboring-bin covariance. DIFF's $E_f=E_i$ convention remains an
 elastic coordinate approximation for unanalysed scattering.
 
+### MACS vanadium energy-scan calibration
+
+For SPEC channel $j$ in vanadium scan $r$, fit the monitor-normalized counts
+$y_{rj}(x)=n_{rj}(x)/M_r(x)$ to
+
+$$
+y_{rj}(x)=A_{rj}\exp[-(x-\mu_{rj})^2/(2s_{rj}^2)]+b_{rj}.
+$$
+
+Here $x$ is the scanned monochromator or analyzer two-theta angle in degrees;
+$\mu_{rj}$ and $s_{rj}$ are the peak center and width in degrees, and
+$A_{rj}$ and $b_{rj}$ have units detector counts per monitor count. Using
+two-theta for all files makes A1/A2 and A5/A6 input conventions consistent.
+The fitted area $P_{rj}=\sqrt{2\pi}A_{rj}s_{rj}$ has units detector counts
+per monitor count times degrees. This follows DAVE's angle integration;
+integrating in neutron energy would introduce a Jacobian and is a different
+calibration convention.
+
+The direct-beam mask excludes a file's channel when its mean A4 satisfies
+$|\overline{A4}_{rj}|\leq\theta_{\mathrm{mask}}$, default
+$\theta_{\mathrm{mask}}=15$ degrees. Average usable areas at each channel,
+$\overline P_j=\operatorname{mean}_r P_{rj}$, then calculate
+
+$$
+c_j=\frac{1/\overline P_j}
+          {\operatorname{mean}_{k\in\mathcal C}(1/\overline P_k)},
+$$
+
+where $\mathcal C$ is the set of calibrated channels. The dimensionless
+factors have mean one, as in DAVE. A channel with half another channel's
+vanadium area receives twice its correction; the shared normalization fixes
+the arbitrary overall intensity scale. A channel outside $\mathcal C$ is
+masked rather than assigned a measured sensitivity. Fits with insufficient
+points, invalid parameters, or inadequate coverage of the fitted peak are
+excluded and recorded in diagnostics.
+
+The fit uses observed Poisson standard deviations divided by monitor. For
+zero-count observations, DAVE's one-count floor at a common reference monitor
+becomes $1/M_0$ in rate units, where $M_0$ is the first valid monitor count in
+the first calibration file. No monitor-response,
+ki/kf, or Debye-Waller correction is applied to the calibration scans. The
+derived $c_j$ enters the calibrated exposure defined above; original detector
+counts and their Poisson variances remain unchanged. Gaussian fitting is an
+empirical calibration approximation even when the measured energy resolution
+is asymmetric. Fit and monitor uncertainties are not propagated into the
+sample's counting uncertainty.
+
 ### MACS angle-independent dummy subtraction
 
 For a laboratory-fixed dummy background, let $w_a$ be the normalized,

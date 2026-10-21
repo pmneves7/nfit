@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 
 MACS_REDUCTION_FORMAT = "macs-step-nexus"
-MACS_REDUCTION_VERSION = 2
+MACS_REDUCTION_VERSION = 3
 MACS_DEFAULTS = {
     "monitor_target": 1_000_000.0,
     "monitor_response": "inverse_velocity",
@@ -20,6 +20,8 @@ MACS_DEFAULTS = {
     "a3_offset_deg": None,
     "ub_matrix": None,
     "apply_detector_efficiency": False,
+    "vanadium_files": [],
+    "vanadium_a4_mask_deg": 15.0,
     "mask_misaligned_analyzers": True,
     "analyzer_alignment_tolerance_deg": 1.0,
     "detect_dead_analyzers": False,
@@ -67,6 +69,11 @@ def macs_settings_schema():
               "Optional reciprocal transform without 2 pi. An empty matrix uses the run's lattice and orientation metadata.", units="angstrom^-1", scope="coordinates", automatic=True, per_run=False),
         Field("apply_detector_efficiency", "Use recorded detector correction factors", "bool", False,
               "Apply the 20 multiplicative detectorEfficiency correction factors in each stream's NeXus logs. Default assumes equal sensitivity; enable only for a validated calibration.", scope="normalization"),
+        Field("vanadium_files", "SPEC vanadium energy scans", "files", [],
+              "Select one or more compatible MACS vanadium energy scans at complementary kidney positions. Fit monitor-normalized Gaussian peak areas to calibrate SPEC channels. Uncovered or failed channels are masked. DIFF is unaffected. Clear the list to disable.", scope="normalization"),
+        Field("vanadium_a4_mask_deg", "Vanadium A4 exclusion half-angle", "float", 15.0,
+              "Exclude vanadium channels within this angle of the direct beam, including both boundaries (-angle through +angle). This only selects calibration observations; sample channel masks are separate.",
+              units="deg", scope="normalization", minimum=0.0, maximum=180.0),
         Field("mask_misaligned_analyzers", "Mask misset SPEC analyzers", "bool", True,
               "Exclude SPEC analyzer blades outside the alignment tolerance. This does not mask DIFF detectors."),
         Field("analyzer_alignment_tolerance_deg", "Analyzer alignment tolerance", "float", 1.0,

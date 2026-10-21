@@ -17,12 +17,13 @@ import numpy as np
 
 from .dataset import PointData4D
 from .fitting import reciprocal_basis_from_lattice_parameters
+from .macs_geometry import (
+    MACS_DETECTOR_OFFSETS_DEG,
+    MACS_E_KSQ_MEV_ANGSTROM2,
+    MACS_E_LAMBDA_SQ_MEV_ANGSTROM2,
+    MACS_KIDNEY_ZERO_DEG,
+)
 from .macs_reduction import MACS_DEFAULTS, MACS_REDUCTION_FORMAT, MACS_REDUCTION_VERSION
-
-MACS_E_KSQ_MEV_ANGSTROM2 = 2.0721246
-MACS_E_LAMBDA_SQ_MEV_ANGSTROM2 = 81.8042
-MACS_DETECTOR_OFFSETS_DEG = np.arange(20, dtype=float) * 8.0
-MACS_KIDNEY_ZERO_DEG = -76.0
 
 
 def _decode(value: Any) -> str:
@@ -445,6 +446,13 @@ def import_macs_nexus(
     if not np.isfinite(occupancy_limit) or not 0.0 <= occupancy_limit <= 1.0:
         raise ValueError("MACS dead-channel nonzero fraction must be between zero and one")
 
+    vanadium = None
+    if stream == "spec" and settings["vanadium_files"]:
+        from .macs_vanadium import calculate_macs_vanadium
+
+        vanadium = calculate_macs_vanadium(
+            settings["vanadium_files"], a4_mask_deg=settings["vanadium_a4_mask_deg"])
+
     with h5py.File(source, "r") as handle:
         entry = _entry_group(handle)
         instrument = _decode(
@@ -555,6 +563,15 @@ def import_macs_nexus(
             aligned_analyzers = None
         point_mask &= np.isfinite(counts) & (counts >= 0.0)
 
+        if vanadium is not None:
+            usable = np.asarray(vanadium["usable_channels"], dtype=bool)
+            efficiency = np.asarray([factor if factor is not None else 1.0
+                                     for factor in vanadium["factors"]], dtype=float)
+            point_mask &= usable[None, :]
+            for channel in np.flatnonzero(~usable):
+                analyzer_reasons.append({"channel": int(channel) + 1,
+                    "reasons": ["no usable vanadium energy-scan fit"]})
+
         if stream == "spec":
             ef, ef_source = _dave_final_energy(
                 entry,
@@ -649,6 +666,7 @@ def import_macs_nexus(
             "a3_offset_source": a3_offset_source,
             "monitor_target": target,
             "detector_efficiency_applied": bool(settings["apply_detector_efficiency"]),
+            "vanadium_sensitivity_applied": vanadium is not None,
             "macs_reduction_version": MACS_REDUCTION_VERSION,
             "incident_energy_source": ei_source,
             "incident_energy": float(np.nanmedian(ei)),
@@ -666,6 +684,8 @@ def import_macs_nexus(
             "import_options": dict(settings),
             "dataset_parameters": parameters,
         }
+        if vanadium is not None:
+            metadata["macs_vanadium"] = vanadium
         from .histogram_statistics import EVENT_STATISTICS_METADATA
         from .measurement_contracts import MeasurementContract
         from .measurement_likelihoods import PoissonCountModel

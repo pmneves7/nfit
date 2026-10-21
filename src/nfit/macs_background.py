@@ -37,6 +37,7 @@ _MATCH_SETTINGS = (
     "stream", "monitor_target", "monitor_response", "monitor_reference_k_inv_angstrom",
     "ki_kf_normalization", "higher_order_monitor_correction", "apply_detector_efficiency",
     "incident_energy_policy", "final_energy_policy",
+    "vanadium_files", "vanadium_a4_mask_deg",
 )
 
 
@@ -115,7 +116,7 @@ class _MacsSourcePreparation:
     def __call__(self, group, run, shared, mapping):
         masks = (mapping or {}).get(run.id, shared if shared is not None else group.masks)
         config, data, angles, path = _source(group, run, masks)
-        settings = tuple(config.get(k) for k in _MATCH_SETTINGS)
+        settings = tuple(config.get(k, MACS_DEFAULTS.get(k)) for k in _MATCH_SETTINGS)
         ei = float(data.metadata["incident_energy"])
         ef = float(data.metadata.get("fixed_final_energy_meV", ei))
         energies = np.array([ei, ef])

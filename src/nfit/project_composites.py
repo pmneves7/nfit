@@ -1045,11 +1045,20 @@ def _composite_cache_signature(
     if isinstance(node, DatasetGroup) and selected and all(
         dataset.metadata.get("importer") == "macs_nexus" for dataset in selected
     ):
+        from .macs_vanadium import vanadium_source_provenance
         from .reduction_recipes import effective_reduction_config
 
-        numerical["macs_reduction_settings"] = [
+        macs_settings = [
             effective_reduction_config(node, dataset) for dataset in selected
         ]
+        numerical["macs_reduction_settings"] = macs_settings
+        calibration_files = [settings.get("vanadium_files", [])
+                             if str(settings.get("stream", "spec")).lower() == "spec" else []
+                             for settings in macs_settings]
+        if any(calibration_files):
+            numerical["macs_vanadium_sources"] = [
+                vanadium_source_provenance(files) for files in calibration_files
+            ]
     native_event_rebin = (
         isinstance(node, DatasetGroup) and not child_scopes and bool(selected)
         and all(dataset.kind in {"mdevent", "raw_dgs_nexus"} for dataset in selected)

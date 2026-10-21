@@ -68,7 +68,7 @@ def _field_editor(
         )
     else:
         editor = QtWidgets.QLineEdit(
-            (json.dumps(value) if value is not None else "") if field.kind == "matrix"
+            (json.dumps(value) if value is not None else "") if field.kind in {"matrix", "files"}
             else (value if isinstance(value, str) else ",".join(map(str, value))) if field.kind == "channels" else str(value or "")
         )
 
@@ -77,7 +77,9 @@ def _field_editor(
             parsed: Any = text or None
             if field.kind == "channels":
                 parsed = text or []
-            if field.kind == "matrix" and text:
+            if field.kind == "files" and not text:
+                parsed = []
+            if field.kind in {"matrix", "files"} and text:
                 try:
                     parsed = ast.literal_eval(text)
                 except (SyntaxError, ValueError):
@@ -85,9 +87,15 @@ def _field_editor(
             on_changed(parsed)
 
         editor.editingFinished.connect(changed)
+        if field.kind == "files":
+            editor.setPlaceholderText('["first.nxs", "second.nxs"]')
     editor.setObjectName(object_name)
-    editor.setToolTip(field.tooltip)
-    if not field.automatic and not (field.kind == "path" and browse is not None):
+    editor.setToolTip(field.tooltip + (
+        ' Browse to select multiple files, or edit a list such as ["first.nxs", "second.nxs"]. '
+        "Clear the field to disable this calibration."
+        if field.kind == "files" else ""
+    ))
+    if not field.automatic and not (field.kind in {"path", "files"} and browse is not None):
         return editor
 
     container = QtWidgets.QWidget()
@@ -110,7 +118,7 @@ def _field_editor(
 
         automatic.toggled.connect(set_automatic)
         layout.addWidget(automatic)
-    if field.kind == "path" and browse is not None:
+    if field.kind in {"path", "files"} and browse is not None:
         button = QtWidgets.QPushButton("Browse…")
         button.setObjectName(f"{object_name}_browse")
         button.setToolTip(f"Choose {field.label.lower()} for this reduction recipe.")
@@ -133,7 +141,7 @@ def build_reduction_recipe_panel(
     from PySide6 import QtCore, QtWidgets
 
     from .dgs_reduction_settings import dgs_reduction_policy_script
-    from .file_dialogs import get_open_file_name
+    from .file_dialogs import get_open_file_name, get_open_file_names
     from .reduction_recipes import (
         effective_reduction_config,
         get_reduction_overrides,
@@ -165,6 +173,20 @@ def build_reduction_recipe_panel(
     fields = _applicable_fields(fields, datasets)
 
     def browse(field, edit, apply):
+        if field.kind == "files":
+            try:
+                current = ast.literal_eval(edit.text())
+            except (SyntaxError, ValueError):
+                current = []
+            paths, _filter = get_open_file_names(
+                parent, f"Choose {field.label.lower()}",
+                current[0] if isinstance(current, list) and current else "",
+                "MACS scans (*.nxs *.nxs.h5 *.nx5 *.h5 *.hdf5 *.ng0);;All files (*)",
+            )
+            if paths:
+                edit.setText(json.dumps(paths))
+                apply(paths)
+            return
         path, _filter = get_open_file_name(
             parent, f"Choose {field.label.lower()}", edit.text(),
             "Calibration files (*.nxs *.nxs.h5 *.nx5 *.h5 *.hdf5 *.xml);;All files (*)",

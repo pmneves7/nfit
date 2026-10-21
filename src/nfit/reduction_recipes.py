@@ -215,6 +215,12 @@ def _validate_value(setting, value):
         if not isinstance(value, (str, Path)):
             raise ValueError(f"{setting.key} must be a file path or None")
         return str(value) if str(value).strip() else None
+    if setting.kind == "files":
+        if not isinstance(value, (list, tuple)) or any(
+            not isinstance(path, (str, Path)) or not str(path).strip() for path in value
+        ):
+            raise ValueError(f"{setting.key} must be a list of nonempty file paths")
+        return list(dict.fromkeys(str(Path(path).expanduser().resolve()) for path in value))
     if setting.kind == "choice":
         if value not in {choice for choice, _ in setting.choices}:
             raise ValueError(f"{setting.key} must be one of {tuple(choice for choice, _ in setting.choices)!r}")
@@ -280,6 +286,8 @@ def validated_reduction_settings(group_or_format, updates, *, base=None, per_run
     result = {key: _validate_value(schema[key], value) for key, value in updates.items()}
     merged = dict(current if base is None and current is not None else base or {})
     merged.update(result)
+    if merged.get("vanadium_files") and merged.get("apply_detector_efficiency"):
+        raise ValueError("Choose vanadium energy scans or recorded detector correction factors, not both")
     if "energy_min_fraction" in schema:
         lower = float(_setting_value(merged, schema["energy_min_fraction"]))
         upper = float(_setting_value(merged, schema["energy_max_fraction"]))
@@ -454,6 +462,9 @@ def ensure_reduction_recipe(group, *, source_selection=None) -> dict[str, Any]:
         effective = effective_reduction_config(group, dataset)
         calibrations[dataset.id] = {key: fingerprint(effective.get(key))
                                     for key in ("normalization_file", "mask_file", "flux_file") if key in effective}
+        if "vanadium_files" in effective:
+            calibrations[dataset.id]["vanadium_files"] = [
+                fingerprint(path) for path in effective["vanadium_files"]]
     recipe = {
         "version": REDUCTION_RECIPE_VERSION,
         "format": format_name,
