@@ -31,6 +31,8 @@ from .source_lineage import (
     source_identity,
 )
 
+DEFAULT_ENERGY_TOLERANCE_MEV = 0.02
+
 _MATCH_SETTINGS = (
     "stream", "monitor_target", "monitor_response", "monitor_reference_k_inv_angstrom",
     "ki_kf_normalization", "higher_order_monitor_correction", "apply_detector_efficiency",
@@ -103,7 +105,10 @@ def _source(group, run, masks):
 class _MacsSourcePreparation:
     """One compatibility reference shared by angular and radial projections."""
 
-    def __init__(self):
+    def __init__(self, energy_tolerance_meV=DEFAULT_ENERGY_TOLERANCE_MEV):
+        self.energy_tolerance_meV = float(energy_tolerance_meV)
+        if not np.isfinite(self.energy_tolerance_meV) or self.energy_tolerance_meV < 0:
+            raise ValueError("MACS energy_tolerance_meV must be finite and nonnegative")
         self.settings = None
         self.energies = None
 
@@ -118,8 +123,8 @@ class _MacsSourcePreparation:
             self.settings, self.energies = settings, energies
         if settings != self.settings:
             raise ValueError("MACS sample/background detector stream and normalization/energy settings must match")
-        if not np.allclose(energies, self.energies, rtol=0, atol=.02):
-            raise ValueError("MACS replay requires matching incident and final energies within 0.02 meV")
+        if not np.allclose(energies, self.energies, rtol=0, atol=self.energy_tolerance_meV):
+            raise ValueError(f"MACS replay requires matching incident and final energies within {self.energy_tolerance_meV:g} meV")
         return config, data, angles, path
 
 
@@ -141,7 +146,7 @@ def _macs_background_metadata(target, background, sources, records, projection):
         source_files=source_files, source_group=background.name,
         source_datasets=[run.name for run in sources],
         background_projection={"instrument": "MACS", "source_group": background.id,
-            "energy_tolerance_meV": .02, "sources": records, **projection})
+            "energy_tolerance_meV": DEFAULT_ENERGY_TOLERANCE_MEV, "sources": records, **projection})
     return metadata
 
 
@@ -150,11 +155,12 @@ def project_measured_background_macs(
     inherited_masks=None, background_inherited_masks=None,
     inherited_masks_by_id=None, background_inherited_masks_by_id=None,
     max_batch_bytes=64 * 1024**2, progress_callback=None,
+    energy_tolerance_meV=DEFAULT_ENERGY_TOLERANCE_MEV,
 ):
     """Pool MACS background counts and monitor exposure at every sample A3.
 
     Groups must have the same detector stream, normalization and energy policies,
-    and one matching Ei/Ef condition (within 0.02 meV). Background sample angles
+    and one matching Ei/Ef condition (within ``energy_tolerance_meV``, default 0.02 meV). Background sample angles
     are undone before applying the sample's A3 offset and UB. Sample acquisition
     exposures weight its exact recorded angles; background acquisitions pool by
     effective monitor exposure. A3 and kidney grids need not coincide. Coverage
@@ -191,7 +197,7 @@ def project_measured_background_macs(
     budget = int(max_batch_bytes)
     if budget < cells * 64:
         raise SourceReplayRequired("MACS replay output exceeds its memory budget")
-    prepare = _MacsSourcePreparation()
+    prepare = _MacsSourcePreparation(energy_tolerance_meV)
 
     transforms, angle_weights, channel_acceptance = [], [], []
     sample_paths = set()
@@ -280,7 +286,8 @@ def project_measured_background_macs(
         coefficients=np.concatenate(coefficients) / denominator[obs], max_bytes=budget)
     signal = np.divide(numerator, denominator, out=np.zeros(cells), where=denominator > 0)
     metadata = _macs_background_metadata(target, background, sources, source_records,
-        {"mode": "measured_events", "uncertainty": "shared_counting_primitives_across_angles_and_bins",
+        {"mode": "measured_events", "energy_tolerance_meV": prepare.energy_tolerance_meV,
+         "uncertainty": "shared_counting_primitives_across_angles_and_bins",
          "sample_angles": len(transforms)})
     return MDHistoData(axes=target.axes, signal=signal.reshape(shape), errors=np.sqrt(deps.variances()),
         mask=(denominator <= 0).reshape(shape), num_events=events.reshape(shape), metadata=metadata,

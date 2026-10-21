@@ -202,6 +202,36 @@ def build_background_details(
         projection.currentIndexChanged.connect(update_radial_visibility)
         layout.addWidget(radial_label, 5, 0)
         layout.addWidget(radial_width, 5, 1)
+    if supports_macs_projection:
+        from .macs_background import DEFAULT_ENERGY_TOLERANCE_MEV
+
+        energy_label = QtWidgets.QLabel("Energy match tolerance (meV)")
+        energy_tolerance = QtWidgets.QDoubleSpinBox()
+        energy_tolerance.setObjectName("background_energy_tolerance")
+        energy_tolerance.setDecimals(5)
+        energy_tolerance.setRange(0., 100.)
+        energy_tolerance.setSingleStep(0.01)
+        energy_tolerance.setKeyboardTracking(False)
+        energy_tolerance.setValue(float(background.metadata.get("energy_tolerance_meV", DEFAULT_ENERGY_TOLERANCE_MEV)))
+        energy_tolerance.setToolTip(
+            "Maximum absolute difference in incident and final neutron energies, in meV, "
+            "between MACS sample and background runs. Applies only to this background link; "
+            "changing it accepts a mismatch without shifting either run's measured energies."
+        )
+        energy_tolerance.editingFinished.connect(lambda: self._update_background(
+            group, owner, background,
+            metadata={**background.metadata, "energy_tolerance_meV": float(energy_tolerance.value())},
+        ))
+
+        def update_energy_visibility(*_args: Any) -> None:
+            visible = projection.currentData() in {"measured_events", "macs_isotropic"}
+            energy_label.setVisible(visible)
+            energy_tolerance.setVisible(visible)
+
+        update_energy_visibility()
+        projection.currentIndexChanged.connect(update_energy_visibility)
+        layout.addWidget(energy_label, 6, 0)
+        layout.addWidget(energy_tolerance, 6, 1)
     binning_explanation = QtWidgets.QLabel()
     binning_explanation.setObjectName("background_binning_explanation")
     binning_explanation.setWordWrap(True)
@@ -217,7 +247,7 @@ def build_background_details(
     projection.currentIndexChanged.connect(update_binning_explanation)
     source_combo.currentIndexChanged.connect(update_binning_explanation)
     enabled.toggled.connect(update_binning_explanation)
-    layout.addWidget(binning_explanation, 6, 0, 1, 2)
+    layout.addWidget(binning_explanation, 7, 0, 1, 2)
     self.details_layout.addWidget(box)
     source_group = background.source_group
     if source_group is None and group is not None:

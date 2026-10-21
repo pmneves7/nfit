@@ -1067,6 +1067,14 @@ def _composite_cache_signature(
         ]
         if radial_backgrounds:
             numerical["macs_isotropic_background_settings"] = radial_backgrounds
+        energy_tolerances = [
+            (index, background.metadata["energy_tolerance_meV"])
+            for index, background in enumerate(getattr(group, "backgrounds", []))
+            if background.enabled and background.projection in {"measured_events", "macs_isotropic"}
+            and "energy_tolerance_meV" in background.metadata
+        ]
+        if energy_tolerances:
+            numerical["background_energy_tolerances_meV"] = energy_tolerances
         scalars = {key: value for key, value in composite_scaling(group).items() if key != "fit_weight"}
         if any(value != 1 for value in scalars.values()):
             numerical["composite_scaling"] = scalars
@@ -1926,11 +1934,14 @@ def _background_membership_unchanged(previous, current):
 
 
 def _background_projection_settings(background):
-    if background.projection != "macs_isotropic":
-        return {}
-    from .macs_radial_background import DEFAULT_Q_BIN_WIDTH
+    settings = {}
+    if background.projection in {"measured_events", "macs_isotropic"} and "energy_tolerance_meV" in background.metadata:
+        settings["energy_tolerance_meV"] = background.metadata["energy_tolerance_meV"]
+    if background.projection == "macs_isotropic":
+        from .macs_radial_background import DEFAULT_Q_BIN_WIDTH
 
-    return {"q_bin_width": background.metadata.get("q_bin_width", DEFAULT_Q_BIN_WIDTH)}
+        settings["q_bin_width"] = background.metadata.get("q_bin_width", DEFAULT_Q_BIN_WIDTH)
+    return settings
 
 
 def _composite_background_signature(group, background, config):
@@ -2008,6 +2019,7 @@ def _composite_background_data(group, background, data, *, config, progress_call
             ):
                 raise ValueError("MACS measured-background replay requires matching MACS source groups")
             projector = project_measured_background_macs
+            projection_options = _background_projection_settings(background)
             if background.projection == "macs_isotropic":
                 from .macs_radial_background import project_isotropic_background_macs
 

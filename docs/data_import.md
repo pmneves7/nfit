@@ -1390,6 +1390,14 @@ projection="measured_events", name="Dummy background")`. Exporting the
 collection workflow preserves both reduction recipes and this link. The
 background's standalone viewing grid does not enter the subtraction.
 
+The default energy matching tolerance is 0.02 meV for both Ei and Ef. A
+background link's **Energy match tolerance** control can accept a documented
+small mismatch for that link alone. Scripts set
+`metadata={"energy_tolerance_meV": 0.05}` on the `BackgroundSpec`, or pass
+`energy_tolerance_meV=0.05` to either MACS projection function. The comparison
+uses the measured energies without shifting them; the selected tolerance is
+saved in projection provenance and cache identity.
+
 **MACS isotropic background** is a separate model: it pools dummy counts and
 effective monitor exposure in radial $|Q|$ bins, then evaluates that radial
 intensity at each output-bin center. Equal momentum modulus receives equal

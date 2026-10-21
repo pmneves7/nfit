@@ -6,7 +6,11 @@ import hashlib
 
 import numpy as np
 
-from .macs_background import _macs_background_metadata, _MacsSourcePreparation
+from .macs_background import (
+    DEFAULT_ENERGY_TOLERANCE_MEV,
+    _macs_background_metadata,
+    _MacsSourcePreparation,
+)
 from .macs_reduction import macs_group_config
 from .mdhisto import MDHistoChannel, MDHistoData
 from .measurement_dependencies import (
@@ -47,6 +51,7 @@ def project_isotropic_background_macs(
     inherited_masks=None, background_inherited_masks=None,
     inherited_masks_by_id=None, background_inherited_masks_by_id=None,
     max_batch_bytes=64 * 1024**2, progress_callback=None,
+    energy_tolerance_meV=DEFAULT_ENERGY_TOLERANCE_MEV,
 ):
     """Project an isotropic, monitor-normalized MACS background at voxel centers.
 
@@ -90,7 +95,7 @@ def project_isotropic_background_macs(
     budget = int(max_batch_bytes)
     if target.signal.size * 128 > budget:
         raise SourceReplayRequired("MACS isotropic output exceeds its memory budget")
-    prepare = _MacsSourcePreparation()
+    prepare = _MacsSourcePreparation(energy_tolerance_meV)
     rlu = None
     sample_paths = set()
     for run in runs:
@@ -181,7 +186,8 @@ def project_isotropic_background_macs(
     raw_counts = np.bincount(bins, weights=np.asarray(source_variances), minlength=size)
     events = np.bincount(output, weights=weights * raw_counts[radial], minlength=cells)
     metadata = _macs_background_metadata(target, background, sources, records,
-        {"mode": "macs_isotropic", "q_bin_width": width, "q_unit": "angstrom^-1",
+        {"mode": "macs_isotropic", "energy_tolerance_meV": prepare.energy_tolerance_meV,
+         "q_bin_width": width, "q_unit": "angstrom^-1",
          "interpolation": interpolation, "q_range": [float(np.min(q)), float(np.max(q))],
          "uncertainty": "shared_counting_primitives_across_radial_field_bins",
          "angular_assumption": "isotropic in physical momentum magnitude",
