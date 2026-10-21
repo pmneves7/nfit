@@ -6,6 +6,7 @@ from typing import Any
 
 from PySide6 import QtWidgets
 
+from .macs_reduction import macs_group_config
 from .pipeline import BackgroundSpec, DataGroup, DatasetEntry, DatasetGroup
 from .project_binning_policy import background_rebin_explanation
 from .project_composites import (
@@ -110,24 +111,33 @@ def build_background_details(
     projection = QtWidgets.QComboBox()
     projection.setObjectName("background_projection")
     projection.addItem("Voxel center", "center")
+    supports_macs_projection = isinstance(owner, DatasetGroup) and macs_group_config(owner) is not None
     supports_trajectory_projection = isinstance(owner, DatasetGroup) and "mdevent" in owner.metadata
     supports_measured_projection = supports_trajectory_projection or (
         isinstance(owner, DatasetGroup)
-        and owner.metadata.get("raw_dgs", {}).get("format") == "raw-direct-geometry-nexus"
+        and (owner.metadata.get("raw_dgs", {}).get("format") == "raw-direct-geometry-nexus"
+             or macs_group_config(owner) is not None)
     )
     if supports_trajectory_projection or background.projection == "sample_trajectories":
         projection.addItem("Powder through sample trajectories", "sample_trajectories")
     if supports_measured_projection or background.projection == "measured_events":
         projection.addItem("Measured background at sample angles", "measured_events")
+    if supports_macs_projection or background.projection == "macs_isotropic":
+        projection.addItem("Isotropic MACS background by |Q|", "macs_isotropic")
     projection.setToolTip(
         "Voxel center is the fast interpolation of B(|Q|, E) at each target-bin center. "
         "Powder through sample trajectories forward-projects a spherical powder background through "
         "every MDEvent sample angle and the same detector-trajectory normalization; "
         "Measured background at sample angles instead replays the measured lab-frame events, "
-        "preserving out-of-plane dependence. It requires a referenced raw DGS or MDEvent group with "
+        "preserving detector-direction dependence. It requires a referenced raw DGS or MDEvent group with "
         "matching detector geometry and incident energy; its powder binning and interpolation "
         "are not used. Powder trajectory replay requires an MDEvent sample group; "
-        "measured replay also accepts native raw DGS sample groups."
+        "measured replay also accepts native raw DGS sample groups. MACS groups pool monitor-normalized "
+        "background detector counts over dummy A3 angles and replay them at sample A3 angles. "
+        "MACS sources must match incident/final energy, detector stream and reduction settings. "
+        "Isotropic MACS background pools counts and monitor exposure in |Q| bins, removing "
+        "detector-direction dependence before mapping onto the sample grid. "
+        "For MACS subtraction, use physical bins with Fractional off and symmetry set to None."
     )
     projection.setCurrentIndex(max(projection.findData(background.projection), 0))
     projection.currentIndexChanged.connect(
@@ -145,7 +155,8 @@ def build_background_details(
     interpolation.addItem("Linear", "linear")
     interpolation.addItem("Nearest", "nearest")
     interpolation.setToolTip(
-        "Interpolation used for powder data. Measured-event replay and identically binned single-crystal subtraction do not interpolate."
+        "Interpolation used for powder data and isotropic MACS radial intensity, within measured support. "
+        "Measured-event replay and identically binned single-crystal subtraction do not interpolate."
     )
     interpolation.setCurrentIndex(max(interpolation.findData(background.interpolation), 0))
     interpolation.setEnabled(background.projection != "measured_events")
@@ -161,6 +172,36 @@ def build_background_details(
         )
     )
     layout.addWidget(interpolation, 4, 1)
+    if supports_macs_projection or background.projection == "macs_isotropic":
+        from .macs_radial_background import DEFAULT_Q_BIN_WIDTH
+
+        radial_label = QtWidgets.QLabel("Radial |Q| bin width (Å⁻¹)")
+        radial_width = QtWidgets.QDoubleSpinBox()
+        radial_width.setObjectName("background_q_bin_width")
+        radial_width.setDecimals(5)
+        radial_width.setRange(0.00001, 100.)
+        radial_width.setSingleStep(0.01)
+        radial_width.setKeyboardTracking(False)
+        radial_width.setValue(float(background.metadata.get("q_bin_width", DEFAULT_Q_BIN_WIDTH)))
+        radial_width.setToolTip(
+            "Positive width of |Q| bins in inverse angstroms. Each bin pools raw background "
+            "counts and effective monitor exposure before normalization. Wider bins trade radial "
+            "detail for precision; interpolation cannot fill missing radial bins or extrapolate."
+        )
+        radial_width.editingFinished.connect(lambda: self._update_background(
+            group, owner, background,
+            metadata={**background.metadata, "q_bin_width": float(radial_width.value())},
+        ))
+
+        def update_radial_visibility(*_args: Any) -> None:
+            visible = projection.currentData() == "macs_isotropic"
+            radial_label.setVisible(visible)
+            radial_width.setVisible(visible)
+
+        update_radial_visibility()
+        projection.currentIndexChanged.connect(update_radial_visibility)
+        layout.addWidget(radial_label, 5, 0)
+        layout.addWidget(radial_width, 5, 1)
     binning_explanation = QtWidgets.QLabel()
     binning_explanation.setObjectName("background_binning_explanation")
     binning_explanation.setWordWrap(True)
@@ -176,7 +217,7 @@ def build_background_details(
     projection.currentIndexChanged.connect(update_binning_explanation)
     source_combo.currentIndexChanged.connect(update_binning_explanation)
     enabled.toggled.connect(update_binning_explanation)
-    layout.addWidget(binning_explanation, 5, 0, 1, 2)
+    layout.addWidget(binning_explanation, 6, 0, 1, 2)
     self.details_layout.addWidget(box)
     source_group = background.source_group
     if source_group is None and group is not None:

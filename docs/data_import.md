@@ -1353,6 +1353,58 @@ Detector gaps and unmeasured bins within the allowed region remain unavailable
 and mask the affected sample bins. Linear interpolation blends the zero and
 nonzero bins at window edges; nearest interpolation gives a binwise boundary.
 
+### MACS dummy backgrounds at sample angles
+
+For MACS, **Measured background at sample angles** pools an empty-mount scan's
+rotations in the laboratory frame and replays its detector observations at each
+sample A3 rotation (degrees). This produces an A3-independent background while
+preserving detector direction and kidney coverage. Use separate source and
+sample collections with the same SPEC or DIFF stream and matching incident and
+final neutron energies, Ei and Ef (meV). A background measured at one energy
+must not be applied to an entire energy scan.
+
+A3 independence does not impose radial isotropy in the final Q map. A partial
+sample rotation can expose opposite Q directions to different mixtures of
+detector observations. A full uniform rotation removes that angular-coverage
+asymmetry; a radial powder average instead changes the assumed background model.
+
+Sample and background use their MACS reduction recipes, including monitor
+normalization, monitor response, kinematic corrections and detector masks.
+Counts and effective monitor exposure are pooled before division; replaying an
+observation does not create additional independent counts. The background-link
+scale is dimensionless and defaults to one. Filters and sample environment must
+also match physically; unreliable filter-position logs cannot establish that.
+
+The initial MACS replay supports physical-bin assignment without symmetry
+copies. Set **Fractional** off for every output axis and symmetry to **None**.
+Unmeasured background coverage masks the corresponding subtracted bins. Sparse
+source dependencies retain the covariance from using the same background
+observation at several sample angles and in several output bins. Supported
+measurement-profile operations propagate those dependencies; diagonal-only
+viewers do not acquire additional independent background statistics.
+
+The GUI and scripts call `project_measured_background_macs(sample_group,
+background_group, target)`. A live collection link uses
+`BackgroundSpec(source_group_id=background_group.id,
+projection="measured_events", name="Dummy background")`. Exporting the
+collection workflow preserves both reduction recipes and this link. The
+background's standalone viewing grid does not enter the subtraction.
+
+**MACS isotropic background** is a separate model: it pools dummy counts and
+effective monitor exposure in radial $|Q|$ bins, then evaluates that radial
+intensity at each output-bin center. Equal momentum modulus receives equal
+background regardless of direction in the scattering plane. The default radial
+bin width is 0.05 Å⁻¹; **Radial bin width** changes this averaging scale. Linear
+or nearest interpolation applies between radial bins. Empty radial bins and
+points beyond measured support remain unavailable rather than extrapolated.
+The same background observations remain correlated across all output directions.
+
+The scripting API is `project_isotropic_background_macs(sample_group,
+background_group, target, q_bin_width=0.05, interpolation="linear")`. A collection
+link uses `projection="macs_isotropic"` and `metadata={"q_bin_width": 0.05}`.
+Use separate sample collections to compare this model with measured-angle replay;
+both can reference the same dummy source collection and retain scale one.
+
 ### Fast composite scaling
 
 For a combined collection, the existing header **Scale** multiplies the complete

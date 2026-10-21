@@ -1042,6 +1042,14 @@ def _composite_cache_signature(
         # persisted indices and older cache layouts remain recognizable.
         numerical["ub_setup"] = node.metadata["ub_setup"]
     selected = _composite_candidates(group)
+    if isinstance(node, DatasetGroup) and selected and all(
+        dataset.metadata.get("importer") == "macs_nexus" for dataset in selected
+    ):
+        from .reduction_recipes import effective_reduction_config
+
+        numerical["macs_reduction_settings"] = [
+            effective_reduction_config(node, dataset) for dataset in selected
+        ]
     native_event_rebin = (
         isinstance(node, DatasetGroup) and not child_scopes and bool(selected)
         and all(dataset.kind in {"mdevent", "raw_dgs_nexus"} for dataset in selected)
@@ -1052,6 +1060,13 @@ def _composite_cache_signature(
     if include_backgrounds:
         if any(background.enabled for background in getattr(group, "backgrounds", [])):
             numerical["background_application_version"] = _BACKGROUND_APPLICATION_VERSION
+        radial_backgrounds = [
+            _background_projection_settings(background)
+            for background in getattr(group, "backgrounds", [])
+            if background.enabled and background.projection == "macs_isotropic"
+        ]
+        if radial_backgrounds:
+            numerical["macs_isotropic_background_settings"] = radial_backgrounds
         scalars = {key: value for key, value in composite_scaling(group).items() if key != "fit_weight"}
         if any(value != 1 for value in scalars.values()):
             numerical["composite_scaling"] = scalars
@@ -1910,6 +1925,14 @@ def _background_membership_unchanged(previous, current):
         return False
 
 
+def _background_projection_settings(background):
+    if background.projection != "macs_isotropic":
+        return {}
+    from .macs_radial_background import DEFAULT_Q_BIN_WIDTH
+
+    return {"q_bin_width": background.metadata.get("q_bin_width", DEFAULT_Q_BIN_WIDTH)}
+
+
 def _composite_background_signature(group, background, config):
     source = background.source_entry
     source_scope = None
@@ -1940,7 +1963,8 @@ def _composite_background_signature(group, background, config):
         )
     return json.dumps(
         [
-            {"background_application_version": _BACKGROUND_APPLICATION_VERSION},
+            {"background_application_version": _BACKGROUND_APPLICATION_VERSION,
+             **_background_projection_settings(background)},
             sample_signature,
             background.projection,
             background.interpolation,
@@ -1960,7 +1984,8 @@ def _composite_background_data(group, background, data, *, config, progress_call
     source_group = background.source_group
     if source is None and source_group is None:
         raise ValueError(f"background {background.name!r} refers to a missing dataset or group")
-    if background.projection == "measured_events":
+    if background.projection in {"measured_events", "macs_isotropic"}:
+        from .macs_reduction import macs_group_config
         from .mdevent_background import project_measured_background_mdevent
 
         node = group.node if isinstance(group, _CompositeScope) else group
@@ -1972,11 +1997,30 @@ def _composite_background_data(group, background, data, *, config, progress_call
         sample_runs = _composite_candidates(group)
         background_scope = _background_group_scope(group, background)
         background_runs = _composite_candidates(background_scope)
+        projector = project_measured_background_mdevent
+        projection_options = {}
+        if macs_group_config(node) is not None:
+            from .macs_background import project_measured_background_macs
+
+            if macs_group_config(source_group) is None or any(
+                run.metadata.get("importer") != "macs_nexus"
+                for run in [*sample_runs, *background_runs]
+            ):
+                raise ValueError("MACS measured-background replay requires matching MACS source groups")
+            projector = project_measured_background_macs
+            if background.projection == "macs_isotropic":
+                from .macs_radial_background import project_isotropic_background_macs
+
+                projector = project_isotropic_background_macs
+                projection_options = {**_background_projection_settings(background),
+                                      "interpolation": background.interpolation}
+        elif background.projection == "macs_isotropic":
+            raise ValueError("Isotropic MACS background projection requires MACS source groups")
 
         def inherited_mask_map(scope, runs):
             return {run.id: effective_dataset_masks(_composite_root(scope), run) for run in runs}
 
-        projected = project_measured_background_mdevent(
+        projected = projector(
             node,
             source_group,
             data,
@@ -1990,6 +2034,7 @@ def _composite_background_data(group, background, data, *, config, progress_call
                 data_group_composite_config(group) if config is None else config
             ),
             progress_callback=progress_callback,
+            **projection_options,
         )
         return projected
     if source_group is not None:
@@ -2136,6 +2181,15 @@ def _apply_composite_backgrounds(
         if source is not None:
             source_data = _apply_dataset_scale(source, source_data)
         validate_scientific_compatibility([(None, result), (source, source_data)], compare_coordinates=False)
+        if source_data.metadata.get("background_projection", {}).get("instrument") == "MACS":
+            from .macs_background import prepare_macs_background_sample
+
+            result = prepare_macs_background_sample(
+                result,
+                source_signature=_composite_cache_signature(
+                    group, config_override=config, include_backgrounds=False
+                ),
+            )
         before_subtraction = result
         cancels_self = (
             reference_entry is not None

@@ -42,7 +42,10 @@ class BackgroundSpec:
     direct powder interpolation or ``"sample_trajectories"`` for MDEvent
     powder backgrounds forward-projected through the sample acceptance, or
     ``"measured_events"`` to replay measured lab-frame background events at
-    the sample angles while retaining detector-direction dependence.
+    the sample angles while retaining detector-direction dependence. MACS
+    replay uses monitor-normalized detector counts pooled over dummy angles.
+    ``"macs_isotropic"`` pools MACS counts by momentum-transfer magnitude;
+    ``metadata['q_bin_width']`` sets its positive radial width in inverse angstroms.
     """
 
     name: str

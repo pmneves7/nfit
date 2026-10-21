@@ -197,6 +197,12 @@ def background_rebin_explanation(
 
     if not background.enabled:
         return "This background link is disabled, so no background rebin recipe is consumed."
+    if background.projection == "macs_isotropic":
+        return (
+            "Isotropic MACS subtraction pools the source counts and monitor exposure in |Q| bins "
+            "and maps the radial intensity onto the sample grid. The background's private view "
+            "recipe is not used. Radial width, interpolation, source masks and scale still apply."
+        )
     if background.projection == "measured_events":
         return (
             "Measured-event subtraction replays the source events on the sample grid; "

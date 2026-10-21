@@ -385,6 +385,8 @@ from .kpath import (
     standard_kpath,
 )
 from .macs import import_macs_nexus, is_macs_nexus_file
+from .macs_background import project_measured_background_macs
+from .macs_radial_background import project_isotropic_background_macs
 from .magnetization import curie_weiss_susceptibility
 from .mdevent import (
     DetectorNormalization,
@@ -1405,6 +1407,8 @@ __all__ = [
     "bin_mdevent_powder_group",
     "project_powder_background_mdevent",
     "project_measured_background_mdevent",
+    "project_measured_background_macs",
+    "project_isotropic_background_macs",
     "append_mdevent_file",
     "CorelliRunInfo",
     "bin_corelli_group",

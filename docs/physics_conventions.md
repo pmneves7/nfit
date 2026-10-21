@@ -1371,3 +1371,29 @@ $D_b=\sum_j\alpha_{jb}d_j$. Report $C_b/D_b$ and $\sqrt{V_b}/D_b$ as a local
 weighted estimator, without claiming independent integer Poisson bins or
 retaining neighboring-bin covariance. DIFF's $E_f=E_i$ convention remains an
 elastic coordinate approximation for unanalysed scattering.
+
+### MACS angle-independent dummy subtraction
+
+For a laboratory-fixed dummy background, let $w_a$ be the normalized,
+dimensionless sample monitor-exposure weight at sample angle $a$. Let
+$P_{jab}$ equal one when background observation $j$, replayed at angle $a$,
+falls in physical output bin $b$, and zero otherwise, including masks. Define
+$u_{jb}=\sum_a w_a P_{jab}$. For unit background run scales and weights,
+
+$$
+B_b=\frac{\sum_j u_{jb}n_j}{D_b},\qquad
+D_b=\sum_j u_{jb}d_j,\qquad
+\widehat{\operatorname{Cov}}(B_b,B_c)
+=\frac{\sum_j u_{jb}u_{jc}n_j}{D_bD_c}.
+$$
+
+Each $n_j$ is one measured detector count, regardless of the number of angles
+at which it is replayed. Combining its angle coefficients before squaring
+prevents artificial statistical improvement. Sparse source sensitivities retain
+this covariance without a dense bin-by-bin matrix. Sample and background use
+the same monitor/intensity convention. For independent sample intensity $S_b$
+and fixed dimensionless link scale $s$, the result is $S_b-sB_b$, with variance
+$\operatorname{Var}(S_b)+s^2\operatorname{Var}(B_b)$. The initial MACS composite
+implementation uses unsymmetrized physical sample bins so their independent
+counting variances can be represented without assuming independence between
+fractional or symmetry copies.
