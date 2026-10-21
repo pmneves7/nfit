@@ -1463,6 +1463,23 @@ where $M$ contains runs having matching backgrounds. All sample runs contribute
 to $N_b$, so unmatched energies remain unsubtracted, including when several
 incident energies share one DIFF output bin. Exposure weights are known and
 use the same masks, fit weights and physical grid as the sample histogram.
+
+For matching enabled background files $k$, individual dimensionless scales $a_k$
+act on counts, while their effective exposures pool:
+
+$$
+B_{jb}=\frac{\sum_k a_k C^{\mathrm{bg}}_{kjb}}
+                 {\sum_k N^{\mathrm{bg}}_{kjb}}.
+$$
+
+Each file inherits the sample reduction unless explicitly overridden. Its
+monitor response, kinematic, detector-calibration and energy policies apply to
+its own observations. Backgrounds are reported using the matched sample's
+monitor target (counts) and reference wavevector (Å⁻¹); per-file changes to only
+those reporting units do not rescale the correction. Individual scales affect
+primitive sensitivities, so the variance scales with $a_k^2$ and reuse retains
+covariance. Disabled files contribute neither counts nor exposure.
+
 Background observations retain their original primitive identities: weights
 from every reuse are added before squaring for uncertainty propagation. The
 result requires an explicit derived statistical target rather than a raw

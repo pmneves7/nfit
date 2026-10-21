@@ -76,3 +76,19 @@ def test_radial_service_is_gui_independent_and_public():
     tree = ast.parse(Path(module.__file__).read_text())
     names = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
     assert not any(name.startswith(("PySide", "project_gui", "project_data", "project_composites")) for name in names)
+
+
+def test_radial_source_reporting_units_and_policy_overrides_are_explicit(tmp_path):
+    sample = _group(tmp_path / "sample.nxs")
+    background = _group(tmp_path / "background.nxs")
+    target = _radial_target(sample)
+    expected = project_isotropic_background_macs(sample, background, target, q_bin_width=.3)
+    background.metadata["macs"].update(monitor_target=4., final_energy_policy="recorded")
+    with pytest.raises(ValueError, match="settings must match"):
+        project_isotropic_background_macs(sample, background, target, q_bin_width=.3)
+    actual = project_isotropic_background_macs(sample, background, target, q_bin_width=.3,
+                                              allow_background_reduction_overrides=True)
+    np.testing.assert_allclose(actual.signal, expected.signal)
+    np.testing.assert_allclose(actual.errors, expected.errors)
+    assert actual.metadata["background_projection"]["monitor_target"] == 1.
+    assert actual.metadata["background_projection"]["sources"][0]["reduction_settings"]["monitor_target"] == 4.

@@ -146,3 +146,23 @@ def test_macs_replay_service_is_gui_independent_and_public():
     tree = ast.parse(Path(module.__file__).read_text())
     names = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
     assert not any(name.startswith(("PySide", "project_gui", "project_data", "project_composites")) for name in names)
+
+
+def test_explicit_source_reductions_keep_legacy_guard_and_energy_stream_checks(tmp_path):
+    sample = _group(tmp_path / "sample.nxs")
+    background = _group(tmp_path / "background.nxs")
+    background.metadata["macs"].update(monitor_target=2., final_energy_policy="recorded")
+    with pytest.raises(ValueError, match="settings must match"):
+        project_measured_background_macs(sample, background, _target())
+    result = project_measured_background_macs(sample, background, _target(),
+                                              allow_background_reduction_overrides=True)
+    assert result.signal.item() == pytest.approx(.4)
+    assert result.metadata["background_projection"]["monitor_target"] == 1.
+    background.metadata["macs"]["stream"] = "diff"
+    with pytest.raises(ValueError, match="streams must match"):
+        project_measured_background_macs(sample, background, _target(),
+                                         allow_background_reduction_overrides=True)
+    background.metadata["macs"].update(stream="spec", incident_energy_override=5.)
+    with pytest.raises(ValueError, match="matching incident and final energies"):
+        project_measured_background_macs(sample, background, _target(),
+                                         allow_background_reduction_overrides=True)

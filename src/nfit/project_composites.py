@@ -1064,6 +1064,13 @@ def _composite_cache_signature(
             numerical["macs_background_file_sources"] = [
                 vanadium_source_provenance(files) for files in background_files
             ]
+            from .macs_background_sources import list_macs_background_sources
+
+            # Explicit source calibration files also own numerical cache identity.
+            numerical["macs_background_source_calibrations"] = [
+                vanadium_source_provenance(record["reduction_overrides"].get("vanadium_files", []))
+                for record in list_macs_background_sources(node) if record["enabled"]
+            ]
     native_event_rebin = (
         isinstance(node, DatasetGroup) and not child_scopes and bool(selected)
         and all(dataset.kind in {"mdevent", "raw_dgs_nexus"} for dataset in selected)

@@ -1405,10 +1405,12 @@ nonzero bins at window edges; nearest interpolation gives a binwise boundary.
 ### MACS background file lists for an energy series
 
 Keep the sample files in one SPEC collection and one DIFF collection. In each
-collection's **Reduction** settings, select **Background scans** and set the
-**Background energy-transfer tolerance** in meV (default 0.05). These files are
-reduction inputs and do not become project datasets or viewer dropdown choices.
-The sample file list remains owned by **Sources**.
+collection's **Backgrounds** folder, select **Background scans** and set the
+**Background energy-transfer tolerance** in meV (default 0.05). The folder shows
+all source files and the shared subtraction method, scale, and radial bin width.
+The same shared settings remain available under **Reduction**. Background files
+are visible, editable reduction inputs; they do not become project datasets or
+viewer dropdown choices. The sample file list remains owned by **Sources**.
 
 For each enabled sample run, nfit matches backgrounds by measured energy
 transfer $\Delta E=E_i-E_f$ and final energy $E_f$, both in meV. Both differences
@@ -1424,7 +1426,20 @@ contribution. Backgrounds must be independent acquisitions from the samples.
 without making duplicate collections. **Background scale** is dimensionless;
 **Isotropic background radial bin width** is in Å⁻¹ and applies to the isotropic method.
 Each background inherits its matched sample run's effective monitor, detector,
-energy and SPEC vanadium settings. SPEC vanadium factors do not calibrate DIFF.
+energy and SPEC vanadium settings. Select a file inside **Backgrounds** to bypass
+it, adjust its individual scale factor, or override individual reduction fields.
+The **Inherit** checkbox restores each field to the matched sample's setting.
+The individual dimensionless scale multiplies the shared background scale;
+its absolute value scales that source's statistical uncertainty. Multiple
+matching files still pool their monitor exposure, with individual scales applied
+to their count contributions. Disabling a file removes its counts and exposure
+from the pool. Explicit per-file monitor response, kinematic, calibration and
+energy-policy choices apply independently. Background monitor targets and
+reference wavevectors are converted to the matched sample's reporting convention
+before exposure pooling; changing only those reporting units therefore does not
+change the subtraction. Use the individual scale factor to rescale a source. The
+detector stream and resolved Ei/Ef compatibility checks remain required.
+SPEC vanadium factors do not calibrate DIFF.
 Use physical bin assignment with **Fractional** off on every axis and symmetry
 **None**. The sample's existing grid, masks, and statistical exposure pooling
 control how contributions from different energies combine.
@@ -1439,9 +1454,21 @@ set_reduction_settings(spec_group, {
     "background_scale": 1.0,
     "background_q_bin_width": 0.05,      # inverse angstroms
 })
+
+from nfit import list_macs_background_sources, set_macs_background_source_settings
+
+# Optional per-file choices; all unedited fields inherit the matched sample.
+set_macs_background_source_settings(spec_group, "/data/empty_410.nxs.bt9",
+    scale_factor=0.95, reduction_overrides={"a3_offset_deg": 0.0})
+print(list_macs_background_sources(spec_group))
+# Restore just the A3 setting, preserving the individual scale.
+set_macs_background_source_settings(spec_group, "/data/empty_410.nxs.bt9",
+    reduction_overrides={"a3_offset_deg": None}, inherit=True)
 ```
 
 The same public settings drive the GUI and exported collection workflow.
+**Copy reduction recipe script** includes shared and individual source choices.
+Edits invalidate the corrected composite while retaining raw sample point data.
 Background file identities participate in cache validation and portable project
 paths. The corrected result retains correlations from reusing background
 observations; it is a derived signal rather than independent Poisson counts.

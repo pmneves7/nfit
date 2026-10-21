@@ -1377,6 +1377,7 @@ _DELETABLE_TREE_ROLES = frozenset(
         "mask",
         "background",
         "group_background",
+        "macs_background_file",
         "dataset_group",
         "group_mask",
         "model",
@@ -1392,6 +1393,7 @@ _DELETABLE_TREE_ROLES = frozenset(
         "backgrounds",
         "group_masks",
         "group_backgrounds",
+        "macs_backgrounds",
         "models",
         "fits",
         "analyses",
@@ -1414,6 +1416,8 @@ _DELETABLE_ROLE_GROUP: dict[str, frozenset[str]] = {
     "group_masks": frozenset({"group_mask", "group_masks"}),
     "group_background": frozenset({"group_background", "group_backgrounds"}),
     "group_backgrounds": frozenset({"group_background", "group_backgrounds"}),
+    "macs_background_file": frozenset({"macs_background_file", "macs_backgrounds"}),
+    "macs_backgrounds": frozenset({"macs_background_file", "macs_backgrounds"}),
     "model": frozenset({"model", "models"}),
     "models": frozenset({"model", "models"}),
     "analysis": frozenset({"analysis", "analyses"}),
@@ -7694,6 +7698,11 @@ class NfitProjectExplorer:
         if role == "group_backgrounds":
             owner = self._background_owner_for_item(item)
             return bool(owner is not None and owner.backgrounds)
+        if role in {"macs_backgrounds", "macs_background_file"}:
+            from .macs_background_sources import list_macs_background_sources
+
+            node = self._dataset_group_for_item(item)
+            return bool(node is not None and list_macs_background_sources(node))
         if role == "models" and group is not None:
             return bool(group.models)
         if role == "analyses" and group is not None:
@@ -7712,6 +7721,22 @@ class NfitProjectExplorer:
         """
 
         group, entry, mask, model, role = self._objects_for_item(item)
+        if role in {"macs_backgrounds", "macs_background_file"} and group is not None:
+            from .macs_background_gui import background_source_path
+            from .macs_background_sources import list_macs_background_sources
+            from .reduction_recipes import set_reduction_settings
+
+            node = self._dataset_group_for_item(item)
+            if node is None:
+                return False, None
+            path = background_source_path(item) if role == "macs_background_file" else None
+            sources = list_macs_background_sources(node)
+            paths = [source["source_file"] for source in sources if path is not None and source["source_file"] != path]
+            if len(paths) == len(sources):
+                return False, None
+            set_reduction_settings(node, {"background_files": paths})
+            self._background_changed(group, node)
+            return True, group
         if role == "group" and group is not None:
             delete_data_group(self.project, group)
             self._close_slice_viewer(group)
@@ -11867,8 +11892,19 @@ class NfitProjectExplorer:
                 if dataset_found is not None and found is None:
                     found = dataset_found
 
+        from .macs_background_gui import add_macs_background_tree
+
+        add_macs_background_tree(
+            parent_item, node,
+            remember=lambda item, role, **options: self._remember_item(item, role, group, **options),
+            icon=_set_tree_item_icon, style=_style_enabled_tree_item,
+            expanded=self._expanded_state.get(("macs_backgrounds", self._tree_state_identity(node)), False),
+        )
         if node.backgrounds:
-            group_backgrounds_item = QtWidgets.QTreeWidgetItem(["Backgrounds"])
+            from .macs_reduction import macs_group_config
+
+            label = "Background histograms" if macs_group_config(node) is not None else "Backgrounds"
+            group_backgrounds_item = QtWidgets.QTreeWidgetItem([label])
             group_backgrounds_item.setToolTip(
                 0,
                 "Background histograms subtracted after the enabled datasets in this group are combined.",
@@ -12145,7 +12181,7 @@ class NfitProjectExplorer:
                 state[(role, id(group))] = item.isExpanded()
             elif role == "dataset_group" and node is not None:
                 state[("dataset_group", self._tree_state_identity(node))] = item.isExpanded()
-            elif role in {"group_masks", "group_backgrounds"} and node is not None:
+            elif role in {"group_masks", "group_backgrounds", "macs_backgrounds"} and node is not None:
                 state[(role, self._tree_state_identity(node))] = item.isExpanded()
             elif role == "dataset" and dataset is not None:
                 state[("dataset", self._tree_state_identity(dataset))] = item.isExpanded()
@@ -12181,7 +12217,11 @@ class NfitProjectExplorer:
         node = self._dataset_group_for_item(item)
         if role in {"group", "datasets", "models", "fits", "analyses", "plots"}:
             return (role, self._tree_state_identity(group)) if group is not None else None
-        if role in {"dataset_group", "group_masks", "group_backgrounds"}:
+        if role == "macs_background_file" and node is not None:
+            from .macs_background_gui import background_source_path
+
+            return (role, self._tree_state_identity(node), background_source_path(item))
+        if role in {"dataset_group", "group_masks", "group_backgrounds", "macs_backgrounds"}:
             return (role, self._tree_state_identity(node)) if node is not None else None
         if role in {"dataset", "masks", "backgrounds"}:
             return (role, self._tree_state_identity(dataset)) if dataset is not None else None
@@ -12599,6 +12639,20 @@ class NfitProjectExplorer:
             if background is not None:
                 self.title_label.setText(background.name)
                 self._set_background_details(group, entry, background)
+        elif role in {"macs_backgrounds", "macs_background_file"} and group is not None:
+            from .macs_background_gui import background_source_path, build_macs_background_panel
+
+            node = self._dataset_group_for_item(current_item)
+            path = background_source_path(current_item) if role == "macs_background_file" else None
+            self.title_label.setText(Path(path).name if path is not None else f"{node.name} / Backgrounds")
+            self.details_label.setText("MACS background settings")
+            self._clear_details_panel()
+            self.details_layout.addWidget(build_macs_background_panel(
+                node, path,
+                on_changed=lambda key, value, **options: self._set_macs_background_value(group, node, path, key, value, **options),
+                parent=self.window,
+            ))
+            self.details_layout.addStretch(1)
         elif role == "group_backgrounds" and group is not None:
             owner = self._background_owner_for_item(self._current_item())
             if owner is not None:
@@ -13914,6 +13968,36 @@ class NfitProjectExplorer:
         self._refresh_cache_badges()
         self._mark_dirty()
 
+    def _set_macs_background_value(
+        self, group, node, path, key, value, *, inherit=False,
+    ) -> bool:
+        from PySide6 import QtCore, QtWidgets
+
+        from .macs_background_sources import (
+            list_macs_background_sources,
+            set_macs_background_source_settings,
+        )
+        from .reduction_recipes import set_reduction_settings
+
+        try:
+            if path is None and key == "enabled":
+                for source in list_macs_background_sources(node):
+                    set_macs_background_source_settings(node, source["source_file"], enabled=bool(value))
+            elif path is None:
+                set_reduction_settings(node, {key: value})
+            elif key in {"enabled", "scale_factor"}:
+                set_macs_background_source_settings(node, path, **{key: value})
+            else:
+                set_macs_background_source_settings(node, path, reduction_overrides={key: value}, inherit=inherit)
+        except (TypeError, ValueError) as error:
+            QtWidgets.QMessageBox.warning(self.window, "Invalid background setting", str(error))
+            QtCore.QTimer.singleShot(0, self._sync_details)
+            return False
+        self._background_changed(group, node)
+        if key in {"background_files", "enabled"}:
+            QtCore.QTimer.singleShot(0, lambda: self._refresh_tree(refresh_viewers=False))
+        return True
+
     def _set_group_details(self, group: DataGroup) -> None:
         result_count = sum(1 for fit in _walk_fit_entries(group.fits) if fit.kind == "result")
         datasets = list(group.iter_datasets())
@@ -14253,6 +14337,13 @@ class NfitProjectExplorer:
             composite["stale"] = True
         self._mark_dirty()
         self._refresh_cache_badges()
+        if key.startswith("background_"):
+            root = self._objects_for_item(self._current_item())[0]
+            self._background_changed(root, node)
+            if key == "background_files":
+                from PySide6 import QtCore
+
+                QtCore.QTimer.singleShot(0, lambda: self._refresh_tree(refresh_viewers=False))
         return True
 
     def _group_inventory_panel_context(

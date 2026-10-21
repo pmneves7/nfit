@@ -156,13 +156,23 @@ changes the saved normalization convention. Raw/MDE group import functions also
 accept `trajectory_energy_policy`. The default first-run Ei matches Mantid MDNorm;
 event reconstruction remains per run. A positive Ei override takes precedence.
 
-`reduction_settings_schema(group)` supplies native DGS/CORELLI/MDEvent settings.
+`reduction_settings_schema(group)` supplies native MACS/DGS/CORELLI/MDEvent settings.
 `set_reduction_settings(group, updates, dataset_ids=..., inherit=...)` validates
 shared or per-run edits and invalidates affected reductions. Use
 `export_reduction_recipe`, `replay_reduction_recipe` and `apply_reduction_recipe`
 for persisted source membership/settings; `reduction_workflow_script` adds an
 independent final binning recipe. See
 [Source and reduction recipes](reduction_recipes.md).
+
+For MACS background file lists, `list_macs_background_sources(group)` returns all
+source records, including disabled files. Use
+`set_macs_background_source_settings(group, path, enabled=..., scale_factor=...,
+reduction_overrides=..., inherit=...)` for individual changes and
+`effective_macs_background_config(group, path, sample_dataset=...)` to inspect
+inherited choices. Scales are dimensionless; energy settings use meV and A3
+settings use degrees. These records are included in reduction recipes and
+portable projects without creating viewer datasets. See
+[MACS background sources](data_import.md#macs-background-file-lists-for-an-energy-series).
 
 `set_dgs_reduction_policies(group, *, event_precision_policy=...,
 symmetry_variance_policy=..., monitor_variance_policy=...)` atomically validates

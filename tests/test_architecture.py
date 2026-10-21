@@ -66,6 +66,8 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "dataset_criteria.py",
     PACKAGE_ROOT / "dataset_criterion_values.py",
     PACKAGE_ROOT / "macs_reduction.py",
+    PACKAGE_ROOT / "macs_background_sources.py",
+    PACKAGE_ROOT / "macs_background_series.py",
     PACKAGE_ROOT / "macs_normalization.py",
     PACKAGE_ROOT / "point_counting.py",
     PACKAGE_ROOT / "measurement_contracts.py",

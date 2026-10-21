@@ -229,3 +229,154 @@ def test_series_service_rejects_unnormalized_sample(tmp_path):
 
     with pytest.raises(ValueError, match="normalized exposure pooling"):
         apply_macs_background_series(sample, target, prepare_sample=unexpected_prepare)
+
+
+def test_individual_scale_and_disable_change_only_background_statistics(tmp_path):
+    from nfit import set_macs_background_source_settings
+
+    path = _source(tmp_path / "sample.nxs", counts=9.)
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    original = _prepare(root, sample, config, backgrounds=False)
+    unit = _prepare(root, sample, config)
+    set_macs_background_source_settings(sample, background, scale_factor=2.)
+    doubled = _prepare(root, sample, config)
+    np.testing.assert_allclose(original.signal - doubled.signal, 2 * (original.signal - unit.signal))
+    np.testing.assert_allclose(doubled.errors**2 - original.errors**2,
+                               4 * (unit.errors**2 - original.errors**2))
+    set_macs_background_source_settings(sample, background, enabled=False)
+    # Disabled files need not remain accessible and do not enter the projector.
+    background.unlink()
+    disabled = _prepare(root, sample, config)
+    np.testing.assert_array_equal(disabled.signal, original.signal)
+    np.testing.assert_array_equal(disabled.errors, original.errors)
+
+
+def test_background_matching_uses_individual_energy_overrides(tmp_path):
+    from nfit import set_macs_background_source_settings
+
+    path = _source(tmp_path / "sample.nxs", counts=9.)
+    background = _source(tmp_path / "dummy.nxs", energy=.2, counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    original = _prepare(root, sample, config)
+    set_macs_background_source_settings(sample, background,
+                                       reduction_overrides={"incident_energy_override": 3.5})
+    corrected = _prepare(root, sample, config)
+    assert corrected.signal.item() < original.signal.item()
+    assert corrected.metadata["macs_background_series"]["matches"][0]["background_files"] == [str(background)]
+
+
+def test_background_overrides_survive_complete_workflow_and_project_round_trip(tmp_path):
+    from nfit import list_macs_background_sources, set_macs_background_source_settings
+
+    path = _source(tmp_path / "sample.nxs", counts=9.)
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    set_macs_background_source_settings(sample, background, scale_factor=.4,
+                                       reduction_overrides={"a3_offset_deg": 12.})
+    expected = _prepare(root, sample, config)
+    project = NfitProject([root])
+    script = composite_workflow_script(project, root.name, node_id=sample.id)
+    namespace = {"__name__": "standalone"}
+    exec(compile(script, "per_file_macs.py", "exec"), namespace)
+    replayed = namespace["run"]()
+    destination = tmp_path / "overrides.nfit"
+    save_project(project, destination)
+    restored_root = load_project(destination).data_groups[0]
+    restored_sample = restored_root.subgroups[0]
+    assert list_macs_background_sources(restored_sample) == list_macs_background_sources(sample)
+    restored = _prepare(restored_root, restored_sample, config)
+    for actual in (replayed, restored):
+        np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
+        np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
+        np.testing.assert_array_equal(actual.mask, expected.mask)
+
+
+def test_individual_calibration_contents_participate_in_composite_signature(tmp_path):
+    from nfit import set_macs_background_source_settings
+    from nfit.project_composites import _composite_cache_signature
+
+    path = _source(tmp_path / "sample.nxs")
+    background = _source(tmp_path / "dummy.nxs")
+    calibration = _scan(tmp_path / "vanadium.nxs", kidney=0)
+    root, sample, config = _collection([path], [background], bins=1)
+    set_macs_background_source_settings(sample, background,
+                                       reduction_overrides={"vanadium_files": [str(calibration)]})
+    scope = _composite_scope(root, sample)
+    before = _composite_cache_signature(scope, config_override=config)
+    _scan(calibration, kidney=0, weak=.25)
+    after = _composite_cache_signature(scope, config_override=config)
+    assert before != after
+
+
+def test_individual_detector_mask_changes_background_without_masking_sample(tmp_path):
+    from nfit import set_macs_background_source_settings
+
+    path = _source(tmp_path / "sample.nxs", counts=9.)
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    with h5py.File(background, "r+") as handle:
+        handle["entry/DAS_logs/specDetector/counts"][:, 0] = 100.
+    root, sample, config = _collection([path], [background], bins=1)
+    original = _prepare(root, sample, config, backgrounds=False)
+    before = _prepare(root, sample, config)
+    set_macs_background_source_settings(sample, background,
+                                       reduction_overrides={"masked_analyzer_channels": [1]})
+    after = _prepare(root, sample, config)
+    np.testing.assert_array_equal(after.mask, original.mask)
+    assert after.signal.item() > before.signal.item()
+    np.testing.assert_allclose(after.signal, 25. * np.sqrt(3.5 / 3.7))
+    np.testing.assert_array_equal(_prepare(root, sample, config, backgrounds=False).signal, original.signal)
+
+
+def test_background_reporting_units_are_converted_to_sample_units(tmp_path):
+    from nfit import set_macs_background_source_settings
+
+    path = _source(tmp_path / "sample.nxs", counts=9.)
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    set_reduction_settings(sample, {"monitor_response": "inverse_velocity"})
+    before = _prepare(root, sample, config)
+    set_macs_background_source_settings(sample, background, reduction_overrides={
+        "monitor_target": 2_000_000., "monitor_reference_k_inv_angstrom": 2.})
+    after = _prepare(root, sample, config)
+    np.testing.assert_allclose(after.signal, before.signal)
+    np.testing.assert_allclose(after.errors, before.errors)
+    record = after.metadata["macs_background_series"]["source_settings"][0]
+    assert record["reduction_overrides"]["monitor_target"] == 2_000_000.
+    assert record["reduction_overrides"]["monitor_reference_k_inv_angstrom"] == 2.
+
+
+def test_background_response_policy_is_independent_and_applied(tmp_path):
+    from nfit import set_macs_background_source_settings
+    from nfit.macs_geometry import MACS_E_KSQ_MEV_ANGSTROM2
+
+    path = _source(tmp_path / "sample.nxs", counts=9.)
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    original = _prepare(root, sample, config, backgrounds=False)
+    constant = _prepare(root, sample, config)
+    set_macs_background_source_settings(sample, background, reduction_overrides={
+        "monitor_response": "inverse_velocity", "incident_energy_policy": "bragg"})
+    inverse_velocity = _prepare(root, sample, config)
+    ki = np.sqrt(3.5 / MACS_E_KSQ_MEV_ANGSTROM2)
+    np.testing.assert_allclose(original.signal - inverse_velocity.signal,
+                               (original.signal - constant.signal) / ki)
+    np.testing.assert_allclose(inverse_velocity.errors**2 - original.errors**2,
+                               (constant.errors**2 - original.errors**2) / ki**2)
+
+
+def test_background_can_use_its_own_vanadium_calibration(tmp_path):
+    from nfit import set_macs_background_source_settings
+
+    path = _source(tmp_path / "sample.nxs", counts=9.)
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    calibrations = [_scan(tmp_path / "vanadium-a.nxs", kidney=0),
+                    _scan(tmp_path / "vanadium-b.nxs", kidney=40)]
+    root, sample, config = _collection([path], [background], bins=1)
+    before = _prepare(root, sample, config)
+    set_macs_background_source_settings(sample, background, reduction_overrides={
+        "vanadium_files": [str(p) for p in calibrations], "vanadium_a4_mask_deg": 15.})
+    after = _prepare(root, sample, config)
+    assert not np.any(after.mask)
+    assert not np.allclose(after.signal, before.signal)
+    assert after.source_dependencies is not None

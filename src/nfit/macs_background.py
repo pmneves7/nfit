@@ -81,13 +81,21 @@ def _rotation(angles):
     return matrix
 
 
-def _source(group, run, masks):
+def _source(group, run, masks, *, monitor_target=None, monitor_reference_k_inv_angstrom=None):
     if run.transforms or run.backgrounds:
         raise ValueError("MACS replay requires untransformed, unsubtracted source runs")
     config = effective_reduction_config(group, run)
     path = Path(run.metadata["source_file"])
-    data = import_macs_nexus(path, {key: value for key, value in config.items()
-                                   if key in MACS_DEFAULTS or key == "stream"})
+    options = {key: value for key, value in config.items()
+               if key in MACS_DEFAULTS or key == "stream"}
+    if monitor_target is not None:
+        # A monitor target defines reporting units, not an acquisition correction.
+        # Keep independent response/calibration choices, but report backgrounds
+        # in the matched sample's counts-per-reference-monitor units.
+        options["monitor_target"] = monitor_target
+    if monitor_reference_k_inv_angstrom is not None:
+        options["monitor_reference_k_inv_angstrom"] = monitor_reference_k_inv_angstrom
+    data = import_macs_nexus(path, options)
     data = _point_data_with_nfit_masks(run, data, extra_masks=list(masks))
     with h5py.File(path, "r") as handle:
         logs = handle["entry/DAS_logs"]
@@ -112,17 +120,27 @@ class _MacsSourcePreparation:
             raise ValueError("MACS energy_tolerance_meV must be finite and nonnegative")
         self.settings = None
         self.energies = None
+        self.monitor_target = None
+        self.monitor_reference_k_inv_angstrom = None
 
-    def __call__(self, group, run, shared, mapping):
+    def __call__(self, group, run, shared, mapping, *, allow_reduction_overrides=False):
         masks = (mapping or {}).get(run.id, shared if shared is not None else group.masks)
-        config, data, angles, path = _source(group, run, masks)
+        config, data, angles, path = _source(group, run, masks,
+            monitor_target=self.monitor_target if allow_reduction_overrides else None,
+            monitor_reference_k_inv_angstrom=self.monitor_reference_k_inv_angstrom if allow_reduction_overrides else None)
         settings = tuple(config.get(k, MACS_DEFAULTS.get(k)) for k in _MATCH_SETTINGS)
         ei = float(data.metadata["incident_energy"])
         ef = float(data.metadata.get("fixed_final_energy_meV", ei))
         energies = np.array([ei, ef])
         if self.settings is None:
             self.settings, self.energies = settings, energies
-        if settings != self.settings:
+            self.monitor_target = config.get("monitor_target", MACS_DEFAULTS["monitor_target"])
+            self.monitor_reference_k_inv_angstrom = config.get(
+                "monitor_reference_k_inv_angstrom", MACS_DEFAULTS["monitor_reference_k_inv_angstrom"])
+        if allow_reduction_overrides:
+            if settings[0] != self.settings[0]:
+                raise ValueError("MACS sample/background detector streams must match")
+        elif settings != self.settings:
             raise ValueError("MACS sample/background detector stream and normalization/energy settings must match")
         if not np.allclose(energies, self.energies, rtol=0, atol=self.energy_tolerance_meV):
             raise ValueError(f"MACS replay requires matching incident and final energies within {self.energy_tolerance_meV:g} meV")
@@ -157,11 +175,17 @@ def project_measured_background_macs(
     inherited_masks_by_id=None, background_inherited_masks_by_id=None,
     max_batch_bytes=64 * 1024**2, progress_callback=None,
     energy_tolerance_meV=DEFAULT_ENERGY_TOLERANCE_MEV,
+    allow_background_reduction_overrides=False,
 ):
     """Pool MACS background counts and monitor exposure at every sample A3.
 
     Groups must have the same detector stream, normalization and energy policies,
-    and one matching Ei/Ef condition (within ``energy_tolerance_meV``, default 0.02 meV). Background sample angles
+    and one matching Ei/Ef condition (within ``energy_tolerance_meV``, default 0.02 meV).
+    ``allow_background_reduction_overrides=True`` permits explicit background
+    response, calibration and energy-policy choices while retaining the same
+    stream and resolved Ei/Ef check. Background monitor targets and reference
+    wavevectors are converted to the sample's reporting units. This option is used by editable file series.
+    Background sample angles
     are undone before applying the sample's A3 offset and UB. Sample acquisition
     exposures weight its exact recorded angles; background acquisitions pool by
     effective monitor exposure. A3 and kidney grids need not coincide. Coverage
@@ -231,7 +255,8 @@ def project_measured_background_macs(
     seen = set()
     stored = 0
     for source_number, run in enumerate(sources):
-        config, data, angles, path = prepare(background, run, background_inherited_masks, background_inherited_masks_by_id)
+        config, data, angles, path = prepare(background, run, background_inherited_masks,
+            background_inherited_masks_by_id, allow_reduction_overrides=allow_background_reduction_overrides)
         identity = (str(path.resolve()), config.get("stream", "spec"))
         if path.resolve() in sample_paths:
             raise ValueError("MACS sample and background must be independent acquisitions")
@@ -289,7 +314,10 @@ def project_measured_background_macs(
     metadata = _macs_background_metadata(target, background, sources, source_records,
         {"mode": "measured_events", "energy_tolerance_meV": prepare.energy_tolerance_meV,
          "uncertainty": "shared_counting_primitives_across_angles_and_bins",
-         "sample_angles": len(transforms)})
+         "sample_angles": len(transforms),
+         "background_reduction_overrides": bool(allow_background_reduction_overrides),
+         "monitor_target": prepare.monitor_target,
+         "monitor_reference_k_inv_angstrom": prepare.monitor_reference_k_inv_angstrom})
     return MDHistoData(axes=target.axes, signal=signal.reshape(shape), errors=np.sqrt(deps.variances()),
         mask=(denominator <= 0).reshape(shape), num_events=events.reshape(shape), metadata=metadata,
         source_dependencies=deps, auxiliary_channels={"normalization_denominator": MDHistoChannel(

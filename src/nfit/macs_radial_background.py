@@ -52,6 +52,7 @@ def project_isotropic_background_macs(
     inherited_masks_by_id=None, background_inherited_masks_by_id=None,
     max_batch_bytes=64 * 1024**2, progress_callback=None,
     energy_tolerance_meV=DEFAULT_ENERGY_TOLERANCE_MEV,
+    allow_background_reduction_overrides=False,
 ):
     """Project an isotropic, monitor-normalized MACS background at voxel centers.
 
@@ -66,6 +67,10 @@ def project_isotropic_background_macs(
     One matching Ei/Ef condition and the same detector/normalization policies
     are required, as for measured-angle replay. Reused radial values retain the
     original background counting primitives and their cross-bin covariance.
+    ``allow_background_reduction_overrides`` permits independently declared
+    source corrections as for measured-angle replay, expressing backgrounds in
+    the sample's monitor-target and reference-wavevector units. Stream and
+    resolved Ei/Ef must match.
     """
     width = float(q_bin_width)
     if not np.isfinite(width) or width <= 0:
@@ -109,7 +114,8 @@ def project_isotropic_background_macs(
     q_parts, count_parts, exposure_parts, coefficient_parts = [], [], [], []
     records, energy_ranges, seen = [], [], set()
     for index, run in enumerate(sources):
-        config, data, _, path = prepare(background, run, background_inherited_masks, background_inherited_masks_by_id)
+        config, data, _, path = prepare(background, run, background_inherited_masks,
+            background_inherited_masks_by_id, allow_reduction_overrides=allow_background_reduction_overrides)
         identity = (str(path.resolve()), config.get("stream", "spec"))
         if path.resolve() in sample_paths:
             raise ValueError("MACS sample and background must be independent acquisitions")
@@ -188,6 +194,9 @@ def project_isotropic_background_macs(
     metadata = _macs_background_metadata(target, background, sources, records,
         {"mode": "macs_isotropic", "energy_tolerance_meV": prepare.energy_tolerance_meV,
          "q_bin_width": width, "q_unit": "angstrom^-1",
+         "background_reduction_overrides": bool(allow_background_reduction_overrides),
+         "monitor_target": prepare.monitor_target,
+         "monitor_reference_k_inv_angstrom": prepare.monitor_reference_k_inv_angstrom,
          "interpolation": interpolation, "q_range": [float(np.min(q)), float(np.max(q))],
          "uncertainty": "shared_counting_primitives_across_radial_field_bins",
          "angular_assumption": "isotropic in physical momentum magnitude",

@@ -483,6 +483,23 @@ def ensure_reduction_recipe(group, *, source_selection=None) -> dict[str, Any]:
          "run_number": dataset.metadata.get("run_number"),
          "experiment_index": dataset.metadata.get("mdevent_experiment_index")}
         for dataset in group.datasets]
+    if format_name == "macs-step-nexus":
+        from .macs_background_sources import (
+            MACS_BACKGROUND_SOURCE_OVERRIDES,
+            list_macs_background_sources,
+            normalize_macs_background_source_overrides,
+        )
+
+        recipe[MACS_BACKGROUND_SOURCE_OVERRIDES] = normalize_macs_background_source_overrides(config)
+        for dataset in group.datasets:
+            effective = effective_reduction_config(group, dataset)
+            for source in recipe[MACS_BACKGROUND_SOURCE_OVERRIDES]:
+                validated_reduction_settings(group, source["reduction_overrides"], base=effective, per_run=True)
+        recipe["provenance"]["background_sources"] = [
+            {**record, "source_provenance": fingerprint(record["source_file"]),
+             "calibration_provenance": {"vanadium_files": [fingerprint(path) for path in
+                 record["reduction_overrides"].get("vanadium_files", ())]}}
+            for record in list_macs_background_sources(group)]
     # MDE conversion parameters are provenance, not adjustable raw TOF controls.
     if format_name == "mantid-mdevent":
         recipe["provenance"]["stored_coordinate_parameters"] = {
@@ -544,6 +561,17 @@ def set_reduction_settings(group, updates, *, dataset_ids=None, inherit=False) -
     new_config = dict(config)
     if dataset_ids is None:
         new_config.update(normalized)
+    if format_name == "macs-step-nexus":
+        from .macs_background_sources import (
+            MACS_BACKGROUND_SOURCE_OVERRIDES,
+            normalize_macs_background_source_overrides,
+        )
+
+        source_overrides = normalize_macs_background_source_overrides(new_config)
+        if source_overrides:
+            new_config[MACS_BACKGROUND_SOURCE_OVERRIDES] = source_overrides
+        else:
+            new_config.pop(MACS_BACKGROUND_SOURCE_OVERRIDES, None)
     prepared = []
     for dataset in targets:
         old = effective_reduction_config(group, dataset)
@@ -556,6 +584,9 @@ def set_reduction_settings(group, updates, *, dataset_ids=None, inherit=False) -
         new = dict(new_config)
         new.update(validated_reduction_settings(group, overrides, base=new, per_run=True))
         validated_reduction_settings(group, {}, base=new)
+        if format_name == "macs-step-nexus":
+            for source in source_overrides:
+                validated_reduction_settings(group, source["reduction_overrides"], base=new, per_run=True)
         keys = tuple(key for key, item in schema.items() if _plain(_setting_value(old, item)) != _plain(_setting_value(new, item)))
         prepared.append((dataset, overrides, keys))
     if format_name == "macs-step-nexus":
@@ -565,6 +596,11 @@ def set_reduction_settings(group, updates, *, dataset_ids=None, inherit=False) -
         config = group.metadata["macs"]
     if dataset_ids is None:
         config.update(normalized)
+        if format_name == "macs-step-nexus":
+            if source_overrides:
+                config[MACS_BACKGROUND_SOURCE_OVERRIDES] = source_overrides
+            else:
+                config.pop(MACS_BACKGROUND_SOURCE_OVERRIDES, None)
     else:
         for dataset, overrides, _ in prepared:
             if overrides:
@@ -652,6 +688,19 @@ def _replay_config(payload):
     if coordinate.get("ub_matrix") is not None:
         config.update(validated_reduction_settings(format_name, {"ub_matrix": coordinate["ub_matrix"]}, base=config))
     config["source_files"] = list(payload.get("source_selection", {}).get("resolved_files", config.get("source_files", ())))
+    if format_name == "macs-step-nexus":
+        from .macs_background_sources import (
+            MACS_BACKGROUND_SOURCE_OVERRIDES,
+            normalize_macs_background_source_overrides,
+        )
+
+        if MACS_BACKGROUND_SOURCE_OVERRIDES in payload:
+            config[MACS_BACKGROUND_SOURCE_OVERRIDES] = payload[MACS_BACKGROUND_SOURCE_OVERRIDES]
+        records = normalize_macs_background_source_overrides(config)
+        if records:
+            config[MACS_BACKGROUND_SOURCE_OVERRIDES] = records
+        else:
+            config.pop(MACS_BACKGROUND_SOURCE_OVERRIDES, None)
     return config
 
 
@@ -770,6 +819,9 @@ def apply_reduction_recipe(group, recipe) -> ReductionEdit:
         raise ValueError("recipe format/version does not match the native reduction group")
     config = _replay_config(payload)
     before_config = effective_reduction_config(group)
+    background_sources_changed = (payload["format"] == "macs-step-nexus" and
+                                  before_config.get("background_source_overrides", []) !=
+                                  config.get("background_source_overrides", []))
     before_overrides = {dataset.id: get_reduction_overrides(group, dataset) for dataset in group.datasets}
     before_selection = group.metadata.get(REDUCTION_RECIPE_KEY, {}).get("source_selection", {})
     descriptors = payload.get("datasets", ())
@@ -836,9 +888,11 @@ def apply_reduction_recipe(group, recipe) -> ReductionEdit:
     final_by_id = {dataset.id: dataset for dataset in group.datasets}
     for candidate, keys in prepared:
         dataset = final_by_id[candidate.id]
-        if any(schema[key].scope != "storage" for key in keys):
+        if background_sources_changed or any(schema[key].scope != "storage" for key in keys):
             changed.append(dataset)
-        if payload["format"] == "macs-step-nexus" and keys:
+        if payload["format"] == "macs-step-nexus" and any(
+            schema[key].affects_reduced_events or schema[key].scope == "coordinates" for key in keys
+        ):
             from .macs_reduction import invalidate_macs_source
 
             invalidate_macs_source(dataset, effective_reduction_config(group, dataset))
@@ -852,8 +906,11 @@ def apply_reduction_recipe(group, recipe) -> ReductionEdit:
     if changed or membership_changed:
         _mark_stale(group, changed)
     ensure_reduction_recipe(group, source_selection=payload.get("source_selection"))
-    return ReductionEdit(tuple(dataset.id for dataset in changed), tuple(sorted(changed_keys)),
-                         tuple(sorted({schema[key].scope for key in changed_keys} | ({"sources"} if membership_changed else set()))),
+    return ReductionEdit(tuple(dataset.id for dataset in changed),
+                         tuple(sorted(changed_keys | ({"background_source_overrides"} if background_sources_changed else set()))),
+                         tuple(sorted({schema[key].scope for key in changed_keys}
+                                      | ({"background"} if background_sources_changed else set())
+                                      | ({"sources"} if membership_changed else set()))),
                          _plain(before_config) != _plain(config) or membership_changed
                          or before_overrides != {dataset.id: get_reduction_overrides(group, dataset) for dataset in group.datasets}
                          or any(before_selection.get(key) != payload.get("source_selection", {}).get(key)
