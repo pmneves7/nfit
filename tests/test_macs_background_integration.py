@@ -111,6 +111,30 @@ def test_macs_replay_cache_includes_effective_source_settings(macs_groups):
     assert _composite_background_signature(scope, link, config) != baseline
 
 
+@pytest.mark.parametrize("projection", ["measured_events", "macs_isotropic"])
+def test_macs_projection_keeps_cache_version_out_of_projector_arguments(macs_groups, monkeypatch, projection):
+    from nfit import macs_background
+    from nfit.project_composites import _background_projection_settings, _composite_cache_signature
+
+    root, sample, _dummy, link, config = macs_groups
+    link.projection = projection
+    link.metadata.update(energy_tolerance_meV=0.05, q_bin_width=0.3)
+    arguments = _background_projection_settings(link)
+    assert arguments == ({"energy_tolerance_meV": 0.05, "q_bin_width": 0.3}
+                         if projection == "macs_isotropic" else {"energy_tolerance_meV": 0.05})
+    scope = _composite_scope(root, sample)
+    background_before = _composite_background_signature(scope, link, config)
+    result_before = _composite_cache_signature(scope, config_override=config)
+    base_before = _composite_cache_signature(scope, config_override=config, include_backgrounds=False)
+    monkeypatch.setattr(macs_background, "MACS_BACKGROUND_NUMERICAL_VERSION",
+                        macs_background.MACS_BACKGROUND_NUMERICAL_VERSION + 1)
+    assert _background_projection_settings(link) == arguments
+    assert _composite_background_signature(scope, link, config) != background_before
+    assert _composite_cache_signature(scope, config_override=config, include_backgrounds=False) == base_before
+    if projection == "macs_isotropic":
+        assert _composite_cache_signature(scope, config_override=config) != result_before
+
+
 def test_macs_replay_does_not_extrapolate_to_unmatched_energy(macs_groups):
     root, sample, dummy, _, config = macs_groups
     dummy.datasets[0].metadata["reduction_overrides"] = {"incident_energy_override": 4.5}

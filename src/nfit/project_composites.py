@@ -1086,7 +1086,7 @@ def _composite_cache_signature(
         if any(background.enabled for background in getattr(group, "backgrounds", [])):
             numerical["background_application_version"] = _BACKGROUND_APPLICATION_VERSION
         radial_backgrounds = [
-            _background_projection_settings(background)
+            _background_projection_settings(background, include_cache_identity=True)
             for background in getattr(group, "backgrounds", [])
             if background.enabled and background.projection == "macs_isotropic"
         ]
@@ -1958,9 +1958,11 @@ def _background_membership_unchanged(previous, current):
         return False
 
 
-def _background_projection_settings(background):
+def _background_projection_settings(background, *, include_cache_identity=False):
+    """Return projector arguments, optionally including cache-only identity."""
     settings = {}
-    if background.projection in {"measured_events", "macs_isotropic"} and background.source_group is not None:
+    if (include_cache_identity and background.projection in {"measured_events", "macs_isotropic"}
+            and background.source_group is not None):
         from .macs_reduction import macs_group_config
 
         if macs_group_config(background.source_group) is not None:
@@ -2007,7 +2009,7 @@ def _composite_background_signature(group, background, config):
     return json.dumps(
         [
             {"background_application_version": _BACKGROUND_APPLICATION_VERSION,
-             **_background_projection_settings(background)},
+             **_background_projection_settings(background, include_cache_identity=True)},
             sample_signature,
             background.projection,
             background.interpolation,
