@@ -19,7 +19,7 @@ _FILE_FIELDS = frozenset((
     "mask_file", "flux_file", "ub_file", "calibration_file",
     "normalization_path", "mask_path", "flux_path", "ub_path",
 ))
-_FILE_LIST_FIELDS = frozenset(("source_files", "resolved_files", "vanadium_files"))
+_FILE_LIST_FIELDS = frozenset(("source_files", "resolved_files", "vanadium_files", "background_files"))
 _IDENTITY_FIELDS = frozenset(("source_identity", "source_namespace"))
 
 

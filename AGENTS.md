@@ -131,6 +131,8 @@ different Python.
   `macs_vanadium.py` owns energy-scan detector calibration; `macs_geometry.py`
   owns shared detector geometry and neutron conversion constants.
   `macs_background.py` owns monitor-normalized stepped-background angle replay.
+  `macs_background_series.py` owns energy-matched background file lists within
+  one sample collection, including unmatched-energy and shared-exposure handling.
   `macs_radial_background.py` owns radial pooling and isotropic dummy backgrounds.
   `point_counting.py` retains counting statistics in the shared point rebinner.
 - `src/nfit/corelli.py`, `_corelli_numba.py`, and `corelli_constants.py`: CORELLI

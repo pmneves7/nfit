@@ -386,6 +386,7 @@ from .kpath import (
 )
 from .macs import import_macs_nexus, is_macs_nexus_file
 from .macs_background import project_measured_background_macs
+from .macs_background_series import apply_macs_background_series
 from .macs_radial_background import project_isotropic_background_macs
 from .magnetization import curie_weiss_susceptibility
 from .mdevent import (
@@ -1408,6 +1409,7 @@ __all__ = [
     "project_powder_background_mdevent",
     "project_measured_background_mdevent",
     "project_measured_background_macs",
+    "apply_macs_background_series",
     "project_isotropic_background_macs",
     "append_mdevent_file",
     "CorelliRunInfo",

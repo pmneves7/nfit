@@ -335,9 +335,12 @@ def import_dataset_paths(
                     f"{entry.name} [{stream.label}]", group.dataset_names
                 )
                 if spec.name == "macs_nexus" and "macs" in target_group.metadata:
+                    from .reduction_recipes import reduction_settings_schema
+
+                    per_run_keys = {setting.key for setting in reduction_settings_schema(target_group) if setting.per_run}
                     entry.metadata["reduction_overrides"] = {
                         key: value for key, value in stream_options.items()
-                        if key != "stream" and value != target_group.metadata["macs"].get(key)
+                        if key in per_run_keys and value != target_group.metadata["macs"].get(key, MACS_DEFAULTS.get(key))
                     }
                 group.add_dataset(entry, into=target_group)
                 entries.append(entry)

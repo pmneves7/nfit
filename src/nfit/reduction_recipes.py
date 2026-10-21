@@ -250,7 +250,8 @@ def _validate_value(setting, value):
     if setting.maximum is not None and number > setting.maximum:
         raise ValueError(f"{setting.key} must be at most {setting.maximum}")
     if setting.key in {"incident_energy_override", "final_energy_override", "monitor_target",
-                       "monitor_reference_k_inv_angstrom", "wavelength_min_angstrom", "wavelength_max_angstrom"} and number <= 0:
+                       "monitor_reference_k_inv_angstrom", "wavelength_min_angstrom", "wavelength_max_angstrom",
+                       "background_q_bin_width"} and number <= 0:
         raise ValueError(f"{setting.key} must be positive or automatic where supported")
     if setting.key == "energy_max_fraction" and number >= 1:
         raise ValueError("energy_max_fraction must be below one (positive final neutron energy)")
@@ -320,7 +321,7 @@ def get_reduction_overrides(group, dataset) -> dict[str, Any]:
     dataset = _group_dataset(group, dataset)
     legacy = {}
     if format_name == "macs-step-nexus" and "macs" not in group.metadata:
-        schema = {field.key for field in reduction_settings_schema(group)}
+        schema = {field.key for field in reduction_settings_schema(group) if field.per_run}
         legacy = {key: value for key, value in dataset.metadata.get("import_options", {}).items()
                   if key in schema and value != config.get(key)}
     return copy.deepcopy({**legacy, **dataset.metadata.get(REDUCTION_OVERRIDES_KEY, {})})
@@ -462,9 +463,9 @@ def ensure_reduction_recipe(group, *, source_selection=None) -> dict[str, Any]:
         effective = effective_reduction_config(group, dataset)
         calibrations[dataset.id] = {key: fingerprint(effective.get(key))
                                     for key in ("normalization_file", "mask_file", "flux_file") if key in effective}
-        if "vanadium_files" in effective:
-            calibrations[dataset.id]["vanadium_files"] = [
-                fingerprint(path) for path in effective["vanadium_files"]]
+        for key in ("vanadium_files", "background_files"):
+            if key in effective:
+                calibrations[dataset.id][key] = [fingerprint(path) for path in effective[key]]
     recipe = {
         "version": REDUCTION_RECIPE_VERSION,
         "format": format_name,
@@ -572,7 +573,9 @@ def set_reduction_settings(group, updates, *, dataset_ids=None, inherit=False) -
                 dataset.metadata.pop(REDUCTION_OVERRIDES_KEY, None)
     changed = [dataset for dataset, _, keys in prepared if any(schema[key].scope != "storage" for key in keys)]
     for dataset, _, keys in prepared:
-        if format_name == "macs-step-nexus" and keys:
+        if format_name == "macs-step-nexus" and any(
+            schema[key].affects_reduced_events or schema[key].scope == "coordinates" for key in keys
+        ):
             from .macs_reduction import invalidate_macs_source
 
             invalidate_macs_source(dataset, effective_reduction_config(group, dataset))

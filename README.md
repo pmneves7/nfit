@@ -47,7 +47,8 @@ A few of its main capabilities are:
 - editable MACS Sources/Reduction recipes with multi-file vanadium energy-scan
   detector calibration, equal-sensitivity defaults, and
   calibrated count/exposure pooling through histograms and cuts, plus measured
-  dummy-background replay at sample A3 angles or radial isotropic subtraction
+  energy-matched background file lists within a single series, with dummy-background
+  replay at sample A3 angles or radial isotropic subtraction
   with monitor normalization and per-link energy matching tolerances;
 - a shared crystal-orientation editor with lattice parameters, Mantid-compatible
   U/V vectors, and NeXus or ISAW UB import;

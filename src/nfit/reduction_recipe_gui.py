@@ -92,7 +92,7 @@ def _field_editor(
     editor.setObjectName(object_name)
     editor.setToolTip(field.tooltip + (
         ' Browse to select multiple files, or edit a list such as ["first.nxs", "second.nxs"]. '
-        "Clear the field to disable this calibration."
+        "Clear the list to disable this file-based correction."
         if field.kind == "files" else ""
     ))
     if not field.automatic and not (field.kind in {"path", "files"} and browse is not None):
@@ -181,7 +181,7 @@ def build_reduction_recipe_panel(
             paths, _filter = get_open_file_names(
                 parent, f"Choose {field.label.lower()}",
                 current[0] if isinstance(current, list) and current else "",
-                "MACS scans (*.nxs *.nxs.h5 *.nx5 *.h5 *.hdf5 *.ng0);;All files (*)",
+                "MACS scans (*.nxs *.nxs.h5 *.nx5 *.h5 *.hdf5 *.ng0 *.bt9);;All files (*)",
             )
             if paths:
                 edit.setText(json.dumps(paths))

@@ -250,7 +250,7 @@ def project_measured_background_macs(
         namespace = hashlib.sha256(repr(identity).encode()).hexdigest()
         offset = len(source_ids)
         source_ids.extend(f"macs:{namespace}:{i}" for i in range(data.size))
-        source_variances.extend(np.where(data.mask, counts, 0.))
+        source_variances.extend(np.where(np.isfinite(counts) & (counts >= 0), counts, 0.))
         # Bound the transform workspace; concatenate only coalesced bin/primitive links.
         batch = max(1, min(data.size, budget // max(1, len(transforms) * 160)))
         for start in range(0, data.size, batch):

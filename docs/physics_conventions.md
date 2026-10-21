@@ -1444,3 +1444,27 @@ $\operatorname{Var}(S_b)+s^2\operatorname{Var}(B_b)$. The initial MACS composite
 implementation uses unsymmetrized physical sample bins so their independent
 counting variances can be represented without assuming independence between
 fractional or symmetry copies.
+
+
+### MACS energy-series background estimator
+
+For sample run $j$ and final physical bin $b$, let $C_{jb}$ be the raw count
+numerator and $N_{jb}$ the effective monitor exposure, including known detector
+and monitor corrections. Let $B_{jb}$ be its matched monitor-normalized
+background intensity. With dimensionless background scale $s$, the series is
+
+$$
+I_b=\frac{\sum_j C_{jb}}{N_b}
+-s\sum_{j\in M}\frac{N_{jb}}{N_b}B_{jb},\qquad
+N_b=\sum_j N_{jb},
+$$
+
+where $M$ contains runs having matching backgrounds. All sample runs contribute
+to $N_b$, so unmatched energies remain unsubtracted, including when several
+incident energies share one DIFF output bin. Exposure weights are known and
+use the same masks, fit weights and physical grid as the sample histogram.
+Background observations retain their original primitive identities: weights
+from every reuse are added before squaring for uncertainty propagation. The
+result requires an explicit derived statistical target rather than a raw
+Poisson count model. Missing matched-background support excludes only affected
+sample bins; an unmatched energy is not treated as missing background coverage.

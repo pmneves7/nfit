@@ -22,6 +22,11 @@ MACS_DEFAULTS = {
     "apply_detector_efficiency": False,
     "vanadium_files": [],
     "vanadium_a4_mask_deg": 15.0,
+    "background_files": [],
+    "background_delta_e_tolerance_meV": 0.05,
+    "background_method": "replay",
+    "background_scale": 1.0,
+    "background_q_bin_width": 0.05,
     "mask_misaligned_analyzers": True,
     "analyzer_alignment_tolerance_deg": 1.0,
     "detect_dead_analyzers": False,
@@ -31,7 +36,7 @@ MACS_DEFAULTS = {
 
 
 def macs_settings_schema():
-    """Describe every adjustable importer setting; smoothing is a viewer action."""
+    """Describe source reduction and shared composite background settings."""
     from .reduction_recipes import ReductionSetting as Field
 
     return (
@@ -74,6 +79,22 @@ def macs_settings_schema():
         Field("vanadium_a4_mask_deg", "Vanadium A4 exclusion half-angle", "float", 15.0,
               "Exclude vanadium channels within this angle of the direct beam, including both boundaries (-angle through +angle). This only selects calibration observations; sample channel masks are separate.",
               units="deg", scope="normalization", minimum=0.0, maximum=180.0),
+        Field("background_files", "Background scans", "files", [],
+              "Select background files for this composite. Matching sample runs subtract their background with the same stream and normalization, including vanadium sensitivity. Runs without an energy match remain unsubtracted. Background files do not become selectable datasets. Clear the list to disable.",
+              per_run=False, reduced_event_dependency=False),
+        Field("background_delta_e_tolerance_meV", "Background energy-transfer tolerance", "float", 0.05,
+              "Maximum absolute difference in energy transfer (Ei minus Ef) between a sample run and a background scan. Runs outside this tolerance remain unsubtracted.",
+              units="meV", minimum=0.0, per_run=False, reduced_event_dependency=False),
+        Field("background_method", "Background subtraction method", "choice", "replay",
+              "Replay measured background by detector angle, or pool it as an isotropic radial background. Subtraction is applied when preparing the composite histogram.",
+              choices=(("replay", "Detector-angle replay"), ("isotropic", "Isotropic radial background")),
+              per_run=False, reduced_event_dependency=False),
+        Field("background_scale", "Background scale", "float", 1.0,
+              "Dimensionless multiplier applied to the monitor-normalized background before subtraction. One uses the measured background exposure directly.",
+              per_run=False, reduced_event_dependency=False),
+        Field("background_q_bin_width", "Isotropic background radial bin width", "float", 0.05,
+              "Positive width in momentum-transfer magnitude for isotropic background pooling. Used only with the isotropic subtraction method.",
+              units="angstrom^-1", minimum=0.0, per_run=False, reduced_event_dependency=False),
         Field("mask_misaligned_analyzers", "Mask misset SPEC analyzers", "bool", True,
               "Exclude SPEC analyzer blades outside the alignment tolerance. This does not mask DIFF detectors."),
         Field("analyzer_alignment_tolerance_deg", "Analyzer alignment tolerance", "float", 1.0,
@@ -110,10 +131,11 @@ def adopt_macs_reduction(group):
         return False
     if "macs" not in group.metadata:
         group.metadata["macs"] = copy.deepcopy(config)
+        per_run = {field.key for field in macs_settings_schema() if field.per_run}
         for entry in group.datasets:
             options = entry.metadata.get("import_options", {})
             overrides = {key: copy.deepcopy(value) for key, value in options.items()
-                         if key in MACS_DEFAULTS and value != config.get(key)}
+                         if key in per_run and value != config.get(key)}
             overrides.update(entry.metadata.get("reduction_overrides", {}))
             if overrides:
                 entry.metadata["reduction_overrides"] = overrides

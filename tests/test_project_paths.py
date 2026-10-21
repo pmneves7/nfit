@@ -31,18 +31,19 @@ def _tree(tmp_path, name):
     return experiment, source, calibration, project
 
 
-def test_macs_vanadium_files_relocate_in_settings_overrides_and_provenance(tmp_path):
+@pytest.mark.parametrize("file_list", ["vanadium_files", "background_files"])
+def test_macs_files_relocate_in_settings_overrides_and_provenance(tmp_path, file_list):
     experiment, source, calibration, project = _tree(tmp_path, "old")
     payload = {"data_groups": [{"metadata": {
-        "macs": {"vanadium_files": [str(calibration), str(source)]},
-        "reduction_recipe": {"shared_defaults": {"vanadium_files": [str(calibration)]}},
+        "macs": {file_list: [str(calibration), str(source)]},
+        "reduction_recipe": {"shared_defaults": {file_list: [str(calibration)]}},
     }, "datasets": [{"metadata": {
-        "import_options": {"vanadium_files": [str(calibration)]},
-        "reduction_overrides": {"vanadium_files": [str(source)]},
+        "import_options": {file_list: [str(calibration)]},
+        "reduction_overrides": {file_list: [str(source)]},
         "macs_vanadium": {"source_files": [{"path": str(calibration), "available": True}]},
     }}]}]}
     saved = portable_project_manifest(payload, project)
-    assert saved["data_groups"][0]["metadata"]["macs"]["vanadium_files"] == [
+    assert saved["data_groups"][0]["metadata"]["macs"][file_list] == [
         "../calibrations/vanadium.nxs", "../../nexus/run.nxs"]
     relocated = tmp_path / "new" / "experiment"
     shutil.copytree(experiment, relocated)
@@ -51,11 +52,11 @@ def test_macs_vanadium_files_relocate_in_settings_overrides_and_provenance(tmp_p
     node = resolved["data_groups"][0]
     new_calibration = str(relocated / "shared" / "calibrations" / calibration.name)
     new_source = str(relocated / "nexus" / source.name)
-    assert node["metadata"]["macs"]["vanadium_files"] == [new_calibration, new_source]
-    assert node["metadata"]["reduction_recipe"]["shared_defaults"]["vanadium_files"] == [new_calibration]
+    assert node["metadata"]["macs"][file_list] == [new_calibration, new_source]
+    assert node["metadata"]["reduction_recipe"]["shared_defaults"][file_list] == [new_calibration]
     metadata = node["datasets"][0]["metadata"]
-    assert metadata["import_options"]["vanadium_files"] == [new_calibration]
-    assert metadata["reduction_overrides"]["vanadium_files"] == [new_source]
+    assert metadata["import_options"][file_list] == [new_calibration]
+    assert metadata["reduction_overrides"][file_list] == [new_source]
     assert metadata["macs_vanadium"]["source_files"][0]["path"] == new_calibration
 
 

@@ -1402,6 +1402,53 @@ Detector gaps and unmeasured bins within the allowed region remain unavailable
 and mask the affected sample bins. Linear interpolation blends the zero and
 nonzero bins at window edges; nearest interpolation gives a binwise boundary.
 
+### MACS background file lists for an energy series
+
+Keep the sample files in one SPEC collection and one DIFF collection. In each
+collection's **Reduction** settings, select **Background scans** and set the
+**Background energy-transfer tolerance** in meV (default 0.05). These files are
+reduction inputs and do not become project datasets or viewer dropdown choices.
+The sample file list remains owned by **Sources**.
+
+For each enabled sample run, nfit matches backgrounds by measured energy
+transfer $\Delta E=E_i-E_f$ and final energy $E_f$, both in meV. Both differences
+must be within the selected tolerance. DIFF uses the acquisition's analyzed
+energy condition for matching, although its elastic plotting coordinate is
+$\Delta E=0$. No measured energies are shifted. Multiple matching background
+files pool raw counts and effective monitor exposure. Energies with no matching
+background retain their unsubtracted sample contribution. A matched background
+with missing spatial coverage masks only bins containing that matched sample
+contribution. Backgrounds must be independent acquisitions from the samples.
+
+**Background subtraction method** selects sample-angle replay or an isotropic radial average
+without making duplicate collections. **Background scale** is dimensionless;
+**Isotropic background radial bin width** is in Å⁻¹ and applies to the isotropic method.
+Each background inherits its matched sample run's effective monitor, detector,
+energy and SPEC vanadium settings. SPEC vanadium factors do not calibrate DIFF.
+Use physical bin assignment with **Fractional** off on every axis and symmetry
+**None**. The sample's existing grid, masks, and statistical exposure pooling
+control how contributions from different energies combine.
+
+```python
+from nfit.reduction_recipes import set_reduction_settings
+
+set_reduction_settings(spec_group, {
+    "background_files": ["/data/empty_410.nxs.bt9", "/data/empty_411.nxs.bt9"],
+    "background_delta_e_tolerance_meV": 0.05,
+    "background_method": "replay",       # or "isotropic"
+    "background_scale": 1.0,
+    "background_q_bin_width": 0.05,      # inverse angstroms
+})
+```
+
+The same public settings drive the GUI and exported collection workflow.
+Background file identities participate in cache validation and portable project
+paths. The corrected result retains correlations from reusing background
+observations; it is a derived signal rather than independent Poisson counts.
+The numerical service `apply_macs_background_series` takes an explicit callback
+that prepares sample subsets on the exact final grid; collection workflows
+provide that callback automatically.
+
 ### MACS dummy backgrounds at sample angles
 
 For MACS, **Measured background at sample angles** pools an empty-mount scan's

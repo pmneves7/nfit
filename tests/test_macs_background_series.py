@@ -1,0 +1,231 @@
+"""One MACS collection pools matched corrections and untouched sample energies."""
+
+import ast
+from pathlib import Path
+
+import h5py
+import numpy as np
+import pytest
+
+from nfit import (
+    DataGroup,
+    DatasetGroup,
+    NfitProject,
+    composite_dataset_data,
+    dataset_entry_from_path,
+    load_project,
+    save_project,
+)
+from nfit.macs_reduction import adopt_macs_reduction
+from nfit.project_composites import _composite_scope, data_group_composite_config
+from nfit.project_viewer_loading import plan_viewer_items
+from nfit.reduction_recipes import set_reduction_settings
+from nfit.workflow import composite_workflow_script
+from tests.test_macs import _write_macs_nexus
+from tests.test_macs_vanadium import _scan
+
+
+def _source(path, *, energy=-.2, counts=9., monitor=200_000.):
+    _write_macs_nexus(path, points=2, energy_transfer=energy)
+    with h5py.File(path, "r+") as handle:
+        logs = handle["entry/DAS_logs"]
+        for stream in ("spec", "diff"):
+            logs[f"{stream}Detector/counts"][...] = counts
+        logs["counter/liveMonitor"][...] = monitor
+        logs["kidneyMotor/softPosition"][...] = 0.
+    return path
+
+
+def _collection(paths, background_paths, *, stream="spec", energies=(-.3, .5), bins=2):
+    entries = [dataset_entry_from_path(
+        path, importer_name="macs_nexus", data_type="single_crystal_inelastic",
+        importer_options={"stream": stream, "incident_energy_policy": "recorded",
+                          "final_energy_policy": "recorded", "monitor_response": "constant",
+                          "ki_kf_normalization": True, "mask_misaligned_analyzers": False},
+    ) for path in paths]
+    sample = DatasetGroup(f"MACS {stream.upper()}", datasets=entries)
+    adopt_macs_reduction(sample)
+    set_reduction_settings(sample, {
+        "background_files": [str(path) for path in background_paths],
+        "background_delta_e_tolerance_meV": .05,
+        "background_method": "replay",
+    })
+    root = DataGroup("Ef5_2K", subgroups=[sample])
+    config = data_group_composite_config(_composite_scope(root, sample))
+    config.update(enabled=True, auto_rebin=False, minimum_coverage=0.,
+                  resolution_mode="bins", fractional=False)
+    for axis in config["axes"]:
+        axis.update(lower=-100., upper=100., auto_lower=False, auto_upper=False,
+                    num_bins=1, mode="bins", auto_step_size=False, fractional=False)
+    config["axes"][-1].update(lower=energies[0], upper=energies[1], num_bins=bins)
+    return root, sample, config
+
+
+def _prepare(root, sample, config, *, backgrounds=True):
+    return composite_dataset_data(root, node=sample, config_override=config,
+                                  apply_backgrounds=backgrounds)
+
+
+@pytest.mark.parametrize("stream", ["spec", "diff"])
+def test_matched_background_and_unmatched_energy_preserve_exposure_pool(tmp_path, stream):
+    paths = [_source(tmp_path / "matched.nxs", energy=-.2, counts=9.),
+             _source(tmp_path / "unmatched.nxs", energy=.2, counts=16.)]
+    background = _source(tmp_path / "dummy.nxs", energy=-.2, counts=4.)
+    root, sample, config = _collection(paths, [background], stream=stream,
+                                      bins=2 if stream == "spec" else 1)
+    original = _prepare(root, sample, config, backgrounds=False)
+    corrected = _prepare(root, sample, config)
+    assert not np.any(corrected.mask)
+    if stream == "spec":
+        np.testing.assert_allclose(corrected.signal.ravel(),
+                                   [25. * np.sqrt(3.5 / 3.7), 80. * np.sqrt(3.9 / 3.7)])
+        assert corrected.signal.ravel()[1] == original.signal.ravel()[1]
+        assert corrected.errors.ravel()[1] == original.errors.ravel()[1]
+    else:
+        # DIFF maps both acquisitions to E=0. Only the acquisition whose SPEC
+        # energy transfer matches the dummy contributes to the correction.
+        assert original.signal.item() == pytest.approx(62.5)
+        assert corrected.signal.item() == pytest.approx(52.5)
+    assert corrected.source_dependencies is not None
+    np.testing.assert_allclose(corrected.source_dependencies.variance(), corrected.errors**2)
+    assert "poisson_count_model" not in corrected.metadata
+    assert "measurement_contract" not in corrected.metadata
+
+
+def test_reused_background_retains_full_uncertainty_across_sample_runs(tmp_path):
+    paths = [_source(tmp_path / f"sample-{index}.nxs", counts=9.) for index in range(2)]
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection(paths, [background], bins=1)
+    original = _prepare(root, sample, config, backgrounds=False)
+    corrected = _prepare(root, sample, config)
+    one_root, one_sample, one_config = _collection(paths[:1], [background], bins=1)
+    one_original = _prepare(one_root, one_sample, one_config, backgrounds=False)
+    one_corrected = _prepare(one_root, one_sample, one_config)
+    np.testing.assert_allclose(corrected.signal, one_corrected.signal)
+    background_variance = corrected.errors**2 - original.errors**2
+    one_background_variance = one_corrected.errors**2 - one_original.errors**2
+    np.testing.assert_allclose(background_variance, one_background_variance)
+    assert background_variance.item() > 0
+    np.testing.assert_allclose(original.errors**2, one_original.errors**2 / 2)
+
+
+def test_background_file_references_do_not_create_viewer_datasets(tmp_path):
+    path = _source(tmp_path / "sample.nxs")
+    background = _source(tmp_path / "dummy.nxs")
+    root, spec, _ = _collection([path], [background])
+    _, diff, _ = _collection([path], [background], stream="diff", bins=1)
+    root.subgroups.append(diff)
+    items = plan_viewer_items(root, use_composite=True, dataset_binnings=lambda _dataset: [])
+    assert [item.source_name for item in items] == ["MACS SPEC Composite", "MACS DIFF Composite"]
+    assert all(item.dataset is None for item in items)
+    assert len(list(root.iter_datasets())) == 2
+    assert all(entry.metadata["source_file"] == str(path) for entry in root.iter_datasets())
+    assert spec.backgrounds == diff.backgrounds == []
+
+
+def test_series_archive_and_exported_workflow_round_trip(tmp_path):
+    paths = [_source(tmp_path / "sample.nxs"),
+             _source(tmp_path / "unmatched.nxs", energy=.2, counts=16.)]
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection(paths, [background])
+    project = NfitProject([root])
+    expected = _prepare(root, sample, config)
+    script = composite_workflow_script(project, root.name, node_id=sample.id)
+    namespace = {"__name__": "standalone"}
+    exec(compile(script, "macs_background_series.py", "exec"), namespace)
+    replayed = namespace["run"]()
+    destination = tmp_path / "series.nfit"
+    save_project(project, destination)
+    restored_root = load_project(destination).data_groups[0]
+    restored_sample = restored_root.subgroups[0]
+    assert restored_sample.metadata["macs"]["background_files"] == [str(background)]
+    restored = _prepare(restored_root, restored_sample, config)
+    for actual in (replayed, restored):
+        np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
+        np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
+        np.testing.assert_array_equal(actual.mask, expected.mask)
+        assert actual.source_dependencies is not None
+
+
+def test_background_file_content_change_invalidates_composite_cache(tmp_path):
+    path = _source(tmp_path / "sample.nxs", counts=9.)
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    before = _prepare(root, sample, config)
+    with h5py.File(background, "r+") as handle:
+        handle["entry/DAS_logs/specDetector/counts"][...] = 8.
+    after = _prepare(root, sample, config)
+    assert before.signal.item() == pytest.approx(25. * np.sqrt(3.5 / 3.7))
+    assert after.signal.item() == pytest.approx(5. * np.sqrt(3.5 / 3.7))
+    assert after.errors.item() > before.errors.item()
+
+
+def test_vanadium_settings_are_inherited_by_background_source(tmp_path):
+    path = _source(tmp_path / "sample.nxs", counts=9.)
+    background = _source(tmp_path / "dummy.nxs", counts=9.)
+    calibrations = [_scan(tmp_path / "vanadium-a.nxs", kidney=0),
+                    _scan(tmp_path / "vanadium-b.nxs", kidney=40)]
+    root, sample, config = _collection([path], [background], bins=1)
+    set_reduction_settings(sample, {"vanadium_files": [str(path) for path in calibrations],
+                                    "vanadium_a4_mask_deg": 15.})
+    original = _prepare(root, sample, config, backgrounds=False)
+    corrected = _prepare(root, sample, config)
+    assert not np.any(corrected.mask)
+    np.testing.assert_allclose(corrected.signal, 0., atol=1e-12)
+    np.testing.assert_allclose(corrected.errors, np.sqrt(2.) * original.errors)
+
+
+def test_series_service_is_gui_independent_and_public():
+    import nfit
+    from nfit import macs_background_series
+
+    assert nfit.apply_macs_background_series is macs_background_series.apply_macs_background_series
+    tree = ast.parse(Path(macs_background_series.__file__).read_text())
+    imports = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+    assert not any(name.startswith(("PySide", "project_gui", "project_data", "project_composites"))
+                   for name in imports)
+
+
+def test_per_run_correction_keeps_observations_below_collection_sample_threshold(tmp_path):
+    paths = [_source(tmp_path / f"sample-{index}.nxs", counts=9.) for index in range(2)]
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection(paths, [background], bins=1)
+    # Each acquisition has 40 points. Only the combined 80-point bin passes.
+    config["minimum_samples"] = 60
+    corrected = _prepare(root, sample, config)
+    assert not corrected.mask.item()
+    assert corrected.signal.item() == pytest.approx(25. * np.sqrt(3.5 / 3.7))
+
+
+@pytest.mark.parametrize("unsupported", ["fractional", "symmetry"])
+def test_series_rejects_untracked_sample_copy_dependence(tmp_path, unsupported):
+    from nfit.measurement_dependencies import SourceReplayRequired
+
+    path = _source(tmp_path / "sample.nxs")
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    if unsupported == "fractional":
+        config["fractional"] = True
+        for axis in config["axes"]:
+            axis["fractional"] = True
+    else:
+        config["symmetry"] = {"mode": "space_group", "expression": "P -1"}
+    with pytest.raises(SourceReplayRequired, match=unsupported):
+        _prepare(root, sample, config)
+
+
+def test_series_service_rejects_unnormalized_sample(tmp_path):
+    from nfit.macs_background_series import apply_macs_background_series
+
+    path = _source(tmp_path / "sample.nxs")
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    target = _prepare(root, sample, config, backgrounds=False)
+    target = target.with_updates(metadata={**target.metadata,
+        "rebin": {**target.metadata["rebin"], "normalize": False}})
+
+    def unexpected_prepare(_runs):
+        pytest.fail("The invalid statistical target must be rejected before source replay")
+
+    with pytest.raises(ValueError, match="normalized exposure pooling"):
+        apply_macs_background_series(sample, target, prepare_sample=unexpected_prepare)

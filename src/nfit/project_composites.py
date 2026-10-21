@@ -1059,6 +1059,11 @@ def _composite_cache_signature(
             numerical["macs_vanadium_sources"] = [
                 vanadium_source_provenance(files) for files in calibration_files
             ]
+        background_files = [settings.get("background_files", []) for settings in macs_settings]
+        if include_backgrounds and any(background_files):
+            numerical["macs_background_file_sources"] = [
+                vanadium_source_provenance(files) for files in background_files
+            ]
     native_event_rebin = (
         isinstance(node, DatasetGroup) and not child_scopes and bool(selected)
         and all(dataset.kind in {"mdevent", "raw_dgs_nexus"} for dataset in selected)
@@ -2164,6 +2169,34 @@ def _apply_composite_backgrounds(
 ) -> MDHistoData | PointListData | PointData4D:
     """Apply backgrounds owned by a composite scope after it is combined."""
 
+    node = group.node if isinstance(group, _CompositeScope) else group
+    if isinstance(node, DatasetGroup):
+        from .macs_reduction import macs_group_config
+        from .reduction_recipes import effective_reduction_config
+
+        if macs_group_config(node) is not None and effective_reduction_config(node).get("background_files"):
+            from .macs_background_series import apply_macs_background_series
+
+            if not isinstance(data, MDHistoData) or len(data.axes) != 4:
+                raise ValueError("MACS background file lists require a physical HKLE composite")
+            aligned = copy.deepcopy(dict(data_group_composite_config(group) if config is None else config))
+            aligned.update(auto_rebin=False, minimum_coverage=0., minimum_samples=0.)
+            for axis, physical in zip(aligned["axes"], data.axes, strict=True):
+                axis.update(mode="edges", bin_edges=physical.values.tolist(),
+                            auto_lower=False, auto_upper=False, auto_step_size=False)
+
+            def prepare_sample(runs):
+                subset = replace(node, datasets=list(runs), subgroups=[])
+                return _composite_point_data(_composite_scope(_composite_root(group), subset),
+                    aligned, include_source_masks=True, progress_callback=progress_callback)
+
+            candidates = _composite_candidates(group)
+            data = apply_macs_background_series(node, data, prepare_sample=prepare_sample,
+                datasets=candidates,
+                inherited_masks_by_id={run.id: effective_dataset_masks(_composite_root(group), run)
+                                       for run in candidates},
+                source_signature=_composite_cache_signature(group, config_override=config, include_backgrounds=False),
+                max_batch_bytes=_rebin_max_batch_bytes(aligned), progress_callback=progress_callback)
     backgrounds = list(getattr(group, "backgrounds", []))
     if not backgrounds:
         return data
