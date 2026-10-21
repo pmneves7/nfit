@@ -50,7 +50,8 @@ A few of its main capabilities are:
   energy-matched background file lists within a single series, visible Backgrounds
   folders with shared and per-file scale/reduction controls, and dummy-background
   replay at sample A3 angles or radial isotropic subtraction
-  with monitor normalization and per-link energy matching tolerances;
+  with monitor normalization, shared uncertainties across symmetry images, and
+  per-link energy matching tolerances;
 - a shared crystal-orientation editor with lattice parameters, Mantid-compatible
   U/V vectors, and NeXus or ISAW UB import;
 - compiled fractional N-dimensional point binning on uniform and nonuniform grids,

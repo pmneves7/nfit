@@ -123,11 +123,14 @@ def test_background_file_references_do_not_create_viewer_datasets(tmp_path):
     assert spec.backgrounds == diff.backgrounds == []
 
 
-def test_series_archive_and_exported_workflow_round_trip(tmp_path):
+@pytest.mark.parametrize("symmetry", [False, True])
+def test_series_archive_and_exported_workflow_round_trip(tmp_path, symmetry):
     paths = [_source(tmp_path / "sample.nxs"),
              _source(tmp_path / "unmatched.nxs", energy=.2, counts=16.)]
     background = _source(tmp_path / "dummy.nxs", counts=4.)
     root, sample, config = _collection(paths, [background])
+    if symmetry:
+        config['symmetry'] = {'mode': 'space_group', 'expression': 'P -1'}
     project = NfitProject([root])
     expected = _prepare(root, sample, config)
     script = composite_workflow_script(project, root.name, node_id=sample.id)
@@ -197,7 +200,7 @@ def test_per_run_correction_keeps_observations_below_collection_sample_threshold
     assert corrected.signal.item() == pytest.approx(25. * np.sqrt(3.5 / 3.7))
 
 
-@pytest.mark.parametrize("unsupported", ["fractional", "symmetry"])
+@pytest.mark.parametrize("unsupported", ["fractional"])
 def test_series_rejects_untracked_sample_copy_dependence(tmp_path, unsupported):
     from nfit.measurement_dependencies import SourceReplayRequired
 
@@ -380,3 +383,98 @@ def test_background_can_use_its_own_vanadium_calibration(tmp_path):
     assert not np.any(after.mask)
     assert not np.allclose(after.signal, before.signal)
     assert after.source_dependencies is not None
+
+
+def test_symmetry_copies_preserve_original_count_uncertainties(tmp_path):
+    path = _source(tmp_path / "sample.nxs", counts=9.)
+    background = _source(tmp_path / "dummy.nxs", counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    original = _prepare(root, sample, config)
+    config['symmetry'] = {'mode': 'space_group', 'expression': 'P -1'}
+    expanded = _prepare(root, sample, config)
+    np.testing.assert_allclose(expanded.signal, original.signal)
+    np.testing.assert_allclose(expanded.errors, original.errors)
+    assert expanded.metadata['sample_uncertainty'] == 'original_counts_with_shared_symmetry_copies'
+    expanded.source_dependencies.validate_variances(expanded.errors**2, mask=expanded.mask)
+
+
+def test_symmetry_sample_replay_tracks_masked_weighted_scaled_counts(tmp_path):
+    from nfit import set_macs_background_source_settings
+    from nfit.composite_scaling import configure_composite_scaling
+
+    paths = [_source(tmp_path / f'sample-{n}.nxs', counts=c) for n,c in enumerate([9.,16.])]
+    background = _source(tmp_path / 'dummy.nxs', counts=4.)
+    root, sample, config = _collection(paths, [background], bins=1)
+    sample.datasets[0].scale_factor=1.5
+    sample.datasets[0].fit_weight=.7
+    set_reduction_settings(sample, {'masked_analyzer_channels':[1]}, dataset_ids=[sample.datasets[0].id])
+    set_macs_background_source_settings(sample,background,scale_factor=.4)
+    configure_composite_scaling(root,node=sample,data_scale=2.)
+    original = _prepare(root, sample, config)
+    config['symmetry']={'mode':'space_group','expression':'P -1'}
+    expanded = _prepare(root, sample, config)
+    np.testing.assert_allclose(expanded.signal, original.signal)
+    np.testing.assert_allclose(expanded.errors, original.errors)
+
+
+def test_symmetry_dependencies_keep_cross_bin_sample_covariance(tmp_path):
+    from nfit.measurement_dependencies import project_source_dependencies
+
+    path = _source(tmp_path / 'sample.nxs', counts=9.)
+    background = _source(tmp_path / 'dummy.nxs', counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    reference = _prepare(root, sample, config)
+    config['symmetry']={'mode':'space_group','expression':'P -1'}
+    config['axes'][0].update(num_bins=2)
+    expanded = _prepare(root, sample, config)
+    assert not np.any(expanded.mask)
+    deps=expanded.source_dependencies
+    mean=project_source_dependencies(deps,np.array([0,1]),np.array([0,0]),np.array([.5,.5]),(1,))
+    np.testing.assert_allclose(mean.variances(),reference.errors.ravel()**2)
+    assert mean.variances()[0] > np.sum(expanded.errors.ravel()**2)/4
+
+
+def test_cubic_symmetry_coincident_images_match_native_histogram(tmp_path):
+    path = _source(tmp_path / 'sample.nxs', counts=9.)
+    background = _source(tmp_path / 'dummy.nxs', counts=4.)
+    root, sample, config = _collection([path], [background], bins=1)
+    config['symmetry']={'mode':'space_group','expression':'Fd-3m'}
+    data = _prepare(root,sample,config)
+    assert not np.any(data.mask)
+    np.testing.assert_allclose(data.signal,25.*np.sqrt(3.5/3.7))
+    assert data.metadata['sample_uncertainty']=='original_counts_with_shared_symmetry_copies'
+    assert np.all(np.isfinite(data.errors)) and np.all(data.errors>0)
+
+
+def test_symmetry_background_numerical_version_invalidates_only_corrected_cache(tmp_path,monkeypatch):
+    from nfit import macs_background
+    from nfit.project_composites import _composite_cache_signature
+
+    path=_source(tmp_path/'sample.nxs')
+    background=_source(tmp_path/'dummy.nxs')
+    root,sample,config=_collection([path],[background],bins=1)
+    config['symmetry']={'mode':'space_group','expression':'P -1'}
+    scope=_composite_scope(root,sample)
+    old=_composite_cache_signature(scope,config_override=config)
+    raw=_composite_cache_signature(scope,config_override=config,include_backgrounds=False)
+    monkeypatch.setattr(macs_background,'MACS_BACKGROUND_NUMERICAL_VERSION',macs_background.MACS_BACKGROUND_NUMERICAL_VERSION+1)
+    assert old!=_composite_cache_signature(scope,config_override=config)
+    assert raw==_composite_cache_signature(scope,config_override=config,include_backgrounds=False)
+
+
+def test_background_subtraction_uses_the_configured_sensitivity_budget(tmp_path,monkeypatch):
+    from nfit import backgrounds, performance
+
+    path=_source(tmp_path/'sample.nxs')
+    background=_source(tmp_path/'dummy.nxs')
+    root,sample,config=_collection([path],[background],bins=1)
+    config['symmetry']={'mode':'space_group','expression':'P -1'}
+    monkeypatch.setattr(performance,'operation_batch_bytes',lambda:32*1024**2)
+    budgets=[]
+    real=backgrounds.combine_source_dependencies
+    def combine(*args,**kwargs):
+        budgets.append(kwargs.get('max_bytes'))
+        return real(*args,**kwargs)
+    monkeypatch.setattr(backgrounds,'combine_source_dependencies',combine)
+    _prepare(root,sample,config)
+    assert budgets==[32*1024**2]

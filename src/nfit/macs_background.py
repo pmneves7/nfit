@@ -23,6 +23,7 @@ from .measurement_dependencies import (
     independent_source_dependencies,
 )
 from .project_masks import _point_data_with_nfit_masks
+from .rebin import ArrayRebinSource, SymmetryRebinSource
 from .reduction_recipes import effective_reduction_config
 from .source_lineage import (
     SOURCE_LINEAGE_KEY,
@@ -32,6 +33,7 @@ from .source_lineage import (
 )
 
 DEFAULT_ENERGY_TOLERANCE_MEV = 0.02
+MACS_BACKGROUND_NUMERICAL_VERSION = 2
 
 _MATCH_SETTINGS = (
     "stream", "monitor_target", "monitor_response", "monitor_reference_k_inv_angstrom",
@@ -79,6 +81,26 @@ def _rotation(angles):
     matrix[:, 1, 0] = np.sin(radians)
     matrix[:, 2, 2] = 1.
     return matrix
+
+
+def _background_symmetry_keep(lab, sample_transforms, operations):
+    """Retain native unique images of each raw point at each sample angle.
+
+    Sample acquisitions stay separate source rows, even when angles coincide.
+    The shared symmetry iterator owns its coordinate comparison convention;
+    comparison occurs in physical HKL before projecting into the output basis.
+    Its source batch and retained previous images fit the caller's existing
+    point/angle/operation batch budget.
+    """
+    coordinates = np.einsum("ni,aij->naj", lab, sample_transforms)
+    shape = (*coordinates.shape[:2], len(operations))
+    rows = np.arange(coordinates.shape[0] * coordinates.shape[1])
+    source = ArrayRebinSource(rows, coordinates.reshape(-1, 3), batch_size=len(rows))
+    keep = np.zeros(shape, dtype=bool)
+    flattened = keep.reshape(-1, len(operations))
+    for index, batch in enumerate(SymmetryRebinSource(source, operations).iter_batches()):
+        flattened[np.asarray(batch.data, dtype=np.int64), index] = True
+    return keep.reshape(len(lab), -1)
 
 
 def _source(group, run, masks, *, monitor_target=None, monitor_reference_k_inv_angstrom=None):
@@ -224,7 +246,7 @@ def project_measured_background_macs(
         raise SourceReplayRequired("MACS replay output exceeds its memory budget")
     prepare = _MacsSourcePreparation(energy_tolerance_meV)
 
-    transforms, angle_weights, channel_acceptance = [], [], []
+    transforms, angle_weights, channel_acceptance, sample_transforms = [], [], [], []
     sample_paths = set()
     symmetry = _target_symmetry(target)
     for run in runs:
@@ -237,13 +259,16 @@ def project_measured_background_macs(
         for rotation, weight, accepted in zip(_rotation(angles), weights, mask, strict=True):
             if not np.isfinite(weight) or weight <= 0 or not np.any(accepted):
                 continue
+            sample_transform = rotation @ inverse_rlu.T
+            sample_transforms.append(sample_transform)
             for operation in symmetry:
-                transforms.append(rotation @ inverse_rlu.T @ operation.T @ inverse_basis[:3, :3])
+                transforms.append(sample_transform @ operation.T @ inverse_basis[:3, :3])
                 angle_weights.append(weight)
                 channel_acceptance.append(accepted)
     if not transforms:
         raise ValueError("MACS sample has no unmasked acquisition angles")
     transforms = np.asarray(transforms)
+    sample_transforms = np.asarray(sample_transforms)
     weights = np.asarray(angle_weights)
     weights /= weights.sum()
     acceptance = np.asarray(channel_acceptance)
@@ -277,7 +302,7 @@ def project_measured_background_macs(
         source_ids.extend(f"macs:{namespace}:{i}" for i in range(data.size))
         source_variances.extend(np.where(np.isfinite(counts) & (counts >= 0), counts, 0.))
         # Bound the transform workspace; concatenate only coalesced bin/primitive links.
-        batch = max(1, min(data.size, budget // max(1, len(transforms) * 160)))
+        batch = max(1, min(data.size, budget // max(1, len(transforms) * 192)))
         for start in range(0, data.size, batch):
             stop = min(data.size, start + batch)
             ids = np.arange(start, stop)
@@ -287,6 +312,8 @@ def project_measured_background_macs(
             bins = flat_bin_indices(coords.reshape(-1, 4), edges, shape).reshape(len(ids), -1)
             valid = data.mask[start:stop, None] & acceptance[:, ids % 20].T & (bins >= 0)
             valid &= ~target.mask.ravel()[np.maximum(bins, 0)]
+            if len(symmetry) > 1:
+                valid &= _background_symmetry_keep(lab[start:stop], sample_transforms, symmetry)
             rows, columns = np.nonzero(valid)
             locations = bins[rows, columns]
             keys, inverse = np.unique(rows * cells + locations, return_inverse=True)

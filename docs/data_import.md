@@ -1440,9 +1440,14 @@ before exposure pooling; changing only those reporting units therefore does not
 change the subtraction. Use the individual scale factor to rescale a source. The
 detector stream and resolved Ei/Ef compatibility checks remain required.
 SPEC vanadium factors do not calibrate DIFF.
-Use physical bin assignment with **Fractional** off on every axis and symmetry
-**None**. The sample's existing grid, masks, and statistical exposure pooling
-control how contributions from different energies combine.
+Use physical bin assignment with **Fractional** off on every axis. Reciprocal
+symmetry, including **Fd-3m**, is supported: original sample and background
+observations retain shared sensitivities across symmetry images. Coincident
+images are counted once, matching the normal point rebinner. Distinct
+images that enter the same bin are combined before squaring their uncertainty
+coefficients. The sample's existing grid, symmetry, masks and exposure pooling
+control how contributions from different energies combine. The rebinning memory
+budget also bounds the final shared-sensitivity merge.
 
 ```python
 from nfit.reduction_recipes import set_reduction_settings

@@ -1480,8 +1480,12 @@ those reporting units do not rescale the correction. Individual scales affect
 primitive sensitivities, so the variance scales with $a_k^2$ and reuse retains
 covariance. Disabled files contribute neither counts nor exposure.
 
-Background observations retain their original primitive identities: weights
-from every reuse are added before squaring for uncertainty propagation. The
+With reciprocal symmetry, the MACS file-series subtraction replays original
+sample counts onto the final physical bins. Coincident coordinate images of one
+observation are removed using the point rebinner's tolerance; distinct images
+retain the same counting primitive across bins. Both sample and background
+weights from every reuse are added before squaring for uncertainty propagation.
+Symmetry therefore expands coverage without inventing independent measurements. The
 result requires an explicit derived statistical target rather than a raw
 Poisson count model. Missing matched-background support excludes only affected
 sample bins; an unmatched energy is not treated as missing background coverage.

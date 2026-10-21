@@ -14,7 +14,11 @@ import numpy as np
 from .backgrounds import subtract_aligned_background
 from .histogram_statistics import NORMALIZATION_DENOMINATOR
 from .macs import import_macs_nexus
-from .macs_background import prepare_macs_background_sample, project_measured_background_macs
+from .macs_background import (
+    _target_symmetry,
+    prepare_macs_background_sample,
+    project_measured_background_macs,
+)
 from .macs_background_sources import effective_macs_background_config, list_macs_background_sources
 from .macs_radial_background import project_isotropic_background_macs
 from .macs_reduction import MACS_DEFAULTS
@@ -46,7 +50,7 @@ def _exposure(data):
 def apply_macs_background_series(
     sample, target, *, prepare_sample, datasets=None, inherited_masks=None,
     inherited_masks_by_id=None, source_signature="", max_batch_bytes=64 * 1024**2,
-    progress_callback=None,
+    progress_callback=None, sample_scale=1.,
 ):
     """Subtract matching file backgrounds on a combined physical MACS grid.
 
@@ -61,7 +65,9 @@ def apply_macs_background_series(
     Unmatched energies remain unsubtracted. Missing spatial coverage for a
     matched energy masks only output bins containing that sample contribution.
     Shared background observations retain their cross-bin/run covariance.
-    Physical, unsymmetrized, exposure-pooled sample bins are required.
+    Physical, exposure-pooled sample bins are required. Symmetry-expanded bins
+    replay original sample counts to retain shared-source covariance;
+    ``sample_scale`` is the dimensionless composite sample-numerator scale.
     """
     if not isinstance(target, MDHistoData) or len(target.axes) != 4:
         raise ValueError("MACS background file series requires a four-dimensional physical histogram")
@@ -151,7 +157,15 @@ def apply_macs_background_series(
         unmatched_policy="retain_unsubtracted_sample", estimator="sample_exposure_weighted_background")
     if not dependencies:
         return target.with_updates(metadata={**target.metadata, "macs_background_series": recipe})
-    sample_target = prepare_macs_background_sample(target, source_signature=source_signature)
+    operations = _target_symmetry(target)
+    if target.source_dependencies is None and (len(operations) != 1 or not np.array_equal(operations[0], np.eye(3))):
+        from .macs_sample_dependencies import track_macs_sample_dependencies
+
+        sample_target = track_macs_sample_dependencies(sample, target, datasets=runs,
+            inherited_masks=inherited_masks, inherited_masks_by_id=inherited_masks_by_id,
+            scale=sample_scale, max_batch_bytes=max_batch_bytes, progress_callback=progress_callback)
+    else:
+        sample_target = prepare_macs_background_sample(target, source_signature=source_signature)
     combined = combine_source_dependencies(dependencies, [1.] * len(dependencies), max_bytes=max_batch_bytes)
     signal = np.sum(corrections, axis=0)
     metadata = {**source_metadata[0].metadata, **merge_source_lineage_metadata(*source_metadata),
@@ -159,7 +173,8 @@ def apply_macs_background_series(
     correction = target.with_updates(signal=signal, errors=np.sqrt(combined.variances()),
         mask=missing | target.mask, source_dependencies=combined, counting_dependencies=None,
         auxiliary_channels={}, metadata=metadata)
-    result = subtract_aligned_background(sample_target, correction, scale=float(settings.get("background_scale", 1.)))
+    result = subtract_aligned_background(sample_target, correction, scale=float(settings.get("background_scale", 1.)),
+                                         max_dependency_bytes=max_batch_bytes)
     final_metadata = {**result.metadata, "macs_background_series": recipe,
         "macs_background_file_signature": hashlib.sha256(repr(source_settings).encode()).hexdigest()}
     final_metadata.pop("poisson_count_model", None)

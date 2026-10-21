@@ -9,6 +9,7 @@ from .analysis.coordinates import q_modulus_for_spectral
 from .background_channels import accumulate_background_channel
 from .mdhisto import MDHistoChannel, MDHistoData, mdhisto_coverage_fraction, mdhisto_measured_bins
 from .measurement_dependencies import (
+    DEFAULT_SOURCE_DEPENDENCY_BYTES,
     SourceReplayRequired,
     combine_source_dependencies,
     project_source_dependencies,
@@ -61,11 +62,14 @@ def subtract_aligned_background(
     background: MDHistoData,
     *,
     scale: float = 1.0,
+    max_dependency_bytes: int = DEFAULT_SOURCE_DEPENDENCY_BYTES,
 ) -> MDHistoData:
     """Subtract aligned histograms, preserving declared shared sensitivities.
 
     Untracked operands retain the documented independent variance convention.
     A mixture of tracked and untracked operands requires explicit source replay.
+    ``max_dependency_bytes`` bounds the shared-sensitivity merge's working
+    storage; instrument workflows can pass their configured binning budget.
     """
 
     if float(scale) == 0.0:
@@ -106,7 +110,8 @@ def subtract_aligned_background(
     )
     dependencies = None
     if data.source_dependencies is not None or background.source_dependencies is not None:
-        dependencies = combine_source_dependencies((data.source_dependencies, background.source_dependencies), (1.0, -factor))
+        dependencies = combine_source_dependencies((data.source_dependencies, background.source_dependencies),
+            (1.0, -factor), max_bytes=max_dependency_bytes)
         variance = dependencies.variance()
     if dependencies is None:
         from .cached_background_replay import replay_represents_background_overlap

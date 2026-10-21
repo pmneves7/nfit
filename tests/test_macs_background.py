@@ -166,3 +166,47 @@ def test_explicit_source_reductions_keep_legacy_guard_and_energy_stream_checks(t
     with pytest.raises(ValueError, match="matching incident and final energies"):
         project_measured_background_macs(sample, background, _target(),
                                          allow_background_reduction_overrides=True)
+
+
+@pytest.mark.parametrize("sample_points,budget", [(2, 64 * 1024**2), (100, 65536)])
+def test_symmetry_replay_deduplicates_coordinates_preserving_angles_and_same_bin_images(
+    tmp_path, monkeypatch, sample_points, budget,
+):
+    import nfit.macs_background as module
+
+    sample = _group(tmp_path / "sample.nxs", points=sample_points, angles=[0.])
+    background = _group(tmp_path / "background.nxs", angles=[0.])
+    original_source = module._source
+
+    def source(*args, **kwargs):
+        config, data, angles, path = original_source(*args, **kwargs)
+        # Half the detector rays have two distinct images under H/K exchange;
+        # the other half lie on H=K and have just one unique image. All images
+        # occupy the same wide output bin. Repeated sample angles stay separate.
+        axis = np.arange(data.size) % 20 < 10
+        counts = np.where(axis, 100., 1.)
+        data = data.with_updates(
+            H=np.full(data.size, 1e-10), K=np.where(axis, 0., 1e-10),
+            L=np.zeros(data.size), intensity=counts, sigma=np.sqrt(counts),
+            normalization_denominator=np.ones(data.size),
+            metadata={**data.metadata, "rlu_to_inv_angstrom_matrix": np.eye(3).tolist()},
+            measurement_payload={"event_signal_numerator": counts, "num_events": counts},
+        )
+        return config, data, angles, path
+
+    monkeypatch.setattr(module, "_source", source)
+    target = _target()
+    # Output coordinates are much closer than the native HKL tolerance. The
+    # unique-image comparison must happen before applying this output basis.
+    basis = np.diag([1000., 1000., 1., 1.])
+    target = target.with_updates(metadata={**target.metadata, "rebin": {
+        "vectors": basis.tolist(), "symmetry": {"operations_hkl": [
+            np.eye(3).tolist(), [[0., 1., 0.], [1., 0., 0.], [0., 0., 1.]],
+        ]}}})
+    result = project_measured_background_macs(sample, background, target, max_batch_bytes=budget)
+    assert not result.mask.item()
+    assert result.signal.item() == pytest.approx((2 * 100. + 1.) / 3.)
+    # Each of 20 independent axis observations has twice the numerator weight
+    # of each of 20 diagonal observations; all copies share those primitives.
+    assert result.errors.item()**2 == pytest.approx((20 * 100. + 20 * .25) / 30.**2)
+    result.source_dependencies.validate_variances(result.errors**2, mask=result.mask)

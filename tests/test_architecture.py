@@ -68,6 +68,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "macs_reduction.py",
     PACKAGE_ROOT / "macs_background_sources.py",
     PACKAGE_ROOT / "macs_background_series.py",
+    PACKAGE_ROOT / "macs_sample_dependencies.py",
     PACKAGE_ROOT / "macs_normalization.py",
     PACKAGE_ROOT / "point_counting.py",
     PACKAGE_ROOT / "measurement_contracts.py",

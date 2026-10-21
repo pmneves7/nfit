@@ -134,6 +134,8 @@ different Python.
   `macs_background_series.py` owns energy-matched background file lists within
   one sample collection, including unmatched-energy and shared-exposure handling.
   `macs_radial_background.py` owns radial pooling and isotropic dummy backgrounds.
+  `macs_sample_dependencies.py` tracks original sample counts through symmetry
+  for background-subtracted series.
   `point_counting.py` retains counting statistics in the shared point rebinner.
 - `src/nfit/corelli.py`, `_corelli_numba.py`, and `corelli_constants.py`: CORELLI
   reconstruction, its compiled kernels, and their shared numerical conventions.

@@ -1061,6 +1061,10 @@ def _composite_cache_signature(
             ]
         background_files = [settings.get("background_files", []) for settings in macs_settings]
         if include_backgrounds and any(background_files):
+            from .macs_background import MACS_BACKGROUND_NUMERICAL_VERSION
+
+            if config.get("symmetry", {}).get("mode", "none") != "none":
+                numerical["macs_background_numerical_version"] = MACS_BACKGROUND_NUMERICAL_VERSION
             numerical["macs_background_file_sources"] = [
                 vanadium_source_provenance(files) for files in background_files
             ]
@@ -1956,6 +1960,13 @@ def _background_membership_unchanged(previous, current):
 
 def _background_projection_settings(background):
     settings = {}
+    if background.projection in {"measured_events", "macs_isotropic"} and background.source_group is not None:
+        from .macs_reduction import macs_group_config
+
+        if macs_group_config(background.source_group) is not None:
+            from .macs_background import MACS_BACKGROUND_NUMERICAL_VERSION
+
+            settings["macs_background_numerical_version"] = MACS_BACKGROUND_NUMERICAL_VERSION
     if background.projection in {"measured_events", "macs_isotropic"} and "energy_tolerance_meV" in background.metadata:
         settings["energy_tolerance_meV"] = background.metadata["energy_tolerance_meV"]
     if background.projection == "macs_isotropic":
@@ -2203,7 +2214,8 @@ def _apply_composite_backgrounds(
                 inherited_masks_by_id={run.id: effective_dataset_masks(_composite_root(group), run)
                                        for run in candidates},
                 source_signature=_composite_cache_signature(group, config_override=config, include_backgrounds=False),
-                max_batch_bytes=_rebin_max_batch_bytes(aligned), progress_callback=progress_callback)
+                max_batch_bytes=_rebin_max_batch_bytes(aligned), progress_callback=progress_callback,
+                sample_scale=composite_scaling(group)["data_scale"])
     backgrounds = list(getattr(group, "backgrounds", []))
     if not backgrounds:
         return data
