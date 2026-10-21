@@ -187,6 +187,12 @@ class TiledSlice:
     label: str
 
 
+def _normalize_mdhisto_cmap_name(cmap: str) -> str:
+    """Return the stored colormap name used by slice-viewer controls."""
+
+    return "grey" if str(cmap) == "gray" else str(cmap).removesuffix("_r")
+
+
 def exponential_colormap(cmap, alpha: float = 0.0, *, samples: int = 512):
     """Return ``cmap`` with exponentially warped color coordinates.
 
@@ -2534,8 +2540,7 @@ class MDHistoSliceViewer:
         if self.cmap.endswith("_r"):
             self.cmap = self.cmap[:-2]
             self.cmap_reversed = True
-        if self.cmap == "gray":
-            self.cmap = "grey"
+        self.cmap = _normalize_mdhisto_cmap_name(self.cmap)
         self.color_scale = color_scale
         self.color_alpha = float(color_alpha)
         self.auto_limits = auto_limits
@@ -3562,7 +3567,7 @@ class MDHistoSliceViewer:
             self._syncing_axis_radios = False
 
     def _set_cmap(self, cmap: str) -> None:
-        self.cmap = "grey" if str(cmap) == "gray" else str(cmap).removesuffix("_r")
+        self.cmap = _normalize_mdhisto_cmap_name(cmap)
         self.update()
 
     def _effective_cmap(self) -> str:
@@ -4167,7 +4172,11 @@ def smooth_mdhisto_view(
         array = np.asarray(values)
         if name in excluded or name in CONFIDENCE_CHANNELS or name in EVENT_STATISTICS_CHANNELS or name in MEASUREMENT_STATISTICS_CHANNELS or array.shape != reference.shape or array.dtype == bool:
             continue
-        if name == "errors":
+        if name == "errors" or (
+            name.endswith("_errors")
+            and name[:-len("_errors")] in view
+            and np.asarray(view[name[:-len("_errors")]]).shape == reference.shape
+        ):
             smoothed = gaussian_smooth_uncertainty(array, sigma)
         else:
             smoothed = gaussian_smooth_nan(array, sigma)

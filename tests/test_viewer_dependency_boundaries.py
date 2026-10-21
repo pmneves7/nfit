@@ -12,6 +12,9 @@ SOURCE_DIR = Path(__file__).parents[1] / "src" / "nfit"
 VIEWER_MODULES = {
     "plotting",
     "plotting_core",
+    "slice_comparison",
+    "qt_slice_comparison",
+    "qt_comparison_colors",
     "qt_slice_builder",
     "qt_slice_modes",
     "qt_slice_viewer",

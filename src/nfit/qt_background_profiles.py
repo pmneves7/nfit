@@ -185,7 +185,12 @@ class BackgroundProfileReplay(QObject):
         viewer = self.viewer
         suffix = ("Background covariance replay pending; diagonal preview" if self.status == "pending"
                   else f"Diagonal uncertainty: {self.reason}" if self.status == "approximate" else "")
-        for axis in (viewer.ax_xcut, viewer.ax_ycut, viewer.ax_fit_cut):
+        axes = (
+            (viewer.ax_residual_cut, viewer.ax_residual_ycut)
+            if getattr(viewer, "_background_panels_active", lambda: False)()
+            else (viewer.ax_xcut, viewer.ax_ycut, viewer.ax_fit_cut)
+        )
+        for axis in axes:
             if axis is not None:
                 axis.set_title(suffix, fontsize="small")
         if self.status in {"approximate", "pending"} and viewer._current_box_profiles is not None:
@@ -264,8 +269,14 @@ class BackgroundProfileReplay(QObject):
         viewer._current_x_cut = profiles.x if len(profiles.x[0]) else None
         viewer._current_y_cut = profiles.y if len(profiles.y[0]) else None
         rotated = not np.isclose(viewer._roi_angle % 360, 0., atol=1e-10)
-        for dimension, axis, cut in (("x", viewer.ax_xcut, profiles.x),
-                                     ("y", viewer.ax_ycut, profiles.y)):
+        background_comparison = getattr(viewer, "_background_panels_active", lambda: False)()
+        if background_comparison:
+            viewer._render_background_difference_profiles(profiles)
+            viewer.ax_residual_cut.set_ylabel("Difference\n(background covariance replay)")
+        targets = () if background_comparison else (
+            ("x", viewer.ax_xcut, profiles.x), ("y", viewer.ax_ycut, profiles.y),
+        )
+        for dimension, axis, cut in targets:
             if axis is None:
                 continue
             axis.clear()

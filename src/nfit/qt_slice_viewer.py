@@ -52,6 +52,7 @@ from .plotting_core import (
     waterfall_step_bounds,
 )
 from .qt_box_cut_viewers import CutViewerContext, LiveBoxCutViewers
+from .qt_comparison_colors import DiffColorController
 from .qt_controls import configure_numeric_spin_boxes
 from .qt_rotated_box import RotatedBoxSelector
 from .qt_slice_controls import (
@@ -208,6 +209,8 @@ class QtMDHistoSliceViewer:
         self.show_fit_check = None
         self.unmask_model_check = None
         self.show_residual_check = None
+        self.show_background_check = None
+        self.diff_color_group = None
         self.residual_split_slider = None
         self.residual_split_label = None
         self.fit_line_color_combo = None
@@ -395,6 +398,7 @@ class QtMDHistoSliceViewer:
         self.show_fit = bool(initial_data.metadata.get("viewer_show_fit", False))
         self.unmask_model = False
         self.show_residual = False
+        self.show_background = False
         self.fit_line_color = "#d62728"
         self.fit_line_width = 2.0
         self.residual_percent = 30
@@ -502,6 +506,8 @@ class QtMDHistoSliceViewer:
         self._plot_layout_mode: tuple[Any, ...] | None = None
         self._compare_axes = []
         self._compare_colorbars = []
+        self._background_comparison_views = {}
+        self._diff_color_controller = DiffColorController(self)
         self._mode_controllers = SliceModeControllers(self, helpers=globals())
         self._build()
         configure_numeric_spin_boxes(self.app)
@@ -820,6 +826,13 @@ class QtMDHistoSliceViewer:
             "show_fit": self.show_fit,
             "unmask_model": self.unmask_model,
             "show_residual": self.show_residual,
+            "show_background": self.show_background,
+            "diff_color": self._diff_color_controller.snapshot(),
+            "background_uncertainty": (
+                "replay" if self._background_profiles is not None
+                and self._background_profiles.status in {"exact", "pending"}
+                else "diagonal"
+            ),
             "apply_masks": self.model.masked,
             "coverage_threshold": self.coverage_threshold,
             "show_box_tool": bool(self.show_box_check and self.show_box_check.isChecked()),
@@ -986,6 +999,8 @@ class QtMDHistoSliceViewer:
         self._set_show_fit(bool(settings.get("show_fit", self.show_fit)))
         self._set_unmask_model(bool(settings.get("unmask_model", self.unmask_model)))
         self._set_show_residual(bool(settings.get("show_residual", self.show_residual)))
+        self._diff_color_controller.restore(settings.get("diff_color", {}))
+        self._set_show_background(bool(settings.get("show_background", False)))
         self.model.masked = bool(settings.get("apply_masks", self.model.masked))
         self._set_checkbox_silent(self.apply_masks_check, self.model.masked)
         self._set_coverage_threshold(
@@ -1488,6 +1503,8 @@ class QtMDHistoSliceViewer:
         return figure_export_script(self._figure_script(), self._figure_export_path)
 
     def _figure_script(self) -> str:
+        if self._background_panels_active():
+            return self._background_figure_script()
         if self._waterfall_mode_active():
             return self._waterfall_figure_script()
         if self._tiled_mode_active():
@@ -1555,6 +1572,28 @@ class QtMDHistoSliceViewer:
                 "",
             ]
         )
+
+    def _background_figure_script(self) -> str:
+        from pprint import pformat
+
+        from .plot_recipes import new_plot_entry, plot_entry_to_dict
+
+        entry = new_plot_entry(
+            self._binning_title_text(), None, self.current_plot_settings(),
+            plot_type="mdhisto_slice",
+        )
+        return "\n".join([
+            "import matplotlib.pyplot as plt",
+            "import numpy as np",
+            "from nfit.plot_recipes import plot_entry_from_dict, render_plot",
+            "",
+            "# Use the prepared histogram, including its retained background channels.",
+            "data = ...  # Replace with your MDHistoData object",
+            f"recipe = plot_entry_from_dict({pformat(plot_entry_to_dict(entry), sort_dicts=False)})",
+            "fig = render_plot(recipe, data=data)",
+            "plt.show()",
+            "",
+        ])
 
     def _tiled_figure_script(self) -> str:
         source_file = (
@@ -2442,6 +2481,8 @@ class QtMDHistoSliceViewer:
             show_fit=bool(self.show_fit),
             unmask_model=bool(self.unmask_model),
             show_residual=bool(self.show_residual),
+            show_background=bool(self.show_background),
+            diff_color=self._diff_color_controller.snapshot(),
             fit_line_color=str(self.fit_line_color),
             fit_line_width=float(self.fit_line_width),
             residual_percent=int(self.residual_percent),
@@ -2544,6 +2585,8 @@ class QtMDHistoSliceViewer:
             self.show_fit = bool(state.show_fit)
             self.unmask_model = bool(state.unmask_model)
             self.show_residual = bool(state.show_residual)
+            self.show_background = bool(state.show_background)
+            self._diff_color_controller.restore(state.diff_color or {})
             self.fit_line_color = str(state.fit_line_color)
             self.fit_line_width = float(state.fit_line_width)
             self.residual_percent = int(state.residual_percent)
@@ -3280,7 +3323,9 @@ class QtMDHistoSliceViewer:
         self.smoothing_fill_nans = bool(checked)
         self.update_plot()
 
-    def _smoothed_slice_view(self, view: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    def _smoothed_slice_view(
+        self, view: dict[str, np.ndarray], *, channel: str | None = None,
+    ) -> dict[str, np.ndarray]:
         if getattr(self.model, "is_point_list", False):
             return view
         coarsened = coarsen_mdhisto_view(
@@ -3293,7 +3338,7 @@ class QtMDHistoSliceViewer:
             sigma_x=self.smoothing_x,
             sigma_y=self.smoothing_y,
             fill_nans=self.smoothing_fill_nans,
-            channel=self.model.channel,
+            channel=self.model.channel if channel is None else channel,
         )
 
     def _toggle_cmap_reverse(self) -> None:
@@ -3307,6 +3352,8 @@ class QtMDHistoSliceViewer:
                 self.update_plot(preserve_view=self.hold_view_settings)
             return
         self.model.channel = self.model._resolve_channel(channel)
+        if self.model.channel != "signal":
+            self.show_background = False
         self._sync_fit_channel_controls()
         self.update_plot(preserve_view=self.hold_view_settings)
 
@@ -3349,10 +3396,48 @@ class QtMDHistoSliceViewer:
 
         return bool(
             not self._tiled_mode_active()
+            and not self.show_background
             and self.show_fit
             and self._has_fit_channel()
             and not self._is_effective_1d()
         )
+
+    def _background_panels_active(self) -> bool:
+        return bool(
+            self.show_background and self._background_comparison_available()
+            and not self._tiled_mode_active() and not self._waterfall_mode_active()
+        )
+
+    def _background_comparison_available(self) -> bool:
+        return bool(
+            isinstance(self.data, MDHistoData)
+            and not self._is_effective_1d()
+            and available_background_channels(self.data)
+        )
+
+    def _comparison_panels_active(self) -> bool:
+        return self._background_panels_active() or self._fit_panels_active()
+
+    def _comparison_cuts_active(self) -> bool:
+        return bool(
+            self._comparison_panels_active()
+            and self.hist_axes_check is not None and self.hist_axes_check.isChecked()
+        )
+
+    def _comparison_difference_cut_active(self) -> bool:
+        return bool(self._comparison_cuts_active() and (
+            self._background_panels_active() or (self.show_residual and self._has_residual_channel())
+        ))
+
+    def _set_show_background(self, enabled: bool) -> None:
+        self.show_background = bool(enabled and self._background_comparison_available())
+        if self.show_background:
+            self.show_fit = False
+            self.show_residual = False
+            self.model.channel = "signal"
+            self._set_combo_silent(self.channel_combo, "signal")
+        self._sync_fit_channel_controls()
+        self.update_plot(preserve_view=False)
 
     def _residual_axes_active(self) -> bool:
         """A residual axes below the data is used for 1D data."""
@@ -3394,6 +3479,14 @@ class QtMDHistoSliceViewer:
         self.show_fit_check.setEnabled(has_fit)
         self.unmask_model_check.setEnabled(bool(self.show_fit and has_fit))
         self.show_residual_check.setEnabled(bool(self.show_fit and has_residual))
+        if not self._background_comparison_available():
+            self.show_background = False
+        self._set_checkbox_silent(self.show_background_check, self.show_background)
+        self.show_background_check.setEnabled(
+            self._background_comparison_available()
+            and not self._tiled_mode_active() and not self._waterfall_mode_active()
+        )
+        self._diff_color_controller.sync_visibility()
         residual_split = self._residual_axes_active()
         self.residual_split_label.setVisible(residual_split)
         self.residual_split_slider.setVisible(residual_split)
@@ -3417,6 +3510,8 @@ class QtMDHistoSliceViewer:
 
     def _set_show_fit(self, enabled: bool) -> None:
         self.show_fit = bool(enabled)
+        if self.show_fit:
+            self.show_background = False
         self._sync_fit_channel_controls()
         self.update_plot(preserve_view=False)
 
@@ -3971,7 +4066,7 @@ class QtMDHistoSliceViewer:
             or not self.model.autoscale
             or self.model._is_boolean_channel()
             or self._is_effective_1d()
-            or self._fit_panels_active()
+            or self._comparison_panels_active()
             or self._tiled_mode_active()
         ):
             return
@@ -4069,7 +4164,7 @@ class QtMDHistoSliceViewer:
                 self.y_min_spin.setValue(float(ymin))
                 self.y_max_spin.setValue(float(ymax))
                 self._set_axis_spin_steps((self.y_min_spin, self.y_max_spin), self.model.y_dim)
-            if self._fit_panels_active():
+            if self._comparison_panels_active():
                 self._apply_compare_view_limits(
                     xlim=self.ax_image.get_xlim(),
                     ylim=self.ax_image.get_ylim(),
@@ -4179,7 +4274,7 @@ class QtMDHistoSliceViewer:
         is_waterfall = self._waterfall_mode_active()
         is_tiled = self._tiled_mode_active()
         grouped_waterfall = is_waterfall and self._waterfall_uses_1d_group()
-        compare_active = self._fit_panels_active()
+        compare_active = self._comparison_panels_active()
         if self.axes_group is not None:
             self.axes_group.setVisible(
                 is_waterfall or is_line or len(self._non_singleton_dims()) >= 2
@@ -4220,6 +4315,10 @@ class QtMDHistoSliceViewer:
             self.hidden_group.setVisible(not is_line)
         if self.color_group is not None:
             self.color_group.setVisible(not is_line and not is_waterfall)
+        self._diff_color_controller.sync_visibility()
+        if self.show_background_check is not None:
+            self.show_background_check.setVisible(not is_line and not is_tiled and not is_waterfall)
+            self.show_background_check.setEnabled(self._background_comparison_available())
         if self.smoothing_group is not None:
             self.smoothing_group.setVisible(not is_point)
         if self.brillouin_zone_group is not None:
@@ -4477,6 +4576,9 @@ class QtMDHistoSliceViewer:
         reuse_slice: bool = False,
     ) -> None:
         self._sync_fit_channel_controls()
+        if not self._background_panels_active():
+            self._background_comparison_views.clear()
+            self._background_comparison_source_key = None
         if self._background_profiles is not None and (
                 self._waterfall_mode_active() or self._tiled_mode_active() or self._is_effective_1d()):
             self._background_profiles.update(None)
@@ -4502,6 +4604,12 @@ class QtMDHistoSliceViewer:
                 previous_ylim,
                 previous_dims,
                 current_dims,
+                reuse_prepared=reuse_slice,
+            )
+            return
+        if self._background_panels_active():
+            self._draw_background_panels_view(
+                previous_xlim, previous_ylim, previous_dims, current_dims,
                 reuse_prepared=reuse_slice,
             )
             return
@@ -4640,6 +4748,7 @@ class QtMDHistoSliceViewer:
             float(self.waterfall_step),
             bool(self.show_fit),
             bool(self.unmask_model),
+            bool(self.show_background),
             float(self.smoothing_x),
             float(self.smoothing_y),
             bool(self.smoothing_fill_nans),
@@ -4653,6 +4762,8 @@ class QtMDHistoSliceViewer:
         if getattr(self.model, "is_point_list", False):
             return not bool(getattr(data, "_arrays_mutable", False))
         visible_metadata_channels = set()
+        if self._background_panels_active():
+            visible_metadata_channels.add("nfit_mask")
         if self.model.channel in {"fit", "residual"}:
             visible_metadata_channels.add(self.model.channel)
         if (
@@ -4761,6 +4872,21 @@ class QtMDHistoSliceViewer:
         extents: tuple[float, float, float, float] | None,
     ) -> None:
         self._mode_controllers.fit_comparison._update_fit_compare_cuts(extents)
+
+    def _draw_background_panels_view(
+        self, previous_xlim, previous_ylim, previous_dims, current_dims,
+        *, reuse_prepared: bool = False,
+    ) -> None:
+        self._mode_controllers.fit_comparison._draw_background_panels_view(
+            previous_xlim, previous_ylim, previous_dims, current_dims,
+            reuse_prepared=reuse_prepared,
+        )
+
+    def _update_background_compare_cuts(self, extents) -> None:
+        self._mode_controllers.fit_comparison._update_background_compare_cuts(extents)
+
+    def _render_background_difference_profiles(self, profiles) -> None:
+        self._mode_controllers.fit_comparison._render_background_difference_profiles(profiles)
 
     def _comparison_panel_model(
         self,
@@ -4904,8 +5030,8 @@ class QtMDHistoSliceViewer:
             self._sync_export_controls()
         elif self._roi_extents is not None:
             self._update_histogram_cuts_from_extents(self._roi_extents)
-        if self._fit_panels_active():
-            # Toggling the cut axes changes the fit-compare layout, so rebuild.
+        if self._comparison_panels_active():
+            # Comparison layouts add their cut axes when the box tool is shown.
             self.update_plot()
             return
         self._apply_histogram_axes_layout(draw=True)
@@ -4918,7 +5044,7 @@ class QtMDHistoSliceViewer:
         elif self._roi_extents is not None:
             self._update_histogram_cuts_from_extents(self._roi_extents)
         self._sync_histogram_panel_controls()
-        if self._fit_panels_active():
+        if self._comparison_panels_active():
             self.update_plot()
         else:
             self._apply_histogram_axes_layout(draw=True)
@@ -4943,7 +5069,7 @@ class QtMDHistoSliceViewer:
     def _set_xcut_percent(self, value: int) -> None:
         self.xcut_percent = int(value)
         self._sync_histogram_panel_controls()
-        if self._fit_panels_active():
+        if self._comparison_panels_active():
             if self.ax_fit_cut is not None and self.grid is not None:
                 self.grid.set_height_ratios([1.0, self._panel_ratio(self.xcut_percent)])
                 self.canvas.draw_idle()
@@ -4953,7 +5079,7 @@ class QtMDHistoSliceViewer:
     def _set_ycut_percent(self, value: int) -> None:
         self.ycut_percent = int(value)
         self._sync_histogram_panel_controls()
-        if self._fit_panels_active() and self._fit_cuts_active():
+        if self._comparison_cuts_active():
             self.update_plot()
             return
         self._apply_histogram_axes_layout(draw=True)
@@ -5089,8 +5215,11 @@ class QtMDHistoSliceViewer:
         self._current_y_cut = None
         self._current_box_profiles = None
         self._sync_export_controls()
-        if self._fit_cuts_active():
-            self._update_fit_compare_cuts(extents)
+        if self._comparison_cuts_active():
+            if self._background_panels_active():
+                self._update_background_compare_cuts(extents)
+            else:
+                self._update_fit_compare_cuts(extents)
             self._apply_figure_font_size()
             self._apply_axis_linewidth()
             self._sync_cut_viewers()
@@ -5141,7 +5270,10 @@ class QtMDHistoSliceViewer:
         annotation = self.roi_sum_text
         self.roi_sum_text = None
         if annotation is not None:
-            annotation.set_text("")
+            if annotation.axes is not None and annotation in annotation.axes.texts:
+                annotation.remove()
+            else:
+                annotation.set_text("")
 
     def _show_roi_sum_annotation(
         self,
@@ -5163,12 +5295,21 @@ class QtMDHistoSliceViewer:
             source_dependencies=(self._current_slice or {}).get("source_dependencies")
             if selected is not None and self.model.channel == "signal" else None)
         self.roi_sum_text = _draw_box_sum_annotation(
-            self.ax_image,
+            self._compare_axes[-1] if self._background_panels_active() else self.ax_image,
             extents,
             total,
             uncertainty,
             uncertainty_label="diagonal uncertainty" if (self._current_slice or {}).get("background_profile_uncertainty") else None,
         )
+        if self._background_panels_active():
+            text = self.roi_sum_text.get_text()
+            self.roi_sum_text.set_text("")
+            axis = self._compare_axes[-1]
+            self.roi_sum_text = axis.text(
+                .03, .98, text, transform=axis.transAxes, va="top", fontsize="small",
+                bbox={"facecolor": "white", "edgecolor": "none", "alpha": .8},
+                gid="nfit-roi-total",
+            )
 
     def _histogram_cut_coverage(
         self,
@@ -5218,6 +5359,16 @@ class QtMDHistoSliceViewer:
                 coordinate_overrides=coordinate_overrides,
             )
             return
+        if self._background_panels_active() and event.inaxes in self._compare_axes:
+            channel = ("unsubtracted", "background", "signal")[self._compare_axes.index(event.inaxes)]
+            view = self._background_comparison_views[channel]
+            model = self._comparison_panel_model(self.data, channel)
+            error_key = "errors" if channel == "signal" else f"{channel}_errors"
+            self._on_2d_motion(
+                event, view, values=model._display_values(view), errors=view[error_key],
+                value_label={"unsubtracted": "Unsubtracted", "background": "Background", "signal": "Difference"}[channel],
+            )
+            return
         if event.inaxes != self.ax_image:
             return
         if self._waterfall_mode_active():
@@ -5234,6 +5385,8 @@ class QtMDHistoSliceViewer:
         view: dict[str, np.ndarray],
         *,
         values: np.ndarray | None = None,
+        errors: np.ndarray | None = None,
+        value_label: str = "Signal",
         coordinate_overrides: dict[int, float] | None = None,
     ) -> None:
         x_idx = int(np.searchsorted(view["x_edges"], event.xdata, side="right") - 1)
@@ -5256,7 +5409,7 @@ class QtMDHistoSliceViewer:
         )
         value_text, error_text = _format_value_with_uncertainty(
             float(display_values[y_idx, x_idx]),
-            float(view["errors"][y_idx, x_idx]),
+            float((view["errors"] if errors is None else errors)[y_idx, x_idx]),
         )
         self.cursor_xy_label.setText(
             f"(x, y) = ({_format_coord(view['x_centers'][x_idx])}, {_format_coord(view['y_centers'][y_idx])})"
@@ -5275,7 +5428,7 @@ class QtMDHistoSliceViewer:
         self.cursor_q_label.setText(self._format_q_modulus(coords))
         coverage = float(view["coverage_fraction"][y_idx, x_idx])
         self.cursor_intensity_label.setText(
-            f"Signal = {value_text} ± {error_text}; coverage = {coverage:.1%}"
+            f"{value_label} = {value_text} ± {error_text}; coverage = {coverage:.1%}"
         )
 
     def _on_waterfall_motion(self, event) -> None:

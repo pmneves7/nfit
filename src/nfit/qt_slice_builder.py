@@ -98,6 +98,7 @@ def build_slice_viewer(
     _build_tiled_controls(viewer, controls_layout)
     _build_hidden_axis_controls(viewer, controls_layout)
     _build_color_controls(viewer, controls_layout)
+    viewer._diff_color_controller.build(controls_layout)
     _build_smoothing_controls(viewer, controls_layout)
     _build_gridline_controls(
         viewer, controls_layout, color_options=color_options
@@ -335,6 +336,14 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
     dataset_layout.addWidget(viewer.show_fit_check, 3, 1)
     dataset_layout.addWidget(viewer.show_residual_check, 3, 2)
     dataset_layout.addWidget(viewer.unmask_model_check, 4, 1)
+    viewer.show_background_check = QtWidgets.QCheckBox("Show bkg && diff")
+    viewer.show_background_check.setObjectName("viewer_show_background_check")
+    viewer.show_background_check.setToolTip(
+        "Show the subtracted background and signal-minus-background difference "
+        "beside the original signal. Available for compatible background channels."
+    )
+    viewer.show_background_check.toggled.connect(viewer._set_show_background)
+    dataset_layout.addWidget(viewer.show_background_check, 4, 2)
     coverage_label = QtWidgets.QLabel("Coverage")
     viewer.coverage_threshold_label = coverage_label
     viewer.coverage_threshold_spin = _make_float_spinbox(0.0, 1.0)

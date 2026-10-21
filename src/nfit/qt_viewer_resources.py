@@ -144,6 +144,8 @@ def release_viewer_resources(viewer) -> None:
     viewer._dataset_states.clear()
     viewer._current_slice = None
     viewer._current_slice_source_key = None
+    viewer._background_comparison_views.clear()
+    viewer._background_comparison_source_key = None
     viewer._current_tiled_slices.clear()
     viewer._current_waterfall_traces.clear()
     viewer._current_box_profiles = None

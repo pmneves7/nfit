@@ -19,6 +19,7 @@ from .plotting import (
     plot_mdhisto_tiled_slices,
     plot_mdhisto_waterfall,
 )
+from .slice_comparison import plot_mdhisto_background_comparison
 
 PLOT_TYPE_LABELS = {
     "mdhisto_slice": "MDHisto slice",
@@ -256,7 +257,14 @@ def render_plot(
     elif plot_type == "mdhisto_slice":
         if not isinstance(data, MDHistoData):
             raise TypeError("slice plots require one MDHisto dataset")
-        figure = plot_mdhisto_slice(
+        comparison = bool(settings.get("show_background", False))
+        plot_slice = plot_mdhisto_background_comparison if comparison else plot_mdhisto_slice
+        comparison_options = {
+            "diff_color": settings.get("diff_color"),
+            "masked": bool(settings.get("apply_masks", True)),
+            "box_tool": settings.get("box_tool"),
+        } if comparison else {}
+        figure = plot_slice(
             data,
             x_dim=settings.get("x_dim", -1),
             y_dim=settings.get("y_dim", 0),
@@ -290,6 +298,8 @@ def render_plot(
             axes_ratio=str(settings.get("axes_ratio", "fit")),
             show_histogram_axes=bool(settings.get("show_histogram_axes", False)),
             roi_extents=_quad(settings.get("roi_extents")),
+            roi_angle=float(settings.get("roi_angle", 0.0)),
+            background_uncertainty=settings.get("background_uncertainty", "diagonal"),
             xcut_percent=float(settings.get("xcut_percent", 20.0)),
             ycut_percent=float(settings.get("ycut_percent", 16.0)),
             show_brillouin_zone_boundaries=bool(
@@ -306,6 +316,7 @@ def render_plot(
             ),
             brillouin_zone_alpha=float(settings.get("brillouin_zone_alpha", 1.0)),
             figsize=tuple(settings.get("figsize", (8.0, 6.5))),
+            **comparison_options,
         )
     else:
         raise ValueError(f"unsupported plot type {plot_type!r}")

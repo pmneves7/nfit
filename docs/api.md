@@ -256,6 +256,11 @@ plots use `axis_step`, and waterfall plots use `x_step` for the trace axis.
 Exported scripts from the GUI call the matching slice, line, waterfall, or
 tiled-slice backend and include the current display settings.
 
+`nfit.slice_comparison.plot_mdhisto_background_comparison(data, ...)` renders
+linked unsubtracted, background, and difference maps from retained subtraction
+channels. `diff_color` configures the difference independently, and the usual
+slice selections, display steps, masks, and rotated box cuts apply.
+
 `clear_project_caches(project)` discards computed project caches without Qt,
 preserving source data, stored plots, analysis outputs, and fit results. It also
 turns off embedded binning caching; call `save_project(project, path)` to remove

@@ -114,7 +114,8 @@ A few of its main capabilities are:
 - search for other minima with a separate tempered parameter explorer, then
   refine an improving candidate without mixing search samples into posterior errors;
 - inspect the subtracted signal, retained background, and on-demand unsubtracted
-  slices through a grouped channel menu without adding visualization channels to fits;
+  slices through a grouped channel menu or linked comparison panels with independent
+  difference colors and shared box cuts;
 - open viewers on demand, with an optional preference to preload all datasets
   and binnings for faster switching;
 - construct and inspect crystal, tight-binding, Lindhard, and RPA models;

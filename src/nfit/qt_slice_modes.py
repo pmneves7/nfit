@@ -18,6 +18,13 @@ from .plotting_core import (
     prepare_mdhisto_waterfall,
     waterfall_colors,
 )
+from .qt_slice_comparison import (
+    draw_background_panels,
+    draw_comparison_panel,
+    finish_comparison_view,
+    render_background_difference_profiles,
+    update_background_compare_cuts,
+)
 
 _DEFAULT_HELPERS = {
     "default_tiled_slice_step": default_tiled_slice_step,
@@ -654,6 +661,21 @@ class WaterfallController(_ViewerController):
 
 
 class FitComparisonController(_ViewerController):
+    def _draw_background_panels_view(
+        self, previous_xlim, previous_ylim, previous_dims, current_dims,
+        *, reuse_prepared: bool = False,
+    ) -> None:
+        draw_background_panels(
+            self, previous_xlim, previous_ylim, previous_dims, current_dims,
+            reuse_prepared=reuse_prepared,
+        )
+
+    def _update_background_compare_cuts(self, extents) -> None:
+        update_background_compare_cuts(self, extents)
+
+    def _render_background_difference_profiles(self, profiles) -> None:
+        render_background_difference_profiles(self, profiles)
+
     def _draw_fit_panels_view(
         self,
         previous_xlim,
@@ -710,7 +732,7 @@ class FitComparisonController(_ViewerController):
         self.image = None
         self.colorbar = None
         unmasked_view = None
-        for index, (ax, (title, channel)) in enumerate(zip(self._compare_axes, panels, strict=True)):
+        for index, (title, channel) in enumerate(panels):
             model = self._viewer._comparison_panel_model(self.data, channel)
             if title == "Data" or not self.unmask_model:
                 view = data_view
@@ -720,66 +742,16 @@ class FitComparisonController(_ViewerController):
                 view = unmasked_view
             values = model._display_values(view)
             norm = model._color_norm(values) if title == "Residual" else shared_norm
-            artist = ax.pcolormesh(
-                view["x_edges"],
-                view["y_edges"],
-                values,
-                shading="auto",
-                cmap=self.model._display_cmap(),
-                norm=norm,
+            draw_comparison_panel(
+                self, index, title, model, view, norm,
+                "Residual (sigma)" if title == "Residual" else data_model._channel_label(),
             )
-            self._viewer._apply_axes_ratio(ax)
-            self._viewer._draw_gridline_overlay(ax)
-            ax.set_title(title)
-            ax.set_xlabel(model._axis_label(model.x_dim))
-            ax.set_ylabel(model._axis_label(model.y_dim))
-            colorbar_axis = (
-                self._compare_colorbar_axes[index]
-                if index < len(self._compare_colorbar_axes)
-                else None
-            )
-            colorbar = self.figure.colorbar(
-                artist,
-                cax=colorbar_axis,
-                ax=None if colorbar_axis is not None else ax,
-            )
-            colorbar.set_label(
-                "Residual (sigma)" if title == "Residual" else data_model._channel_label()
-            )
-            self._compare_colorbars.append(colorbar)
-            if title == "Data":
-                self.image = artist
-                self.colorbar = colorbar
 
-        if previous_xlim is not None and previous_ylim is not None and previous_dims == current_dims:
-            for axis in self._compare_axes:
-                axis.set_xlim(previous_xlim)
-                axis.set_ylim(previous_ylim)
-        if with_cuts:
-            if self._roi_extents is None or previous_dims != current_dims:
-                extents = self._default_roi_extents()
-            else:
-                extents = self._roi_extents
-            self._set_roi_extents(extents, update_cuts=True, draw=False)
-            if self.popout_cuts_check.isChecked():
-                self.grid.set_height_ratios([1.0, 0.001])
-                self.grid.set_width_ratios([
-                    *[value for _ in range(len(panels)) for value in (1.0, 0.045)],
-                    *([0.001] * (1 + int(with_residual_cut))),
-                ])
-                for cut_axis in (self.ax_fit_cut, self.ax_ycut,
-                                 self.ax_residual_cut, self.ax_residual_ycut):
-                    if cut_axis is not None:
-                        cut_axis.set_visible(False)
-        self._sync_control_visibility()
-        self._sync_limit_spinboxes(vmin, vmax)
-        self._last_plot_dims = current_dims
-        self._last_plot_view_mode = "slice"
-        self._sync_view_limit_controls()
-        self._apply_figure_font_size()
-        self._apply_axis_linewidth()
-        self._connect_view_limit_callbacks()
-        self.canvas.draw_idle()
+        finish_comparison_view(
+            self, previous_xlim, previous_ylim, previous_dims, current_dims,
+            panel_count=len(panels), with_cuts=with_cuts,
+            with_difference_cut=with_residual_cut, vmin=vmin, vmax=vmax,
+        )
 
     def _update_fit_compare_cuts(self, extents: tuple[float, float, float, float] | None) -> None:
         """Populate weighted data+fit and residual cut axes from a box.

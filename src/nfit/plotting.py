@@ -14,6 +14,7 @@ from . import plotting_core as _core
 from .mdhisto import MDHistoData
 from .plotting_core import *  # noqa: F403 - compatibility facade
 from .plotting_core import MDHistoSliceViewer
+from .slice_comparison import plot_mdhisto_background_comparison
 
 
 def slice_viewer(data: MDHistoData, **kwargs: Any) -> MDHistoSliceViewer:
@@ -47,4 +48,5 @@ def __dir__() -> list[str]:
 __all__ = [
     *(name for name in vars(_core) if not name.startswith("_")),
     "slice_viewer",
+    "plot_mdhisto_background_comparison",
 ]

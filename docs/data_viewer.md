@@ -217,6 +217,22 @@ Both use the primary signal's physical units and follow its dataset scaling
 and spectral conversion. Selecting either channel changes only the plot:
 fitting continues to use the primary signal and its propagated uncertainties.
 
+In the 2D Slice view, **Show bkg & diff** displays **Unsubtracted**,
+**Background**, and **Difference** from left to right. The first two panels share
+the **Color** settings and limits. **Diff color**, below **Color**, controls the
+difference independently and starts with linear scaling, the `bwr` colormap,
+and limits symmetric about zero. Model and background comparisons are separate
+view modes; enabling either switches off the other.
+
+The box tool overlays original and background cuts and shows separate difference
+cuts, including for rotated boxes. Difference uncertainties come from the
+subtracted data; original and background profiles use their retained per-bin
+errors. Cut labels $I$ and $\Delta I$ denote intensity and its background-subtracted
+value in the signal's units. Saved plots retain the comparison and both color settings;
+copied figure scripts accept a prepared histogram with retained background
+channels. Python code can call
+`nfit.slice_comparison.plot_mdhisto_background_comparison(data, ...)` directly.
+
 The histogram retains background values and uncertainties, but no separate full
 unsubtracted array. Slices reconstruct the original values and uncertainties
 as needed. Sparse recovery records preserve original observations where masks,

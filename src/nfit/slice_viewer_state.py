@@ -42,6 +42,8 @@ class _DatasetViewState:
     show_fit: bool = False
     unmask_model: bool = False
     show_residual: bool = False
+    show_background: bool = False
+    diff_color: dict[str, Any] | None = None
     fit_line_color: str = "#d62728"
     fit_line_width: float = 2.0
     residual_percent: int = 30
