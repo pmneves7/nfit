@@ -23,12 +23,15 @@ _COMPOSITE_VIEW_LOCK = RLock()
 
 
 def cached_composite_spectral_view(
-    data, config, datasets, *, cache, key, source_signature, apply_spectral=True,
+    data, config, datasets, *, cache, key, source_signature, apply_spectral=True, resident_only=False,
 ):
     """Share the immutable final composite view, including source lineage.
 
     Source temperatures and spectral settings remain part of the signature:
     changing these presentation conventions does not invalidate reduction.
+    ``resident_only`` prevents cache restoration and storage. A missing
+    prepared view is presented from the supplied current histogram, without
+    loading or recalculating its binning.
     """
     from .source_lineage import source_lineage_metadata, with_source_lineage
 
@@ -50,9 +53,13 @@ def cached_composite_spectral_view(
          bool(apply_spectral)], sort_keys=True, default=str,
     )
     with _COMPOSITE_VIEW_LOCK:
-        cached = cache.get(key) if cache.has_signature(key, signature) else None
+        cached = (
+            cache.peek_resident(key) if resident_only
+            else cache.get(key) if cache.has_signature(key, signature) else None
+        )
         if cached is not None:
-            return cached[1]
+            if cached[0] == signature:
+                return cached[1]
         spectral = config.get(SPECTRAL_CHANNEL_CONFIG_KEY)
         transforms = apply_spectral and isinstance(spectral, dict) and spectral.get("enabled", True)
         peak = 2 * array_storage_nbytes(data).total if transforms else 0
@@ -60,7 +67,7 @@ def cached_composite_spectral_view(
             result = with_source_lineage(data, lineage)
             if apply_spectral:
                 result = apply_composite_spectral_channels(result, config, sources)
-        if isinstance(result, MDHistoData):
+        if not resident_only and isinstance(result, MDHistoData):
             cache.set_label(key, "Composite prepared spectral data")
             cache[key] = (signature, result)
         return result

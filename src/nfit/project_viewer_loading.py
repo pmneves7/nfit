@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from .binning_lifecycle import binning_is_enabled
 from .pipeline import DataGroup, DatasetEntry
 from .project_composites import (
     GROUP_COMPOSITE_BINNINGS_KEY,
@@ -64,7 +65,7 @@ def project_binning_targets(
             if not isinstance(dataset.parameters.get(rebin_key), dict):
                 continue
             for binning in dataset_binnings(dataset):
-                if binning["config"].get("enabled"):
+                if binning["config"].get("enabled") and binning_is_enabled(binning["config"]):
                     targets.append(
                         (
                             "dataset",
@@ -87,7 +88,7 @@ def project_binning_targets(
             ):
                 continue
             for binning in composite_binnings(scope):
-                if binning["config"].get("enabled"):
+                if binning["config"].get("enabled") and binning_is_enabled(binning["config"]):
                     targets.append(
                         (
                             "dataset group",
@@ -160,6 +161,7 @@ def plan_viewer_items(
     *,
     use_composite: bool,
     dataset_binnings: Callable[[DatasetEntry], list[dict[str, Any]]],
+    disabled_binning_available: Callable[[Any, Any, dict[str, Any]], bool] | None = None,
 ) -> list[ProjectViewerItem]:
     """List the same effective sources as the eager viewer without loading data."""
 
@@ -169,6 +171,12 @@ def plan_viewer_items(
         if not binnings:
             result.append(ProjectViewerItem(source_name, dataset, scope, None))
         for item in binnings:
+            if (
+                not binning_is_enabled(item["config"])
+                and disabled_binning_available is not None
+                and not disabled_binning_available(dataset, scope, item)
+            ):
+                continue
             if item.get("fit", False) or item["config"].get("enabled", False):
                 result.append(ProjectViewerItem(source_name, dataset, scope, item))
 
@@ -223,6 +231,7 @@ def viewer_binning_entry(
     if composite_owner is not None:
         alias._viewer_composite_cache_owner = composite_owner
         alias._viewer_composite_binning_id = str(binning["id"])
+        alias._viewer_binning_config = binning["config"]
     alias._viewer_source_dataset_id = dataset.id
     if not fit:
         alias.id = f"{dataset.id}:{binning['id']}"

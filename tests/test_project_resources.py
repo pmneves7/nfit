@@ -157,6 +157,86 @@ def test_inventory_lists_cold_cache_without_decoding(resources, tmp_path, monkey
     assert snapshot.limit_bytes == 100_000_000
 
 
+@pytest.mark.parametrize("collection", [False, True])
+@pytest.mark.parametrize("named", [False, True])
+@pytest.mark.parametrize("loaded", [False, True])
+def test_disabled_binning_resources_retain_inventory_without_loading(
+    resources, tmp_path, monkeypatch, collection, named, loaded,
+):
+    from nfit import project_composites as comp
+    from nfit import project_data
+    from nfit.binning_lifecycle import set_binning_enabled
+
+    if collection:
+        owner = resources.group
+        bid = comp.add_data_group_composite_binning(owner) if named else None
+        config = comp.data_group_composite_config_by_id(owner, bid) if named else comp.data_group_composite_config(owner)
+        cache = resources.composite_cache
+        key = comp._composite_cache_key(owner, bid)
+    else:
+        owner = resources.dataset
+        bid = project_data.add_dataset_rebin_binning(owner) if named else None
+        config = project_data.dataset_rebin_config_by_id(owner, bid) if named else project_data.dataset_rebin_config(owner)
+        cache = resources.viewer_cache
+        key = f"{owner.id}:{bid}" if named else owner.id
+    config["enabled"] = True
+    set_binning_enabled(config, False)
+    payload = histogram()
+    artifact = tmp_path / "cube.npz"
+    write_dataset_artifact(payload, artifact)
+    project_path = tmp_path / "cube.nfit"
+    with ZipFile(project_path, "w") as archive:
+        archive.write(artifact, "data.npz")
+    if loaded:
+        cache[key] = ("signature", payload)
+    cache.set_project_backing(key, signature="signature", project_path=project_path, member="data.npz", lazy=not loaded)
+    monkeypatch.setattr(cache, "get", lambda *_args: pytest.fail("disabled resource decoded a histogram"))
+    resources.manager.recipes = lambda: ((cache, key, "Disabled histogram", "member", lambda: pytest.fail("recomputed")),)
+
+    row = row_of(resources.manager.snapshot(), kind="Histogram")
+    assert not row.can_load
+    assert row.can_unload is loaded
+    assert "Enable this binning" in row.reason
+    if loaded:
+        assert cache.peek_resident(key)[1] is payload
+    with pytest.raises(ValueError, match="support this action"):
+        resources.manager.load((row.key,))
+
+
+@pytest.mark.parametrize("stage", ["unsubtracted", "background", "viewer-finish", "viewer-source", "viewer-prepared"])
+def test_disabled_composite_stage_resources_cannot_load(resources, tmp_path, stage):
+    from nfit import project_composites as comp
+    from nfit.binning_lifecycle import set_binning_enabled
+
+    config = comp.data_group_composite_config(resources.group)
+    set_binning_enabled(config, False)
+    bid = None if stage in ("unsubtracted", "viewer-finish") else config["_binning_id"]
+    key = (id(resources.group), stage, bid)
+    artifact = tmp_path / "cube.npz"
+    write_dataset_artifact(histogram(), artifact)
+    project_path = tmp_path / "cube.nfit"
+    with ZipFile(project_path, "w") as archive:
+        archive.write(artifact, "data.npz")
+    resources.composite_cache.set_project_backing(key, signature="signature", project_path=project_path,
+                                                 member="data.npz", lazy=True)
+    row = row_of(resources.manager.snapshot(), key=f"composite:{key!r}")
+    assert not row.can_load
+
+
+def test_disabling_after_resource_load_plan_prevents_disk_reload(resources, tmp_path, monkeypatch):
+    from nfit import project_data
+    from nfit.binning_lifecycle import set_binning_enabled
+
+    config = project_data.dataset_rebin_config(resources.dataset)
+    saved_histogram(resources, tmp_path)
+    row = row_of(resources.manager.snapshot(), kind="Histogram")
+    plan = resources.manager.prepare_load((row.key,))
+    set_binning_enabled(config, False)
+    monkeypatch.setattr(resources.viewer_cache, "get", lambda *_args: pytest.fail("decoded a disabled histogram"))
+    with pytest.raises(ValueError, match="Enable the selected binnings"):
+        resources.manager.execute_load(plan)
+
+
 def test_many_cold_recipes_read_each_cache_catalog_once(resources, monkeypatch):
     calls = []
     original = resources.viewer_cache.resource_records

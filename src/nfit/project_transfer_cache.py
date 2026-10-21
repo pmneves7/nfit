@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from .binning_lifecycle import binning_is_enabled
 from .cache_utils import dataset_content_signature
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup
 from .project_transfer import _ORIGIN
@@ -112,7 +113,7 @@ def install_selection_binnings(selection, destination, result, target_group, *, 
                     continue
                 entry["node_id"] = target.id
             binding = resolve(destination, entry)
-            if binding is None:
+            if binding is None or not binning_is_enabled(binding.config):
                 continue
             saved = _normal(json.loads(record["signature"]), strings=strings, identities=identities)
             current = _normal(json.loads(binding.signature))

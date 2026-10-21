@@ -572,6 +572,38 @@ def _isolated_context(context_class, **capabilities):
     return context_class(**{**required, **capabilities})
 
 
+@pytest.mark.parametrize("entry_kind", ["dataset", "named", "composite"])
+def test_gui_viewer_wrapper_does_not_load_disabled_unavailable_source(monkeypatch, entry_kind):
+    from nfit.project_composites import FIT_BINNING_ID
+    from nfit.project_data import DATASET_REBIN_KEY, dataset_rebin_config
+
+    source = DatasetEntry("Unloaded", None, kind="mdhisto", metadata={"source_file": "absent.npz"})
+    config = dataset_rebin_config(source)
+    config.update(enabled=True, binning_enabled=False)
+    if entry_kind == "named":
+        alias = source.copy()
+        alias._viewer_source_entry = source
+        alias._viewer_rebin_config = {**config, "_binning_id": "named"}
+        alias._viewer_cache_id = "named"
+    elif entry_kind == "composite":
+        alias = source
+        alias.parameters.pop(DATASET_REBIN_KEY)
+        alias._viewer_composite_cache_owner = (id(source), "composite")
+        alias._viewer_composite_binning_id = FIT_BINNING_ID
+        alias._viewer_binning_config = config
+    else:
+        alias = source
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Disabled viewer output tried to load or calculate its source")
+
+    monkeypatch.setattr(project_gui, "_ensure_dataset_data_loaded", forbidden)
+    monkeypatch.setattr(project_gui._project_data, "_ensure_dataset_data_loaded", forbidden)
+    with pytest.raises(ValueError, match="disabled.*enable"):
+        project_gui.dataset_for_slice_viewer(alias)
+    assert source.data is None
+
+
 def test_editable_point_list_controls_use_isolated_contexts(inventory_qt):
     QtWidgets = inventory_qt
     dataset = DatasetEntry("Values", PointListData({"X": [1], "Y": [2]}))
@@ -653,6 +685,7 @@ def test_dataset_rebin_panel_constructs_without_an_explorer(inventory_qt):
     )
     panel = dataset_panels._dataset_axes_group_box(None, dataset, None, [], context=context)
     try:
+        assert panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_binning_enabled").isChecked()
         enabled = panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_enabled")
         assert enabled.isChecked() and enabled.toolTip()
         enabled.setChecked(False)
@@ -687,6 +720,7 @@ def test_composite_panel_constructs_with_explicit_nested_builders_and_state(inve
     )
     panel = group_panels._group_composite_group_box(None, group, context=context)
     try:
+        assert panel.findChild(QtWidgets.QCheckBox, "group_composite_binning_enabled").isChecked()
         tabs = panel.findChild(QtWidgets.QTabWidget, "group_composite_tabs")
         assert [tabs.tabText(index) for index in range(tabs.count())] == [
             "Rebin settings", "Metadata dimensions", "Physics", "Bin information",
@@ -698,18 +732,143 @@ def test_composite_panel_constructs_with_explicit_nested_builders_and_state(inve
         panel.close()
 
 
+@pytest.mark.parametrize("selected_fit", [True, False])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_dataset_binning_enabled_controls_calculation_and_forwards_callback(
+    inventory_qt, selected_fit, enabled,
+):
+    import copy
+
+    from nfit.dataset import PointData4D
+    from nfit.project_data import dataset_rebin_binnings
+
+    QtWidgets = inventory_qt
+    dataset = DatasetEntry("Points", PointData4D([0], [0], [0], [1], [2], [1]))
+    fit = dataset_rebin_binnings(dataset)[0]
+    fit["config"]["enabled"] = True
+    visual = {"id": "visual", "name": "Visualization", "fit": False,
+              "config": copy.deepcopy(fit["config"])}
+    binnings = [fit, visual]
+    selected = fit if selected_fit else visual
+    selected["config"]["binning_enabled"] = enabled
+    calls = []
+    context = _isolated_context(
+        data_panels.DatasetAxesPanelContext,
+        dataset_can_rebin=lambda candidate: True,
+        dataset_rebin_binnings=lambda candidate: binnings,
+        selected_dataset_binning=lambda candidate: selected,
+        dataset_rebin_symmetry_preview=lambda *args: "Preview",
+        format_number=str,
+        add_rebin_performance_controls=lambda *args, **kwargs: None,
+        peek_cached_dataset_view=lambda *args, **kwargs: None,
+        set_dataset_binning_enabled=lambda *args: calls.append(args),
+        set_dataset_rebin_axis_value=lambda *args: calls.append(args),
+    )
+    panel = dataset_panels._dataset_axes_group_box(None, dataset, None, [], context=context)
+    try:
+        check = panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_binning_enabled")
+        assert check.text() == "Enabled" and check.isChecked() is enabled
+        assert "project storage" in check.toolTip() and "stale" in check.toolTip()
+        assert panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_enabled").isChecked()
+        for name in ("dataset_rebin_now", "dataset_rebin_create", "dataset_rebin_save"):
+            button = panel.findChild(QtWidgets.QPushButton, name)
+            assert button.isEnabled() is enabled and button.toolTip()
+        assert panel.findChild(QtWidgets.QPushButton, "dataset_rebin_all_now").isEnabled()
+        editor = panel.findChild(QtWidgets.QLineEdit, "dataset_rebin_axis_lower_0")
+        assert editor.isEnabled()
+        editor.setText("-2")
+        editor.editingFinished.emit()
+        check.setChecked(not enabled)
+        assert calls == [(dataset, None, 0, "lower", "-2"), (dataset, None, not enabled)]
+        assert selected["config"]["enabled"] is True
+    finally:
+        panel.close()
+
+
+@pytest.mark.parametrize("nested", [True, False])
+@pytest.mark.parametrize("selected_fit", [True, False])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_composite_binning_enabled_keeps_recipes_editable_and_forwards_scope(
+    inventory_qt, nested, selected_fit, enabled,
+):
+    import copy
+
+    from nfit.dataset import PointData4D
+    from nfit.project_composites import _composite_scope, data_group_composite_binnings
+
+    QtWidgets = inventory_qt
+    dataset = DatasetEntry("Points", PointData4D([0], [0], [0], [1], [2], [1]))
+    node = DatasetGroup("Collection", datasets=[dataset])
+    root = DataGroup(
+        "Workspace", subgroups=[node] if nested else [], datasets=[] if nested else [dataset],
+    )
+    group = _composite_scope(root, node) if nested else root
+    fit = data_group_composite_binnings(group)[0]
+    fit["config"]["enabled"] = True
+    visual = {"id": "visual", "name": "Visualization", "fit": False,
+              "config": copy.deepcopy(fit["config"])}
+    binnings = [fit, visual]
+    selected = fit if selected_fit else visual
+    selected["config"]["binning_enabled"] = enabled
+    calls = []
+    context = _isolated_context(
+        data_panels.GroupCompositePanelContext,
+        data_group_composite_binnings=lambda candidate: binnings,
+        selected_composite_binning=lambda candidate: selected,
+        data_group_composite_status=lambda candidate: (True, "Compatible"),
+        expanded_inactive_composite_ids=lambda: set(),
+        project=lambda: NfitProject([root]),
+        format_number=str,
+        saved_binning_compressed_size=lambda *args, **kwargs: None,
+        metadata_rebin_rows=lambda candidate, layout, row: 0,
+        metadata_dimensions_panel=lambda *args, **kwargs: QtWidgets.QWidget(),
+        composite_physics_panel=lambda *args: None,
+        add_rebin_performance_controls=lambda *args, **kwargs: None,
+        peek_cached_composite_dataset_data=lambda *args, **kwargs: None,
+        set_group_composite_binning_enabled=lambda *args: calls.append(args),
+        set_group_composite_axis_value=lambda *args: calls.append(args),
+    )
+    panel = group_panels._group_composite_group_box(None, group, context=context)
+    try:
+        check = panel.findChild(QtWidgets.QCheckBox, "group_composite_binning_enabled")
+        assert check.text() == "Enabled" and check.isChecked() is enabled
+        assert "project storage" in check.toolTip() and "stale" in check.toolTip()
+        assert panel.findChild(QtWidgets.QCheckBox, "group_composite_enabled").isChecked()
+        for name in ("group_composite_rebin_now", "group_composite_create"):
+            button = panel.findChild(QtWidgets.QPushButton, name)
+            assert button.isEnabled() is enabled and button.toolTip()
+        assert panel.findChild(QtWidgets.QPushButton, "group_composite_rebin_all_now").isEnabled()
+        editor = panel.findChild(QtWidgets.QLineEdit, "group_composite_axis_lower_0")
+        assert editor.isEnabled()
+        editor.setText("-2")
+        editor.editingFinished.emit()
+        check.setChecked(not enabled)
+        assert calls == [(group, 0, "lower", "-2"), (group, not enabled)]
+        assert selected["config"]["enabled"] is True
+    finally:
+        panel.close()
+
+
 def test_editable_context_helpers_and_callbacks_remain_live_after_construction(monkeypatch, inventory_qt):
     explorer = NfitProjectExplorer(NfitProject([DataGroup("Workspace")]))
     context = explorer._point_list_scale_panel_context()
     rebin_context = explorer._dataset_axes_panel_context()
+    composite_context = explorer._group_composite_panel_context()
     calls = []
     monkeypatch.setattr(explorer, "_set_point_list_scale", lambda *args: calls.append(args))
     monkeypatch.setattr(project_gui, "_format_number", lambda value: f"live:{value}")
     monkeypatch.setattr(explorer, "materialize_rebin_for_selection", lambda: calls.append("materialize"))
+    monkeypatch.setattr(explorer, "_set_dataset_binning_enabled", lambda *args: calls.append(args))
+    monkeypatch.setattr(explorer, "_set_group_composite_binning_enabled", lambda *args: calls.append(args))
     try:
         context.set_point_list_scale("dataset", "group", "factor", 2)
         rebin_context.materialize_rebin_for_selection()
-        assert calls == [("dataset", "group", "factor", 2), "materialize"]
+        rebin_context.set_dataset_binning_enabled("dataset", "group", False)
+        composite_context.set_group_composite_binning_enabled("group", False)
+        assert calls == [
+            ("dataset", "group", "factor", 2), "materialize",
+            ("dataset", "group", False), ("group", False),
+        ]
         assert rebin_context.format_number(7) == "live:7"
     finally:
         explorer.has_unsaved_changes = False

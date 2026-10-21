@@ -28,6 +28,7 @@ from .analysis.core import AnalysisEntry, AnalysisOutputRef, AnalysisResultRecor
 from .analysis.fingerprint import recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
 from .backgrounds import subtract_background
+from .binning_lifecycle import binning_is_enabled, disabled_binning_status
 from .cache_utils import (
     dataset_content_signature,
     scientific_cache_budget_bytes,
@@ -1041,7 +1042,11 @@ def dataset_for_slice_viewer(
         rebin_config=rebin_config,
         cache_id=cache_id,
     )
+    config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
+    lifecycle_config = getattr(dataset, "_viewer_binning_config", config)
     if result is None:
+        if not binning_is_enabled(lifecycle_config):
+            raise ValueError(f"Binning for {dataset.name} is disabled and has no current resident result; enable it to calculate data.")
         return None
 
     def prepare():
@@ -1055,7 +1060,11 @@ def dataset_for_slice_viewer(
         if isinstance(source_key, tuple)
         else f"{source_key}:viewer-prepared"
     )
-    return cached_viewer_preparation(dataset, result, cache=cache, key=key, prepare=prepare)
+    prepared = cached_viewer_preparation(
+        dataset, result, cache=cache, key=key, prepare=prepare,
+        resident_only=not binning_is_enabled(lifecycle_config),
+    )
+    return prepared
 
 
 def _viewer_preparation_cache(dataset: DatasetEntry, cache_id: str | None = None):
@@ -1085,7 +1094,7 @@ def _viewer_view_signature(
     config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
     rebin = (
         json.dumps(
-            {key: value for key, value in config.items() if key not in {"stale", "auto_rebin"}}
+            {key: value for key, value in config.items() if key not in {"stale", "auto_rebin", "binning_enabled"}}
             | {"general_rebin_numerical_version": REBIN_NUMERICAL_VERSION},
             sort_keys=True, default=str,
         )
@@ -1177,6 +1186,11 @@ def _viewer_data_before_scale(
     cache_id: str | None = None,
 ) -> MDHistoData | PointListData | None:
     config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
+    if not binning_is_enabled(config):
+        return _peek_cached_dataset_view(
+            dataset, extra_masks=extra_masks, rebin_config=config,
+            cache_id=cache_id, resident_only=True,
+        )
     if (
         getattr(dataset, "_viewer_composite_cache_owner", None) is not None
         and not config.get("enabled")
@@ -1252,12 +1266,30 @@ def _peek_cached_dataset_view(
 
     config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
     view_cache, key = _viewer_preparation_cache(dataset, cache_id)
+    prepared_key = (
+        (key[0], "viewer-prepared", key[2])
+        if isinstance(key, tuple) else f"{key}:viewer-prepared"
+    )
+
+    def discard_disabled_result():
+        view_cache.discard_matching(lambda candidate: candidate in (key, prepared_key))
+
+    if not binning_is_enabled(config):
+        resident_only = True
+        if config.get("stale", False):
+            discard_disabled_result()
+            return None
     cached = (
         view_cache.peek_resident(key)
         if resident_only and hasattr(view_cache, "peek_resident")
         else view_cache.get(key)
     )
-    if cached is None or cached[0] != _viewer_view_signature(dataset, extra_masks, config):
+    if cached is None:
+        return None
+    if cached[0] != _viewer_view_signature(dataset, extra_masks, config):
+        if not binning_is_enabled(config):
+            config["stale"] = True
+            discard_disabled_result()
         return None
     return cached[1]
 
@@ -1295,6 +1327,21 @@ def _apply_dataset_backgrounds(
     return result
 
 
+def _disabled_rebin_source_data(dataset, config, *, extra_masks=None):
+    """Reuse a resident pre-background result only when the cache represents it."""
+    if any(background.enabled and float(background.scale) != 0.0
+           for background in dataset.backgrounds):
+        raise ValueError(
+            f"Binning for {dataset.name} is disabled; its cached viewer result includes "
+            "background subtraction. Enable the binning to calculate data before background subtraction."
+        )
+    return _peek_cached_dataset_view(
+        dataset, extra_masks=extra_masks, rebin_config=config,
+        cache_id=(str(config["_binning_id"]) if config.get("_binning_id") != dataset_rebin_config(dataset).get("_binning_id") else None),
+        resident_only=True,
+    )
+
+
 def _viewer_data_before_scale_uncached(
     dataset: DatasetEntry,
     *,
@@ -1305,6 +1352,8 @@ def _viewer_data_before_scale_uncached(
     rebin_config: dict[str, Any] | None = None,
 ) -> MDHistoData | PointListData | None:
     config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
+    if not binning_is_enabled(config):
+        return _disabled_rebin_source_data(dataset, config, extra_masks=extra_masks)
     if isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
         derived = derived_analysis_dataset_data(
             dataset,
@@ -1518,6 +1567,7 @@ def dataset_rebin_config(
     config.setdefault("_binning_id", FIT_BINNING_ID)
     initialize_rebin_performance(config)
     config.setdefault("enabled", False)
+    config.setdefault("binning_enabled", True)
     if not isinstance(config.get("symmetry"), dict):
         config["symmetry"] = symmetry_config(SymmetrySpec())
     if config.get(REBIN_RESOLUTION_MODE_KEY) not in {"step", "bins"}:
@@ -1534,7 +1584,9 @@ def dataset_rebin_config(
     axes = config.get("axes")
     # Only materialize transformed coordinates when defaults are actually
     # needed. Existing axes already carry their complete saved basis.
-    if isinstance(dataset.data, PointListData) and (not isinstance(axes, list) or not axes):
+    if not binning_is_enabled(config):
+        default_axes = []
+    elif isinstance(dataset.data, PointListData) and (not isinstance(axes, list) or not axes):
         default_axes = _default_rebin_axes(prepared_point_list_data(dataset))
     elif isinstance(dataset.data, PointListData):
         default_axes = []
@@ -1795,6 +1847,8 @@ def _dataset_rebin_is_large(dataset: DatasetEntry, config: dict[str, Any]) -> bo
 
 
 def _dataset_rebin_status_text(dataset: DatasetEntry, config: dict[str, Any]) -> str:
+    if (status := disabled_binning_status(config)) is not None:
+        return status
     if not bool(config.get("enabled", False)):
         return "Rebinning is disabled."
     size_note = "large dataset" if _dataset_rebin_is_large(dataset, config) else "small dataset"
@@ -1857,6 +1911,11 @@ def _rebinned_dataset_data(
     """Return a rebinned copy of a supported dataset according to its configuration."""
 
     config = dataset_rebin_config(dataset, config_override=config_override)
+    if not binning_is_enabled(config):
+        result = _disabled_rebin_source_data(dataset, config, extra_masks=extra_masks)
+        if result is None:
+            raise ValueError(f"Binning for {dataset.name} is disabled and has no current resident result; enable it to rebin data.")
+        return result
     if isinstance(dataset.data, PointListData):
         result = _rebin_point_list_data(dataset, config)
         config["stale"] = False

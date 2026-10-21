@@ -94,6 +94,8 @@ different Python.
   presents their preview; `docs/dataset_conditions.md` documents the workflow.
 - `src/nfit/project_rebinning.py`: numerical grid configuration, symmetry-aware
   rebinning, histogram construction, and shared dataset/composite axis edits.
+  `binning_lifecycle.py` defines calculation and cache-storage availability for
+  named dataset and composite binnings.
 - `src/nfit/raw_dgs.py`, `raw_dgs_geometry.py`, `raw_dgs_geometry_precision.py`,
   `raw_dgs_hyspec.py`, `raw_dgs_goniometer.py`, and `raw_dgs_cache.py`:
   direct-geometry reduction, resolved instrument geometry, HYSPEC preprocessing,

@@ -1096,6 +1096,31 @@ optimizer or sampler iterations, but nfit evaluates the fitted model on them
 once afterward for plotting. A dataset and a collection each have their own
 saved list of named configurations, but descendant configurations remain dormant
 while an ancestor owns the output grid.
+
+Clear **Enabled** beside the selected binning to suspend its calculation and
+exclude its numerical cache from project saves and selection exports. The
+configuration is still saved. An already calculated, current result remains
+available in memory; changes to its inputs or settings make it stale, and it
+cannot be rebuilt until **Enabled** is selected again. Disabled binnings are
+skipped by **Rebin all now**, **Rebin stale binnings**, and save-time cache
+preparation. This setting is separate from **Use rebinned data** and collection
+combining, which choose the scientific input used for viewing and fitting.
+
+Scripts can change the same state without constructing GUI widgets:
+
+```python
+from nfit.binning_lifecycle import set_binning_enabled
+from nfit.project_data import dataset_rebin_config_by_id
+
+config = dataset_rebin_config_by_id(dataset, binning_id)
+set_binning_enabled(config, False)
+```
+
+For a collection, obtain the configuration with
+`nfit.project_composites.data_group_composite_config_by_id(collection, binning_id)`.
+A disabled fit binning requires a current in-memory result; otherwise re-enable
+it before fitting or choose another enabled binning for fitting.
+
 When combining histograms, nfit reconstructs physical coordinates from each
 source's saved axis vectors before projecting into the output basis. This
 preserves peak positions and coverage when combining already rebinned HHL

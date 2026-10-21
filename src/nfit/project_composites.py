@@ -29,6 +29,7 @@ from .background_channels import (
     record_background_original_exceptions,
 )
 from .backgrounds import subtract_background
+from .binning_lifecycle import binning_is_enabled, disabled_binning_status
 from .cache_utils import (
     dataset_content_signature,
     scientific_cache_budget_bytes,
@@ -492,6 +493,7 @@ def data_group_composite_config(
     config.setdefault("_binning_id", FIT_BINNING_ID)
     initialize_rebin_performance(config)
     config.setdefault("enabled", False)
+    config.setdefault("binning_enabled", True)
     if not isinstance(config.get("symmetry"), dict):
         config["symmetry"] = symmetry_config(SymmetrySpec())
     resolution_mode_key = _composite_policy().resolution_mode_key
@@ -614,7 +616,7 @@ def data_group_composite_config(
         # legacy configuration genuinely needs default axes.
         reference = (
             _composite_reference_data(group)
-            if not isinstance(axes, list) or not axes
+            if binning_is_enabled(config) and (not isinstance(axes, list) or not axes)
             else None
         )
         default_axes = (
@@ -751,6 +753,8 @@ def _composite_rebin_is_large(group: DataGroup, config: dict[str, Any]) -> bool:
 
 
 def _composite_rebin_status_text(group: DataGroup, config: dict[str, Any]) -> str:
+    if (status := disabled_binning_status(config)) is not None:
+        return status
     if not bool(config.get("enabled", False)):
         return "Composite rebinning is off."
     size_note = "large" if _composite_rebin_is_large(group, config) else "small"
@@ -974,7 +978,7 @@ def _source_data_for_group_composite(
 def _composite_numerical_config(group, config):
     """Exclude UI/runtime controls and options unused by event reducers."""
     result = copy.deepcopy(dict(config))
-    for key in ("stale", "auto_rebin", "workers", "max_batch_mb", "_binning_id"):
+    for key in ("stale", "auto_rebin", "workers", "max_batch_mb", "_binning_id", "binning_enabled"):
         result.pop(key, None)
     node = group.node if isinstance(group, _CompositeScope) else group
     is_event = "mdevent" in node.metadata
@@ -1243,6 +1247,19 @@ def composite_dataset_data(
     """
     if node is not None:
         group = _composite_scope(group, node)
+    config = config_override if config_override is not None else data_group_composite_config(group)
+    if not binning_is_enabled(config):
+        config = data_group_composite_config(group, config_override=dict(config))
+        if metadata_dimensions_override is not None or not include_source_masks or not apply_backgrounds:
+            raise ValueError("This composite binning is disabled; enable it to calculate a changed scientific view.")
+        result = _cached_composite_dataset_data(
+            group, config_override=config_override,
+            binning_id=(str(config["_binning_id"]) if config.get("_binning_id") != data_group_composite_config(group).get("_binning_id") else None),
+            apply_spectral_channels=apply_spectral_channels,
+        )
+        if result is None:
+            raise ValueError("This composite binning is disabled and has no current resident result; enable it to calculate data.")
+        return result
     from .dataset_criteria import prepare_dataset_criteria
 
     selection_node = group.node if isinstance(group, _CompositeScope) else group
@@ -1878,15 +1895,32 @@ def _composite_background_cache_key(group, background, config=None):
     )
 
 
+def _composite_binning_cache_available(key, signature, config):
+    """Disabled donor binnings may contribute only a current resident result."""
+    if config is None or binning_is_enabled(config):
+        return _COMPOSITE_DATA_CACHE.has_signature(key, signature)
+    if config.get("stale", False):
+        return False
+    resident = _COMPOSITE_DATA_CACHE.peek_resident(key)
+    return resident is not None and resident[0] == signature
+
+
 def _matching_composite_base_key(group, signature, binning_id=None):
     """Reuse an identical numerical grid across named binnings of one owner."""
-    keys = [_composite_base_cache_key(group, binning_id), _composite_cache_key(group, binning_id)]
-    for binning in data_group_composite_binnings(group):
+    binnings = data_group_composite_binnings(group)
+    configs = {None if item["fit"] else item["id"]: item["config"] for item in binnings}
+    keys = [(key, configs.get(binning_id)) for key in (
+        _composite_base_cache_key(group, binning_id), _composite_cache_key(group, binning_id)
+    )]
+    for binning in binnings:
         other_id = None if binning["fit"] else binning["id"]
         keys.extend(
-            (_composite_base_cache_key(group, other_id), _composite_cache_key(group, other_id))
+            (key, binning["config"]) for key in (
+                _composite_base_cache_key(group, other_id), _composite_cache_key(group, other_id)
+            )
         )
-    return next((key for key in keys if _COMPOSITE_DATA_CACHE.has_signature(key, signature)), None)
+    return next((key for key, config in keys
+                 if _composite_binning_cache_available(key, signature, config)), None)
 
 
 def _composite_histograms_current(group, *, config_override=None, binning_id=None, trail=None):
@@ -2094,6 +2128,9 @@ def _composite_background_data(group, background, data, *, config, progress_call
             sample_config = data_group_composite_config(group) if config is None else config
             spatial_axes = data.axes[:len(source_config["axes"])]
             aligned_config["enabled"] = True
+            # The sample owns this aligned background, independently of the
+            # reference collection's separate standalone output binning.
+            aligned_config["binning_enabled"] = True
             aligned_config["axes"] = copy.deepcopy(sample_config["axes"][:len(spatial_axes)])
             aligned_config["coordinate_mode"] = sample_config["coordinate_mode"]
             for settings, axis in zip(aligned_config["axes"], spatial_axes, strict=True):
@@ -2238,7 +2275,7 @@ def _apply_composite_backgrounds(
         if projected_cache is None or projected_cache[0] != projection_signature:
             for binning in data_group_composite_binnings(group):
                 other_key = _composite_background_cache_key(group, background, binning["config"])
-                if _COMPOSITE_DATA_CACHE.has_signature(other_key, projection_signature):
+                if _composite_binning_cache_available(other_key, projection_signature, binning["config"]):
                     projected_cache = _COMPOSITE_DATA_CACHE.get(other_key)
                     _COMPOSITE_DATA_CACHE[projection_key] = projected_cache
                     break
@@ -2394,8 +2431,26 @@ def _cached_composite_dataset_data(
             key=(_composite_cache_key(group), "viewer-finish", binning_id, bool(apply_spectral_channels)),
             source_signature=signature,
             apply_spectral=apply_spectral_channels,
+            resident_only=not binning_is_enabled(config),
         )
 
+    config = (
+        data_group_composite_config(group)
+        if config_override is None
+        else data_group_composite_config(group, config_override=config_override)
+    )
+    if not binning_is_enabled(config):
+        cached_data = _peek_cached_composite_dataset_data(
+            group, config_override=config, binning_id=binning_id, resident_only=True,
+        )
+        if cached_data is None:
+            return None
+        if not apply_spectral_channels:
+            return cached_data
+        signature = _composite_cache_signature(
+            group, config_override=config, binning_id=binning_id
+        )
+        return finish(cached_data)
     if force_rebin:
         from .dataset_criteria import prepare_dataset_criteria
 
@@ -2522,7 +2577,32 @@ def _peek_cached_composite_dataset_data(
     display-only memory and bin summaries.
     """
 
+    config = data_group_composite_config(group, config_override=config_override)
+    owner = _composite_cache_key(group)
     key = _composite_cache_key(group, binning_id)
+
+    def discard_disabled_result():
+        viewer_id = str(binning_id or FIT_BINNING_ID)
+        output_keys = {
+            key, _composite_base_cache_key(group, binning_id),
+            (owner, "viewer-source", viewer_id),
+            (owner, "viewer-prepared", viewer_id),
+            (owner, "viewer-finish", binning_id, True),
+            (owner, "viewer-finish", binning_id, False),
+        }
+        _COMPOSITE_DATA_CACHE.discard_matching(
+            lambda candidate: candidate in output_keys or (
+                isinstance(candidate, tuple) and len(candidate) >= 3
+                and candidate[0] == owner and candidate[1] == "background"
+                and candidate[2] == config.get("_binning_id", FIT_BINNING_ID)
+            )
+        )
+
+    if not binning_is_enabled(config):
+        resident_only = True
+        if config.get("stale", False):
+            discard_disabled_result()
+            return None
     cached = (
         _COMPOSITE_DATA_CACHE.peek_resident(key)
         if resident_only and hasattr(_COMPOSITE_DATA_CACHE, "peek_resident")
@@ -2535,6 +2615,8 @@ def _peek_cached_composite_dataset_data(
     ):
         config = data_group_composite_config(group, config_override=config_override)
         config["stale"] = True
+        if not binning_is_enabled(config):
+            discard_disabled_result()
         return None
     return cached[1]
 
@@ -2546,6 +2628,7 @@ def composite_dataset_entry(
     progress_callback: Any | None = None,
     config_override: dict[str, Any] | None = None,
     binning_id: str | None = None,
+    allow_disabled_empty: bool = False,
 ) -> DatasetEntry:
     child_scopes = _hierarchical_composite_scopes(group)
     datasets = _composite_candidates(
@@ -2553,15 +2636,15 @@ def composite_dataset_entry(
     )
     first = datasets[0] if datasets else None
     config = data_group_composite_config(group, config_override=config_override)
+    data = _cached_composite_dataset_data(
+        group, force_rebin=force_rebin, progress_callback=progress_callback,
+        config_override=config_override, binning_id=binning_id,
+    )
+    if data is None and not binning_is_enabled(config) and not allow_disabled_empty:
+        raise ValueError(f"Composite binning for {group.name} is disabled and has no current resident result; enable it to calculate data.")
     entry = DatasetEntry(
         name=_composite_dataset_name(group),
-        data=_cached_composite_dataset_data(
-            group,
-            force_rebin=force_rebin,
-            progress_callback=progress_callback,
-            config_override=config_override,
-            binning_id=binning_id,
-        ),
+        data=data,
         kind=("mdhisto" if child_scopes else first.kind if first is not None else ""),
         data_type=(
             ("powder_inelastic" if len(config.get("axes", [])) == 2 else "single_crystal_inelastic")
@@ -2594,6 +2677,7 @@ def composite_dataset_entry(
     )
     entry._viewer_composite_cache_owner = _composite_cache_key(group)
     entry._viewer_composite_binning_id = str(binning_id or FIT_BINNING_ID)
+    entry._viewer_binning_config = config
     return entry
 
 

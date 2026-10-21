@@ -2,6 +2,7 @@
 
 from . import project_composites as comp
 from .analysis.artifacts import write_dataset_artifact
+from .binning_lifecycle import binning_is_enabled
 from .project_archive import ArchiveMember, binning_artifact_member, project_artifact_exists
 from .project_resources import excluded_project_cache
 
@@ -17,7 +18,7 @@ def background_binning_artifacts(project, directory, format_version, *, scope_id
                 continue
             for binning in comp.data_group_composite_binnings(scope):
                 config = binning['config']
-                if not config.get('enabled'):
+                if not config.get('enabled') or not binning_is_enabled(config):
                     continue
                 for index, background in enumerate(scope.backgrounds):
                     key = comp._composite_background_cache_key(scope, background, config)
@@ -65,6 +66,8 @@ def restore_background_binning_backing(project, path, entries, *, lazy):
             node = None if node_id is None else next(n for n in root.iter_subgroups() if n.id == node_id)
             scope = comp._composite_scope(root, node)
             config = comp.data_group_composite_config_by_id(scope, entry['binning_id'])
+            if not binning_is_enabled(config):
+                continue
             background = scope.backgrounds[int(entry['background_index'])]
             signature = comp._composite_background_signature(scope, background, config)
             if signature != entry['signature'] or not project_artifact_exists(path, entry['member']):

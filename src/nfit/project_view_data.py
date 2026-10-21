@@ -33,6 +33,7 @@ def cached_viewer_preparation(
     cache: MutableMapping,
     key: Any,
     prepare: Callable[[], MDHistoData | PointListData | PointData4D],
+    resident_only: bool = False,
 ) -> MDHistoData | PointListData | PointData4D:
     """Share final immutable scale and spectral payloads across viewer windows.
 
@@ -40,6 +41,9 @@ def cached_viewer_preparation(
     recipes produce replacement arrays. Physical presentation settings are
     included separately because these transformations follow the source cache.
     The lock prevents simultaneous viewers from duplicating a large conversion.
+    ``resident_only`` reads only an existing resident prepared result. If none
+    matches, prepare presentation from the supplied current histogram without
+    storing a new cache entry. This never loads or recalculates its binning.
     """
 
     physical_keys = (
@@ -64,7 +68,9 @@ def cached_viewer_preparation(
     )
     with _VIEW_PREPARATION_LOCK:
         cached = (
-            cache.get(key)
+            cache.peek_resident(key)
+            if resident_only
+            else cache.get(key)
             if not hasattr(cache, "has_signature") or cache.has_signature(key, signature)
             else None
         )
@@ -80,7 +86,7 @@ def cached_viewer_preparation(
         with reserve_memory(peak, operation=f"Preparing viewer data: {dataset.name}"):
             prepared = prepare()
         # PointData4D is not a viewer catalog payload and has no NPZ rebin tier.
-        if isinstance(prepared, (MDHistoData, PointListData)):
+        if not resident_only and isinstance(prepared, (MDHistoData, PointListData)):
             if hasattr(cache, "set_label"):
                 cache.set_label(key, f"{dataset.name} · prepared viewer data")
             cache[key] = (signature, prepared)

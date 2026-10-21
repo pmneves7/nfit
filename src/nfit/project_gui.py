@@ -39,6 +39,7 @@ from .analysis.core import (
 from .analysis.fingerprint import recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
 from .application_preferences import application_settings, preload_viewer_data
+from .binning_lifecycle import binning_is_enabled, set_binning_enabled
 from .cache_utils import lru_store as _lru_store
 from .data_workspace import project_data_workspace, temporary_data_directory
 from .dataset import PointData4D, PointListData
@@ -618,7 +619,14 @@ def dataset_for_slice_viewer(
         if cache_id is not None
         else getattr(dataset, "_viewer_cache_id", None)
     )
-    if _peek_cached_dataset_view(
+    lifecycle_config = getattr(source, "_viewer_binning_config", None)
+    if lifecycle_config is None:
+        lifecycle_config = (
+            effective_rebin_config
+            if effective_rebin_config is not None
+            else _fit_dataset_rebin_config(source)
+        )
+    if binning_is_enabled(lifecycle_config) and _peek_cached_dataset_view(
         source,
         extra_masks=extra_masks,
         rebin_config=effective_rebin_config,
@@ -2076,6 +2084,7 @@ def _effective_dataset_entries(
     progress_callback: Any | None,
     include_disabled_groups: bool = True,
     batch_progress: dict[str, Any] | None = None,
+    allow_unavailable_binnings: bool = False,
 ):
     if (
         isinstance(node, DatasetGroup)
@@ -2096,6 +2105,7 @@ def _effective_dataset_entries(
             scope,
             force_rebin=force_rebin,
             progress_callback=progress_callback,
+            **({"allow_disabled_empty": True} if allow_unavailable_binnings else {}),
         )
         _report_effective_dataset_batch(
             progress_callback,
@@ -2133,6 +2143,7 @@ def _effective_dataset_entries(
             progress_callback=progress_callback,
             include_disabled_groups=include_disabled_groups,
             batch_progress=batch_progress,
+            allow_unavailable_binnings=allow_unavailable_binnings,
         )
 
 
@@ -2391,6 +2402,9 @@ def slice_viewer_datasets(
                 dataset_rebin_binnings(dataset)
                 if isinstance(dataset.parameters.get(DATASET_REBIN_KEY), dict) else []
             ),
+            disabled_binning_available=lambda dataset, scope, binning: _resident_binning_available(
+                group, dataset, scope, binning
+            ),
         )
 
         def prepare(dataset):
@@ -2444,6 +2458,7 @@ def slice_viewer_datasets(
             force_masks=force_masks,
             progress_callback=progress_callback,
             batch_progress=batch_progress,
+            allow_unavailable_binnings=True,
         )
     )
     entries = _entries_with_visualization_binnings(
@@ -2529,6 +2544,25 @@ def _finish_viewer_batch_progress(
     )
 
 
+def _resident_binning_available(
+    group: DataGroup | None, dataset: DatasetEntry | None,
+    scope: DataGroup | _CompositeScope | None, binning: dict[str, Any],
+) -> bool:
+    """Check a disabled viewer entry without restoring numerical caches."""
+
+    cache_id = None if binning["fit"] else binning["id"]
+    if scope is not None:
+        return _peek_cached_composite_dataset_data(
+            scope, config_override=binning["config"],
+            binning_id=cache_id, resident_only=True,
+        ) is not None
+    return dataset is not None and _peek_cached_dataset_view(
+        dataset, rebin_config=binning["config"], cache_id=cache_id,
+        extra_masks=effective_dataset_masks(group, dataset) if group is not None else [],
+        resident_only=True,
+    ) is not None
+
+
 def _entries_with_visualization_binnings(
     group: DataGroup,
     entries: list[DatasetEntry],
@@ -2559,13 +2593,20 @@ def _entries_with_visualization_binnings(
         if not binnings:
             expanded.append(dataset)
             continue
-        expanded.append(_project_viewer_loading.viewer_binning_entry(
-            dataset, binnings[0], enabled=_dataset_is_effectively_enabled(group, dataset),
-            rebin_key=DATASET_REBIN_KEY, derived_key=DERIVED_RECIPE_KEY,
-        ))
+        if binning_is_enabled(binnings[0]["config"]) or _resident_binning_available(
+            group, dataset, scope, binnings[0]
+        ):
+            expanded.append(_project_viewer_loading.viewer_binning_entry(
+                dataset, binnings[0], enabled=_dataset_is_effectively_enabled(group, dataset),
+                rebin_key=DATASET_REBIN_KEY, derived_key=DERIVED_RECIPE_KEY,
+            ))
         for item in binnings[1:]:
             config = item["config"]
             if not bool(config.get("enabled", False)):
+                continue
+            if not binning_is_enabled(config) and not _resident_binning_available(
+                group, dataset, scope, item
+            ):
                 continue
             view_name = _binning_view_name(source_name, str(item["name"]))
             if scope is not None:
@@ -2660,6 +2701,14 @@ def fit_data_bundle(
             force_masks=force_masks,
             progress_callback=progress_callback,
         )
+        if raw_view is None and not binning_is_enabled(
+            getattr(dataset, "_viewer_binning_config", None)
+            or _fit_dataset_rebin_config(dataset)
+        ):
+            raise ValueError(
+                f"Binning for {dataset.name} is disabled and has no current resident "
+                "result; enable it before fitting."
+            )
         view = (
             _with_viewer_dataset_metadata(
                 dataset,
@@ -3094,6 +3143,7 @@ def fit_dataset_inputs(
         force_masks=force_masks,
         progress_callback=progress_callback,
         include_disabled_groups=purpose in {"visualization", "overlay"},
+        allow_unavailable_binnings=purpose in {"visualization", "overlay"},
     )
     if purpose in {"visualization", "overlay"}:
         entries = _entries_with_visualization_binnings(
@@ -5278,6 +5328,7 @@ def _dataset_cached_binnings_current(group: DataGroup, dataset: DatasetEntry) ->
             item
             for item in dataset_rebin_binnings(dataset)
             if bool(item["config"].get("enabled", False))
+            and binning_is_enabled(item["config"])
         ]
         return bool(enabled) and all(
             _project_binning_is_current(
@@ -5308,6 +5359,7 @@ def _composite_cached_binnings_current(group: DataGroup, node: DataGroup | Datas
             item
             for item in data_group_composite_binnings(scope)
             if bool(item["config"].get("enabled", False))
+            and binning_is_enabled(item["config"])
         ]
         return bool(enabled) and all(
             _project_binning_is_current(
@@ -5448,7 +5500,7 @@ def _project_binning_artifacts(
             fit_config = _fit_dataset_rebin_config(dataset)
             for binning in dataset_rebin_binnings(dataset):
                 config = binning["config"]
-                if not config.get("enabled"):
+                if not config.get("enabled") or not binning_is_enabled(config):
                     continue
                 is_fit = config is fit_config
                 signature = _viewer_view_signature(
@@ -5503,7 +5555,7 @@ def _project_binning_artifacts(
             fit_config = _fit_data_group_composite_config(scope)
             for binning in data_group_composite_binnings(scope):
                 config = binning["config"]
-                if not config.get("enabled"):
+                if not config.get("enabled") or not binning_is_enabled(config):
                     continue
                 is_fit = config is fit_config
                 signature = (
@@ -5588,6 +5640,8 @@ def _adopt_saved_project_binning_backing(
                     if item.id == str(entry["dataset_id"])
                 )
                 config = dataset_rebin_config_by_id(dataset, binning_id)
+                if not binning_is_enabled(config):
+                    continue
                 key = (
                     dataset.id
                     if config is _fit_dataset_rebin_config(dataset)
@@ -5615,6 +5669,8 @@ def _adopt_saved_project_binning_backing(
                     )
                 )
                 config = data_group_composite_config_by_id(scope, binning_id)
+                if not binning_is_enabled(config):
+                    continue
                 key = _composite_cache_key(
                     scope,
                     None
@@ -5674,13 +5730,6 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
             member = str(entry["member"])
             if not project_artifact_exists(path, member):
                 continue
-            data = (
-                None
-                if format_version >= 6
-                else read_project_dataset_artifact(path, member)
-            )
-            if data is not None and prepare_data is not None:
-                data = prepare_data(data)
             if entry.get("type") == "dataset":
                 dataset = next(
                     item
@@ -5689,19 +5738,8 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                 )
                 binning_id = str(entry["binning_id"])
                 config = dataset_rebin_config_by_id(dataset, binning_id)
-                resolved.append(
-                    (
-                        "dataset",
-                        (group, dataset),
-                        data,
-                        binning_id,
-                        config,
-                        config is _fit_dataset_rebin_config(dataset),
-                        format_version,
-                        saved_signature,
-                        member,
-                    )
-                )
+                kind, target = "dataset", (group, dataset)
+                is_fit = config is _fit_dataset_rebin_config(dataset)
             elif entry.get("type") == "composite":
                 node_id = entry.get("node_id")
                 scope = (
@@ -5718,19 +5756,23 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                 )
                 binning_id = str(entry["binning_id"])
                 config = data_group_composite_config_by_id(scope, binning_id)
-                resolved.append(
-                    (
-                        "composite",
-                        scope,
-                        data,
-                        binning_id,
-                        config,
-                        config is _fit_data_group_composite_config(scope),
-                        format_version,
-                        saved_signature,
-                        member,
-                    )
-                )
+                kind, target = "composite", scope
+                is_fit = config is _fit_data_group_composite_config(scope)
+            else:
+                continue
+            if not binning_is_enabled(config):
+                continue
+            data = (
+                None
+                if format_version >= 6
+                else read_project_dataset_artifact(path, member)
+            )
+            if data is not None and prepare_data is not None:
+                data = prepare_data(data)
+            resolved.append(
+                (kind, target, data, binning_id, config, is_fit,
+                 format_version, saved_signature, member)
+            )
         except (IndexError, KeyError, OSError, StopIteration, TypeError, ValueError):
             continue
 
@@ -6048,12 +6090,16 @@ def _transfer_binning_binding(project, entry):
     if entry["type"] == "dataset":
         target = next(item for item in group.iter_datasets() if item.id == entry["dataset_id"])
         config = dataset_rebin_config_by_id(target, binning_id)
+        if not binning_is_enabled(config):
+            return None
         key = target.id if config is _fit_dataset_rebin_config(target) else f"{target.id}:{binning_id}"
         return TransferBinning(_VIEWER_VIEW_CACHE, key,
                                _viewer_view_signature(target, effective_dataset_masks(group, target), config), config)
     node = next((node for node in group.iter_subgroups() if node.id == entry.get("node_id")), None)
     scope = _composite_scope(group, node) if node is not None else group
     config = data_group_composite_config_by_id(scope, binning_id)
+    if not binning_is_enabled(config):
+        return None
     if entry["type"] == "composite_background":
         from .project_composites import (
             _composite_background_cache_key,
@@ -8583,6 +8629,8 @@ class NfitProjectExplorer:
             return None
         selected = self._selected_dataset_binning(entry)
         config = selected["config"]
+        if not binning_is_enabled(config):
+            return None
         if not self._confirm_dataset_rebin_memory(
             [selected], operation="Creating a dataset from the rebin"
         ):
@@ -8627,6 +8675,8 @@ class NfitProjectExplorer:
             return False
         selected = self._selected_dataset_binning(entry)
         config = selected["config"]
+        if not binning_is_enabled(config):
+            return False
         if not self._confirm_dataset_rebin_memory(
             [selected], operation="Saving the rebinned dataset"
         ):
@@ -8684,6 +8734,8 @@ class NfitProjectExplorer:
         selected = self._selected_dataset_binning(entry)
         config = selected["config"]
         cache_id = None if selected["fit"] else selected["id"]
+        if not binning_is_enabled(config):
+            return False
         if not self._confirm_dataset_rebin_memory(
             [selected], operation="Rebinning the selected dataset"
         ):
@@ -8762,6 +8814,7 @@ class NfitProjectExplorer:
             item
             for item in dataset_rebin_binnings(entry)
             if bool(item["config"].get("enabled", False))
+            and binning_is_enabled(item["config"])
         ]
         if not binnings:
             return False
@@ -9038,7 +9091,7 @@ class NfitProjectExplorer:
             group = _composite_scope(root, owner)
         selected = self._selected_composite_binning(group)
         config = selected["config"]
-        if not bool(config.get("enabled", False)):
+        if not bool(config.get("enabled", False)) or not binning_is_enabled(config):
             return False
         cache_id = None if selected["fit"] else selected["id"]
         if not self._confirm_composite_rebin_memory(
@@ -9119,6 +9172,7 @@ class NfitProjectExplorer:
             item
             for item in data_group_composite_binnings(group)
             if bool(item["config"].get("enabled", False))
+            and binning_is_enabled(item["config"])
         ]
         if not binnings:
             return False
@@ -9208,7 +9262,7 @@ class NfitProjectExplorer:
             return False
         selected = self._selected_composite_binning(group)
         config = selected["config"]
-        if not bool(config.get("enabled", False)):
+        if not bool(config.get("enabled", False)) or not binning_is_enabled(config):
             return False
         if not self._confirm_composite_rebin_memory(
             group, [selected], operation="Creating a dataset from the composite"
@@ -14400,6 +14454,7 @@ class NfitProjectExplorer:
             selected_composite_binning=lambda *args, **kwargs: self._selected_composite_binning(*args, **kwargs),
             set_dataset_collection_details=lambda *args, **kwargs: self._set_dataset_collection_details(*args, **kwargs),
             set_group_composite_auto=lambda *args, **kwargs: self._set_group_composite_auto(*args, **kwargs),
+            set_group_composite_binning_enabled=lambda *args, **kwargs: self._set_group_composite_binning_enabled(*args, **kwargs),
             set_group_composite_axis_edges=lambda *args, **kwargs: self._set_group_composite_axis_edges(*args, **kwargs),
             set_group_composite_axis_fractional=lambda *args, **kwargs: self._set_group_composite_axis_fractional(*args, **kwargs),
             set_group_composite_axis_mode=lambda *args, **kwargs: self._set_group_composite_axis_mode(*args, **kwargs),
@@ -15594,6 +15649,7 @@ class NfitProjectExplorer:
             selected_dataset_binning=lambda *args, **kwargs: self._selected_dataset_binning(*args, **kwargs),
             set_dataset_details_preserving_scroll=lambda *args, **kwargs: self._set_dataset_details_preserving_scroll(*args, **kwargs),
             set_dataset_rebin_auto=lambda *args, **kwargs: self._set_dataset_rebin_auto(*args, **kwargs),
+            set_dataset_binning_enabled=lambda *args, **kwargs: self._set_dataset_binning_enabled(*args, **kwargs),
             set_dataset_rebin_axis_edges=lambda *args, **kwargs: self._set_dataset_rebin_axis_edges(*args, **kwargs),
             set_dataset_rebin_axis_fractional=lambda *args, **kwargs: self._set_dataset_rebin_axis_fractional(*args, **kwargs),
             set_dataset_rebin_axis_mode=lambda *args, **kwargs: self._set_dataset_rebin_axis_mode(*args, **kwargs),
@@ -16115,6 +16171,37 @@ class NfitProjectExplorer:
         selected.update(pasted)
         self._after_group_composite_changed(group)
         return True
+
+    def _set_dataset_binning_enabled(
+        self, dataset: DatasetEntry, group: DataGroup | None, checked: bool
+    ) -> None:
+        selected = self._selected_dataset_binning(dataset)
+        config = selected["config"]
+        if binning_is_enabled(config) == bool(checked):
+            return
+        set_binning_enabled(config, checked)
+        if not checked:
+            _resident_binning_available(group, dataset, None, selected)
+        if group is not None:
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._refresh_cache_badges()
+        self._set_dataset_details_preserving_scroll(dataset, group)
+
+    def _set_group_composite_binning_enabled(
+        self, group: DataGroup | _CompositeScope, checked: bool
+    ) -> None:
+        selected = self._selected_composite_binning(group)
+        config = selected["config"]
+        if binning_is_enabled(config) == bool(checked):
+            return
+        set_binning_enabled(config, checked)
+        if not checked:
+            _resident_binning_available(_composite_root(group), None, group, selected)
+        self._record_data_group_state_change(_composite_root(group))
+        self._mark_dirty()
+        self._refresh_cache_badges()
+        self._sync_details()
 
     def _set_dataset_rebin_enabled(
         self,
@@ -16705,6 +16792,10 @@ class NfitProjectExplorer:
         if group is not None:
             self._record_data_group_state_change(group)
         self._mark_dirty()
+        if not binning_is_enabled(config):
+            _resident_binning_available(
+                group, dataset, None, self._selected_dataset_binning(dataset)
+            )
         if group is not None:
             self._request_overlay_refresh(group)
         self._refresh_cache_badges()
@@ -16940,6 +17031,10 @@ class NfitProjectExplorer:
         root = _composite_root(group)
         self._record_data_group_state_change(root)
         self._mark_dirty()
+        if not binning_is_enabled(config):
+            _resident_binning_available(
+                root, None, group, self._selected_composite_binning(group)
+            )
         self._request_overlay_refresh(root)
         self._refresh_cache_badges()
         self._sync_details()

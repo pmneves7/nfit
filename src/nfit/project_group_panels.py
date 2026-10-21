@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from .binning_lifecycle import binning_is_enabled
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup
 from .project_composites import _CompositeScope
 from .project_panel_contexts import (
@@ -160,6 +161,20 @@ def _group_composite_group_box(
     from .project_rebin_panels import add_rebin_assignment_items, add_rebin_mode_items
     from .reduction_recipes import reduction_family
 
+    def make_binning_enabled_check(config):
+        check = QtWidgets.QCheckBox("Enabled")
+        check.setObjectName("group_composite_binning_enabled")
+        check.setChecked(binning_is_enabled(config))
+        check.setToolTip(
+            "Allow calculation and project storage of this binning. Disable it to keep the recipe "
+            "without recalculating or saving its output. A valid result already in memory remains "
+            "available until an input or recipe edit makes it stale."
+        )
+        check.toggled.connect(
+            lambda checked: context.set_group_composite_binning_enabled(group, checked)
+        )
+        return check
+
     root = context.composite_root(group)
     selection = group.node if isinstance(group, _CompositeScope) else group
     policy = rebin_presentation_policy(root, selection)
@@ -220,7 +235,7 @@ def _group_composite_group_box(
                 max(binning_combo.findData(selected_binning["id"]), 0)
             )
             binning_combo.setToolTip(
-                "Choose an enabled visualization recipe retained for this collection."
+                "Choose a visualization recipe retained for this collection."
             )
             binning_combo.currentIndexChanged.connect(
                 lambda _index, combo=binning_combo: context.select_composite_binning(
@@ -228,6 +243,7 @@ def _group_composite_group_box(
                 )
             )
             binning_row.addWidget(binning_combo, 1)
+            binning_row.addWidget(make_binning_enabled_check(selected_binning["config"]))
             edit_binning = QtWidgets.QPushButton("Edit selected binning")
             edit_binning.setObjectName("group_composite_edit_visualization")
             edit_binning.setToolTip(
@@ -316,6 +332,7 @@ def _group_composite_group_box(
     binnings = context.data_group_composite_binnings(group)
     selected_binning = context.selected_composite_binning(group)
     config = selected_binning["config"]
+    binning_enabled = binning_is_enabled(config)
     binning_row = QtWidgets.QHBoxLayout()
     binning_row.addWidget(QtWidgets.QLabel("Binning"))
     binning_combo = QtWidgets.QComboBox()
@@ -357,6 +374,7 @@ def _group_composite_group_box(
         lambda checked: checked and context.make_composite_fit_binning(group)
     )
     binning_row.addWidget(binning_combo, 1)
+    binning_row.addWidget(make_binning_enabled_check(config))
     binning_row.addWidget(add_binning)
     binning_row.addWidget(duplicate_binning)
     binning_row.addWidget(rename_binning)
@@ -376,7 +394,8 @@ def _group_composite_group_box(
             else "Make this visualization-only composite rebin available in the data viewer. "
         )
         + "All enabled datasets must have the same data kind. "
-        "Negative dataset scale factors subtract data."
+        "Negative dataset scale factors subtract data. "
+        "The Enabled control separately permits calculation and project storage."
     )
     enable_check.toggled.connect(lambda checked: context.set_group_composite_enabled(group, checked))
     settings_row = QtWidgets.QHBoxLayout()
@@ -805,13 +824,14 @@ def _group_composite_group_box(
     status_label.setObjectName("group_composite_status")
     status_label.setWordWrap(True)
     status_label.setToolTip(
-        "Shows whether the cached composite rebin is current. Pending manual rebinning will be forced automatically for fit and viewer operations."
+        "Shows whether the cached composite rebin is current. For enabled binnings, pending manual "
+        "rebinning is forced automatically for fit and viewer operations."
     )
     controls_layout.addWidget(status_label, footer_row + 5, 0, 1, len(headers))
     action_row = QtWidgets.QHBoxLayout()
     rebin_now_button = QtWidgets.QPushButton("Rebin now")
     rebin_now_button.setObjectName("group_composite_rebin_now")
-    rebin_now_button.setEnabled(can_combine)
+    rebin_now_button.setEnabled(can_combine and binning_enabled)
     rebin_now_button.setToolTip(
         "Compute the current composite rebin immediately and update the cached viewer/fit data. Use this when automatic rebinning is off."
     )
@@ -819,7 +839,13 @@ def _group_composite_group_box(
     action_row.addWidget(rebin_now_button)
     rebin_all_button = QtWidgets.QPushButton("Rebin all now")
     rebin_all_button.setObjectName("group_composite_rebin_all_now")
-    rebin_all_button.setEnabled(can_combine)
+    rebin_all_button.setEnabled(
+        can_combine
+        and any(
+            item["config"].get("enabled") and binning_is_enabled(item["config"])
+            for item in binnings
+        )
+    )
     rebin_all_button.setVisible(len(binnings) > 1)
     rebin_all_button.setToolTip(
         "Compute every enabled named composite binning for this collection and update open data viewers."
@@ -830,7 +856,7 @@ def _group_composite_group_box(
     action_row.addWidget(rebin_all_button)
     materialize_button = QtWidgets.QPushButton("Create dataset from composite")
     materialize_button.setObjectName("group_composite_create")
-    materialize_button.setEnabled(can_combine)
+    materialize_button.setEnabled(can_combine and binning_enabled)
     materialize_button.setToolTip(
         "Compute this composite and store it inside the nfit project as an independent dataset. "
         "The materialized result can be used as a background or as an input to a later composite."

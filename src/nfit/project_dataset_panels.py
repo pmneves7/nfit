@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .binning_lifecycle import binning_is_enabled
 from .dataset import PointData4D
 from .mdhisto import MDHistoData
 from .pipeline import DataGroup, DatasetEntry
@@ -706,6 +707,7 @@ def _dataset_axes_group_box(
     binnings = context.dataset_rebin_binnings(dataset)
     selected_binning = context.selected_dataset_binning(dataset)
     config = selected_binning["config"]
+    binning_enabled = binning_is_enabled(config)
     binning_row = QtWidgets.QHBoxLayout()
     binning_row.addWidget(QtWidgets.QLabel("Binning"))
     binning_combo = QtWidgets.QComboBox()
@@ -720,6 +722,17 @@ def _dataset_axes_group_box(
         lambda _index, combo=binning_combo: context.select_dataset_binning(
             dataset, str(combo.currentData())
         )
+    )
+    binning_enabled_check = QtWidgets.QCheckBox("Enabled")
+    binning_enabled_check.setObjectName("dataset_rebin_binning_enabled")
+    binning_enabled_check.setChecked(binning_enabled)
+    binning_enabled_check.setToolTip(
+        "Allow calculation and project storage of this binning. Disable it to keep the recipe "
+        "without recalculating or saving its output. A valid result already in memory remains "
+        "available until an input or recipe edit makes it stale."
+    )
+    binning_enabled_check.toggled.connect(
+        lambda checked: context.set_dataset_binning_enabled(dataset, group, checked)
     )
     add_binning = QtWidgets.QPushButton("Add…")
     add_binning.setObjectName("dataset_rebin_add_binning")
@@ -747,6 +760,7 @@ def _dataset_axes_group_box(
         lambda checked: checked and context.make_dataset_fit_binning(dataset)
     )
     binning_row.addWidget(binning_combo, 1)
+    binning_row.addWidget(binning_enabled_check)
     binning_row.addWidget(add_binning)
     binning_row.addWidget(duplicate_binning)
     binning_row.addWidget(rename_binning)
@@ -757,9 +771,12 @@ def _dataset_axes_group_box(
     enable_check.setObjectName("dataset_rebin_enabled")
     enable_check.setChecked(bool(config.get("enabled", False)))
     enable_check.setToolTip(
-        "Use this named rebin for viewing and fitting."
-        if selected_binning["fit"]
-        else "Make this visualization-only rebin available in the data viewer."
+        (
+            "Use this named rebin for viewing and fitting. "
+            if selected_binning["fit"]
+            else "Make this visualization-only rebin available in the data viewer. "
+        )
+        + "The Enabled control separately permits calculation and project storage."
     )
     enable_check.toggled.connect(lambda checked: context.set_dataset_rebin_enabled(dataset, group, checked))
     settings_row = QtWidgets.QHBoxLayout()
@@ -1064,12 +1081,12 @@ def _dataset_axes_group_box(
     symmetry_preview.setToolTip("Resolved reciprocal-HKL operation count and any syntax error.")
     create_button = QtWidgets.QPushButton("Create dataset from rebin")
     create_button.setObjectName("dataset_rebin_create")
-    create_button.setEnabled(context.dataset_can_rebin(dataset))
+    create_button.setEnabled(context.dataset_can_rebin(dataset) and binning_enabled)
     create_button.setToolTip("Materialize the current rebinned data as a new independent dataset.")
     create_button.clicked.connect(context.materialize_rebin_for_selection)
     rebin_now_button = QtWidgets.QPushButton("Rebin now")
     rebin_now_button.setObjectName("dataset_rebin_now")
-    rebin_now_button.setEnabled(context.dataset_can_rebin(dataset))
+    rebin_now_button.setEnabled(context.dataset_can_rebin(dataset) and binning_enabled)
     rebin_now_button.setToolTip(
         "Compute the current rebin immediately and update the cached viewer/fit data. Use this when automatic rebinning is off."
     )
@@ -1078,7 +1095,13 @@ def _dataset_axes_group_box(
     )
     rebin_all_button = QtWidgets.QPushButton("Rebin all now")
     rebin_all_button.setObjectName("dataset_rebin_all_now")
-    rebin_all_button.setEnabled(context.dataset_can_rebin(dataset))
+    rebin_all_button.setEnabled(
+        context.dataset_can_rebin(dataset)
+        and any(
+            item["config"].get("enabled") and binning_is_enabled(item["config"])
+            for item in binnings
+        )
+    )
     rebin_all_button.setVisible(len(binnings) > 1)
     rebin_all_button.setToolTip(
         "Compute every enabled named binning for this dataset and update open data viewers."
@@ -1088,7 +1111,7 @@ def _dataset_axes_group_box(
     )
     save_rebin_button = QtWidgets.QPushButton("Save rebin to disk")
     save_rebin_button.setObjectName("dataset_rebin_save")
-    save_rebin_button.setEnabled(context.dataset_can_rebin(dataset))
+    save_rebin_button.setEnabled(context.dataset_can_rebin(dataset) and binning_enabled)
     save_rebin_button.setToolTip("Export the current rebinned dataset directly to a NumPy archive.")
     save_rebin_button.clicked.connect(context.save_rebin_for_selection)
     coverage_label = QtWidgets.QLabel("Minimum coverage")
@@ -1186,7 +1209,8 @@ def _dataset_axes_group_box(
     status_label.setObjectName("dataset_rebin_status")
     status_label.setWordWrap(True)
     status_label.setToolTip(
-        "Shows whether the cached rebinned data is current. Pending manual rebinning will be forced automatically for fit, view, and export operations."
+        "Shows whether the cached rebinned data is current. For enabled binnings, pending manual "
+        "rebinning is forced automatically for fit, view, and export operations."
     )
     controls_layout.addWidget(status_label, footer_row + 5, 0, 1, last_column + 1)
     action_row = QtWidgets.QHBoxLayout()

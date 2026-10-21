@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile
 
+from .binning_lifecycle import binning_is_enabled
 from .data_workspace import temporary_storage_usage
 from .mapped_archive import array_storage_allocations
 from .performance import load_resource_limits
@@ -61,6 +62,7 @@ class _Binding:
     unload: Any = None
     delete: Any = None
     member: str | None = None
+    binning_key: tuple[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -139,6 +141,57 @@ def project_binning_member(project, kind, group, target, binning_id):
     return binning_artifact_member(cache_id)
 
 
+def _disabled_binning_resources(project):
+    """Index configured lifecycle state without normalizing or loading recipes."""
+    from .project_composites import (
+        FIT_BINNING_ID,
+        GROUP_COMPOSITE_BINNINGS_KEY,
+        GROUP_COMPOSITE_KEY,
+    )
+    from .project_data import DATASET_REBIN_KEY
+    from .project_rebinning import DATASET_REBIN_BINNINGS_KEY
+
+    datasets, composites = set(), set()
+
+    def configurations(container, key, registry_key):
+        config = container.get(key)
+        if isinstance(config, dict):
+            yield None, config
+        registry = container.get(registry_key)
+        if isinstance(registry, dict):
+            for item in registry.get("items", ()):
+                if isinstance(item, dict) and isinstance(item.get("config"), dict):
+                    yield str(item.get("id")), item["config"]
+
+    for root in project.data_groups:
+        for dataset in root.iter_datasets():
+            for bid, config in configurations(dataset.parameters, DATASET_REBIN_KEY, DATASET_REBIN_BINNINGS_KEY):
+                if not binning_is_enabled(config):
+                    datasets.add(dataset.id if bid is None else f"{dataset.id}:{bid}")
+        for node in (root, *root.iter_subgroups()):
+            for bid, config in configurations(node.metadata, GROUP_COMPOSITE_KEY, GROUP_COMPOSITE_BINNINGS_KEY):
+                if not binning_is_enabled(config):
+                    composites.add((id(node), bid))
+                    if bid is None:
+                        composites.add((id(node), FIT_BINNING_ID))
+                    if bid is None and config.get("_binning_id") is not None:
+                        composites.add((id(node), str(config["_binning_id"])))
+
+    def disabled(kind, key):
+        if kind == "binning":
+            return isinstance(key, str) and key.removesuffix(":viewer-prepared") in datasets
+        bid = None
+        if isinstance(key, tuple) and len(key) > 1:
+            stage = key[1]
+            if stage in ("unsubtracted", "background", "viewer-finish", "viewer-source", "viewer-prepared"):
+                bid = key[2]
+            elif stage != "local-backgrounds":
+                bid = stage
+        return (_node_identity(key), bid) in composites
+
+    return disabled
+
+
 class ProjectResources:
     """Inspect, load, unload, or forget recomputable project resources.
 
@@ -202,6 +255,7 @@ class ProjectResources:
         bindings = {}
         members = self._members()
         recipes = tuple(self.recipes())
+        disabled_binning = _disabled_binning_resources(self.project)
         caches = (("binning", project_data._VIEWER_VIEW_CACHE),
                   ("composite", comp._COMPOSITE_DATA_CACHE))
         records = {id(cache): cache.resource_records() for _name, cache in caches}
@@ -274,6 +328,7 @@ class ProjectResources:
                     temporary = self._temporary_size(record.disk_path, record.signature)
                 kind = "Prepared view" if "viewer-" in str(record.key) else "Histogram"
                 recipe_loader = recipe_loaders.get((id(cache), record.key))
+                disabled = disabled_binning(cache_name, record.key)
                 state = "In RAM" if loaded else ("Saved in project" if member else "Temporary cache")
                 if not loaded and not record.available:
                     state = "Needs recompute" if recipe_loader else "Unavailable"
@@ -297,19 +352,24 @@ class ProjectResources:
                     ram_bytes=_bytes(record.data) + record.compressed_bytes,
                     project_disk_bytes=disk, temporary_disk_bytes=temporary,
                     parents=(owner.name,), can_unload=loaded or bool(record.compressed_bytes),
-                    can_load=not loaded and bool(recipe_loader or
+                    can_load=not disabled and not loaded and bool(recipe_loader or
                         record.available and (member or temporary or record.compressed_bytes)),
                     can_delete=bool(member or temporary),
-                    reason="" if record.available else "The saved cache is unavailable; recompute from its recipe.",
+                    reason=("Enable this binning before loading or recomputing it." if disabled else
+                            "" if record.available else "The saved cache is unavailable; recompute from its recipe."),
                 ), record.data, load=lambda c=cache, k=record.key, replay=recipe_loader: self._load_cached(c, k, replay),
                    unload=lambda c=cache, k=record.key: c.unload(k),
-                   delete=lambda c=cache, k=record.key: c.delete_backing(k), member=member)
+                   delete=lambda c=cache, k=record.key: c.delete_backing(k), member=member,
+                   binning_key=(cache_name, record.key))
 
         represented_members = {binding.member for binding in bindings.values() if binding.member}
         available_keys = {identity: {record.key for record in cache_records if record.available}
                           for identity, cache_records in records.items()}
         for recipe in recipes:
             cache, cache_key, label, member, loader = recipe
+            cache_name = "binning" if cache is project_data._VIEWER_VIEW_CACHE else "composite"
+            if disabled_binning(cache_name, cache_key):
+                continue
             if member in represented_members:
                 continue
             # A runtime cube is already represented by its cache row.
@@ -318,7 +378,7 @@ class ProjectResources:
             key = f"recipe:{member}"
             bindings[key] = _Binding(ResourceRow(key, label, "Histogram", "Needs recompute",
                 can_load=True, reason="Load computes this binning from its retained recipe and sources."),
-                load=loader, member=member)
+                load=loader, member=member, binning_key=(cache_name, cache_key))
             represented_members.add(member)
 
         for dataset in datasets.values():
@@ -467,6 +527,10 @@ class ProjectResources:
         """
         if plan.project_identity != id(self.project):
             raise ValueError("The load plan belongs to a different project.")
+        disabled_binning = _disabled_binning_resources(self.project)
+        if any(binding.binning_key is not None and disabled_binning(*binding.binning_key)
+               for binding in plan.entries):
+            raise ValueError("Enable the selected binnings before loading or recomputing them.")
         changed = False
         for binding in plan.entries:
             binding.load()

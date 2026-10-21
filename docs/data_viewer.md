@@ -91,9 +91,10 @@ not every file or placeholder stored in the project:
   remain visible so their loading errors can be diagnosed.
 - Empty placeholders without data, a source or a derived recipe are omitted.
 
-Catalog construction and the explorer's viewer-button availability check read
-metadata only. They do not validate per-run conditions or inspect source files;
-scientific preparation validates inputs when a result is requested.
+Catalog construction and the explorer's viewer-button availability check do
+not load numerical data or validate per-run conditions. Disabled binnings also
+require a current resident result; scientific preparation validates other inputs
+when a result is requested.
 Source runs and hidden placeholders
 remain available in the explorer for inspection and reduction settings. The
 same selection policy applies to preloaded and lazy viewers and to scripting
@@ -120,6 +121,9 @@ save_figure(fig, "figure.svg")
 ```
 
 By default, a new viewer loads only the initially selected dataset and binning.
+Disabled binnings remain viewable while their current results are in memory.
+They are not loaded from disk or recalculated; re-enable a stale or unavailable
+binning in its rebin panel before viewing it.
 All available choices still appear in the menus; selecting another loads its
 data, and revisiting a loaded choice reuses it. Valid saved bins are reused;
 missing or stale bins are computed when requested. Dependencies needed to
