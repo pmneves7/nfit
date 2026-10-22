@@ -120,6 +120,7 @@ A few of its main capabilities are:
   difference colors and shared box cuts;
 - open viewers on demand, with an optional preference to preload all datasets
   and binnings for faster switching;
+- review external project-file changes in the main window without blocking the GUI;
 - enable individual binnings for calculation and project caching, retaining
   current in-memory results when a binning is disabled;
 - construct and inspect crystal, tight-binding, Lindhard, and RPA models;

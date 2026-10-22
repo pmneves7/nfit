@@ -223,6 +223,7 @@ def test_measurement_workflow_public_exports_are_authoritative():
 
 
 PROJECT_GUI_CLIENT_MODULES = (
+    PACKAGE_ROOT / "qt_project_external_changes.py",
     PACKAGE_ROOT / "qt_ub_setup.py",
     PACKAGE_ROOT / "qt_figure_export.py",
     PACKAGE_ROOT / "qt_resource_monitor.py",

@@ -7052,6 +7052,8 @@ class NfitProjectExplorer:
         self._project_disk_signature: tuple[int, int, int, int] | None = None
         self._ignored_project_disk_signature: tuple[int, int, int, int] | None = None
         self._external_change_timer = None
+        self._external_change_notice = None
+        self._external_change_polling = False
         self.has_unsaved_changes = False
         self._selected_dataset_binning_ids: dict[str, str] = {}
         self._selected_composite_binning_ids: dict[str, str] = {}
@@ -7952,6 +7954,7 @@ class NfitProjectExplorer:
         self._project_disk_signature = None
         self._ignored_project_disk_signature = None
         self.has_unsaved_changes = False
+        self._external_change_notice.clear()
         self._clear_active_fit_state()
         self._sync_cache_binnings_action()
         self._refresh_tree()
@@ -8077,6 +8080,7 @@ class NfitProjectExplorer:
     def _update_project_disk_signature(self) -> None:
         self._project_disk_signature = _project_file_signature(self.project_path)
         self._ignored_project_disk_signature = None
+        self._external_change_notice.clear()
 
     def _project_changed_on_disk(self) -> bool:
         if self.project_path is None or self._project_disk_signature is None:
@@ -8085,43 +8089,32 @@ class NfitProjectExplorer:
         return current is not None and current != self._project_disk_signature
 
     def _prompt_external_change_action(self) -> str:
-        """Ask how to handle a project changed by another process."""
+        """Present the automatic file-change notice without waiting for input."""
 
-        from PySide6 import QtWidgets
+        signature = _project_file_signature(self.project_path)
+        if self.project_path is not None and signature is not None:
+            self._external_change_notice.present(
+                self.project_path, signature, unsaved=self.has_unsaved_changes,
+            )
+        return "pending"
 
-        message = QtWidgets.QMessageBox(self.window)
-        message.setIcon(QtWidgets.QMessageBox.Icon.Warning)
-        message.setWindowTitle("Project changed on disk")
-        message.setText(
-            "The current nfit project changed on disk after it was opened."
-        )
-        discard_note = (
-            " Reloading will discard unsaved in-memory changes."
-            if self.has_unsaved_changes
-            else ""
-        )
-        message.setInformativeText(
-            "Reload the external version, save this in-memory state under a "
-            "different name, or keep working without changing either copy."
-            + discard_note
-        )
-        reload_button = message.addButton(
-            "Reload from Disk", QtWidgets.QMessageBox.ButtonRole.AcceptRole
-        )
-        save_as_button = message.addButton(
-            "Save As…", QtWidgets.QMessageBox.ButtonRole.ActionRole
-        )
-        message.addButton(
-            "Keep Current State", QtWidgets.QMessageBox.ButtonRole.RejectRole
-        )
-        message.setDefaultButton(reload_button)
-        message.exec()
-        clicked = message.clickedButton()
-        if clicked is reload_button:
-            return "reload"
-        if clicked is save_as_button:
-            return "save_as"
-        return "keep"
+    def _handle_external_change_action(
+        self, action: str, path: Path, signature: tuple[int, int, int, int],
+    ) -> bool:
+        """Resolve a user-selected notice action against its original project."""
+
+        if gui_operation_active() or path != self.project_path:
+            return False
+        with GuiOperationGuard():
+            if action == "reload":
+                return self.reload_project_from_disk()
+            if action == "save_as":
+                return self.save_as()
+            if action == "keep":
+                self._ignored_project_disk_signature = signature
+                self._external_change_notice.clear()
+                return True
+        return False
 
     def _prompt_save_conflict_action(self) -> str:
         """Ask whether an explicit Save may overwrite an external change."""
@@ -8253,26 +8246,33 @@ class NfitProjectExplorer:
         return show_in_file_manager_in_desktop(self.window, self.project_path)
 
     def check_for_external_project_change(self) -> bool:
-        """Prompt once when the open project has been replaced on disk."""
+        """Show a nonblocking notice when the open project changes on disk."""
 
         # Worker completion and dialog cleanup process Qt events before Save
         # adopts its new disk signature. Poll only after the whole guarded
         # operation finishes, including its final GUI bookkeeping.
-        if gui_operation_active():
+        if gui_operation_active() or self._external_change_polling:
             return False
         if not self._project_changed_on_disk():
+            self._external_change_notice.clear()
             return False
         current = _project_file_signature(self.project_path)
         if current == self._ignored_project_disk_signature:
+            self._external_change_notice.clear()
             return False
-        with GuiOperationGuard():
+        if self._external_change_notice.identity == (self.project_path, current):
+            self._external_change_notice.present(
+                self.project_path, current, unsaved=self.has_unsaved_changes,
+            )
+            return False
+        self._external_change_polling = True
+        try:
             action = self._prompt_external_change_action()
-            if action == "reload":
-                return self._load_project_path(self.project_path, remember=True)
-            if action == "save_as":
-                return self.save_as()
-            self._ignored_project_disk_signature = current
-            return True
+            if action == "pending":
+                return True
+            return self._handle_external_change_action(action, self.project_path, current)
+        finally:
+            self._external_change_polling = False
 
     @guarded_gui_operation
     def save(self) -> bool:

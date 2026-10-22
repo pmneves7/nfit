@@ -9,6 +9,159 @@ from nfit import project_gui as gui
 from nfit.pipeline import DataGroup
 
 
+@pytest.fixture
+def changed_project(tmp_path):
+    path = tmp_path / "shared.nfit"
+    gui.save_project(gui.NfitProject([DataGroup("original")]), path)
+    explorer = gui.NfitProjectExplorer()
+    assert explorer.open_project_path(path, remember=False)
+    gui.save_project(gui.NfitProject([DataGroup("external")]), path)
+    try:
+        yield explorer, path
+    finally:
+        explorer.has_unsaved_changes = False
+        explorer.window.close()
+
+
+def _notice_button(explorer, action):
+    return explorer._external_change_notice.toolbar.findChild(
+        QtWidgets.QPushButton, f"project_external_change_{action}"
+    )
+
+
+def test_background_file_change_has_no_modal_dialog_or_application_input_barrier(changed_project, monkeypatch):
+    from PySide6 import QtTest
+
+    explorer, _path = changed_project
+    other_window = QtWidgets.QWidget()
+    editor = QtWidgets.QLineEdit(other_window)
+    other_window.show()
+    # The project window is hidden, modelling a notification while elsewhere.
+    assert not explorer.window.isVisible()
+    monkeypatch.setattr(explorer.window, "activateWindow", lambda: pytest.fail("stole window focus"))
+    monkeypatch.setattr(explorer.window, "raise_", lambda: pytest.fail("raised background window"))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec", lambda *_: pytest.fail("opened a modal file-change dialog"))
+    try:
+        assert explorer.check_for_external_project_change()
+        assert not explorer.window.isVisible()
+        assert not gui.gui_operation_active()
+        assert QtWidgets.QApplication.activeModalWidget() is None
+        QtTest.QTest.keyClicks(editor, "still responsive")
+        assert editor.text() == "still responsive"
+        assert not explorer._external_change_notice.toolbar.isHidden()
+        assert explorer._external_change_notice.toolbar.window() is explorer.window
+        assert explorer.project.data_groups[0].name == "original"
+        explorer.window.show()
+        QtWidgets.QApplication.processEvents()
+        assert explorer._external_change_notice.toolbar.isVisible()
+        for action in ("reload", "save_as", "keep"):
+            button = _notice_button(explorer, action)
+            assert button.toolTip()
+            assert not button.isDefault() and not button.autoDefault()
+    finally:
+        other_window.close()
+
+
+def test_notice_does_not_close_editor_popups(changed_project):
+    explorer, _path = changed_project
+    explorer.window.show()
+    combo = QtWidgets.QComboBox(explorer.window)
+    combo.addItems(["first", "second"])
+    combo.showPopup()
+    try:
+        assert combo.view().isVisible()
+        assert explorer.check_for_external_project_change()
+        assert combo.view().isVisible()
+    finally:
+        combo.hidePopup()
+
+
+def test_keep_acknowledges_only_observed_revision_and_preserves_save_conflict(changed_project, monkeypatch):
+    explorer, path = changed_project
+    assert explorer.check_for_external_project_change()
+    assert not explorer.check_for_external_project_change()
+    observed = explorer._external_change_notice.identity[1]
+    gui.save_project(gui.NfitProject([DataGroup("newer external")]), path)
+    _notice_button(explorer, "keep").click()
+    assert explorer._ignored_project_disk_signature == observed
+    assert explorer._external_change_notice.toolbar.isHidden()
+    assert explorer._project_changed_on_disk()
+    assert explorer.check_for_external_project_change()
+    assert explorer._external_change_notice.identity[1] != observed
+    _notice_button(explorer, "keep").click()
+    assert not explorer.check_for_external_project_change()
+    monkeypatch.setattr(explorer, "_prompt_save_conflict_action", lambda: "cancel")
+    assert not explorer.save()
+    assert gui.load_project(path).data_groups[0].name == "newer external"
+    assert explorer.project.data_groups[0].name == "original"
+
+
+def test_notice_reload_confirms_unsaved_changes_and_survives_cancellation(changed_project, monkeypatch):
+    explorer, path = changed_project
+    assert explorer.check_for_external_project_change()
+    explorer.project.data_groups[0].name = "local edits"
+    explorer._mark_dirty()
+    assert not explorer.check_for_external_project_change()
+    assert "unsaved changes" in explorer._external_change_notice.label.text()
+    monkeypatch.setattr(explorer, "_prompt_reload_unsaved_action", lambda: "cancel")
+    _notice_button(explorer, "reload").click()
+    assert explorer.project.data_groups[0].name == "local edits"
+    assert explorer.has_unsaved_changes
+    assert not explorer._external_change_notice.toolbar.isHidden()
+    monkeypatch.setattr(explorer, "_prompt_reload_unsaved_action", lambda: "reload")
+    _notice_button(explorer, "reload").click()
+    assert explorer.project.data_groups[0].name == "external"
+    assert not explorer.has_unsaved_changes
+    assert explorer._external_change_notice.toolbar.isHidden()
+    assert not explorer.check_for_external_project_change()
+    assert gui.load_project(path).data_groups[0].name == "external"
+
+
+@pytest.mark.parametrize("accept", [False, True])
+def test_notice_save_as_preserves_external_file(changed_project, tmp_path, monkeypatch, accept):
+    explorer, path = changed_project
+    copy_path = tmp_path / "local copy.nfit"
+    explorer.project.data_groups[0].name = "local edits"
+    explorer._mark_dirty()
+    assert explorer.check_for_external_project_change()
+    monkeypatch.setattr(gui, "get_save_file_name", lambda *_a, **_k: (str(copy_path) if accept else "", ""))
+    _notice_button(explorer, "save_as").click()
+    assert gui.load_project(path).data_groups[0].name == "external"
+    assert explorer.project.data_groups[0].name == "local edits"
+    if accept:
+        assert explorer.project_path == copy_path
+        assert gui.load_project(copy_path).data_groups[0].name == "local edits"
+        assert explorer._external_change_notice.toolbar.isHidden()
+    else:
+        assert explorer.project_path == path
+        assert explorer.has_unsaved_changes
+        assert not explorer._external_change_notice.toolbar.isHidden()
+
+
+def test_notice_is_retired_on_project_switch_and_old_actions_are_ignored(changed_project):
+    explorer, path = changed_project
+    assert explorer.check_for_external_project_change()
+    _old_path, observed = explorer._external_change_notice.identity
+    assert explorer.new_project()
+    assert explorer._external_change_notice.toolbar.isHidden()
+    assert explorer._external_change_notice.identity is None
+    assert not explorer._handle_external_change_action("reload", path, observed)
+    assert explorer.project_path is None
+
+
+def test_notice_waits_for_guarded_operations_and_does_not_resolve_during_them(changed_project, monkeypatch):
+    explorer, _path = changed_project
+    with gui.GuiOperationGuard():
+        assert not explorer.check_for_external_project_change()
+        assert explorer._external_change_notice.identity is None
+    assert explorer.check_for_external_project_change()
+    monkeypatch.setattr(explorer, "reload_project_from_disk", lambda: pytest.fail("reloaded during an operation"))
+    with gui.GuiOperationGuard():
+        _notice_button(explorer, "reload").click()
+    assert not explorer._external_change_notice.toolbar.isHidden()
+    assert not gui.gui_operation_active()
+
+
 def test_unchanged_file_poll_keeps_open_editor_popups(tmp_path):
     path = tmp_path / "project.nfit"
     gui.save_project(gui.NfitProject([DataGroup("saved")]), path)

@@ -173,10 +173,12 @@ The **File** menu provides New, Open, Recent projects, Reload from Disk,
 Show in File Manager, Save,
 Save As, Close, and Quit. Closing or reloading a modified project asks before
 discarding changes. While the GUI is running, nfit checks whether another
-process replaced the open project file. It then offers to reload the external
-version, save the in-memory version under another name, or keep the current
-state. An explicit Save never overwrites a detected external change without a
-separate confirmation.
+process replaced the open project file. A persistent notice inside the project
+window offers **Reload from Disk**, **Save As…**, and **Keep Current State**.
+It does not open a blocking dialog or steal focus when you are in another
+application or macOS Space. Reloading still confirms before discarding unsaved
+edits. Keeping the current state leaves both copies intact; an explicit Save
+still requires separate confirmation before overwriting an external change.
 
 **Show in File Manager**, after **Reload from Disk**, opens the saved project's
 containing folder in your operating system's default file manager. Save a new

@@ -63,6 +63,8 @@ different Python.
 - `src/nfit/project_window_builder.py`, `project_model_editor.py`,
   `project_lindhard_editor.py`, and `project_tight_binding_editor.py`: project
   window construction and focused model-editor presentation helpers.
+- `src/nfit/qt_project_external_changes.py`: nonblocking, window-owned notices
+  for project changes detected on disk.
 - `src/nfit/qt_widget_state.py`: shared Qt editor focus, tab, and scroll
   preservation during panel rebuilds.
 - `src/nfit/qt_operation_guard.py`: shared operation input and popup-lifetime

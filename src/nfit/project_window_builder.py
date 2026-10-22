@@ -218,6 +218,12 @@ def _build_window_shell(
     toolbar.addWidget(resource_button)
     self.resource_manager_button = resource_button
 
+    from .qt_project_external_changes import ProjectExternalChangeNotice
+
+    self._external_change_notice = ProjectExternalChangeNotice(
+        self.window, on_action=self._handle_external_change_action,
+    )
+
     splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
     self.window.setCentralWidget(splitter)
     return toolbar, file_button, menu, splitter
